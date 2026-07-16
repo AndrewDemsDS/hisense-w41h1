@@ -144,6 +144,6 @@ watch on
 
 ## Recording results
 
-Post each result as a comment on the matching Gitea issue (offsets/bits, N/N reliability,
+Post each result as a comment on the matching issue (offsets/bits, N/N reliability,
 frame hex evidence), and close the issue when its "Done:" bar is met. The tool's `decode`/`diff`
 output pastes cleanly into an issue comment.

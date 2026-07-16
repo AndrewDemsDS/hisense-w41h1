@@ -304,6 +304,6 @@ ported from the ESP32 esp-matter build to AmebaZ2:
   the manifest `otaUrl` as the release-asset URL
   (`$OTA_RELEASE_BASE/amebaz2-v<semver>/rac-v<int>.ota`) instead of `file:///…`. python-matter-server's
   OTA provider downloads an http(s):// `otaUrl` (checksum-verified) then re-serves it over BDX, so the
-  big `.ota` lives in the Gitea/GitHub release and only the small `.json` need be staged. CI
-  (`.gitea/workflows/firmware-build.yaml`) already attaches `rac-v*.{ota,json}` on `release: published`
+  big `.ota` lives in the GitHub release and only the small `.json` need be staged. CI
+  (`.github/workflows/amebaz2-release.yaml`) already attaches `rac-v*.{ota,json}` on `release: published`
   (needs the self-hosted `sdk-builder` runner; until it exists, build+publish from the dev box).

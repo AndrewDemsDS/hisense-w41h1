@@ -51,8 +51,8 @@ that's out of scope (and can't be redistributed). `gen-creds.sh` handles per-uni
 - **AI assistance:** if you used an AI tool, add an `Assisted-by: AI` trailer (vendor-neutral). Do
   **not** use `Co-authored-by:` for AI.
 - Open an issue for anything non-trivial before a big PR, so we can agree on the approach.
-- CI is host-only (no hardware): `.gitea/workflows/qa.yaml` runs `ota-release.sh lint` (the same
-  gate as the pre-commit hook) on every push/PR — make sure it passes. See [`.gitea/README.md`](.gitea/README.md).
+- CI is host-only (no hardware): `.github/workflows/qa.yaml` runs `ota-release.sh lint` (the same
+  gate as the pre-commit hook) on every push/PR — make sure it passes.
 - Bumping the firmware version = edit **`firmware/src/version.txt`** (the git-tracked source of
   truth) and commit it; on a PR, CI requires it to strictly increase vs the target branch.
 

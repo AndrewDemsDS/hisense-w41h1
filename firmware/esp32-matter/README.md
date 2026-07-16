@@ -81,7 +81,7 @@ Work in three stages so the unit is never left in an unknown state:
 
 The read direction is hardware-proven: the mainboard accepts a non-Hisense module and the
 hardcoded session token holds on this unit (robustness caveat in issue I16). Current status and
-the remaining stages are tracked in the Gitea issues (`esp32-path` label) — see **Status** below.
+the remaining stages are tracked in the GitHub issues (`esp32-path` label) — see **Status** below.
 
 ## Gotchas & design notes
 - **`xTaskCreate` stack unit differs by platform.** The bus task's `1024` is *words* on

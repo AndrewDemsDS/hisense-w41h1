@@ -39,8 +39,8 @@ firmware/scripts/ota-release.env
 
 # --- Public-release excludes (added for open-source prep) ---
 # Private working notes — never publish (per project convention).
-# RELEASE.md is internal release-prep scaffolding (names the private repo path +
-# the private Gitea host); README/NOTICE/CONTRIBUTING cover everything public.
+# RELEASE.md is internal release-prep scaffolding (names a private mirror path);
+# README/NOTICE/CONTRIBUTING cover everything public.
 /CLAUDE.md
 /AGENTS.md
 /RELEASE.md

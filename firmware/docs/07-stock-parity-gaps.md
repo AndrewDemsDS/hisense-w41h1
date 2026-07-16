@@ -1,4 +1,4 @@
-# 07 · Stock-parity gap matrix (Gitea #19)
+# 07 · Stock-parity gap matrix
 
 Single source of truth for "what does the stock A/C do that we don't (yet) mirror." Consolidates
 the previously-scattered lists in `05-ha-control-and-native-ui.md`, `01-expose-all-clusters.md`,

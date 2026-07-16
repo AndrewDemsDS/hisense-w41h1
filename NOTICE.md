@@ -14,7 +14,7 @@ its changes to them (see [`patches/`](patches/) and
 
 | Component | License | How this repo modifies it |
 |---|---|---|
-| **Realtek AmebaZ2 SDK** (`ameba-rtos-z2`) — base RTOS/BSP for the RTL8710C | **Proprietary — © Realtek Semiconductor.** *Not redistributable.* | Base-SDK file edits shipped as [`patches/ameba-rtos-z2.patch`](patches/ameba-rtos-z2.patch). Pinned base commit: `0ee0460bc2cf`. |
+| **Realtek AmebaZ2 SDK** (`ameba-rtos-z2`) — base RTOS/BSP for the RTL8710C | **Proprietary — © Realtek Semiconductor.** *Not redistributable.* | Base-SDK build-glue edits shipped as [`patches/ameba-rtos-z2.patch`](patches/ameba-rtos-z2.patch). Pinned base commit: `0ee0460bc2cf`. **The patch touches only build-config files (`GCC-RELEASE/Makefile`, `*.json`), executable-bit changes on the prebuilt `gcc_utility` tools, and one Apache-2.0-licensed header — no proprietary Realtek source or binaries are embedded.** |
 | **Realtek AmebaZ2 Matter component** (`.../application/matter/`) — Realtek's Matter integration layer | **Proprietary / Apache-2.0 mix — © Realtek.** *Not redistributable.* | Our `room_air_conditioner` example is our own code (dropped into this layer); Realtek framework-file edits (e.g. `matter_events.h`, `platform_opts_matter.h`, the example makefiles) are documented as in-place diffs in `sdk-edits/README.md`. **Realtek proprietary source is never checked in** (e.g. `matter_core.cpp` is used unmodified from the SDK and not vendored here). |
 | **connectedhomeip / Matter SDK** (`connectedhomeip`) | **Apache-2.0 — © Project CHIP Authors.** | SDK-file edits shipped as [`patches/connectedhomeip.patch`](patches/connectedhomeip.patch). Pinned base commit: `cc74311cffac`. |
 

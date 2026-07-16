@@ -277,7 +277,7 @@ package() {
   local ota="$REPO/firmware/built-images/rac-v$v.ota"
   [ -f "$fw" ] || die "no firmware_is.bin -- build first"
   # otaUrl (#79): default to a LOCAL file:// (staged into --ota-provider-dir). If OTA_RELEASE_BASE
-  # is set, point at the Gitea/GitHub release asset instead -- python-matter-server's OTA provider
+  # is set, point at the GitHub release asset instead -- python-matter-server's OTA provider
   # downloads an http(s):// otaUrl (checksum-verified) then re-serves it over BDX, so the big .ota
   # can live in the release and only the small .json need be staged on the Pi.
   local otaurl="file:///rac-v$v.ota"

@@ -48,7 +48,7 @@ done: core control, fan+swing+setpoints, and the manufacturer cluster (eco/turbo
 (no CH341A) via the stock Matter OTA Requestor (F2). The remote-triggered **"77" recommission**
 flow (F1) is bench-validated: it reopens the commissioning window and swaps fabrics without
 wiping the device. Live status, the open-issues tracker, and the fleet-OTA plan for the
-remaining units live in the **Gitea issues tracker**.
+remaining units live in the **GitHub issue tracker**.
 
 ## Flashing a unit — two ways
 
@@ -75,7 +75,7 @@ Once on our firmware, version-to-version updates are ordinary **Matter OTA**
 ## Original plan (historical)
 
 Original phased plan (all six steps done): see git history. Ongoing work — open issues and the
-fleet-OTA of the remaining units — lives in the Gitea issues tracker.
+fleet-OTA of the remaining units — lives in the GitHub issue tracker.
 
 ## Setup
 

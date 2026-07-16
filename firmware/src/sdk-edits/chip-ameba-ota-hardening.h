@@ -1,5 +1,5 @@
 
-// ==== HISENSE_OTA_HARDENING (Gitea #76) =====================================
+// ==== HISENSE_OTA_HARDENING =====================================
 // Appended to connectedhomeip/src/platform/Ameba/CHIPPlatformConfig.h by
 // firmware/scripts/ota-release.sh build() -> apply_ota_hardening() (idempotent; the marker
 // "HISENSE_OTA_HARDENING" above is the guard). This file is the CANONICAL copy captured in the

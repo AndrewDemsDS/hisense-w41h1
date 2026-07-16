@@ -46,7 +46,7 @@ CONFIG_CUSTOM_DEVICE_INFO_PROVIDER=y
 # "1.0.3" (-> 10003) for clarity/fallback; edit PROJECT_VER, not this, and they stay in sync.
 CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10005
 CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.0.5"
-# --- OTA hardening (faster + reliable on marginal Wi-Fi; see Gitea #76) ---
+# --- OTA hardening (faster + reliable on marginal Wi-Fi) ---
 # Delta OTA: ship a diff (tens of KB) instead of the full ~1.5MB image over BDX.
 CONFIG_ENABLE_DELTA_OTA=y
 # MRP: survive deep fades during the long BDX transfer (default MAX_RETRANS=4 too low at ~-67dBm).

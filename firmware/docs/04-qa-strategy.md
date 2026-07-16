@@ -109,7 +109,7 @@ to be caught on hardware instead of on a laptop. Standing rule for new glue code
    whose checksum never contains `0xF4` means the stuff/un-stuff path is never exercised.
 
 (Promoted from the 2026-07 bug-hunt review; the specific findings that motivated it are tracked
-as Gitea issues.)
+as GitHub issues.)
 
 ## Why we're well-positioned
 
