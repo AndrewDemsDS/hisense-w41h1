@@ -1,26 +1,26 @@
-# Stock W41H1 — device-type → model capability map (how features are gated per A/C model)
+# Stock W41H1: device-type → model capability map (how features are gated per A/C model)
 
-**Scope:** how the stock dongle decides *which features an attached indoor unit has*. This is the
-mechanism our driver needs if it is ever to support an A/C model other than the one on the bench.
+**Scope:** how the stock dongle decides *which features an attached indoor unit has*. You need this
+mechanism to support any A/C model other than the one on the bench.
 
 **Sources:** static RE of `dumps/w41h1_dump1.bin` (2026-07-16), building on the call graph in
 [`10-stock-fw-init-and-comms.md`](10-stock-fw-init-and-comms.md). XIP mapping
-`runtime = file_offset + 0x9b6d0000`, independently re-verified before decoding (`0x9b805506` →
+`runtime = file_offset + 0x9b6d0000`, re-verified before decoding (`0x9b805506` →
 `0a 04 00`, `0x9b807823` → `07 01 00`, matching doc 10 §3.3). **[PROVEN]**
 
-Every claim is tagged **[PROVEN]** (read off the disassembly — runtime address cited) or
-**[INFERRED]** (reasoning). Treat [INFERRED] as untested: acting on an [INFERRED] claim from
-doc 10 §4.5 shipped v10207 and killed the A/C link (post-mortem there).
+Each claim below is tagged **[PROVEN]** (read off the disassembly, runtime address cited) or
+**[INFERRED]** (reasoning). Treat [INFERRED] as untested. We acted on one [INFERRED] claim from
+doc 10 §4.5, shipped it as v10207, and killed the A/C link (post-mortem there).
 
 ---
 
 ## 1. The one-paragraph version
 
-The A/C tells the module its **device-type** in the DevType (`0x0A`) reply. The module uses that
-to pick one of **two capability templates** in flash, copies it to a heap struct, and then lets the
-**ProductType (`0x66/40`) reply refine it** by switching individual capabilities on. Every consumer
-then skips any capability whose `supported` byte is 0. Static baseline + runtime refinement =
-**one mechanism, two stages** — not two competing sources of truth.
+The A/C reports its **device-type** in the DevType (`0x0A`) reply. The module picks one of **two
+capability templates** in flash, copies it to a heap struct, and lets the **ProductType (`0x66/40`)
+reply refine it** by switching individual capabilities on. Consumers skip any capability whose
+`supported` byte is 0. Static baseline plus runtime refinement is **one mechanism in two stages**,
+so the two never compete.
 
 ```
 DevType 0x0A reply ──▶ devtype ──▶ S4: malloc + copy TEMPLATE_{A,B} ──▶ [0x1000b8a8]/[0x1000b8b4]
@@ -31,29 +31,30 @@ ProductType 0x66/40 reply ──▶ flag decision tree (0x9b6f0d84) ──▶ wr
 
 ## 2. Device-type table **[PROVEN]**
 
-Exhaustive: all **27** callsites of the devtype getter `0x9b6f307c` + all **10** literal-pool xrefs
-of `[0x10009687]`. The only codes the image ever compares are **`1`, `0x15`, `0x36`, `0x37`**
-(plus `0xFF`, a sentinel written on a NULL DevType payload @ `0x9b6f2194`).
-**There is no lookup table** — dispatch is an `if`/`else-if` chain (`bl 0x9b6f307c; cmp; beq`).
+This sweep covered all **27** callsites of the devtype getter `0x9b6f307c` and all **10**
+literal-pool xrefs of `[0x10009687]`. The image compares only **`1`, `0x15`, `0x36`, `0x37`**,
+plus `0xFF`, a sentinel written on a NULL DevType payload @ `0x9b6f2194`.
+**No lookup table exists.** Dispatch is an `if`/`else-if` chain (`bl 0x9b6f307c; cmp; beq`).
 
 | devtype | struct | malloc | records | profile codes | product |
 |---|---|---|---|---|---|
-| `0x00`, `0x01` | TEMPLATE_A `0x9b807e20` → `[0x1000b8a8]` | `0x33c` | 69 | `100`–`129`, `199` | air conditioner — **ours** |
+| `0x00`, `0x01` | TEMPLATE_A `0x9b807e20` → `[0x1000b8a8]` | `0x33c` | 69 | `100`–`129`, `199` | air conditioner (**ours**) |
 | `0x15` | TEMPLATE_B `0x9b808144` → `[0x1000b8b4]` | `0xe4` | 19 | `400`, `499` | **dehumidifier** (`t_pump`, `t_anion`, `f_e_wetsensor`) |
 | `0x36` | TEMPLATE_A | `0x33c` | 69 | `200`–`203`, `299` | A/C variant |
 | `0x37` | TEMPLATE_A | `0x33c` | 69 | `300`–`311`, `399` | A/C variant (also sets `[0x1002942c]=1` @ `0x9b6f2194`) |
-| anything else | **none allocated** | — | — | — | falls to `0x9b6f9638` |
+| anything else | **none allocated** | | | | falls to `0x9b6f9638` |
 
-- The **getter** `0x9b6f307c` is `ldrb r0,[0x10009687]; cmp r0,#1; it lo; movlo r0,#1` — it maps
-  **0 → 1**, so devtype 0 and 1 are the same model.
-- `0x36`/`0x37` share TEMPLATE_A with the plain A/C — they differ by *profile code*, not struct.
-- **Do not add driver branches for codes outside `{0,1,0x15,0x36,0x37}`** — nothing else exists.
+- The **getter** `0x9b6f307c` is `ldrb r0,[0x10009687]; cmp r0,#1; it lo; movlo r0,#1`. It maps
+  **0 → 1**, so devtype 0 and 1 name the same model.
+- `0x36` and `0x37` share TEMPLATE_A with the plain A/C. Their *profile code* differs, the struct
+  does not.
+- **Do not add driver branches for codes outside `{0,1,0x15,0x36,0x37}`.** Nothing else exists.
 - **Our unit reports `01 01`** (measured on the wire, doc 10 §4.5) → TEMPLATE_A, profiles `1xx`.
 
 > Corrects three errors in an earlier doc 10 §4.1 (fixed there): `0x9b6f9126` is the `bl` to the
 > getter, not the dispatch head; `0x9b6f9130` *is* the TEMPLATE_A branch (shared by all four A/C
 > codes, `beq.w` @ `0x9b6f9728`/`0x9b6f9732`), not an `0x36`/`0x37`-only path; and TEMPLATE_A is
-> selected by an explicit `==1` test — the real `else` allocates nothing.
+> selected by an explicit `==1` test. The real `else` allocates nothing.
 
 ## 3. The capability struct **[PROVEN]**
 
@@ -72,7 +73,7 @@ struct cap_entry {           // 12 bytes
 
 Template `word0 = 0x00010000` (byte2 = 1) → supported; `0x00000000` → not.
 
-**`+2` is a hard skip-gate** — `0x9b6f9b50`:
+**`+2` is a hard skip-gate.** From `0x9b6f9b50`:
 ```
 ldr.w r3,[fp]        ; fp = &[0x1000b8a8]
 muls  r7, r6, #0xc   ; record index * 12
@@ -112,11 +113,11 @@ Two consumers read **different halves** of it:
 in the **status (`0x66`)** frame. Consistent with spot checks (`f_votage` b3=`0x80` → 16-bit read;
 `t_temp` b2=4 → status byte 6) but **not confirmed**. See §6.
 
-`word0`'s `b0`/`b1`/`b3` have **no known consumer** — only `+2` is proven meaningful.
+`word0`'s `b0`/`b1`/`b3` have **no known consumer**. Only `+2` is proven meaningful.
 
 ## 4. ProductType refines the struct (they are one mechanism) **[PROVEN]**
 
-`handle_producttype_cmd_result` (`0x9b6f0c4c`) does not just log. Gated on **`devtype <= 1`**
+`handle_producttype_cmd_result` (`0x9b6f0c4c`) does more than log. Gated on **`devtype <= 1`**
 (`ldrb r3,[0x10009687]; cmp r3,#1; bhi.w #0x9b6f16c4` @ `0x9b6f0d84`) it writes `supported` bytes
 straight into the S4 struct:
 
@@ -129,23 +130,23 @@ It also `strcpy`s the 3-digit **profile code** to `0x100096dc` (getter `0x9b6f30
 `ac_trans_102_64` set → **`199`** (generic/transparent profile; `beq.w` @ `0x9b6f0ddc` →
 `'199'` @ `0x9b6f0de4`).
 
-So: **ProductType is the authoritative refinement layer**, and in the `devtype<=1` path it only
-ever *enables*. (Disable writes do exist elsewhere — e.g. `= 0` stores in the `0x37` branch at
-`+0x31a` — so "only ever enables" is scoped to this path.)
+**ProductType is the authoritative refinement layer.** Within the `devtype<=1` path it only
+*enables*. Disable writes exist elsewhere, such as the `= 0` stores in the `0x37` branch at
+`+0x31a`, so scope "only enables" to this path.
 
-> This corrects doc 10 §5a's *"Whole commit gated on `[0x10009687]==0x15`"* — the `==0x15` test
-> only picks the printf **format string**. Fixed in §5a.
+> This corrects doc 10 §5a's *"Whole commit gated on `[0x10009687]==0x15`"*. That `==0x15` test
+> picks the printf **format string** and nothing more. Fixed in §5a.
 
-## 5. What this means for OUR unit (devtype `0x01`)
+## 5. What this means for our unit (devtype `0x01`)
 
-**Static baseline: only 9 of 69 capabilities are `supported` before any ProductType refinement** —
-`t_work_mode`, `t_power`, `t_temp`, `t_temp_type`, `t_sleep`, `f_temp_in`, `f_e_push`,
+**Static baseline: 9 of 69 capabilities carry `supported=1` before any ProductType refinement.**
+They are `t_work_mode`, `t_power`, `t_temp`, `t_temp_type`, `t_sleep`, `f_temp_in`, `f_e_push`,
 `f_e_intemp`, `f_e_incoiltemp`. **[PROVEN]**
 
-Everything else — **fan speed, all swing, humidity, purify, eco, 8heat, electricity** — starts
-**off** and is only switched on by the ProductType decision tree.
+The rest, including fan speed, every swing field, humidity, purify, eco, 8heat and electricity,
+start **off**. The ProductType decision tree switches them on.
 
-### 5.1 MEASURED — the A/C *does* answer ProductType **[PROVEN on hardware, 2026-07-16]**
+### 5.1 MEASURED: the A/C does answer ProductType **[PROVEN on hardware, 2026-07-16]**
 
 Read live from node 28 (esp32 fw `1.0.7`, `features` command on the `:2323` diag console):
 
@@ -157,41 +158,52 @@ Read live from node 28 (esp32 fw `1.0.7`, `features` command on the `:2323` diag
   q_display=0  <- MISLABELED: [0x0A]&0x08 is really ac_purify -> purify = 0
 ```
 
-**This resolves the §5 paradox.** The static baseline has eco/quiet/fan `supported=0`; the
-ProductType reply enables them (`power_save=1`, `fan_mute=1`) — and we drive them. The two-stage
-mechanism works exactly as the disassembly describes; there is no contradiction and no reason to
-doubt the `supported` gate.
+This resolves the §5 paradox. The static baseline leaves eco, quiet and fan at `supported=0`; the
+ProductType reply enables them (`power_save=1`, `fan_mute=1`), and we drive them. The two-stage
+mechanism behaves as the disassembly describes, so trust the `supported` gate.
 
-> ⚠️ **Scope: these flags are node 28's A/C, not necessarily node 14's.** ProductType is a
-> *per-unit* answer. Both are Hisense on the same protocol, but the flags are only proven for the
-> unit that returned them. Run `features` against each unit before acting on it for that unit.
+> ⚠️ **A `0` means "not on this unit", never "not on this model range".**
+>
+> ProductType answers **per unit**. These flags come from node 28's A/C. Node 14's unit may differ,
+> and someone else's Hisense will differ more. A capability reading `0` here can read `1` on another
+> unit: `ac_ai`, `ac_swing_direction_8`, `ac_humidity` and `ac_purify` all exist as stock verbs, so
+> some Hisense unit ships them.
+>
+> **Design rule: keep the code path, gate it at runtime.** Never delete a capability because this
+> bench unit lacks it. Read `hisense_get_features()` and expose per unit. Deleting the path breaks
+> compatibility for every owner whose unit has the feature, and this repo is meant to serve them.
 
-**What the flags settle (for node 28's A/C):**
+**What the flags settle (node 28's A/C only):**
 
-| flag | value | consequence |
+| flag | value | what to do |
 |---|---|---|
-| `ac_humidity` | **0** | The A/C has **no humidity capability** → the unfed Humidity endpoint in `firmware/docs/01` is **not a firmware gap**; there is nothing to feed it. Drop the endpoint rather than chase it. |
-| `ac_swing_direction_8` | **0** | The **8-position louvre** (issue #52 / I19) is **unsupported by this unit** → not worth chasing here. (Basic v/h swing is a different field and works — `poll` shows `hswing=1`.) |
-| `ac_power_display` | **1** | **Display/LED IS supported** → the highest-value #52 item is real and worth the capture. |
-| `ac_8heat` | **1** | **8 °C frost-guard heat IS supported** (#52 / I19). |
-| `ac_purify` | **0** | Purify unsupported → don't expose it. |
+| `ac_power_display` | **1** | **Display/LED supported.** The highest-value #52 item is real. Worth the capture. |
+| `ac_8heat` | **1** | **8 °C frost-guard heat supported** (#52 / I19). Worth the capture. |
 | `ac_cool_heat` | **1** | Heat-pump capable, consistent with the heat mode we drive. |
+| `ac_ai` | **0** | Absent here. **Keep support on the roadmap**, gate on the flag. Other units ship AI/smart mode. |
+| `ac_swing_direction_8` | **0** | 8-position louvre absent here. **Keep it gated, don't delete it.** Deprioritise the capture until someone has a unit reporting `1`. (Basic v/h swing is a different field and works: `poll` shows `hswing=1`.) |
+| `ac_humidity` | **0** | No humidity capability here, so the unfed Humidity endpoint in `firmware/docs/01` is **not a firmware gap on this unit**. Gate the endpoint on the flag rather than delete it: a unit reporting `1` should get it. |
+| `ac_purify` | **0** | Absent here. Gate, don't remove. |
 
 ### Recommendations
-1. **Gate on the ProductType flags, not on the static `supported` baseline.** §5.1 shows the
-   baseline is *meant* to be refined — reading it alone would wrongly conclude eco/quiet/fan are
-   unavailable. `hisense_get_features()` already exposes the refined answer; that is the layer to
-   gate on. (It remains **[INFERRED]** that an unsupported capability is un-drivable on the wire
-   rather than merely unadvertised — but we now have no counter-example.)
-2. **Two flags in `hisense_parse_features` are mislabeled** (doc 10 §5a): its `q_display` is
-   really `ac_purify`, its `purify` is really `ac_8heat`; true `ac_q_display` is unparsed.
-   **Rename, don't rewire** — the byte reads are correct, only the names are wrong.
-3. **`f_humidity` (record 44) / `t_temp_type` / `f_temp_in`** give the docs/01 telemetry gaps a
-   firmware-grounded gate *once* §6 is settled.
-4. **Supporting a dehumidifier (`0x15`)** is a real, bounded piece of work: TEMPLATE_B, 19 records,
-   its own verbs (`t_pump`, `t_anion`) and profiles `400`/`499`.
+1. **Gate at runtime on the ProductType flags, never on the static `supported` baseline.** §5.1
+   shows the baseline exists to be refined; read it alone and you would conclude eco, quiet and fan
+   are unavailable while we drive all three. `hisense_get_features()` already exposes the refined
+   answer, so gate there. It stays **[INFERRED]** that an unsupported capability is un-drivable on
+   the wire rather than unadvertised, though no counter-example has turned up.
+2. **Runtime gating beats compile-time assumptions, because our bench units are not the fleet.**
+   Every capability the stock firmware names is one some Hisense unit ships. Build the path, gate
+   the exposure, let the A/C decide. A feature this unit reports `0` for is a **deprioritised
+   capture target**, not a dead one.
+3. **`hisense_parse_features` mislabeled two flags** (doc 10 §5a). Its `q_display` read
+   `ac_purify`, its `purify` read `ac_8heat`, and true `ac_q_display` goes unparsed. Renamed
+   2026-07-16: same byte reads, correct names.
+4. **`f_humidity` (record 44), `t_temp_type` and `f_temp_in`** give the docs/01 telemetry gaps a
+   firmware-grounded gate.
+5. **Supporting a dehumidifier (`0x15`)** is bounded work: TEMPLATE_B, 19 records, its own verbs
+   (`t_pump`, `t_anion`) and profiles `400`/`499`.
 
-## 6. Unproven — and how to settle each
+## 6. Unproven, and how to settle each
 
 | # | Open question | How to settle |
 |---|---|---|
