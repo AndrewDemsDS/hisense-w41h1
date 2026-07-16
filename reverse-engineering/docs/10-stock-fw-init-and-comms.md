@@ -182,7 +182,16 @@ Runs as `uart_ctl_process_main` (`0x9b6f8dd8`) — **called repeatedly** by the 
 
 **S3 — INITIAL STATUS STREAM, 15 s** (`0x9b6f8fc2`): `deadline = now + 0x3a98(15000)`. Loop: gather A/C state via the seven Wi-Fi getters (§6), `memset(buf,0,0x80)`, build **num30(0x1E)** (`0x9b6f225c`), `transaction_primitive(num30, len, rx, verify=1, mode=1, 500ms)`; on success `handle_num30_cmd_result`; if the iteration took <1000 ms, `vTaskDelay` the remainder → **≈1 Hz** poll.
 
-**S4 — MODEL FINALISE** (`0x9b6f9126`): dispatch on device-type `[0x10009687]`: `0x36/0x37`→`0x9b6f9130`, `0x15`→tmpl `0x9b808144` + `malloc(0xe4)→[0x1000b8b4]`, else tmpl `0x9b807e20` + `malloc(0x33c)→[0x1000b8a8]`; copy model capability struct; return. Next pass short-circuits S3 via `[0x1000bcc2]` → steady state = repeated verified num30/0x66 polls.
+**S4 — MODEL FINALISE**: allocates + copies the model capability struct, keyed on device-type. Full map, struct layout, and the per-model feature tables: **[`11-model-capability-map.md`](11-model-capability-map.md)**. In brief: `{0,1,0x36,0x37}` → TEMPLATE_A `0x9b807e20` + `malloc(0x33c)→[0x1000b8a8]` (A/C); `0x15` → TEMPLATE_B `0x9b808144` + `malloc(0xe4)→[0x1000b8b4]` (**dehumidifier**); anything else allocates **nothing** (`0x9b6f9638`). Next pass short-circuits S3 via `[0x1000bcc2]` → steady state = repeated verified num30/0x66 polls.
+
+> **Corrections to an earlier revision of this line (2026-07-16, all [PROVEN] — see doc 11 §2):**
+> 1. **`0x9b6f9126` is NOT the dispatch head** — it is `bl 0x9b6f307c`, the devtype *getter*
+>    (`ldrb r0,[0x10009687]; cmp r0,#1; it lo; movlo r0,#1` — maps 0→1).
+> 2. **`0x36`/`0x37` do NOT get a distinct branch.** `0x9b6f9130` *is* the TEMPLATE_A/`0x33c`
+>    branch (`mov.w r0,#0x33c` @ `0x9b6f9130`), shared by all four A/C codes
+>    (`beq.w #0x9b6f9130` @ `0x9b6f9728`/`0x9b6f9732`).
+> 3. **TEMPLATE_A is reached by an explicit `==1` test, not an "else."** The real else
+>    (`0x9b6f9638`) allocates no struct at all.
 
 (Off main path: `0x9b6f3480` enumerates slaves 1..8 via `0x9b6f3120`, transaction timeout **3000 ms, 5 retries**; `0x9b6f3418` resets 8×0x48-byte slave slots.)
 
@@ -282,7 +291,23 @@ Guard: `payload[0]==0x66` (`0x9b6f0c6a`) **and** `payload[1]==0x40` (`0x9b6f0c74
 | `ac_trans_102_64` | [0x19] | 38 | 0x08 | `0x9b6f0cfe` |
 | `ac_enable_8heat` | [0x1A] | 39 | 0x04 | `0x9b6f0d0a` |
 
-Also: `payload[3]` (frame 16) → raw global `0x100096c9` (bits1,3 feed a state machine); `payload[4]` (frame 17) bit3 → state machine; **`payload[5]` (frame 18) read *signed* (`ldrsb` @ `0x9b6f0c86`)** into `sp+0x64`, branched `≥0/<0` @ `0x9b6f0f10` — a signed selector byte, **not** a plain temperature. Whole commit gated on `[0x10009687]==0x15`. The partial overlap with ESPHome (frame16≈"fan", frame18≈"mode") is coincidental — semantics are **bit-flags, not byte values**. **[PROVEN]**
+Also: `payload[3]` (frame 16) → raw global `0x100096c9` (bits1,3 feed a state machine); `payload[4]` (frame 17) bit3 → state machine; **`payload[5]` (frame 18) read *signed* (`ldrsb` @ `0x9b6f0c86`)** into `sp+0x64`, branched `≥0/<0` @ `0x9b6f0f10` — a signed selector byte, **not** a plain temperature. The partial overlap with ESPHome (frame16≈"fan", frame18≈"mode") is coincidental — semantics are **bit-flags, not byte values**. **[PROVEN]**
+
+> **Correction (2026-07-16, [PROVEN] — see [doc 11](11-model-capability-map.md) §4):** an earlier
+> revision said *"Whole commit gated on `[0x10009687]==0x15`"*. **Wrong.** The `==0x15` test only
+> selects the **printf format string**; it does not gate the commit. The real gate is
+> **`devtype <= 1`** (`ldrb r3,[0x10009687]; cmp r3,#1; bhi.w #0x9b6f16c4` @ `0x9b6f0d84`) —
+> i.e. the commit runs for **our** unit (devtype 1), not only for the dehumidifier. What it
+> commits: `supported` bytes written into the S4-allocated capability struct at `[0x1000b8a8]`,
+> plus a 3-digit **profile code** strcpy'd to `0x100096dc` (getter `0x9b6f308c`).
+> `ac_trans_102_64` set → profile **`199`** (the generic/transparent profile,
+> `beq.w` @ `0x9b6f0ddc` → `'199'` @ `0x9b6f0de4`).
+
+> ⚠️ **The table above is authoritative and our driver disagrees with it.**
+> `hisense_parse_features()` reads the right *bytes* but mislabels two: its `q_display` is
+> `[0x0A]&0x08` = **`ac_purify`**, and its `purify` is `[0x0D]&0x80` = **`ac_8heat`**. True
+> `ac_q_display` (`[0x1A]&0x40`) is not parsed at all. Independently confirmed against the stock
+> printf arg order. Tracked for a rename (behaviour is unchanged — the byte reads are correct).
 
 ### 5b. Command `0x65` — `matter_pack_devType_cmd` `0x9b6f2c60` **[PROVEN]**
 

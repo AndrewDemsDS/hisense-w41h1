@@ -110,6 +110,31 @@ static int cmd_token(int, char **)
     return 0;
 }
 
+// RE docs/11 §6 Q1: does this A/C answer the 0x66/40 ProductType poll at all? It gates the whole
+// model-capability story — with no reply, stock's STRUCT_A stays at its 9-entry static baseline
+// (fan/swing/eco all `supported=0`) and every runtime refinement is moot.
+static int cmd_features(int, char **)
+{
+    HisenseFeatures ft;
+    if (!hisense_get_features(&ft)) {
+        printf("0x66/40 ProductType: NO reply parsed yet.\r\n"
+               "  -> the A/C has not answered the ProductType poll on this boot.\r\n"
+               "  -> RE docs/11 §5: STRUCT_A would stay at the 9-entry static baseline.\r\n");
+        return 0;
+    }
+    printf("0x66/40 ProductType: REPLY PARSED — the A/C DOES answer. (docs/11 §6 Q1)\r\n");
+    printf("  cool_heat=%d ai=%d infinite_fan=%d power_save/eco=%d fan_mute/quiet=%d\r\n",
+           ft.cool_heat, ft.ai, ft.infinite_fan, ft.power_save, ft.fan_mute);
+    printf("  swing_dir_8=%d swing_follow=%d humidity=%d power_display=%u demand_resp=%u\r\n",
+           ft.swing_dir_8, ft.swing_follow, ft.humidity,
+           (unsigned)ft.power_display, (unsigned)ft.demand_resp);
+    // Names corrected 2026-07-16 (RE docs/10 §5a): same byte reads, right names.
+    printf("  purify=%d ([0x0A]&0x08)   8heat=%d ([0x0D]&0x80, 8C frost-guard)\r\n",
+           ft.purify, ft.heat_8c);
+    printf("  (true ac_q_display = [0x1A]&0x40 is not parsed — docs/11 §6)\r\n");
+    return 0;
+}
+
 static int cmd_poll(int, char **)
 {
     LOCK(); HisenseState s = s_snap; bool h = s_have; uint32_t f = s_frames; UNLOCK();
@@ -253,6 +278,7 @@ extern "C" void diag_console_start(void)
         const esp_console_cmd_t cmds[] = {
             { "token",    "#49: link session token captured from the A/C reply", NULL, cmd_token, NULL, NULL },
             { "poll",     "show the latest decoded A/C status", NULL, cmd_poll, NULL, NULL },
+            { "features", "#49/docs11: 0x66/40 ProductType reply — did the A/C answer?", NULL, cmd_features, NULL, NULL },
             { "watch",    "stream decoded frames ~1Hz: watch [on|off]", NULL, cmd_watch, NULL, NULL },
             { "decode",   "offline-decode a pasted hex frame", NULL, cmd_decode, NULL, NULL },
             { "selftest", "compact on-target codec self-check", NULL, cmd_selftest, NULL, NULL },

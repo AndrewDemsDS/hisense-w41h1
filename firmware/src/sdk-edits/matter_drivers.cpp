@@ -343,9 +343,9 @@ static void matter_driver_on_features(const HisenseFeatures *f)
 {
     ChipLogProgress(DeviceLayer,
         "A/C features (0x66/40): cool_heat=%d ai=%d inf_fan=%d eco=%d mute=%d swing8=%d "
-        "swing_follow=%d display=%d dr=%d humidity=%d purify=%d q_display=%d",
+        "swing_follow=%d display=%d dr=%d humidity=%d purify=%d 8heat=%d",
         f->cool_heat, f->ai, f->infinite_fan, f->power_save, f->fan_mute, f->swing_dir_8,
-        f->swing_follow, f->power_display, f->demand_resp, f->humidity, f->purify, f->q_display);
+        f->swing_follow, f->power_display, f->demand_resp, f->humidity, f->purify, f->heat_8c);
 }
 
 // Driver link-health callback (#56, bus-task context) -> latch the state and post one

@@ -224,15 +224,15 @@ int main() {
         ff[13]=0x66; ff[14]=0x40;
         ff[18]=0x80;                 // cool_heat
         ff[28]=0x40|0x10;            // ai + swing_dir_8
-        ff[23]=0x40|0x08;            // power_save + q_display
-        ff[26]=0x80;                 // purify (swing_follow clear)
+        ff[23]=0x40|0x08;            // power_save + purify   ([0x0A] bits 0x40/0x08)
+        ff[26]=0x80;                 // 8heat  ([0x0D]&0x80; swing_follow clear)
         ff[27]=(uint8_t)(0x02u<<6);  // power_display = 2
         ff[35]=0x03;                 // demand_resp = 3
         HisenseFeatures fe; memset(&fe,0,sizeof(fe));
         CHECK(hisense_parse_features(ff,64,&fe),"parse 66/40 frame");
         CHECK(fe.cool_heat&&fe.ai&&fe.swing_dir_8,"cool_heat/ai/swing8 set");
-        CHECK(fe.power_save&&fe.q_display,"power_save/q_display set");
-        CHECK(fe.purify&&!fe.swing_follow,"purify set, swing_follow clear");
+        CHECK(fe.power_save&&fe.purify,"power_save/purify set");
+        CHECK(fe.heat_8c&&!fe.swing_follow,"8heat set, swing_follow clear");
         CHECK(fe.power_display==2,"power_display=%d exp 2",fe.power_display);
         CHECK(fe.demand_resp==3,"demand_resp=%d exp 3",fe.demand_resp);
         CHECK(!fe.humidity&&!fe.fan_mute,"unset flags stay clear");

@@ -324,8 +324,16 @@ typedef struct {
     uint8_t power_display;     // [14]>>6    ac_power_display (2-bit: display/LED)
     uint8_t demand_resp;       // [22]&0x03  ac_dr          (2-bit: demand response)
     bool    humidity;          // [19]&0x01  ac_humidity
-    bool    purify;            // [13]&0x80  ac_purify
-    bool    q_display;         // [10]&0x08  ac_q_display
+    // RENAMED 2026-07-16 -- these two were MISLABELED. The byte reads were always correct; the
+    // NAMES were swapped-ish, so `purify` reported 8heat and `q_display` reported purify. Caught
+    // by RE of the stock printf arg order (0x9b6f0d60) and corroborated by this repo's own
+    // [PROVEN] flag table in RE docs/10 §5a. No behaviour change -- same bytes, right names.
+    bool    heat_8c;           // [0x0D]&0x80  ac_8heat  (8 C frost-guard heat; was `purify`)
+    bool    purify;            // [0x0A]&0x08  ac_purify (was `q_display`)
+    // NOT parsed (need payload > [0x1A], and our len gate rejects len<=35 -- see docs/11 §6):
+    //   ac_q_display   [0x1A]&0x40   <- the REAL q_display
+    //   ac_enable_8heat[0x1A]&0x04
+    //   ac_trans_102_64[0x19]&0x08   (set -> stock profile '199')
 } HisenseFeatures;
 
 /* Feature-flags callback: invoked (bus-task context) each time a 0x66/40

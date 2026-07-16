@@ -245,10 +245,10 @@ bool hisense_parse_features(const uint8_t *buf, size_t len, HisenseFeatures *out
     }
     out->cool_heat     = (buf[18] & 0x80) != 0;   // [ 5]&0x80
     out->power_save    = (buf[23] & 0x40) != 0;   // [10]&0x40
-    out->q_display     = (buf[23] & 0x08) != 0;   // [10]&0x08
+    out->purify        = (buf[23] & 0x08) != 0;   // [0x0A]&0x08  ac_purify
     out->fan_mute      = (buf[24] & 0x40) != 0;   // [11]&0x40
     out->infinite_fan  = (buf[25] & 0x08) != 0;   // [12]&0x08
-    out->purify        = (buf[26] & 0x80) != 0;   // [13]&0x80
+    out->heat_8c       = (buf[26] & 0x80) != 0;   // [0x0D]&0x80  ac_8heat
     out->swing_follow  = (buf[26] & 0x02) != 0;   // [13]&0x02
     out->power_display = (uint8_t)((buf[27] >> 6) & 0x03); // [14]>>6
     out->ai            = (buf[28] & 0x40) != 0;   // [15]&0x40
