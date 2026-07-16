@@ -47,6 +47,7 @@ jobs:
 
       - name: Build + package OTA
         run: |
+          mkdir -p firmware/built-images   # gitignored dir, absent on a fresh CI checkout; package writes here
           bash firmware/scripts/ota-release.sh build
           bash firmware/scripts/ota-release.sh package
 

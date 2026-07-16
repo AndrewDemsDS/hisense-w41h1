@@ -18,17 +18,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: espressif/idf:v5.5.4   # matches IDF_PIN in versions.env; gives IDF + toolchain
+    defaults:
+      run:
+        shell: bash   # ESP-IDF export.sh + esp-matter install.sh are bash scripts
     steps:
       - uses: actions/checkout@v4
 
       - name: Avoid git "dubious ownership" in the container
         run: git config --global --add safe.directory '*'
 
-      - name: Load pins from versions.env
+      - name: Load esp-matter pin from versions.env
         run: |
-          # shellcheck disable=SC1091
-          . versions.env
-          echo "ESP_MATTER_PIN=${ESP_MATTER_PIN:?set ESP_MATTER_PIN in versions.env}" >> "$GITHUB_ENV"
+          pin=$(sed -n 's/^ESP_MATTER_PIN="\(.*\)"$/\1/p' versions.env)
+          echo "ESP_MATTER_PIN=${pin:?set ESP_MATTER_PIN in versions.env}" >> "$GITHUB_ENV"
 
       - name: Tag must match CMake PROJECT_VER
         run: |
