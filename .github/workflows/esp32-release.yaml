@@ -1,36 +1,32 @@
 name: ESP32 firmware release
 
 # Builds the ESP32 Matter firmware on an `esp32-vX.Y.Z` tag and attaches the images to the GitHub
-# Release. ESP-IDF + esp-matter are fully open-source, so this runs GitHub-hosted (no self-hosted
-# runner, no proprietary SDK). Tag-triggered workflows are read from the TAGGED commit's tree, so
-# this file must exist on whatever branch (dev/main) you cut the tag from.
+# Release. Runs on the same self-hosted `sdk-builder` runner as the AmebaZ2 build, reusing its
+# already-installed ESP-IDF + esp-matter (a cold esp-matter bootstrap in a hosted container is slow
+# and fragile). The runner must export two paths in its service env (~/actions-runner/.env), so no
+# personal paths live in this public workflow:
+#   IDF_EXPORT        = <esp-idf>/export.sh   (the IDF that matches versions.env IDF_PIN)
+#   ESP_MATTER_EXPORT = <esp-matter>/export.sh
 #
-# PROJECT_VER lives in firmware/esp32-matter/CMakeLists.txt; the tag must match it (guarded below).
-# stage/flash stay manual -- CI only produces + publishes the artifacts.
+# SECURITY (public repo): tag-push only + the github.repository guard, so fork PRs can't reach the
+# self-hosted runner. stage/flash stay manual.
 on:
   push:
     tags: ['esp32-v[0-9]+.[0-9]+.[0-9]+']
 
 permissions:
-  contents: write        # create the Release + upload assets via the auto GITHUB_TOKEN
+  contents: write
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container: espressif/idf:v5.5.4   # matches IDF_PIN in versions.env; gives IDF + toolchain
+    if: github.repository == 'AndrewDemsDS/hisense-w41h1' && github.event_name == 'push'
+    runs-on: [self-hosted, sdk-builder]
     defaults:
       run:
-        shell: bash   # ESP-IDF export.sh + esp-matter install.sh are bash scripts
+        shell: bash
+
     steps:
       - uses: actions/checkout@v4
-
-      - name: Avoid git "dubious ownership" in the container
-        run: git config --global --add safe.directory '*'
-
-      - name: Load esp-matter pin from versions.env
-        run: |
-          pin=$(sed -n 's/^ESP_MATTER_PIN="\(.*\)"$/\1/p' versions.env)
-          echo "ESP_MATTER_PIN=${pin:?set ESP_MATTER_PIN in versions.env}" >> "$GITHUB_ENV"
 
       - name: Tag must match CMake PROJECT_VER
         run: |
@@ -42,29 +38,14 @@ jobs:
             exit 1
           fi
 
-      - name: Cache esp-matter (checkout + tools)
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/esp-matter
-            /root/.espressif
-          key: esp-matter-${{ env.ESP_MATTER_PIN }}-idf-v5.5.4
-
-      - name: Provision esp-matter
+      - name: Build (reuse the runner's ESP-IDF + esp-matter)
         run: |
-          if [ ! -d esp-matter/.git ]; then
-            git clone https://github.com/espressif/esp-matter.git
-            git -C esp-matter checkout "$ESP_MATTER_PIN"
-            git -C esp-matter submodule update --init --depth 1
-            (cd esp-matter && ./install.sh)
-          fi
-          echo "ESP_MATTER_PATH=$GITHUB_WORKSPACE/esp-matter" >> "$GITHUB_ENV"
-
-      - name: Build
-        run: |
-          # shellcheck disable=SC1091
-          . "$IDF_PATH/export.sh"
-          . "$ESP_MATTER_PATH/export.sh"
+          : "${IDF_EXPORT:?set IDF_EXPORT on the runner to the esp-idf export.sh path}"
+          : "${ESP_MATTER_EXPORT:?set ESP_MATTER_EXPORT on the runner to the esp-matter export.sh path}"
+          # shellcheck disable=SC1090
+          . "$IDF_EXPORT"
+          # shellcheck disable=SC1090
+          . "$ESP_MATTER_EXPORT"
           cd firmware/esp32-matter
           idf.py set-target esp32
           idf.py build
@@ -81,7 +62,7 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Attach to the GitHub Release
-        uses: softprops/action-gh-release@v2   # auto-creates the release on a tag push
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             firmware/esp32-matter/build/hisense_ac_matter.bin
