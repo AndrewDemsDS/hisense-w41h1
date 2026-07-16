@@ -9,6 +9,10 @@ on:
   pull_request:
     branches: [main, dev]
 
+# Least privilege: this gate only reads the tree (checkout + host scripts), never writes.
+permissions:
+  contents: read
+
 jobs:
   host-qa:
     runs-on: ubuntu-latest
