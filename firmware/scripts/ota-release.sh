@@ -167,11 +167,34 @@ build() {
   lint_zap
   sync_mirror
   apply_ota_hardening   # #76: MRP tuning into the Ameba CHIP platform config (idempotent)
+  # Reproducible-build path scrub (public release): rewrite the absolute build path baked into
+  # __FILE__ / debug info so the compiled image carries generic /build/... paths instead of the
+  # developer's $HOME (e.g. .../connectedhomeip/src/app/server/Server.cpp leaked the full path).
+  # -ffile-prefix-map=$(HOME)=/build maps $HOME's leading prefix (covers __FILE__ AND debug info;
+  # -fmacro-prefix-map would cover only __FILE__). Applied to BOTH compile paths:
+  #   - GN CHIP core (the connectedhomeip .cpp files, the actual leak source): appended to
+  #     CHIP_CFLAGS/CHIP_CXXFLAGS, which the args.gn generator turns into target_cflags_c/cc ->
+  #     gn cflags_c/cflags_cc (build/config/compiler/BUILD.gn). Injected idempotently into the SDK
+  #     so a fresh checkout is covered (like the ccache CRMK patch below).
+  #   - Ameba make app/main-lib: carried on CC/CXX (see CCMK).
+  # $(HOME) is expanded by make at build time -> the developer's username never lands in this
+  # tracked script (only the literal string "$(HOME)" is stored here).
+  local MPROJ="$SDK_ROOT/ameba-rtos-z2/component/common/application/matter/project"
+  local CCS
+  for CCS in "$MPROJ/amebaz2/make/chip_core_sources.mk" "$MPROJ/amebaz2plus/make/chip_core_sources.mk"; do
+    [ -f "$CCS" ] || continue
+    grep -q 'ffile-prefix-map' "$CCS" 2>/dev/null \
+      || sed -i 's#^CHIP_CXXFLAGS += \$(INCLUDES)#&\nCHIP_CFLAGS += -ffile-prefix-map=$(HOME)=/build\nCHIP_CXXFLAGS += -ffile-prefix-map=$(HOME)=/build#' "$CCS"
+  done
   # ccache (OFFICIAL way, docs/10 §10): the GN core honours pw_command_launcher="ccache"
   # (pigweed generate_toolchain -> GN command_launcher), injected into args.gn via
   # chip_core_rules.mk; the make main-lib/app use a CC=ccache prefix. This makes the mandatory
   # full-clean rebuild fast on repeat (unchanged core = cache hits). NOT the masquerade hack.
-  local CCMK=()
+  # PMAP: the -ffile-prefix-map flag, carried on the make CC/CXX so app/main-lib TUs get their
+  # $HOME scrubbed from __FILE__ regardless of whether ccache is present. $(CROSS_COMPILE) and
+  # $(HOME) stay literal here for make to expand (single quotes) -> no username in this script.
+  local PMAP='-ffile-prefix-map=$(HOME)=/build'
+  local CCMK=(CC="\$(CROSS_COMPILE)gcc $PMAP" CXX="\$(CROSS_COMPILE)g++ $PMAP")
   if command -v ccache >/dev/null; then
     export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"; ccache -M "${CCACHE_MAXSIZE:-25G}" >/dev/null 2>&1 || true
     # ccache tuning (2026-07-14): base_dir rewrites absolute build paths to relative so the hash
@@ -186,17 +209,16 @@ build() {
     # the build target `realtek_amebaz2_v0_example` reads the `amebaz2` (no "plus") variant of
     # chip_core_rules.mk; patching only `amebaz2plus` left the ninja CHIP core UNwrapped by
     # ccache (0 cacheable). Inject into BOTH variants defensively (SDK ships duplicates).
-    local MPROJ="$SDK_ROOT/ameba-rtos-z2/component/common/application/matter/project"
     local CRMK
     for CRMK in "$MPROJ/amebaz2/make/chip_core_rules.mk" "$MPROJ/amebaz2plus/make/chip_core_rules.mk"; do
       [ -f "$CRMK" ] || continue
       grep -q pw_command_launcher "$CRMK" 2>/dev/null \
         || sed -i 's#\(echo ameba_cpu = \\"ameba\\" >> \$(OUTPUT_DIR)/args.gn && \\\)#\1\n\techo pw_command_launcher = \\"ccache\\" >> $(OUTPUT_DIR)/args.gn \&\& \\#' "$CRMK"
     done
-    CCMK=(CC='ccache $(CROSS_COMPILE)gcc' CXX='ccache $(CROSS_COMPILE)g++')
+    CCMK=(CC="ccache \$(CROSS_COMPILE)gcc $PMAP" CXX="ccache \$(CROSS_COMPILE)g++ $PMAP")
     say "ccache ON (dir=$CCACHE_DIR, base_dir=$HOME, check=content): GN core via pw_command_launcher, make via CC prefix"
   else
-    say "ccache not installed (sudo pacman -S ccache) -- building without it"
+    say "ccache not installed (sudo pacman -S ccache) -- building without it (path-scrub still on via CC)"
   fi
   local BSP="$SDK_ROOT/ameba-rtos-z2/component/soc/realtek/8710c/misc/bsp/lib/common/GCC"
   # MANDATORY full clean before EVERY build. The SDK's build cache otherwise reuses a

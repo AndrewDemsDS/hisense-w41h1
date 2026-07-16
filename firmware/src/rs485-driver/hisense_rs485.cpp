@@ -843,16 +843,12 @@ void hisense_set_recommission_cb(hisense_recommission_cb_t cb)
 
 void hisense_set_provisioning(bool on)
 {
-    // While on, every outbound 0x1E carries prov_status=1 (payload[4] bit3), which
-    // lights "77" on the A/C panel -- bench-confirmed 2026-07-09 (injecting that bit
-    // showed "77"). Set true when the commissioning window opens, false when it closes.
-    s_prov_active = on;
+    s_prov_active = on;   // see the header doc for the "77" prov_status semantics
 }
 
 void hisense_send_exit_77(void)
 {
-    // Stop reporting prov=1, then push one online 0x1E now so the A/C clears "77"
-    // promptly instead of waiting for the next ~1Hz heartbeat.
+    // Clear prov, then push one online 0x1E now so the A/C drops "77" promptly.
     s_prov_active = false;
     uint8_t f[HISENSE_LINK_HEARTBEAT_LEN + 4];
     size_t n = hisense_build_link_1e(f, sizeof(f), true);

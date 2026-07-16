@@ -43,6 +43,11 @@ idf_build_set_property(CXX_COMPILE_OPTIONS "-std=gnu++17;-Os;-DCHIP_HAVE_CONFIG_
 idf_build_set_property(C_COMPILE_OPTIONS "-Os" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-security" APPEND)
 
+# Strip the builder's absolute home path from __FILE__/debug info so public release binaries don't
+# leak /home/<user>/... (esp-matter/connectedhomeip bake __FILE__ into asserts+logging). $ENV{HOME}
+# keeps the literal path out of this tracked file; everything (IDF, esp-matter, project) sits under it.
+idf_build_set_property(COMPILE_OPTIONS "-ffile-prefix-map=$ENV{HOME}=/build" APPEND)
+
 # Force the Matter softwareVersion int from PROJECT_VER (issue #77). Wins over sdkconfig's
 # CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER because CHIPDeviceConfig.h guards the macro with #ifndef,
 # so the OTA int can never drift from the semver. (The string stays in sdkconfig.defaults, kept

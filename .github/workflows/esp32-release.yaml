@@ -1,15 +1,12 @@
 name: ESP32 firmware release
 
-# Builds the ESP32 Matter firmware on an `esp32-vX.Y.Z` tag and attaches the images to the GitHub
-# Release. Runs on the same self-hosted `sdk-builder` runner as the AmebaZ2 build, reusing its
-# already-installed ESP-IDF + esp-matter (a cold esp-matter bootstrap in a hosted container is slow
-# and fragile). The runner must export two paths in its service env (~/actions-runner/.env), so no
-# personal paths live in this public workflow:
-#   IDF_EXPORT        = <esp-idf>/export.sh   (the IDF that matches versions.env IDF_PIN)
+# On an `esp32-vX.Y.Z` tag: build the ESP32 image and attach it to the GitHub Release. Runs on the
+# same self-hosted `sdk-builder` runner as the AmebaZ2 build, reusing its installed ESP-IDF +
+# esp-matter (a cold esp-matter bootstrap in a hosted container is slow and fragile). The runner
+# must export two paths so none leak into this workflow:
+#   IDF_EXPORT        = <esp-idf>/export.sh   (the IDF matching versions.env IDF_PIN)
 #   ESP_MATTER_EXPORT = <esp-matter>/export.sh
-#
-# SECURITY (public repo): tag-push only + the github.repository guard, so fork PRs can't reach the
-# self-hosted runner. stage/flash stay manual.
+# Tag-push only, so fork PRs can't reach the runner. stage/flash stay manual.
 on:
   push:
     tags: ['esp32-v[0-9]+.[0-9]+.[0-9]+']
@@ -19,12 +16,10 @@ permissions:
 
 jobs:
   build:
-    if: github.repository == 'AndrewDemsDS/hisense-w41h1' && github.event_name == 'push'
     runs-on: [self-hosted, sdk-builder]
     defaults:
       run:
-        shell: bash
-
+        shell: bash   # ESP-IDF export.sh + esp-matter export.sh are bash
     steps:
       - uses: actions/checkout@v4
 
@@ -32,11 +27,7 @@ jobs:
         run: |
           tag_ver="${GITHUB_REF_NAME#esp32-v}"
           cmake_ver=$(sed -n 's/^set(PROJECT_VER "\(.*\)").*/\1/p' firmware/esp32-matter/CMakeLists.txt)
-          echo "tag=$tag_ver  CMakeLists PROJECT_VER=$cmake_ver"
-          if [ "$tag_ver" != "$cmake_ver" ]; then
-            echo "::error::tag esp32-v$tag_ver != PROJECT_VER $cmake_ver -- bump CMakeLists.txt or retag"
-            exit 1
-          fi
+          [ "$tag_ver" = "$cmake_ver" ] || { echo "::error::tag esp32-v$tag_ver != PROJECT_VER $cmake_ver"; exit 1; }
 
       - name: Build (reuse the runner's ESP-IDF + esp-matter)
         run: |
@@ -53,13 +44,8 @@ jobs:
       - name: Collect artifacts + checksums
         run: |
           cd firmware/esp32-matter/build
-          sha256sum \
-            hisense_ac_matter.bin \
-            bootloader/bootloader.bin \
-            partition_table/partition-table.bin \
-            ota_data_initial.bin \
-            flasher_args.json > SHA256SUMS.txt
-          cat SHA256SUMS.txt
+          sha256sum hisense_ac_matter.bin bootloader/bootloader.bin \
+            partition_table/partition-table.bin ota_data_initial.bin flasher_args.json > SHA256SUMS.txt
 
       - name: Attach to the GitHub Release
         uses: softprops/action-gh-release@v2

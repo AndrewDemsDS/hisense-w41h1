@@ -88,6 +88,9 @@ firmware/scripts/ota-release.sh build     # → firmware_is.bin (+ clip image + 
 ```
 
 ### 5. First flash (CH341, once)
+Download a prebuilt image from the [Releases](https://github.com/AndrewDemsDS/hisense-w41h1/releases)
+(each `amebaz2-vX.Y.Z` / `esp32-vX.Y.Z` tag attaches the built binaries + `SHA256SUMS`), or build your
+own from step 4. Then:
 ```bash
 python3 firmware/flasher/ch341flash.py firmware/built-images/flash_rac-integrated-vN.bin
 ```
@@ -107,6 +110,15 @@ firmware/scripts/ota-release.sh release --bump --flash
 > the fw1/fw2 slot by the image **`FWHS.header.serial`** (`amebaz2_firmware_is.json`), **not** the
 > Matter software version. Every OTA build must **bump the serial** or the device applies the update
 > then silently reverts on reboot. `ota-release.sh` does this for you (`serial = base + version`).
+
+## Releases & CI
+
+A host-only lint gate (codec + Matter-map + virtual-AC + `.zap` contiguity + version) runs on every
+push/PR. Pushing a signed tag builds and publishes a GitHub Release with the firmware attached:
+`amebaz2-vX.Y.Z` (version from `firmware/src/version.txt`) and `esp32-vX.Y.Z` (from
+`firmware/esp32-matter/CMakeLists.txt` `PROJECT_VER`). Both release builds run on a self-hosted
+`sdk-builder` runner that holds the Realtek SDK + ESP-IDF/esp-matter; see the wiki's build-pipeline
+page for the runner setup.
 
 ## Attestation & credentials
 
