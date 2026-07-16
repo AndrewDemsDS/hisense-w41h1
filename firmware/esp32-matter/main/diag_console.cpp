@@ -81,14 +81,32 @@ static int parse_hex(const char *s, uint8_t *out, int cap)
 
 static int cmd_token(int, char **)
 {
-    uint8_t hi = 0, lo = 0;
-    bool seen = hisense_get_link_token(&hi, &lo);
-    printf("link session token (reply [9]/[10]): %02x %02x  [%s]\r\n",
-           hi, lo, seen ? "captured" : "seed — no reply yet");
-    if (seen && (hi != 0x01 || lo != 0x01))
-        printf("  != hardcoded 01 01 -> #49 capture+echo REQUIRED for this unit\r\n");
-    else if (seen)
-        printf("  == hardcoded 01 01 -> this unit is safe; #49 is a robustness fix\r\n");
+    // #49: report BOTH rival readings of outbound envelope [7]/[8], from the SAME
+    // DevType (0x0A) reply -- the frame stock samples and the one v10207 died on.
+    uint8_t dhi = 0, dlo = 0, ehi = 0, elo = 0;
+    bool dseen = hisense_get_link_token(&dhi, &dlo);        // inner [3]/[4] = device-type
+    bool eseen = hisense_get_devtype_envelope(&ehi, &elo);  // envelope [9]/[10]
+
+    printf("#49 outbound envelope [7]/[8] sources, from the 0x0A DevType reply:\r\n");
+    printf("  device-type  inner [3]/[4] : %02x %02x  [%s]   <- USED (stock 0x9b6f2194)\r\n",
+           dhi, dlo, dseen ? "learned from A/C" : "DEFAULT 01 01 — no 0x0A reply parsed");
+    if (eseen)
+        printf("  session tok  envel [9]/[10]: %02x %02x  [captured]      <- v10207 stamped this\r\n",
+               ehi, elo);
+    else
+        printf("  session tok  envel [9]/[10]: --      [no 0x0A reply seen yet]\r\n");
+
+    if (dseen && eseen) {
+        if (dhi != ehi || dlo != elo)
+            printf("  VERDICT: sources DIFFER on the 0x0A frame -> \"session token\" reading is\r\n"
+                   "           disproven on the wire; device-type is correct. (docs/10 §4.5)\r\n");
+        else
+            printf("  VERDICT: sources agree on this frame -- v10207's failure is NOT explained\r\n"
+                   "           by this reply; re-open the root cause. (docs/10 §4.5)\r\n");
+    } else if (!dseen) {
+        printf("  VERDICT: the learning path did NOT fire -- outbound [7]/[8] is riding the\r\n"
+               "           01 01 default, so #49's robustness fix is still unproven here.\r\n");
+    }
     return 0;
 }
 
@@ -135,9 +153,13 @@ static int cmd_selftest(int, char **)
     size_t n = hisense_build_command(&c, f, sizeof(f));
     if (!(n && f[16] == 0x0B && f[18] == 0x50 && f[19] == 0x2D && f[33] == 0x30)) fails++;
     uint8_t hi = 0, lo = 0;
-    // token = reply envelope [9]/[10]; put the probe bytes there (index 9 and 10).
-    uint8_t reply[16] = {0xF4,0xF5,0x01,0x40,0x97,0x01,0x00,0xFE,0x01,0xAB,0xCD,0x00,0x00,0x66,0x00,0x01};
-    if (!(hisense_link_token_from_reply(reply, 16, &hi, &lo) && hi == 0xAB && lo == 0xCD)) fails++;
+    // #49: outbound [7]/[8] comes from the 0x0A reply's INNER [3]/[4] (= frame [16]/[17]),
+    // not the envelope [9]/[10] (0x02/0x03 here) -- stamping the latter killed the link.
+    uint8_t reply[20] = {0xF4,0xF5,0x01,0x40,0x0B,0x01,0x00,0xFE,0x01,0x02,
+                         0x03,0x04,0x00,0x0A,0x00,0x00,0xAB,0xCD,0xF4,0xFB};
+    if (!(hisense_devtype_from_reply(reply, 20, &hi, &lo) && hi == 0xAB && lo == 0xCD)) fails++;
+    reply[13] = 0x66;   // a status reply must NOT supply a device type
+    if (hisense_devtype_from_reply(reply, 20, &hi, &lo)) fails++;
     printf("selftest: %s (%d failure%s)\r\n", fails ? "FAIL" : "PASS", fails, fails == 1 ? "" : "s");
     return fails ? 1 : 0;
 }

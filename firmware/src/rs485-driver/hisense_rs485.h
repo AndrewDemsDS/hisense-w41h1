@@ -482,16 +482,36 @@ bool hisense_send_frame(const uint8_t *buf, size_t len);
 // un-stuffed). Returns true on a fully valid, parsed frame.
 bool hisense_parse_status(const uint8_t *buf, size_t len, HisenseState *out_state);
 
-// #49 (link session token). The A/C->module reply envelope carries the token the
-// module must echo (bytes [9]/[10]); the driver currently HARDCODES 01 01 in its
-// outgoing frames instead of capturing+echoing it. Phase A (observe-only, no wire
-// change): the bus task captures the reply token, exposed here for bench
-// confirmation before the framing is rewritten to actually echo it.
-//   - hisense_link_token_from_reply(): PURE extractor (host-testable; the offset is
-//     the risky bit). Returns false if the buffer is too short.
-//   - hisense_get_link_token(): last captured token; false until a reply updated it.
-bool hisense_link_token_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo);
+// #49 (outbound envelope [7]/[8]) -- LEARNED FROM THE A/C, not hardcoded.
+//
+// These bytes are NOT a per-session token. Stock seeds them from the reply envelope
+// [9]/[10] but then overwrites them with the DevType (class 0x0A) reply's INNER
+// payload [3]/[4] = (device-type code, sub-type), and post-handshake that meaning is
+// authoritative (RE docs/10 §4.5 [PROVEN]). They are a static per-model identifier --
+// which is why hardcoding this unit's 01 01 worked at all.
+//
+// ⚠ Stamping the raw envelope [9]/[10] instead (docs/10's one INFERRED claim: that the
+// two sources coincide on the DevType frame) was shipped as v10207 and KILLED the link
+// -- the A/C rejected every frame and no status came back. They do not coincide.
+//
+// hisense_transact() therefore: sends the DevType probe verbatim (pre-link 00 00),
+// latches the type from its reply, and stamps it on every later frame. Defaults to the
+// known-good 01 01, so a unit whose probe never answers behaves as the pre-#49 build.
+//   - hisense_devtype_from_reply(): PURE extractor of inner [3]/[4] from a 0x0A reply
+//     (host-testable; the offset is the risky bit). False for any other class.
+//   - hisense_stamp_link_token(): PURE re-stamp of a finished frame's [7]/[8] +
+//     checksum fixup (the checksum sums over [7]/[8]). Returns the new length, or
+//     0 if the envelope is unrecognized.
+//   - hisense_get_link_token(): the live pair; false until a 0x0A reply supplied it
+//     (the bytes are then the 01 01 default).
+bool hisense_devtype_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo);
+size_t hisense_stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8_t lo,
+                                uint8_t *out, size_t out_cap);
 bool hisense_get_link_token(uint8_t *hi, uint8_t *lo);
+//   - hisense_get_devtype_envelope(): DIAG. The 0x0A reply's raw envelope [9]/[10] -- the
+//     value v10207 stamped and died on. If this differs from hisense_get_link_token()'s
+//     pair, the "session token" reading is disproven on the wire. False until a 0x0A reply.
+bool hisense_get_devtype_envelope(uint8_t *hi, uint8_t *lo);
 
 #ifdef __cplusplus
 }

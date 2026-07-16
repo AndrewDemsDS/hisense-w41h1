@@ -248,21 +248,94 @@ int main() {
         CHECK(rq[17]==0x01&&rq[18]==0xF3,"producttype req checksum 01 F3 got %02X %02X",rq[17],rq[18]);
     }
 
-    // ---- #49 link session token extraction (envelope [9]/[10]) ----
-    printf("[#49 link token from reply]\n");
+    // ---- #49 device-type extraction from the DevType (0x0A) reply, inner [3]/[4] ----
+    printf("[#49 devtype from reply]\n");
     {
         uint8_t hi = 0, lo = 0;
-        // A/C->module status response header: 01 40 97 01 00 FE 01 01 01 01 00 66...
-        // -> envelope [9]/[10] carry the token the module must echo (01 01 here).
-        uint8_t reply[16] = {0xF4,0xF5,0x01,0x40,0x97,0x01,0x00,0xFE,
-                             0x01,0x01,0x01,0x01,0x00,0x66,0x00,0x01};
-        CHECK(hisense_link_token_from_reply(reply,16,&hi,&lo),"extract token");
-        CHECK(hi==0x01&&lo==0x01,"token 01 01 got %02X %02X",hi,lo);
-        reply[9]=0xAB; reply[10]=0xCD;   // arbitrary token carried through
-        CHECK(hisense_link_token_from_reply(reply,16,&hi,&lo)&&hi==0xAB&&lo==0xCD,
-              "arbitrary token %02X %02X",hi,lo);
-        CHECK(!hisense_link_token_from_reply(reply,10,&hi,&lo),"reject too-short (<=10)");
-        CHECK(hisense_link_token_from_reply(reply,16,nullptr,nullptr),"null out ptrs ok");
+        // A/C->module DevType reply: class 0x0A @[13], inner[3]/[4] = [16]/[17] = type/sub.
+        uint8_t reply[20] = {0xF4,0xF5,0x01,0x40,0x0B,0x01,0x00,0xFE,0x01,0x02,
+                             0x03,0x04,0x00,0x0A,0x00,0x00,0x01,0x01,0xF4,0xFB};
+        CHECK(hisense_devtype_from_reply(reply,20,&hi,&lo),"extract devtype");
+        CHECK(hi==0x01&&lo==0x01,"devtype 01 01 got %02X %02X",hi,lo);
+        // REGRESSION GUARD (v10207): the envelope [9]/[10] here is 02 03 -- deliberately
+        // NOT equal to the device type. Reading it instead is the bug that killed the link.
+        CHECK(!(hi==reply[9]&&lo==reply[10]),"does NOT read envelope [9]/[10]");
+        reply[16]=0x36; reply[17]=0x00;  // another model's type carried through
+        CHECK(hisense_devtype_from_reply(reply,20,&hi,&lo)&&hi==0x36&&lo==0x00,
+              "arbitrary devtype %02X %02X",hi,lo);
+        reply[13]=0x66;                  // a status reply must NOT supply a device type
+        CHECK(!hisense_devtype_from_reply(reply,20,&hi,&lo),"reject non-0x0A class");
+        reply[13]=0x0A;
+        CHECK(!hisense_devtype_from_reply(reply,17,&hi,&lo),"reject too-short (<=17)");
+        CHECK(hisense_devtype_from_reply(reply,20,nullptr,nullptr),"null out ptrs ok");
+    }
+
+    // ---- #49 link session token stamped into outbound frames (envelope [7]/[8]) ----
+    printf("[#49 link token stamp]\n");
+    {
+        uint8_t out[80];   // > the longest frame (50B cmd) + stuffing headroom
+
+        // GOLDEN: stamping a template with the pair it already carries must reproduce it
+        // byte-for-byte. This is the #49 no-regression guarantee -- this A/C reports
+        // device-type 01 01 (proven: the stock dongle's captured DI frames carry 01 01,
+        // and stock sources those bytes from the DevType reply), so the wire is unchanged
+        // vs the hardcoded build. The 0x0A probe is sent verbatim, not stamped.
+        struct { const uint8_t *f; size_t n; uint8_t hi, lo; const char *name; } golden[] = {
+            {HISENSE_STATUS_REQUEST,  HISENSE_STATUS_REQUEST_LEN,  0x01,0x01, "status request"},
+            {HISENSE_LINK_INIT_07,    HISENSE_LINK_INIT_07_LEN,    0x01,0x01, "link init 07"},
+            {HISENSE_LINK_HEARTBEAT,  HISENSE_LINK_HEARTBEAT_LEN,  0x01,0x01, "link heartbeat 1E"},
+        };
+        for (auto &g : golden) {
+            size_t n = hisense_stamp_link_token(g.f, g.n, g.hi, g.lo, out, sizeof(out));
+            CHECK(n==g.n && memcmp(out,g.f,g.n)==0, "stamp is identity on %s", g.name);
+        }
+        // A power frame (literal template, precomputed checksum 0x01DF) round-trips too.
+        {
+            uint8_t on[HISENSE_CMD_FRAME_LEN];
+            size_t  onn = hisense_build_power_frame(true, on, sizeof(on));
+            size_t  n   = hisense_stamp_link_token(on, onn, 0x01, 0x01, out, sizeof(out));
+            CHECK(n==onn && memcmp(out,on,onn)==0, "stamp is identity on power-on frame");
+        }
+
+        // A different token lands at [7]/[8] and the checksum FOLLOWS it (it sums over
+        // [2,chk), which includes the token) -- a stale checksum would be a "crc error".
+        {
+            size_t n = hisense_stamp_link_token(HISENSE_STATUS_REQUEST, HISENSE_STATUS_REQUEST_LEN,
+                                                0xAB, 0xCD, out, sizeof(out));
+            CHECK(n==HISENSE_STATUS_REQUEST_LEN, "stamped len %u", (unsigned)n);
+            CHECK(out[7]==0xAB&&out[8]==0xCD, "token at [7]/[8] got %02X %02X", out[7], out[8]);
+            // template chk 0x01B3 with 01 01; swapping in AB CD adds (0xAB-1)+(0xCD-1).
+            uint16_t want = 0x01B3 + (0xAB-0x01) + (0xCD-0x01);
+            CHECK(out[17]==(uint8_t)(want>>8)&&out[18]==(uint8_t)want,
+                  "checksum tracks token: want %04X got %02X%02X", want, out[17], out[18]);
+            CHECK(out[19]==0xF4&&out[20]==0xFB, "end tag preserved");
+        }
+
+        // A token whose checksum byte hits the 0xF4 marker must still be stuffed.
+        // status: chk 0x01B3 with 01 01 -> low byte 0xF4 needs hi+lo delta 0x41.
+        {
+            size_t n = hisense_stamp_link_token(HISENSE_STATUS_REQUEST, HISENSE_STATUS_REQUEST_LEN,
+                                                0x42, 0x01, out, sizeof(out));
+            CHECK(n==HISENSE_STATUS_REQUEST_LEN+1, "stuffed len %u (grew by 1)", (unsigned)n);
+            CHECK(out[17]==0x01&&out[18]==0xF4&&out[19]==0xF4, "0xF4 checksum byte doubled");
+            CHECK(out[20]==0xF4&&out[21]==0xFB, "end tag after stuffing");
+        }
+
+        // Malformed / hostile envelopes are refused (caller then sends verbatim).
+        {
+            uint8_t bad[HISENSE_STATUS_REQUEST_LEN];
+            memcpy(bad, HISENSE_STATUS_REQUEST, sizeof(bad));
+            bad[0]=0x00;
+            CHECK(hisense_stamp_link_token(bad,sizeof(bad),1,1,out,sizeof(out))==0,"reject bad STX");
+            memcpy(bad, HISENSE_STATUS_REQUEST, sizeof(bad));
+            bad[4]=0xFF;   // LEN claims 264 bytes -> would read past the buffer
+            CHECK(hisense_stamp_link_token(bad,sizeof(bad),1,1,out,sizeof(out))==0,"reject oversize LEN");
+            bad[4]=0x02;   // LEN too small to hold an envelope
+            CHECK(hisense_stamp_link_token(bad,sizeof(bad),1,1,out,sizeof(out))==0,"reject undersize LEN");
+            CHECK(hisense_stamp_link_token(HISENSE_STATUS_REQUEST,HISENSE_STATUS_REQUEST_LEN,
+                                           1,1,out,4)==0,"reject too-small out_cap");
+            CHECK(hisense_stamp_link_token(nullptr,20,1,1,out,sizeof(out))==0,"reject null in");
+        }
     }
 
     printf("== %d passed, %d failed ==\n", g_pass, g_fail);

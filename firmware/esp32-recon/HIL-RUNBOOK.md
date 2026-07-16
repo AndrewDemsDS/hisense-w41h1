@@ -102,23 +102,27 @@ precede a successful start. **Pass:** deterministic power-on from the off state.
 
 ---
 
-## #49 (I16) · Session token hardcoded (`00 00`→`01 01`), never captured+echoed
+## #49 (I16) · Envelope `[7]/[8]` — RESOLVED ON HARDWARE 2026-07-16. No tap rig needed.
 
-**Goal:** determine whether the A/C expects a per-session token echoed back (the driver
-currently hardcodes it), by watching a real handshake.
+**Settled.** The "session token" premise was **wrong**. Measured on node 28 (fw 1.0.6) via the
+instrumented `token` console command, both sources read from the same `0x0A` DevType reply:
 
-**Tap rig** (stock dongle doing a fresh link-up is ideal — power-cycle the dongle):
 ```
-mode tap
-watch on hex              # capture the full link-up conversation both directions
-# --- power-cycle the stock dongle so it re-links ---
-# look for a token that the A/C sends (dir=0x01) and the dongle then echoes (dir=0x00)
+  device-type  inner [3]/[4] : 01 01  [learned from A/C]   <- USED
+  session tok  envel [9]/[10]: 00 00  [captured]           <- v10207 stamped this, link died
 ```
-Use `decode <hex>` on captured frames to line up offsets. Focus on the init frames
-(`0x0A`/`0x07`) and the `0x1E` link heartbeat payload.
-**Record:** whether the token is static (safe to hardcode, current behavior) or per-session
-(must be captured from the A/C reply and echoed). If per-session, note the offsets on both
-sides. **Pass:** a clear yes/no with the frame evidence attached.
+
+So `[7]/[8]` is the A/C's **device-type/sub-type** (static per model), read from the DevType
+reply's inner `[3]/[4]`; the envelope `[9]/[10]` on that frame is `00 00`. `[learned from A/C]`
+also proves the driver's learning path fires rather than riding its `01 01` default. Full
+narrative + the v10207 post-mortem: RE `docs/10` §4.5.
+
+**Re-run only if** supporting a **different A/C model** (to see what device-type it reports):
+```
+nc <node-ip> 2323   ->   token
+```
+No bus wiring required — any esp32 node running the driver reports it. A tap capture
+(`mode tap` + `watch hex` through a dongle power-cycle) is now purely optional corroboration.
 
 ---
 

@@ -209,10 +209,42 @@ RX is **interrupt-driven**: `uart_rx_start` (`0x9b6f7728`); TX via framed sender
 
 Two source threads appeared to conflict; they describe different byte origins:
 
-- **Envelope bytes[7]/[8]** (`link_seq hi/lo`) are the session token. `0x9b6f09dc` writes `00 00` while `[0x10009687]==0`, else the stored token. After each successful transaction the primitive echoes the A/C reply's envelope bytes[9]/[10] into those globals (`0x9b6f33ae`). First frame (DevType) is sent `00 00`; the A/C reply seeds the token to `01 01`; every later frame carries `01 01`. **This is a genuine link-layer session sync — a fire-and-forget replay that never ingests the reply never advances it.** **[PROVEN]**
+- **Envelope bytes[7]/[8]** (`link_seq hi/lo`). `0x9b6f09dc` writes `00 00` while `[0x10009687]==0`, else the stored value. The transaction primitive echoes the A/C reply's envelope bytes[9]/[10] into those globals (`0x9b6f33ae`), but for the DevType frame `handle_devType_cmd_result` overwrites them right after (see "Dual use" below) — **the device-type write is the one that survives**. First frame (DevType) is sent `00 00`; every later frame carries `01 01` = this model's device-type/sub-type. **[PROVEN]** ⚠️ Read the "Dual use" warning before touching these bytes: they are a static per-model id, **not** a per-session token — treating them as a token breaks the link.
 - The wifi-coupling thread's observation that the num30 *inner payload* never writes offsets [7]/[8] is about a **different index origin** (the 11-byte class payload, not the envelope) — no contradiction. **[PROVEN]**
 
-**Dual use of `[0x10009686/87]`:** the transaction primitive seeds these once from the raw reply envelope bytes[9]/[10] (session token), and `handle_devType_cmd_result` overwrites them with the DevType **inner payload** `[3]` (device-type code → `0x10009687`) and `[4]` (sub-type → `0x10009686`). Post-handshake the **device-type meaning is authoritative** (later gating reads `0x10009687` for `0x15/0x36/0x37`). For the DevType reply frame the two byte sources coincide in practice. **[PROVEN that both writes occur; INFERRED that they coincide on the DevType frame.]**
+**Dual use of `[0x10009686/87]`:** the transaction primitive seeds these once from the raw reply envelope bytes[9]/[10] (session token), and `handle_devType_cmd_result` overwrites them with the DevType **inner payload** `[3]` (device-type code → `0x10009687`) and `[4]` (sub-type → `0x10009686`). Post-handshake the **device-type meaning is authoritative** (later gating reads `0x10009687` for `0x15/0x36/0x37`). **[PROVEN that both writes occur.]**
+
+> ⚠️ **The two sources coincide on STATUS replies but NOT on the DevType reply — hardware,
+> 2026-07-16.** The inference that they always coincide was shipped as v10207, which stamped the
+> reply envelope bytes[9]/[10] into outbound bytes[7]/[8], sampling **first reply only** (stock's
+> `globals==0` gate) — i.e. the `0x0A` DevType reply. The A/C **rejected every frame**: link never
+> came up, zero status, `LocalTemperature` null; recovered by OTA (v10208). Since stamping `01 01`
+> is provably byte-identical (host goldens), the breakage proves the **`0x0A` reply's envelope
+> bytes[9]/[10] is NOT `01 01`** on this unit.
+>
+> **MEASURED ON THE WIRE** (2026-07-16, esp32 node 28 fw 1.0.6, instrumented `token` console
+> command reporting both sources from the *same* `0x0A` reply):
+>
+> ```
+>   device-type  inner [3]/[4] : 01 01  [learned from A/C]   <- what stock uses
+>   session tok  envel [9]/[10]: 00 00  [captured]           <- what v10207 stamped
+> ```
+>
+> The DevType reply's envelope bytes[9]/[10] is **`00 00`** — *not* `01 01`. The claim above
+> that "the A/C reply seeds the token to `01 01`" is therefore **wrong for the `0x0A` frame**:
+> that `01 01` comes only from `handle_devType_cmd_result`'s inner `[3]/[4]`. (A **`0x66` status**
+> reply *does* carry `01 01` at [9]/[10] — measured separately — which is why an observe-only
+> capture that re-reads every reply always looked benign and seemed to confirm the token story.)
+>
+> **This is the exact v10207 failure:** it sampled first-reply-only (stock's `globals==0` gate =
+> the `0x0A` reply), got `00 00`, rejected it as "not yet seeded", and so stamped its `00 00`
+> seed onto every post-handshake frame instead of `01 01`. The A/C rejected all of them.
+>
+> **Consequence:** bytes[7]/[8] post-handshake are the **device-type/sub-type**, a *static
+> per-model identifier* — the `01 01` in every captured stock DI frame is this model's device
+> type. Anything reading these bytes must take `handle_devType_cmd_result`'s inner `[3]/[4]`
+> from the class-`0x0A` reply (frame bytes `[16]/[17]`), **never** that reply's envelope
+> `[9]/[10]`; see `firmware/src/rs485-driver/hisense_rs485.cpp` (`hisense_devtype_from_reply`).
 
 ### 4.6 Timing / retry summary **[PROVEN]**
 - Per-transaction listen: **500 ms**. Timeout → status 7 → transaction returns 0.

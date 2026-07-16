@@ -43,11 +43,29 @@ static bool                s_link_down        = false; // link-health latch for 
 static hisense_features_cb_t s_features_cb    = NULL;  // fires on each 0x66/40 ProductType response
 static HisenseFeatures     s_features;                 // last-parsed feature flags
 static bool                s_features_valid   = false; // true once a 0x66/40 response has been parsed
-// #49: link session token captured from A/C reply envelope [9]/[10] (stock 0x9b6f33ae).
-// OBSERVE-ONLY (Phase A): captured + exposed via hisense_get_link_token(), NOT yet stamped
-// into outgoing frames. Seeded to 01 01 (this unit's value) so the getter reads sanely pre-link.
+// #49: the outbound envelope [7]/[8] pair (stock `link_seq hi/lo`). NOT a per-session token:
+// the stock transaction primitive seeds these globals from the reply envelope [9]/[10], but
+// handle_devType_cmd_result (0x9b6f2194) immediately OVERWRITES them with the DevType reply's
+// INNER payload [3]/[4] = (device-type code, sub-type), and post-handshake that meaning is
+// authoritative (RE docs/10 §4.5 + §4.1 S1, [PROVEN]). So these bytes are a static per-model
+// identifier, which is why hardcoding 01 01 worked on this unit for so long.
+//
+// HARDWARE-LEARNED (v10207, 2026-07-16): stamping the raw envelope [9]/[10] here -- docs/10's
+// one INFERRED claim, that the two byte sources coincide on the DevType frame -- killed the
+// link outright (A/C rejected every frame, zero status). They do NOT coincide. Take the
+// device type, never the envelope token.
+//
+// Seeded to the known-good 01 01 so a unit whose DevType probe never answers behaves exactly
+// as the pre-#49 firmware did; a real 0x0A reply overrides it with that A/C's own type.
 static uint8_t             s_link_tok[2]      = { 0x01, 0x01 };
-static bool                s_link_tok_seen    = false; // true once a reply has updated the token
+static bool                s_link_tok_seen    = false; // true once a 0x0A reply supplied the type
+// #49 diag: the DevType (0x0A) reply's ENVELOPE [9]/[10], recorded verbatim alongside the
+// inner [3]/[4] we actually use. These are the two rival readings of outbound [7]/[8]; the
+// v10207 failure implies they differ on THIS frame (status replies carry 01 01 in both, which
+// is what made the old observe-only capture look benign). Recorded once, reported by the
+// esp32 diag console's `token`, so the difference is measured instead of inferred.
+static uint8_t             s_devtype_env[2]     = { 0x00, 0x00 };
+static bool                s_devtype_env_seen   = false;
 
 /* RX ring buffer, filled from the UART RxIrq, drained by the bus task. */
 #define HISENSE_RX_RING_SIZE 256   // power of two
@@ -144,6 +162,47 @@ static size_t hisense_stuff_checksum(const uint8_t *frame, size_t len, uint8_t *
     out[o++] = HISENSE_ETX1;        // F4
     out[o++] = HISENSE_ETX2;        // FB
     return o;
+}
+
+/* ---------------------------------------------------------------------------
+ * #49: stamp the link session token into a finished outbound frame.
+ *
+ * Stock writes envelope bytes[7]/[8] (`link_seq hi/lo`) from the token globals at
+ * wrap time (0x9b6f09dc), i.e. BEFORE the checksum -- the checksum is a running sum
+ * over [2, chk) which INCLUDES [7]/[8], so a token change must be re-checksummed.
+ * Our frames are pre-built (templates + builders), so we re-stamp post-build here
+ * and re-run the same validated finalize+stuff machinery.
+ *
+ * `in` is a finished, F4-stuffed frame; `out` receives the re-stamped frame (cap
+ * >= unstuffed+2) and the new length is returned. 0 = malformed envelope (caller
+ * then sends the frame verbatim, i.e. exactly the pre-#49 behavior).
+ *
+ * The unstuffed length is recovered from the LEN field: `total_frame = LEN+9`
+ * (RE docs/10 §3.2) -- holds byte-exact on all five outbound templates. Only the
+ * checksum is ever stuffed, so the body (which is all we copy) is never shifted.
+ * PURE -> host-testable; the offsets are the #49-critical bit.
+ * -------------------------------------------------------------------------*/
+size_t hisense_stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8_t lo,
+                                uint8_t *out, size_t out_cap)
+{
+    if (in == NULL || out == NULL || len < 13) {
+        return 0;
+    }
+    if (in[0] != HISENSE_STX1 || in[1] != HISENSE_STX2) {
+        return 0;
+    }
+    size_t unstuffed = (size_t)in[4] + 9;          // LEN field -> full unstuffed frame
+    // Stuffing only ever GROWS a frame, so unstuffed <= len. A shorter `len` means
+    // the LEN field disagrees with the buffer -> refuse rather than read past it.
+    if (unstuffed < 13 || unstuffed > len || unstuffed > HISENSE_TX_MAX_FRAME) {
+        return 0;
+    }
+    uint8_t f[HISENSE_TX_MAX_FRAME];
+    memcpy(f, in, unstuffed);                      // body verbatim; the 4 trailing
+    f[7] = hi;                                     // bytes are rewritten by finalize
+    f[8] = lo;
+    finalize_frame(f, unstuffed - 4, unstuffed - 2);
+    return hisense_stuff_checksum(f, unstuffed, out, out_cap);
 }
 
 /* ---------------------------------------------------------------------------
@@ -677,28 +736,45 @@ static void hisense_tx_raw(const uint8_t *buf, size_t len)
 }
 
 /* ---------------------------------------------------------------------------
- * #49: extract the link session token from an A/C reply. The A/C->module
- * envelope carries the token the module must echo at bytes [9]/[10] (stock
- * session-id capture 0x9b6f33a0 / per-transaction echo 0x9b6f33ae). PURE ->
- * host-testable; the offset is the #49-critical bit, so it lives in one function.
+ * #49: extract the (device-type, sub-type) pair the module must put in its
+ * outbound envelope [7]/[8], from the A/C's DevType (class 0x0A) reply.
+ *
+ * Mirrors handle_devType_cmd_result (0x9b6f2194): device-type = inner payload [3],
+ * sub-type = inner [4]. Inner index N is frame byte 13+N (13 = CLASS), so the
+ * bytes are reply[16]/reply[17]. Returns false for any other class -- ONLY the
+ * DevType reply carries this, and reading it from a status reply is meaningless.
+ *
+ * NOT the envelope [9]/[10] "session token": stamping that killed the link on
+ * hardware (see the s_link_tok note). PURE -> host-testable; the offset is the
+ * #49-critical bit, so it lives in one function.
  * -------------------------------------------------------------------------*/
-bool hisense_link_token_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo)
+bool hisense_devtype_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo)
 {
-    if (reply == NULL || n <= 10) {
+    if (reply == NULL || n <= 17 || reply[13] != 0x0A) {
         return false;
     }
-    if (hi) *hi = reply[9];
-    if (lo) *lo = reply[10];
+    if (hi) *hi = reply[16];   // inner[3] = device-type code  -> stock 0x10009687
+    if (lo) *lo = reply[17];   // inner[4] = sub-type          -> stock 0x10009686
     return true;
 }
 
-// #49 getter: last token captured from a reply (Phase A, observe-only). Returns
-// false until a reply has updated it (the returned bytes are then the 01 01 seed).
+// #49 getter: the live session token stamped into outbound frames. Returns false
+// until a reply seeded it (the returned bytes are then the 00 00 pre-link seed).
 bool hisense_get_link_token(uint8_t *hi, uint8_t *lo)
 {
     if (hi) *hi = s_link_tok[0];
     if (lo) *lo = s_link_tok[1];
     return s_link_tok_seen;
+}
+
+// #49 diag: the DevType reply's raw envelope [9]/[10] (the value v10207 wrongly stamped).
+// False until a 0x0A reply was seen. Compare against hisense_get_link_token(): if they
+// differ, the "session token" reading is disproven directly on the wire.
+bool hisense_get_devtype_envelope(uint8_t *hi, uint8_t *lo)
+{
+    if (hi) *hi = s_devtype_env[0];
+    if (lo) *lo = s_devtype_env[1];
+    return s_devtype_env_seen;
 }
 
 /* ---------------------------------------------------------------------------
@@ -721,7 +797,23 @@ static int hisense_transact(const uint8_t *frame, size_t len, int timeout_ms, ui
     hisense_reset_rx();
     while (hisense_ring_getc() >= 0) { /* flush stale RX before we speak */ }
 
-    hisense_tx_raw(frame, len);
+    // #49: stamp this A/C's (device-type, sub-type) into the envelope [7]/[8].
+    //
+    // The DevType probe itself is EXEMPT: it is sent pre-link, before the A/C has told
+    // us its type, and its template already carries the stock's pre-link 00 00 (stock
+    // writes 00 00 while the type global is still 0). Stamping it would corrupt the one
+    // frame that bootstraps the link.
+    uint8_t txbuf[HISENSE_TX_MAX_FRAME + 2];
+    size_t  txlen = 0;
+    if (!(len > 13 && frame[13] == 0x0A)) {
+        txlen = hisense_stamp_link_token(frame, len, s_link_tok[0], s_link_tok[1],
+                                         txbuf, sizeof txbuf);
+    }
+    if (txlen > 0) {
+        hisense_tx_raw(txbuf, txlen);
+    } else {
+        hisense_tx_raw(frame, len);   // DevType probe / unrecognized envelope: verbatim
+    }
 
     TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
     while ((int)(xTaskGetTickCount() - deadline) < 0) {
@@ -730,11 +822,26 @@ static int hisense_transact(const uint8_t *frame, size_t len, int timeout_ms, ui
             size_t n = hisense_rx_feed((uint8_t)c);
             if (n > 0) {
                 if (n > 13 && hisense_reply_class_ok(s_msg_buf[13], expect_class)) {
-                    // #49 Phase A (observe-only): capture the session token from the
-                    // reply envelope [9]/[10]. NOT yet stamped into outgoing frames —
-                    // that framing change is gated on bench confirmation via recon.
-                    if (hisense_link_token_from_reply(s_msg_buf, n, &s_link_tok[0], &s_link_tok[1]))
-                        s_link_tok_seen = true;
+                    // #49: latch this A/C's (device-type, sub-type) from the DevType reply,
+                    // exactly as stock's handle_devType_cmd_result does. Only a class-0x0A
+                    // reply carries it; every other class leaves the value alone. A 00 00
+                    // pair is rejected -- stock treats a zero type global as "not linked yet",
+                    // so adopting it would send the pre-link value on post-link frames.
+                    {
+                        uint8_t hi, lo;
+                        if (hisense_devtype_from_reply(s_msg_buf, n, &hi, &lo) && (hi || lo)) {
+                            s_link_tok[0]   = hi;
+                            s_link_tok[1]   = lo;
+                            s_link_tok_seen = true;
+                        }
+                        // #49 diag: same frame's envelope bytes, for comparison. Recorded even
+                        // if the type above was rejected -- that case is itself a finding.
+                        if (n > 17 && s_msg_buf[13] == 0x0A && !s_devtype_env_seen) {
+                            s_devtype_env[0]   = s_msg_buf[9];
+                            s_devtype_env[1]   = s_msg_buf[10];
+                            s_devtype_env_seen = true;
+                        }
+                    }
                     return (int)n;  // correlated reply now in s_msg_buf[0..n)
                 }
                 // Wrong-class / late reply: discard and keep listening this window.

@@ -90,8 +90,10 @@ help                  list commands
 
 - **#55 (C/F unit bit):** `mode tap` the stock dongle while toggling the remote's
   °C/°F; `watch hex` and compare the changed byte, or `decode` a captured frame.
-- **#49 (session token):** `raw` a status/command with varied token bytes and watch
-  the A/C's reply on a second unit in `mode tap`.
+- **#49 (envelope `[7]/[8]`): RESOLVED** — not a session token; it's the A/C's device-type/sub-type
+  from the `0x0A` reply's inner `[3]/[4]`. Measured 2026-07-16: inner `[3]/[4]`=`01 01`, envelope
+  `[9]/[10]`=`00 00` on that frame (stamping the latter killed the link, v10207). `token` on any
+  esp32 node re-reports it — useful to see what a **different A/C model** returns.
 - **#50 (cold-off power-on):** `mode master`, `power on` on a physically-off unit and
   watch whether status reflects it.
 

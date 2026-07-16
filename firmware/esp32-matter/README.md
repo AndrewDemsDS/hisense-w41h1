@@ -79,9 +79,10 @@ Work in three stages so the unit is never left in an unknown state:
    watch `power` flip) next.
 3. **Full integration** — power from the connector's 5 V, close it up.
 
-The read direction is hardware-proven: the mainboard accepts a non-Hisense module and the
-hardcoded session token holds on this unit (robustness caveat in issue I16). Current status and
-the remaining stages are tracked in the GitHub issues (`esp32-path` label) — see **Status** below.
+The read direction is hardware-proven: the mainboard accepts a non-Hisense module and the link
+comes up. Envelope `[7]/[8]` is now learned from the A/C's DevType reply rather than hardcoded
+(issue I16). Current status and the remaining stages are tracked in the GitHub issues
+(`esp32-path` label) — see **Status** below.
 
 ## Gotchas & design notes
 - **`xTaskCreate` stack unit differs by platform.** The bus task's `1024` is *words* on
@@ -94,9 +95,12 @@ the remaining stages are tracked in the GitHub issues (`esp32-path` label) — s
 - **DE-release timing.** The HAL's `serial_putc()` calls `uart_wait_tx_done()` after
   `uart_write_bytes()` (which only queues to the FIFO), so the last byte leaves the wire before
   `hisense_tx_raw()` drops DE — full 160 B replies decode with passing checksums, no truncation.
-- **Session token `01 01`** is hardcoded, never echoed from the A/C (issue I16). It holds on
-  this unit, but the robustness fix (capture + echo the real token) is open — don't rewrite the
-  framing blind.
+- **Envelope `[7]/[8]` is the A/C's device-type/sub-type, not a session token** (issue I16,
+  measured 2026-07-16 — `token` on the diag console). Read from the DevType (`0x0A`) reply's
+  inner `[3]/[4]` (=`01 01` here, confirmed *learned* from the A/C) and stamped on later frames;
+  defaults to `01 01` so the wire is unchanged. ⚠️ Do **not** stamp that reply's envelope
+  `[9]/[10]` — it is **`00 00`** on the `0x0A` frame, and shipping it (v10207) made the A/C
+  reject every frame until an OTA recovery. See `RE/docs/10` §4.5.
 - **Commissioning window / "77"** recovery is AmebaZ2-CHIP specific — reimplement against
   **esp-matter's** `CommissioningWindowManager` in `main/` (the *mapping* stays; the CHIP glue
   is new).
