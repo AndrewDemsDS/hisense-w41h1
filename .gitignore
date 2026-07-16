@@ -1,0 +1,64 @@
+# === Secrets / private data — NEVER commit ===
+# Raw flash dumps contain provisioned Wi-Fi credentials + the device RSA key,
+# plus the copyrighted vendor firmware blob.
+*.bin
+*.img
+*.der
+*.key
+# Attestation material (DAC/PAI/CD) generated during the build
+dac* pai* cd*
+# Strings / analysis dumps may contain credentials
+strings.txt
+strings*.txt
+
+# The entire dumps/ dir is local-only (raw dumps + captures). Track only its README.
+/dumps/*
+!/dumps/README.md
+
+# Live captures
+capture_*.log
+*.cap
+
+# Build SDK (15 GB) lives outside the repo; sdk is a symlink to it
+/sdk
+
+# Build output / firmware artifacts (regenerable; some contain factory secrets)
+**/build/
+*.ota
+# built-images/ is entirely generated (flash images, .ota payloads, .json OTA
+# descriptors, release-state dotfiles) — none of it belongs in git.
+firmware/built-images/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS
+.DS_Store
+firmware/scripts/ota-release.env
+
+# --- Public-release excludes (added for open-source prep) ---
+# Private working notes — never publish (per project convention).
+# RELEASE.md is internal release-prep scaffolding (names the private repo path +
+# the private Gitea host); README/NOTICE/CONTRIBUTING cover everything public.
+/CLAUDE.md
+/AGENTS.md
+/RELEASE.md
+# Editor settings — not part of the public deliverable
+/.vscode/
+# Session/scratch artifacts
+/.build*
+/.otaretry*
+/.finishbuild*
+/.corerec*
+/.flash*
+/.mon*
+/.watch-*
+/.otadbg*
+
+# compiled host-test binaries (build artifacts)
+/firmware/test/test_codec
+/firmware/test/test_matter_map
+
+# python lint cache
+.ruff_cache/

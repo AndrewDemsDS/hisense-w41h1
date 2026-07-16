@@ -1,0 +1,48 @@
+name: QA
+
+# Fast, hardware-free gate -- the SAME checks the pre-commit hook runs, so CI and local never
+# drift: host codec golden tests + Matter<->A/C mapping tests + virtual-AC round-trip
+# (firmware/test/run_tests.sh), .zap endpoint contiguity, and softwareVersion sanity
+# (firmware/scripts/ota-release.sh lint). Plus a PR-only check that firmware/src/version.txt
+# strictly increases vs the target branch. No SDK, no Pi, no chip -- runs on a GitHub-hosted runner.
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  host-qa:
+    runs-on: ubuntu-latest   # ships g++/python3/git/node -- everything `lint` needs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # PR version-diff step needs the base branch history
+
+      - name: Host QA + lint (codec, matter-map, virtual-AC, .zap, version)
+        run: bash firmware/scripts/ota-release.sh lint
+
+      - name: softwareVersion must increase vs base branch (only when firmware changed)
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE" || true
+          # Only require a version bump when firmware source / data-model actually changed.
+          # A CI/docs-only PR must not be forced to bump softwareVersion.
+          if git diff --quiet FETCH_HEAD -- firmware/src firmware/test; then
+            echo "no firmware/src|test change vs $BASE -- softwareVersion bump not required"
+            exit 0
+          fi
+          # version.txt holds a SEMVER (issue #77); the Matter softwareVersion INT is derived
+          # (MAJOR*10000+MINOR*100+PATCH). Compare the derived ints, not the raw strings.
+          # `verint` also accepts a legacy raw int, so a base branch still on the old format
+          # (e.g. "34") compares correctly against a semver head ("1.2.0" -> 10200 > 34).
+          new=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
+          oldsem=$(git show "FETCH_HEAD:firmware/src/version.txt" 2>/dev/null | tr -d '[:space:]' || true)
+          old=$(bash firmware/scripts/ota-release.sh verint "${oldsem:-0}" 2>/dev/null || echo 0)
+          echo "softwareVersion int: base($BASE)=$old  head=$new"
+          if [ "${new:-0}" -le "$old" ]; then
+            echo "::error::softwareVersion must strictly increase ($new <= $old) -- bump firmware/src/version.txt"
+            exit 1
+          fi

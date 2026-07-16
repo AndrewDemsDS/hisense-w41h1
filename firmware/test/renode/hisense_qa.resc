@@ -1,0 +1,39 @@
+:name: Hisense W41H1 RS-485 driver QA (Renode)
+:description: Run the RS-485 driver on an emulated RTL8710C core, UART0 bridged
+:description: to the Python virtual A/C -- Layer-3 QA with no physical chip.
+
+# Usage:
+#   renode firmware/test/renode/hisense_qa.resc
+# then in another shell wire the virtual A/C to UART0's socket (see README).
+
+using sysbus
+mach create "w41h1"
+machine LoadPlatformDescription @firmware/test/renode/rtl8710c.repl
+
+# --- firmware to run ---
+# Prefer a SMALL bare-metal driver-test ELF (renode/README.md explains why the
+# full Matter image is a poor first target). Point $bin at your ELF:
+$bin ?= @firmware/test/renode/driver_test.elf
+# For a raw .bin instead of an ELF, load at the RAM/XIP base and set PC/SP.
+# sysbus LoadBinary $bin 0x10000000
+
+macro reset
+"""
+    sysbus LoadELF $bin
+"""
+runMacro $reset
+
+# --- expose UART0 as a TCP socket so the virtual A/C can attach ---
+# Renode side: TCP server on :3456 carrying UART0 bytes.
+emulation CreateServerSocketTerminal 3456 "acbus"
+connector Connect uart0 acbus
+
+# Watch what the driver transmits (optional):
+# uart0 CreateFileBackedTerminal @/tmp/uart0.log
+
+showAnalyzer uart0
+echo ""
+echo ">>> UART0 is on TCP :3456. In another shell bridge it to the virtual A/C:"
+echo ">>>   socat -d -d TCP:127.0.0.1:3456 PTY,raw,link=/tmp/acpty &"
+echo ">>>   python3 firmware/test/virtual_ac.py --port /tmp/acpty"
+echo ">>> Then:  start"

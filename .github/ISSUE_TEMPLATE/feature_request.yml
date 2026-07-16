@@ -1,0 +1,16 @@
+name: Feature / support request
+description: Propose a capability, or ask about building, flashing, or control.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: The capability or question. Link the relevant doc under `firmware/docs/` or `reverse-engineering/docs/` if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Your hardware, HA / matter-server setup, and what you've already tried.

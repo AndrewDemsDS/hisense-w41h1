@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Build & OTA procedure
+    url: https://github.com/AndrewDemsDS/hisense-w41h1/blob/main/firmware/docs/10-firmware-ota-procedure.md
+    about: The canonical build + flash + OTA reference — read this before filing a build issue.
+  - name: RS-485 A/C protocol reference
+    url: https://github.com/AndrewDemsDS/hisense-w41h1/blob/main/reverse-engineering/docs/03-rs485-ac-protocol.md
+    about: The hardware-validated Hisense A/C bus protocol.

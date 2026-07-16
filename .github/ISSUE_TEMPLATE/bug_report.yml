@@ -1,0 +1,38 @@
+name: Bug report
+description: Something in the firmware, driver, or tooling doesn't behave as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is a personal reverse-engineering project for the Hisense AEH-W41H1 (RTL8710C /
+        AmebaZ2) — no warranty, no vendor support. It assumes you're working on hardware you own.
+  - type: input
+    id: version
+    attributes:
+      label: Firmware version
+      description: softwareVersion / git tag (e.g. `amebaz2-v1.2.6` or `esp32-v1.0.5`), or "stock".
+      placeholder: amebaz2-v1.2.6
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target
+      options:
+        - AmebaZ2 module (original RTL8710C)
+        - ESP32 replacement
+        - Host QA / tooling only
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Expected vs actual. Include the exact command and any serial / matter-server log lines.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce

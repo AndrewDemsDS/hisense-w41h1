@@ -1,0 +1,21 @@
+// Diagnostic telnet console (:2323) embedded in the esp-matter A/C firmware, so the
+// node stays a Matter device AND exposes recon-style diagnostics over the network:
+//   nc <node-ip> 2323   ->  token | poll | watch | decode | selftest | help
+#pragma once
+#include "hisense_rs485.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Start the console (esp_console + TCP :2323 server + a watch task). Call once,
+// after hisense_init(); binds on INADDR_ANY so it's ready when Wi-Fi comes up.
+void diag_console_start(void);
+
+// Feed each valid status frame. Snapshots ONLY (no I/O) — safe to call from the
+// bus callback while the CHIP stack lock is held.
+void diag_on_status(const HisenseState *st);
+
+#ifdef __cplusplus
+}
+#endif

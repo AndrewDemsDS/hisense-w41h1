@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Firmware safety gate: when firmware source or the .zap is staged, run the fast
+# lint (host tests + .zap endpoint contiguity + version check) so a boot-crashing
+# config or an unbumped version can't be committed. See firmware/docs/10.
+set -euo pipefail
+REPO="$(git rev-parse --show-toplevel)"
+if git diff --cached --name-only | grep -qE '^firmware/(src|test)/|room-air-conditioner-app\.zap$'; then
+  echo "[pre-commit] firmware changed -> ota-release.sh lint"
+  bash "$REPO/firmware/scripts/ota-release.sh" lint || {
+    echo "[pre-commit] LINT FAILED. Fix, or bypass with: git commit --no-verify"; exit 1; }
+fi
+exit 0

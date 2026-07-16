@@ -1,0 +1,12 @@
+# ESP32-D0WDQ6 (4MB). -Os. Single-app-large so the WiFi+lwIP+console image fits
+# without a custom partition table. NVS (default table includes it) holds the
+# capture mode + WiFi creds.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# Bigger main task stack: app_main brings up wifi/netif/console.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+# NOTE: do NOT define HISENSE_HAL_UART_INTERNAL_LOOPBACK anywhere — it internally
+# loops UART1 TX->RX and would blind the tool to the real bus.

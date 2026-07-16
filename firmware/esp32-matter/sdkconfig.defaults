@@ -1,0 +1,60 @@
+# Essentials for an esp-matter Wi-Fi node (mirrors esp-matter/examples/*/sdkconfig.defaults).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+
+# 4MB flash (ESP32-D0WDQ6). The partitions.csv 4MB map (2x 1.875MB OTA slots + fctry)
+# needs this; without it flash size defaults to 2MB and the partition table won't fit.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# BLE (commissioning) + Wi-Fi (operational)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_ENABLE_CHIPOBLE=y
+CONFIG_USE_MINIMAL_MDNS=n
+
+# Commissioning credentials. For bring-up use esp-matter's built-in TEST providers
+# (example test DAC + discriminator 3840 + passcode 20202021) -- no mfg data flash needed.
+# PRODUCTION: flash per-device factory data with esp-matter-mfg-tool and flip these back on.
+# CONFIG_ENABLE_ESP32_FACTORY_DATA_PROVIDER=y
+# CONFIG_ENABLE_ESP32_DEVICE_INSTANCE_INFO_PROVIDER=y
+
+# Room A/C has multiple clusters -> give the event/attr paths headroom
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=5120
+CONFIG_FREERTOS_HZ=1000
+
+# --- Matter operational essentials (from esp-matter examples/*/sdkconfig.defaults) ---
+# CHIP crypto (SPAKE2+/HKDF) fails to LINK without HKDF in mbedtls (undefined mbedtls_hkdf).
+CONFIG_MBEDTLS_HKDF_C=y
+# Matter operates over IPv6: autoconf + route/nd6 hooks + one address per fabric (MAX_FABRIC+1).
+CONFIG_LWIP_IPV6_AUTOCONFIG=y
+CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
+CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=6
+# Commission over BLE only -- no Wi-Fi SoftAP.
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+CONFIG_ENABLE_WIFI_AP=n
+# We ship OTA updates to the node.
+CONFIG_ENABLE_OTA_REQUESTOR=y
+# Custom DeviceInfoProvider (in-RAM) so the UserLabel cluster can serve "ha_entitylabel"
+# entity names without the factory-data provider (which would break test-cred commissioning).
+CONFIG_CUSTOM_DEVICE_INFO_PROVIDER=y
+# Matter OTA software version. Unified scheme (issue #77): the int is DERIVED from PROJECT_VER
+# in CMakeLists.txt (MAJOR*10000+MINOR*100+PATCH) and injected as a compile definition that WINS
+# over this Kconfig value (CHIPDeviceConfig.h #ifndef guard). These are kept equal to PROJECT_VER
+# "1.0.3" (-> 10003) for clarity/fallback; edit PROJECT_VER, not this, and they stay in sync.
+CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10005
+CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.0.5"
+# --- OTA hardening (faster + reliable on marginal Wi-Fi; see Gitea #76) ---
+# Delta OTA: ship a diff (tens of KB) instead of the full ~1.5MB image over BDX.
+CONFIG_ENABLE_DELTA_OTA=y
+# MRP: survive deep fades during the long BDX transfer (default MAX_RETRANS=4 too low at ~-67dBm).
+CONFIG_MRP_MAX_RETRANS=8
+CONFIG_MRP_LOCAL_ACTIVE_RETRY_INTERVAL_FOR_WIFI_ETHERNET=500
+CONFIG_MRP_LOCAL_IDLE_RETRY_INTERVAL_FOR_WIFI_ETHERNET=800
+CONFIG_MRP_RETRY_INTERVAL_SENDER_BOOST_FOR_WIFI_ETHERNET=300
+# Size-optimize the image (-Os) -> fewer bytes for the one-time full OTA + flash headroom.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+# HTTPS-OTA manual backup path (plain HTTP from a local file server; LAN-only).
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y

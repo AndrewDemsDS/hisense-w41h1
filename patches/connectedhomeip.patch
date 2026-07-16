@@ -1,0 +1,596 @@
+diff --git a/src/app/clusters/fan-control-server/fan-control-server.cpp b/src/app/clusters/fan-control-server/fan-control-server.cpp
+index d1f1dd2b..abd8ae9a 100644
+--- a/src/app/clusters/fan-control-server/fan-control-server.cpp
++++ b/src/app/clusters/fan-control-server/fan-control-server.cpp
+@@ -377,6 +377,20 @@ void MatterFanControlClusterServerAttributeChangedCallback(const app::ConcreteAt
+                                ChipLogError(Zcl, "Failed to write SpeedSetting with error: 0x%02x", to_underlying(status)));
+             }
+         }
++
++        // W41H1 fix: upstream maps only Off and Auto to the speed attributes, so on a
++        // multi-speed device the Low/Medium/High presets never reach PercentSetting/
++        // SpeedSetting (nor the app driver) -- the preset appears to "do nothing" (High
++        // only worked because HA sends it as percent=100). Map them onto a percentage so
++        // the PercentSetting logic below drives the concrete speed
++        // (33/66/100% -> SpeedSetting 2/4/6 at SpeedMax 6 -> Low/Mid/High on the bus).
++        if (mode == FanModeEnum::kLow || mode == FanModeEnum::kMedium || mode == FanModeEnum::kHigh)
++        {
++            Percent pct = (mode == FanModeEnum::kHigh) ? 100 : (mode == FanModeEnum::kMedium) ? 66 : 33;
++            status      = PercentSetting::Set(attributePath.mEndpointId, pct);
++            VerifyOrReturn(Status::Success == status,
++                           ChipLogError(Zcl, "Failed to write PercentSetting with error: 0x%02x", to_underlying(status)));
++        }
+         break;
+     }
+     case PercentSetting::Id: {
+diff --git a/src/app/zap-templates/zcl/zcl.json b/src/app/zap-templates/zcl/zcl.json
+index b7d45665..360a8e89 100644
+--- a/src/app/zap-templates/zcl/zcl.json
++++ b/src/app/zap-templates/zcl/zcl.json
+@@ -145,6 +145,7 @@
+         "window-covering.xml",
+         "matter-devices.xml",
+         "sample-mei-cluster.xml",
++        "hisense-aircon-cluster.xml",
+         "zone-management-cluster.xml"
+     ],
+     "manufacturersXml": "./data-model/manufacturers.xml",
+diff --git a/src/app/zap_cluster_list.json b/src/app/zap_cluster_list.json
+index e2d6a5ea..faa4a01a 100644
+--- a/src/app/zap_cluster_list.json
++++ b/src/app/zap_cluster_list.json
+@@ -65,7 +65,9 @@
+         "ICD_MANAGEMENT_CLUSTER": [],
+         "IDENTIFY_CLUSTER": [],
+         "ILLUMINANCE_MEASUREMENT_CLUSTER": [],
+-        "JOINT_FABRIC_DATASTORE_CLUSTER": ["joint-fabric-datastore-server"],
++        "JOINT_FABRIC_DATASTORE_CLUSTER": [
++            "joint-fabric-datastore-server"
++        ],
+         "JOINT_FABRIC_ADMINISTRATOR_CLUSTER": [
+             "joint-fabric-administrator-server"
+         ],
+@@ -126,7 +128,9 @@
+         "TARGET_NAVIGATOR_CLUSTER": [],
+         "TEMPERATURE_CONTROL_CLUSTER": [],
+         "TEMPERATURE_MEASUREMENT_CLUSTER": [],
+-        "THERMOSTAT_CLUSTER": ["thermostat-client"],
++        "THERMOSTAT_CLUSTER": [
++            "thermostat-client"
++        ],
+         "THERMOSTAT_USER_INTERFACE_CONFIGURATION_CLUSTER": [],
+         "THREAD_BORDER_ROUTER_MANAGEMENT_CLUSTER": [],
+         "THREAD_NETWORK_DIAGNOSTICS_CLUSTER": [],
+@@ -153,26 +157,45 @@
+         "WIFI_NETWORK_DIAGNOSTICS_CLUSTER": [],
+         "WINDOW_COVERING_CLUSTER": [],
+         "WI_FI_NETWORK_DIAGNOSTICS_CLUSTER": [],
+-        "ZONE_MANAGEMENT_CLUSTER": []
++        "ZONE_MANAGEMENT_CLUSTER": [],
++        "HISENSE_AIRCON_CLUSTER": []
+     },
+     "ServerDirectories": {
+-        "ACCESS_CONTROL_CLUSTER": ["access-control-server"],
+-        "ACCOUNT_LOGIN_CLUSTER": ["account-login-server"],
+-        "ACTIONS_CLUSTER": ["actions-server"],
++        "ACCESS_CONTROL_CLUSTER": [
++            "access-control-server"
++        ],
++        "ACCOUNT_LOGIN_CLUSTER": [
++            "account-login-server"
++        ],
++        "ACTIONS_CLUSTER": [
++            "actions-server"
++        ],
+         "ACTIVATED_CARBON_FILTER_MONITORING_CLUSTER": [
+             "resource-monitoring-server"
+         ],
+         "ADMINISTRATOR_COMMISSIONING_CLUSTER": [
+             "administrator-commissioning-server"
+         ],
+-        "AIR_QUALITY_CLUSTER": ["air-quality-server"],
++        "AIR_QUALITY_CLUSTER": [
++            "air-quality-server"
++        ],
+         "ALARM_CLUSTER": [],
+-        "APPLICATION_BASIC_CLUSTER": ["application-basic-server"],
+-        "APPLICATION_LAUNCHER_CLUSTER": ["application-launcher-server"],
+-        "AUDIO_OUTPUT_CLUSTER": ["audio-output-server"],
++        "APPLICATION_BASIC_CLUSTER": [
++            "application-basic-server"
++        ],
++        "APPLICATION_LAUNCHER_CLUSTER": [
++            "application-launcher-server"
++        ],
++        "AUDIO_OUTPUT_CLUSTER": [
++            "audio-output-server"
++        ],
+         "BALLAST_CONFIGURATION_CLUSTER": [],
+-        "BASIC_INFORMATION_CLUSTER": ["basic-information"],
+-        "BINDING_CLUSTER": ["bindings"],
++        "BASIC_INFORMATION_CLUSTER": [
++            "basic-information"
++        ],
++        "BINDING_CLUSTER": [
++            "bindings"
++        ],
+         "BOOLEAN_STATE_CLUSTER": [],
+         "BOOLEAN_STATE_CONFIGURATION_CLUSTER": [
+             "boolean-state-configuration-server"
+@@ -192,93 +215,203 @@
+         "CARBON_MONOXIDE_CONCENTRATION_MEASUREMENT_CLUSTER": [
+             "concentration-measurement-server"
+         ],
+-        "CHANNEL_CLUSTER": ["channel-server"],
+-        "CHIME_CLUSTER": ["chime-server"],
+-        "CLOSURE_CONTROL_CLUSTER": ["closure-control-server"],
+-        "CLOSURE_DIMENSION_CLUSTER": ["closure-dimension-server"],
+-        "COLOR_CONTROL_CLUSTER": ["color-control-server"],
+-        "COMMISSIONER_CONTROL_CLUSTER": ["commissioner-control-server"],
++        "CHANNEL_CLUSTER": [
++            "channel-server"
++        ],
++        "CHIME_CLUSTER": [
++            "chime-server"
++        ],
++        "CLOSURE_CONTROL_CLUSTER": [
++            "closure-control-server"
++        ],
++        "CLOSURE_DIMENSION_CLUSTER": [
++            "closure-dimension-server"
++        ],
++        "COLOR_CONTROL_CLUSTER": [
++            "color-control-server"
++        ],
++        "COMMISSIONER_CONTROL_CLUSTER": [
++            "commissioner-control-server"
++        ],
+         "COMMISSIONING_CLUSTER": [],
+         "COMMODITY_METERING_CLUSTER": [],
+-        "COMMODITY_PRICE_CLUSTER": ["commodity-price-server"],
++        "COMMODITY_PRICE_CLUSTER": [
++            "commodity-price-server"
++        ],
+         "COMMODITY_TARIFF_CLUSTER": [],
+-        "CONTENT_LAUNCHER_CLUSTER": ["content-launch-server"],
+-        "CONTENT_CONTROL_CLUSTER": ["content-control-server"],
+-        "CONTENT_APP_OBSERVER_CLUSTER": ["content-app-observer"],
+-        "DESCRIPTOR_CLUSTER": ["descriptor"],
+-        "DEVICE_ENERGY_MANAGEMENT_CLUSTER": ["device-energy-management-server"],
+-        "DEVICE_ENERGY_MANAGEMENT_MODE_CLUSTER": ["mode-base-server"],
++        "CONTENT_LAUNCHER_CLUSTER": [
++            "content-launch-server"
++        ],
++        "CONTENT_CONTROL_CLUSTER": [
++            "content-control-server"
++        ],
++        "CONTENT_APP_OBSERVER_CLUSTER": [
++            "content-app-observer"
++        ],
++        "DESCRIPTOR_CLUSTER": [
++            "descriptor"
++        ],
++        "DEVICE_ENERGY_MANAGEMENT_CLUSTER": [
++            "device-energy-management-server"
++        ],
++        "DEVICE_ENERGY_MANAGEMENT_MODE_CLUSTER": [
++            "mode-base-server"
++        ],
+         "DEVICE_TEMP_CLUSTER": [],
+-        "DIAGNOSTIC_LOGS_CLUSTER": ["diagnostic-logs-server"],
+-        "DISHWASHER_ALARM_CLUSTER": ["dishwasher-alarm-server"],
+-        "DISHWASHER_MODE_CLUSTER": ["mode-base-server"],
++        "DIAGNOSTIC_LOGS_CLUSTER": [
++            "diagnostic-logs-server"
++        ],
++        "DISHWASHER_ALARM_CLUSTER": [
++            "dishwasher-alarm-server"
++        ],
++        "DISHWASHER_MODE_CLUSTER": [
++            "mode-base-server"
++        ],
+         "ELECTRICAL_GRID_CONDITIONS_CLUSTER": [
+             "electrical-grid-conditions-server"
+         ],
+-        "METER_IDENTIFICATION_CLUSTER": ["meter-identification-server"],
+-        "MICROWAVE_OVEN_MODE_CLUSTER": ["mode-base-server"],
+-        "DOOR_LOCK_CLUSTER": ["door-lock-server"],
+-        "ECOSYSTEM_INFORMATION_CLUSTER": ["ecosystem-information-server"],
++        "METER_IDENTIFICATION_CLUSTER": [
++            "meter-identification-server"
++        ],
++        "MICROWAVE_OVEN_MODE_CLUSTER": [
++            "mode-base-server"
++        ],
++        "DOOR_LOCK_CLUSTER": [
++            "door-lock-server"
++        ],
++        "ECOSYSTEM_INFORMATION_CLUSTER": [
++            "ecosystem-information-server"
++        ],
+         "ELECTRICAL_ENERGY_MEASUREMENT_CLUSTER": [
+             "electrical-energy-measurement-server"
+         ],
+         "ELECTRICAL_POWER_MEASUREMENT_CLUSTER": [
+             "electrical-power-measurement-server"
+         ],
+-        "ENERGY_EVSE_CLUSTER": ["energy-evse-server"],
+-        "ENERGY_EVSE_MODE_CLUSTER": ["mode-base-server"],
++        "ENERGY_EVSE_CLUSTER": [
++            "energy-evse-server"
++        ],
++        "ENERGY_EVSE_MODE_CLUSTER": [
++            "mode-base-server"
++        ],
+         "ETHERNET_NETWORK_DIAGNOSTICS_CLUSTER": [
+             "ethernet-network-diagnostics-server"
+         ],
+-        "ENERGY_PREFERENCE_CLUSTER": ["energy-preference-server"],
+-        "FAN_CONTROL_CLUSTER": ["fan-control-server"],
+-        "FAULT_INJECTION_CLUSTER": ["fault-injection-server"],
+-        "FIXED_LABEL_CLUSTER": ["fixed-label-server"],
++        "ENERGY_PREFERENCE_CLUSTER": [
++            "energy-preference-server"
++        ],
++        "FAN_CONTROL_CLUSTER": [
++            "fan-control-server"
++        ],
++        "FAULT_INJECTION_CLUSTER": [
++            "fault-injection-server"
++        ],
++        "FIXED_LABEL_CLUSTER": [
++            "fixed-label-server"
++        ],
+         "FLOW_MEASUREMENT_CLUSTER": [],
+         "FORMALDEHYDE_CONCENTRATION_MEASUREMENT_CLUSTER": [
+             "concentration-measurement-server"
+         ],
+-        "GENERAL_COMMISSIONING_CLUSTER": ["general-commissioning-server"],
+-        "GENERAL_DIAGNOSTICS_CLUSTER": ["general-diagnostics-server"],
+-        "GROUPS_CLUSTER": ["groups-server"],
+-        "HEPA_FILTER_MONITORING_CLUSTER": ["resource-monitoring-server"],
+-        "GROUP_KEY_MANAGEMENT_CLUSTER": ["group-key-mgmt-server"],
+-        "ICD_MANAGEMENT_CLUSTER": ["icd-management-server"],
+-        "IDENTIFY_CLUSTER": ["identify-server"],
++        "GENERAL_COMMISSIONING_CLUSTER": [
++            "general-commissioning-server"
++        ],
++        "GENERAL_DIAGNOSTICS_CLUSTER": [
++            "general-diagnostics-server"
++        ],
++        "GROUPS_CLUSTER": [
++            "groups-server"
++        ],
++        "HEPA_FILTER_MONITORING_CLUSTER": [
++            "resource-monitoring-server"
++        ],
++        "GROUP_KEY_MANAGEMENT_CLUSTER": [
++            "group-key-mgmt-server"
++        ],
++        "ICD_MANAGEMENT_CLUSTER": [
++            "icd-management-server"
++        ],
++        "IDENTIFY_CLUSTER": [
++            "identify-server"
++        ],
+         "ILLUMINANCE_MEASUREMENT_CLUSTER": [],
+-        "JOINT_FABRIC_DATASTORE_CLUSTER": ["joint-fabric-datastore-server"],
++        "JOINT_FABRIC_DATASTORE_CLUSTER": [
++            "joint-fabric-datastore-server"
++        ],
+         "JOINT_FABRIC_ADMINISTRATOR_CLUSTER": [
+             "joint-fabric-administrator-server"
+         ],
+-        "KEYPAD_INPUT_CLUSTER": ["keypad-input-server"],
+-        "LAUNDRY_WASHER_MODE_CLUSTER": ["mode-base-server"],
+-        "LEVEL_CONTROL_CLUSTER": ["level-control"],
++        "KEYPAD_INPUT_CLUSTER": [
++            "keypad-input-server"
++        ],
++        "LAUNDRY_WASHER_MODE_CLUSTER": [
++            "mode-base-server"
++        ],
++        "LEVEL_CONTROL_CLUSTER": [
++            "level-control"
++        ],
+         "LOCALIZATION_CONFIGURATION_CLUSTER": [
+             "localization-configuration-server"
+         ],
+-        "LOW_POWER_CLUSTER": ["low-power-server"],
+-        "MEDIA_INPUT_CLUSTER": ["media-input-server"],
+-        "MEDIA_PLAYBACK_CLUSTER": ["media-playback-server"],
+-        "MICROWAVE_OVEN_CONTROL_CLUSTER": ["microwave-oven-control-server"],
+-        "MESSAGES_CLUSTER": ["messages-server"],
+-        "MODE_SELECT_CLUSTER": ["mode-select-server"],
+-        "NETWORK_COMMISSIONING_CLUSTER": ["network-commissioning"],
++        "LOW_POWER_CLUSTER": [
++            "low-power-server"
++        ],
++        "MEDIA_INPUT_CLUSTER": [
++            "media-input-server"
++        ],
++        "MEDIA_PLAYBACK_CLUSTER": [
++            "media-playback-server"
++        ],
++        "MICROWAVE_OVEN_CONTROL_CLUSTER": [
++            "microwave-oven-control-server"
++        ],
++        "MESSAGES_CLUSTER": [
++            "messages-server"
++        ],
++        "MODE_SELECT_CLUSTER": [
++            "mode-select-server"
++        ],
++        "NETWORK_COMMISSIONING_CLUSTER": [
++            "network-commissioning"
++        ],
+         "NITROGEN_DIOXIDE_CONCENTRATION_MEASUREMENT_CLUSTER": [
+             "concentration-measurement-server"
+         ],
+         "PUSH_AV_STREAM_TRANSPORT_CLUSTER": [],
+-        "SAMPLE_MEI_CLUSTER": ["sample-mei-server"],
+-        "OCCUPANCY_SENSING_CLUSTER": ["occupancy-sensor-server"],
+-        "ON_OFF_CLUSTER": ["on-off-server"],
+-        "POWER_TOPOLOGY_CLUSTER": ["power-topology-server"],
+-        "OPERATIONAL_CREDENTIALS_CLUSTER": ["operational-credentials-server"],
+-        "OPERATIONAL_STATE_CLUSTER": ["operational-state-server"],
+-        "OPERATIONAL_STATE_OVEN_CLUSTER": ["operational-state-server"],
+-        "OPERATIONAL_STATE_RVC_CLUSTER": ["operational-state-server"],
++        "SAMPLE_MEI_CLUSTER": [
++            "sample-mei-server"
++        ],
++        "OCCUPANCY_SENSING_CLUSTER": [
++            "occupancy-sensor-server"
++        ],
++        "ON_OFF_CLUSTER": [
++            "on-off-server"
++        ],
++        "POWER_TOPOLOGY_CLUSTER": [
++            "power-topology-server"
++        ],
++        "OPERATIONAL_CREDENTIALS_CLUSTER": [
++            "operational-credentials-server"
++        ],
++        "OPERATIONAL_STATE_CLUSTER": [
++            "operational-state-server"
++        ],
++        "OPERATIONAL_STATE_OVEN_CLUSTER": [
++            "operational-state-server"
++        ],
++        "OPERATIONAL_STATE_RVC_CLUSTER": [
++            "operational-state-server"
++        ],
+         "OTA_BOOTLOAD_CLUSTER": [],
+-        "OTA_SOFTWARE_UPDATE_PROVIDER_CLUSTER": ["ota-provider"],
+-        "OTA_SOFTWARE_UPDATE_REQUESTOR_CLUSTER": ["ota-requestor"],
+-        "OVEN_MODE_CLUSTER": ["mode-base-server"],
++        "OTA_SOFTWARE_UPDATE_PROVIDER_CLUSTER": [
++            "ota-provider"
++        ],
++        "OTA_SOFTWARE_UPDATE_REQUESTOR_CLUSTER": [
++            "ota-requestor"
++        ],
++        "OVEN_MODE_CLUSTER": [
++            "mode-base-server"
++        ],
+         "OZONE_CONCENTRATION_MEASUREMENT_CLUSTER": [
+             "concentration-measurement-server"
+         ],
+@@ -294,7 +427,9 @@
+         "POLL_CONTROL_CLUSTER": [],
+         "POWER_CONFIG_CLUSTER": [],
+         "POWER_PROFILE_CLUSTER": [],
+-        "POWER_SOURCE_CLUSTER": ["power-source-server"],
++        "POWER_SOURCE_CLUSTER": [
++            "power-source-server"
++        ],
+         "POWER_SOURCE_CONFIGURATION_CLUSTER": [
+             "power-source-configuration-server"
+         ],
+@@ -309,23 +444,47 @@
+         "RADON_CONCENTRATION_MEASUREMENT_CLUSTER": [
+             "concentration-measurement-server"
+         ],
+-        "REFRIGERATOR_ALARM_CLUSTER": ["refrigerator-alarm-server"],
++        "REFRIGERATOR_ALARM_CLUSTER": [
++            "refrigerator-alarm-server"
++        ],
+         "REFRIGERATOR_AND_TEMPERATURE_CONTROLLED_CABINET_MODE_CLUSTER": [
+             "mode-base-server"
+         ],
+         "RELATIVE_HUMIDITY_MEASUREMENT_CLUSTER": [],
+-        "RVC_CLEAN_MODE_CLUSTER": ["mode-base-server"],
+-        "RVC_RUN_MODE_CLUSTER": ["mode-base-server"],
+-        "SCENES_CLUSTER": ["scenes-server"],
+-        "SERVICE_AREA_CLUSTER": ["service-area-server"],
+-        "SMOKE_CO_ALARM_CLUSTER": ["smoke-co-alarm-server"],
+-        "SOFTWARE_DIAGNOSTICS_CLUSTER": ["software-diagnostics-server"],
+-        "SOIL_MEASUREMENT_CLUSTER": ["soil-measurement-server"],
+-        "SWITCH_CLUSTER": ["switch-server"],
+-        "TARGET_NAVIGATOR_CLUSTER": ["target-navigator-server"],
+-        "TEMPERATURE_CONTROL_CLUSTER": ["temperature-control-server"],
++        "RVC_CLEAN_MODE_CLUSTER": [
++            "mode-base-server"
++        ],
++        "RVC_RUN_MODE_CLUSTER": [
++            "mode-base-server"
++        ],
++        "SCENES_CLUSTER": [
++            "scenes-server"
++        ],
++        "SERVICE_AREA_CLUSTER": [
++            "service-area-server"
++        ],
++        "SMOKE_CO_ALARM_CLUSTER": [
++            "smoke-co-alarm-server"
++        ],
++        "SOFTWARE_DIAGNOSTICS_CLUSTER": [
++            "software-diagnostics-server"
++        ],
++        "SOIL_MEASUREMENT_CLUSTER": [
++            "soil-measurement-server"
++        ],
++        "SWITCH_CLUSTER": [
++            "switch-server"
++        ],
++        "TARGET_NAVIGATOR_CLUSTER": [
++            "target-navigator-server"
++        ],
++        "TEMPERATURE_CONTROL_CLUSTER": [
++            "temperature-control-server"
++        ],
+         "TEMPERATURE_MEASUREMENT_CLUSTER": [],
+-        "THERMOSTAT_CLUSTER": ["thermostat-server"],
++        "THERMOSTAT_CLUSTER": [
++            "thermostat-server"
++        ],
+         "THERMOSTAT_USER_INTERFACE_CONFIGURATION_CLUSTER": [
+             "thermostat-user-interface-configuration-server"
+         ],
+@@ -335,37 +494,68 @@
+         "THREAD_NETWORK_DIAGNOSTICS_CLUSTER": [
+             "thread-network-diagnostics-server"
+         ],
+-        "THREAD_NETWORK_DIRECTORY_CLUSTER": ["thread-network-directory-server"],
++        "THREAD_NETWORK_DIRECTORY_CLUSTER": [
++            "thread-network-directory-server"
++        ],
+         "TIME_CLUSTER": [],
+-        "TIME_FORMAT_LOCALIZATION_CLUSTER": ["time-format-localization-server"],
+-        "TIME_SYNCHRONIZATION_CLUSTER": ["time-synchronization-server"],
+-        "TIMER_CLUSTER": ["timer-server"],
++        "TIME_FORMAT_LOCALIZATION_CLUSTER": [
++            "time-format-localization-server"
++        ],
++        "TIME_SYNCHRONIZATION_CLUSTER": [
++            "time-synchronization-server"
++        ],
++        "TIMER_CLUSTER": [
++            "timer-server"
++        ],
+         "TLS_CERTIFICATE_MANAGEMENT_CLUSTER": [],
+         "TLS_CLIENT_MANAGEMENT_CLUSTER": [],
+         "TVOC_CONCENTRATION_MEASUREMENT_CLUSTER": [
+             "concentration-measurement-server"
+         ],
+-        "UNIT_LOCALIZATION_CLUSTER": ["unit-localization-server"],
+-        "UNIT_TESTING_CLUSTER": ["test-cluster-server"],
+-        "USER_LABEL_CLUSTER": ["user-label-server"],
++        "UNIT_LOCALIZATION_CLUSTER": [
++            "unit-localization-server"
++        ],
++        "UNIT_TESTING_CLUSTER": [
++            "test-cluster-server"
++        ],
++        "USER_LABEL_CLUSTER": [
++            "user-label-server"
++        ],
+         "VALVE_CONFIGURATION_AND_CONTROL_CLUSTER": [
+             "valve-configuration-and-control-server"
+         ],
+-        "WAKE_ON_LAN_CLUSTER": ["wake-on-lan-server"],
+-        "LAUNDRY_WASHER_CONTROLS_CLUSTER": ["laundry-washer-controls-server"],
+-        "LAUNDRY_DRYER_CONTROLS_CLUSTER": ["laundry-dryer-controls-server"],
++        "WAKE_ON_LAN_CLUSTER": [
++            "wake-on-lan-server"
++        ],
++        "LAUNDRY_WASHER_CONTROLS_CLUSTER": [
++            "laundry-washer-controls-server"
++        ],
++        "LAUNDRY_DRYER_CONTROLS_CLUSTER": [
++            "laundry-dryer-controls-server"
++        ],
+         "WEB_RTC_TRANSPORT_PROVIDER_CLUSTER": [
+             "webrtc-transport-provider-server"
+         ],
+         "WEB_RTC_TRANSPORT_REQUESTOR_CLUSTER": [
+             "webrtc-transport-requestor-server"
+         ],
+-        "WIFI_NETWORK_DIAGNOSTICS_CLUSTER": ["wifi-network-diagnostics-server"],
+-        "WIFI_NETWORK_MANAGEMENT_CLUSTER": ["wifi-network-management-server"],
+-        "WINDOW_COVERING_CLUSTER": ["window-covering-server"],
+-        "WATER_HEATER_MANAGEMENT_CLUSTER": ["water-heater-management-server"],
+-        "WATER_HEATER_MODE_CLUSTER": ["mode-base-server"],
++        "WIFI_NETWORK_DIAGNOSTICS_CLUSTER": [
++            "wifi-network-diagnostics-server"
++        ],
++        "WIFI_NETWORK_MANAGEMENT_CLUSTER": [
++            "wifi-network-management-server"
++        ],
++        "WINDOW_COVERING_CLUSTER": [
++            "window-covering-server"
++        ],
++        "WATER_HEATER_MANAGEMENT_CLUSTER": [
++            "water-heater-management-server"
++        ],
++        "WATER_HEATER_MODE_CLUSTER": [
++            "mode-base-server"
++        ],
+         "WI_FI_NETWORK_DIAGNOSTICS_CLUSTER": [],
+-        "ZONE_MANAGEMENT_CLUSTER": []
++        "ZONE_MANAGEMENT_CLUSTER": [],
++        "HISENSE_AIRCON_CLUSTER": []
+     }
+-}
++}
+\ No newline at end of file
+diff --git a/src/include/platform/CHIPDeviceConfig.h b/src/include/platform/CHIPDeviceConfig.h
+index d42d22d0..9602b203 100644
+--- a/src/include/platform/CHIPDeviceConfig.h
++++ b/src/include/platform/CHIPDeviceConfig.h
+@@ -272,7 +272,7 @@
+  * A string identifying the software version running on the device.
+  */
+ #ifndef CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING
+-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "1.0"
++#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION_STRING "20.0"
+ #endif
+ 
+ /**
+@@ -281,7 +281,7 @@
+  * A monothonic number identifying the software version running on the device.
+  */
+ #ifndef CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION
+-#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 1
++#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION 20
+ #endif
+ 
+ /**
+diff --git a/zzz_generated/app-common/app-common/zap-generated/callback.h b/zzz_generated/app-common/app-common/zap-generated/callback.h
+index 278a85b8..53a5b303 100644
+--- a/zzz_generated/app-common/app-common/zap-generated/callback.h
++++ b/zzz_generated/app-common/app-common/zap-generated/callback.h
+@@ -1428,11 +1428,13 @@ void emberAfFaultInjectionClusterShutdownCallback(chip::EndpointId endpoint);
+  * @param endpoint    Endpoint that is being initialized
+  */
+ void emberAfSampleMeiClusterInitCallback(chip::EndpointId endpoint);
++void emberAfHisenseAirconClusterInitCallback(chip::EndpointId endpoint);
+ 
+ /**
+  * @param endpoint    Endpoint that is being shutdown
+  */
+ void emberAfSampleMeiClusterShutdownCallback(chip::EndpointId endpoint);
++void emberAfHisenseAirconClusterShutdownCallback(chip::EndpointId endpoint);
+ 
+ // Cluster Server/Client Init Functions
+ 
+@@ -6818,6 +6820,7 @@ void emberAfSampleMeiClusterServerInitCallback(chip::EndpointId endpoint);
+  * @param endpoint    Endpoint that is being shutdown
+  */
+ void MatterSampleMeiClusterServerShutdownCallback(chip::EndpointId endpoint);
++void MatterHisenseAirconClusterServerShutdownCallback(chip::EndpointId endpoint);
+ 
+ /**
+  * @param endpoint    Endpoint that is being initialized
+diff --git a/zzz_generated/app-common/app-common/zap-generated/ids/Clusters.h b/zzz_generated/app-common/app-common/zap-generated/ids/Clusters.h
+index 73c52b7c..b5a91b2b 100644
+--- a/zzz_generated/app-common/app-common/zap-generated/ids/Clusters.h
++++ b/zzz_generated/app-common/app-common/zap-generated/ids/Clusters.h
+@@ -127,6 +127,7 @@
+ #include <clusters/RvcOperationalState/ClusterId.h>
+ #include <clusters/RvcRunMode/ClusterId.h>
+ #include <clusters/SampleMei/ClusterId.h>
++#include <clusters/HisenseAircon/ClusterId.h>
+ #include <clusters/ScenesManagement/ClusterId.h>
+ #include <clusters/ServiceArea/ClusterId.h>
+ #include <clusters/SmokeCoAlarm/ClusterId.h>

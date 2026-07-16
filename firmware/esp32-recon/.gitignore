@@ -1,0 +1,10 @@
+# ESP-IDF build outputs (regenerable from source + sdkconfig.defaults)
+build/
+.cache/
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+# WiFi creds live in NVS (flash), never in git. If you use the header option
+# instead of the `wifi` console command, keep it out of the repo:
+main/wifi_secrets.h

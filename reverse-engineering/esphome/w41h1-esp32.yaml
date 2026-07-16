@@ -1,0 +1,58 @@
+# ESPHome config for an ESP32 replacement of the Hisense AEH-W41H1.
+#
+# Wiring: ESP32 UART <-> RS-485 transceiver (MAX485 / reused UM3352) <-> A/C 4-pin port.
+#   A/C port:  5V -> (regulate to ESP 3.3V or power ESP separately), GND -> GND,
+#              A  -> transceiver A,  B -> transceiver B.
+#   Transceiver DE+RE tied together -> flow_control_pin below (half-duplex).
+#   Bus is 9600 8N1.  Verify A/B polarity (swap if no valid frames).
+#
+# Uses the tested community component that implements the Hisense F4F5..F4FB protocol.
+
+substitutions:
+  name: hisense-ac
+  tx_pin: GPIO17     # ESP32 TX -> transceiver DI
+  rx_pin: GPIO16     # ESP32 RX <- transceiver RO
+  de_re_pin: GPIO4   # ESP32 -> transceiver DE+RE (drive high to transmit)
+
+esphome:
+  name: ${name}
+
+esp32:
+  board: esp32dev
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/pslawinski/esphome_airconintl
+    components: [airconintl]
+    refresh: 1d
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:            # local control via Home Assistant (no cloud)
+logger:
+  baud_rate: 0  # free the hardware UART for the A/C bus
+
+uart:
+  id: ac_uart
+  tx_pin: ${tx_pin}
+  rx_pin: ${rx_pin}
+  baud_rate: 9600
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+
+climate:
+  - platform: airconintl
+    name: "Air Conditioner"
+    uart_id: ac_uart
+    flow_control_pin: ${de_re_pin}
+    # supported_modes / fan_modes / swing_modes are provided by the component;
+    # trim them here once verified against the unit.
+
+# First-bring-up tips:
+#  1. Keep `logger` on a *second* UART or USB to watch bytes while testing.
+#  2. Confirm you see F4 F5 ... F4 FB frames inbound before enabling writes.
+#  3. Cross-check mode/temp/fan bytes against docs/05-esp32-replacement.md.

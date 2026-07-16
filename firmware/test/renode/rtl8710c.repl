@@ -1,0 +1,42 @@
+// rtl8710c.repl -- Renode platform SCAFFOLD for the Realtek RTL8710C (AmebaZ2),
+// the SoC in the Hisense W41H1 dongle. Cortex-M33 (armv8-m.main+dsp).
+//
+// STATUS: scaffold, not a full-boot model. It defines the CPU + the memory map
+// this firmware links against (from rtl8710c_ram_matter.ld) + UART0, enough to
+// run a MINIMAL bare-metal driver test (see renode/README.md). Booting the full
+// stock/Matter image additionally needs the ROM bootloader, XIP flash controller,
+// clock/PMU and pinmux modeled -- out of scope for the QA spike.
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m33"
+    nvic: nvic
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    priorityMask: 0xF0
+    systickFrequency: 40000000
+    IRQ -> cpu@0
+
+// --- memory map (from rtl8710c_ram_matter.ld) ---
+// Internal RAM: vectors + DTCM program/data (~256 KB)
+sram: Memory.MappedMemory @ sysbus 0x10000000
+    size: 0x40000
+
+// External PSRAM: text/rodata/data (4 MB)
+psram: Memory.MappedMemory @ sysbus 0x60000000
+    size: 0x400000
+
+// XIP-mapped SPI flash (code), base 0x9B000000
+xip: Memory.MappedMemory @ sysbus 0x9B000000
+    size: 0x800000
+
+// --- UART0 @ 0x40003000 = the A/C RS-485 bus UART (PA_14/PA_13) ---
+// The RTL8710C UART is a DesignWare-APB / 16550-style block. NS16550 is a close
+// starting model; if register offsets/IRQ semantics differ, replace with a
+// Python peripheral that models just the regs the driver touches (THR/RBR, LSR,
+// IER) -- that's all hisense_rs485.cpp needs (serial_putc/getc/readable + RxIrq).
+uart0: UART.NS16550 @ sysbus 0x40003000
+    // wideRegisters: true   // set if the Realtek block uses 32-bit-spaced regs
+    IRQ -> nvic@18            // TODO: confirm the UART0 IRQ number from rtl8710c.h
+
+// (log/console UART is on a different block @ PA_16/PA_17 -- add uart_log here
+//  if you want to capture boot logs in the simulation.)

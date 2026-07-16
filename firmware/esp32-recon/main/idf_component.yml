@@ -1,0 +1,7 @@
+## Managed component deps for esp32-recon.
+## espressif/mdns lets the tool advertise itself as esp32-recon.local so you
+## don't have to hunt its DHCP address. Fetched from the ESP Component Registry
+## on first build (needs internet once).
+dependencies:
+  idf: ">=5.0"
+  espressif/mdns: "^1.2.0"

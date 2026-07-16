@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Repo uses a repo-scoped core.hooksPath, which would otherwise shadow the global
+# prepare-commit-msg (the `Assisted-by: AI` trailer). Chain to it so it still runs.
+G="$HOME/.local/share/git/hooks/prepare-commit-msg"
+[ -x "$G" ] && exec "$G" "$@"
+exit 0

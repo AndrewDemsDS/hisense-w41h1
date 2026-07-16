@@ -1,0 +1,90 @@
+name: ESP32 firmware release
+
+# Builds the ESP32 Matter firmware on an `esp32-vX.Y.Z` tag and attaches the images to the GitHub
+# Release. ESP-IDF + esp-matter are fully open-source, so this runs GitHub-hosted (no self-hosted
+# runner, no proprietary SDK). Tag-triggered workflows are read from the TAGGED commit's tree, so
+# this file must exist on whatever branch (dev/main) you cut the tag from.
+#
+# PROJECT_VER lives in firmware/esp32-matter/CMakeLists.txt; the tag must match it (guarded below).
+# stage/flash stay manual -- CI only produces + publishes the artifacts.
+on:
+  push:
+    tags: ['esp32-v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write        # create the Release + upload assets via the auto GITHUB_TOKEN
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.4   # matches IDF_PIN in versions.env; gives IDF + toolchain
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Avoid git "dubious ownership" in the container
+        run: git config --global --add safe.directory '*'
+
+      - name: Load pins from versions.env
+        run: |
+          # shellcheck disable=SC1091
+          . versions.env
+          echo "ESP_MATTER_PIN=${ESP_MATTER_PIN:?set ESP_MATTER_PIN in versions.env}" >> "$GITHUB_ENV"
+
+      - name: Tag must match CMake PROJECT_VER
+        run: |
+          tag_ver="${GITHUB_REF_NAME#esp32-v}"
+          cmake_ver=$(sed -n 's/^set(PROJECT_VER "\(.*\)").*/\1/p' firmware/esp32-matter/CMakeLists.txt)
+          echo "tag=$tag_ver  CMakeLists PROJECT_VER=$cmake_ver"
+          if [ "$tag_ver" != "$cmake_ver" ]; then
+            echo "::error::tag esp32-v$tag_ver != PROJECT_VER $cmake_ver -- bump CMakeLists.txt or retag"
+            exit 1
+          fi
+
+      - name: Cache esp-matter (checkout + tools)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/esp-matter
+            /root/.espressif
+          key: esp-matter-${{ env.ESP_MATTER_PIN }}-idf-v5.5.4
+
+      - name: Provision esp-matter
+        run: |
+          if [ ! -d esp-matter/.git ]; then
+            git clone https://github.com/espressif/esp-matter.git
+            git -C esp-matter checkout "$ESP_MATTER_PIN"
+            git -C esp-matter submodule update --init --depth 1
+            (cd esp-matter && ./install.sh)
+          fi
+          echo "ESP_MATTER_PATH=$GITHUB_WORKSPACE/esp-matter" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          # shellcheck disable=SC1091
+          . "$IDF_PATH/export.sh"
+          . "$ESP_MATTER_PATH/export.sh"
+          cd firmware/esp32-matter
+          idf.py set-target esp32
+          idf.py build
+
+      - name: Collect artifacts + checksums
+        run: |
+          cd firmware/esp32-matter/build
+          sha256sum \
+            hisense_ac_matter.bin \
+            bootloader/bootloader.bin \
+            partition_table/partition-table.bin \
+            ota_data_initial.bin \
+            flasher_args.json > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Attach to the GitHub Release
+        uses: softprops/action-gh-release@v2   # auto-creates the release on a tag push
+        with:
+          files: |
+            firmware/esp32-matter/build/hisense_ac_matter.bin
+            firmware/esp32-matter/build/bootloader/bootloader.bin
+            firmware/esp32-matter/build/partition_table/partition-table.bin
+            firmware/esp32-matter/build/ota_data_initial.bin
+            firmware/esp32-matter/build/flasher_args.json
+            firmware/esp32-matter/build/SHA256SUMS.txt

@@ -1,0 +1,7 @@
+# ESP-IDF / esp-matter build outputs (all regenerable from source + sdkconfig.defaults)
+build/
+.cache/
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old

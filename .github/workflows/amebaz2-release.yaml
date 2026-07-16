@@ -1,0 +1,70 @@
+name: AmebaZ2 firmware release
+
+# The heavy path: the AmebaZ2 + Matter recompile (firmware/docs/10) on an `amebaz2-vX.Y.Z` tag,
+# attaching the built images to the GitHub Release. This build needs the ~15 GB PROPRIETARY Realtek
+# SDK (~/ameba-dev), so it CANNOT run on a GitHub-hosted runner -- it uses a self-hosted `sdk-builder`
+# runner you register on the dev box (SDK + ARM toolchain + ccache + a filled-in ota-release.env).
+#
+# SECURITY (public repo): triggered on TAG PUSH ONLY -- no pull_request, no open workflow_dispatch --
+# so fork contributors cannot reach the self-hosted runner (only someone with write access can push a
+# tag). Belt-and-suspenders: the `github.repository` guard below stops a fork that copied this file
+# from running it. Register the runner REPO-SCOPED and ideally `--ephemeral`; never org-wide. In
+# Settings -> Actions, require approval for fork-PR workflows.
+#
+# The tag's tree pins firmware/src/version.txt and `build` force-syncs the SDK header to it, so a
+# release always ships exactly its own softwareVersion. stage/flash stay OUT of CI (CH341 clip + a
+# live A/C) -- run `ota-release.sh stage` / `flash` by hand from the dev box after the release.
+on:
+  push:
+    tags: ['amebaz2-v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Only ever run for THIS repo on a tag push -- a fork that copies the workflow can't run it,
+    # and no fork-PR event can reach the self-hosted runner.
+    if: github.repository == 'AndrewDemsDS/hisense-w41h1' && github.event_name == 'push'
+    runs-on: [self-hosted, sdk-builder]   # host executor with the SDK on PATH -- NOT a container
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision build env (secrets live on the runner host, never in git)
+        run: |
+          # Set W41H1_OTA_ENV on the runner to the host path of a filled-in ota-release.env.
+          : "${W41H1_OTA_ENV:?set W41H1_OTA_ENV on the runner to the host ota-release.env path}"
+          cp "$W41H1_OTA_ENV" firmware/scripts/ota-release.env
+
+      - name: Tag must match version.txt
+        run: |
+          want="amebaz2-v$(tr -d '[:space:]' < firmware/src/version.txt)"
+          echo "tag=$GITHUB_REF_NAME  expected=$want"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME != $want -- bump firmware/src/version.txt or retag"
+            exit 1
+          fi
+
+      - name: Build + package OTA
+        run: |
+          bash firmware/scripts/ota-release.sh build
+          bash firmware/scripts/ota-release.sh package
+
+      - name: Collect this version's artifacts + checksums
+        run: |
+          # The self-hosted workdir is reused, so built-images/ accumulates old versions -- reference
+          # this build's exact filenames (from `verint`), NOT globs, to avoid attaching stale images.
+          V=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
+          echo "V=$V" >> "$GITHUB_ENV"
+          cd firmware/built-images
+          sha256sum "flash_rac-integrated-v$V.bin" "rac-v$V.ota" "rac-v$V.json" > "SHA256SUMS-v$V.txt"
+          cat "SHA256SUMS-v$V.txt"
+
+      - name: Attach to the GitHub Release
+        uses: softprops/action-gh-release@v2   # no host `gh` dependency; auto-creates the release
+        with:
+          files: |
+            firmware/built-images/flash_rac-integrated-v${{ env.V }}.bin
+            firmware/built-images/rac-v${{ env.V }}.ota
+            firmware/built-images/rac-v${{ env.V }}.json
+            firmware/built-images/SHA256SUMS-v${{ env.V }}.txt

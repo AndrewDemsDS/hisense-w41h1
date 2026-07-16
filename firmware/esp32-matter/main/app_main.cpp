@@ -1,0 +1,840 @@
+// esp-matter Room A/C node bridging Home Assistant (Matter) <-> the Hisense RS-485
+// bus. This is the ESP32 analogue of the AmebaZ2 firmware/src/sdk-edits/matter_drivers.cpp:
+// same shadow-command + echo-suppression logic, same mappings (matter_aircon_map.h),
+// but wired to esp-matter's cluster APIs instead of CHIP-on-Ameba.
+//
+// Endpoints (mirrors the AmebaZ2 .zap 1:1 -> node parity in HA):
+//   ep1 Room Air Conditioner : OnOff + Thermostat (mode/setpoint/local-temp/running-state)
+//                              + FanControl (mode/percent) + ElectricalPowerMeasurement
+//                              (watts/volts/amps) + Hisense mfg cluster 0xFFF1FC00
+//   ep2 TemperatureMeasurement: outdoor temp        ep6 ModeSelect     : Sleep profile
+//   ep3 On/Off plug-in unit   : Eco                 ep7 Contact Sensor : aux/PTC heat relay
+//   ep4 On/Off plug-in unit   : Quiet/Mute          ep8 TemperatureMeasurement: coil temp
+//   ep5 On/Off plug-in unit   : Turbo
+// Every endpoint carries a UserLabel "ha_entitylabel" (via an in-RAM DeviceInfoProvider) so HA
+// names the entities. 0x66/40 feature flags + bus-link-health (#56) wire to the driver callbacks.
+//
+// The RS-485 driver (../src/rs485-driver) is SHARED and reused UNCHANGED: all protocol
+// fixes + special-mode/telemetry decode already live there; this file only surfaces them
+// through esp-matter clusters (the AmebaZ2 matter_drivers.cpp does the same via CHIP).
+#include <esp_err.h>
+#include <esp_log.h>
+#include <nvs_flash.h>
+#include <string.h>
+#include <esp_https_ota.h>     // manual HTTPS-OTA backup path (fallback for a failed Matter OTA)
+#include <esp_http_client.h>
+
+#include <esp_matter.h>
+#include <esp_matter_endpoint.h>
+
+#include <app/server/Server.h>                      // Server / FabricTable / commissioning window (F1 "77")
+#include <app/server/CommissioningWindowManager.h>
+#include <credentials/FabricTable.h>
+#include <platform/CHIPDeviceLayer.h>               // PlatformMgr / ConnectivityMgr / SystemLayer accessors
+#include <system/SystemClock.h>                     // Clock::Seconds32
+#include <app/clusters/mode-select-server/supported-modes-manager.h>   // Sleep-profile ModeSelect
+#include <esp_matter_providers.h>                    // set_custom_device_info_provider
+#include <platform/DeviceInfoProvider.h>             // UserLabel "ha_entitylabel" -> HA entity names
+#include <lib/support/CHIPMemString.h>               // Platform::CopyString
+#include <map>
+#include <vector>
+
+#include "hisense_rs485.h"
+#include "matter_aircon_map.h"
+#include "power_estimate.h"
+#include "diag_console.h"   // embedded :2323 diagnostic console (keeps Matter + adds recon shell)
+#include <ElectricalPowerMeasurementDelegate.h>     // reused from firmware/src/sdk-edits (CHIP EPM delegate)
+#include <app/clusters/temperature-measurement-server/TemperatureMeasurementCluster.h>  // registered-cluster SetMeasuredValue
+#include <data_model_provider/esp_matter_data_model_provider.h>                           // provider registry
+#include <app/ConcreteClusterPath.h>
+
+using namespace esp_matter;
+using namespace chip::app::Clusters;
+
+// EPM (0x0090) is served through a CHIP delegate, not ember RAM: esp-matter builds the
+// ElectricalPowerMeasurement::Instance from this delegate and reads route through its Get*().
+// Must outlive the stack (the Instance holds a reference). Fed via SetActivePower/... each poll.
+using chip::app::Clusters::ElectricalPowerMeasurement::ElectricalPowerMeasurementDelegate;
+static ElectricalPowerMeasurementDelegate s_epm_delegate;
+
+static const char *TAG = "hisense_ac";
+
+// Endpoint ids (assigned by esp-matter in creation order -> 1..8, matching the AmebaZ2 .zap).
+static uint16_t s_ep_id      = 0;  // ep1 Room A/C
+static uint16_t s_ep_outdoor = 0;  // ep2 TemperatureMeasurement outdoor
+static uint16_t s_ep_eco     = 0;  // ep3 OnOff Eco
+static uint16_t s_ep_mute    = 0;  // ep4 OnOff Quiet/Mute
+static uint16_t s_ep_turbo   = 0;  // ep5 OnOff Turbo
+static uint16_t s_ep_sleep   = 0;  // ep6 ModeSelect Sleep profile
+static uint16_t s_ep_aux     = 0;  // ep7 BooleanState aux/PTC heat relay
+static uint16_t s_ep_coil    = 0;  // ep8 TemperatureMeasurement coil
+static uint16_t s_ep_display = 0;  // ep9 OnOff panel display (#19 cheap win)
+
+// Hisense manufacturer cluster (ember-only on Ameba; HA has no schema for it, but it exists
+// for node parity). 4 attrs: 0x00 Eco / 0x01 Turbo / 0x02 Mute (bool), 0x03 SleepProfile (u8).
+static constexpr uint32_t kMfgClusterId = 0xFFF1FC00;
+
+// Shadow command (mirrors matter_drivers.cpp). MUST start at a builder-valid state:
+// zero-init would make mode=HISENSE_MODE_FAN(0)+setpoint=0, so the first single-field
+// write (setpoint/fan) before any SystemMode write would either drop the frame (setpoint
+// <16 range check) or force the A/C into Fan-only mode. Init to COOL/24 like the AmebaZ2
+// reference so the first combined frame is always valid.
+static HisenseCommand s_cmd   = { HISENSE_MODE_COOL, 24, false,
+                                  HISENSE_FAN_AUTO, HISENSE_SWING_OFF,
+                                  HISENSE_SWING_OFF, HISENSE_FEATURE_NONE, false };
+static volatile bool s_from_bus = false;// true while pushing status->attrs: suppress
+                                        // the resulting PRE/POST_UPDATE from re-sending a cmd
+
+// Latest parsed A/C status, snapshotted in on_status so the uplink handler can read the
+// current state for its OFF / mode-appropriate / echo guards. Both on_status (bus task)
+// and a genuine client-write update callback (Matter task) run under the CHIP stack lock, so
+// this plain struct is serialized without a separate critical section. valid=false until the
+// first good frame, so the guards no-op before then.
+static HisenseState  s_status = {};
+
+// Last Matter SystemMode the user commanded (0=off/unset, 1=Auto, 3=Cool, 4=Heat, 7=Fan, 8=Dry).
+// The Hisense A/C in AUTO reports its ACTIVE sub-mode (Cool/Heat) in status, so mapping status
+// straight back would flip HA out of Auto; keep reporting the user's chosen mode instead (Auto
+// stays Auto, with ThermostatRunningState showing the active heating/cooling).
+static uint8_t       s_user_matter_mode = 0;
+
+// Post-command settle window: after we send a frame, skip resyncing s_cmd from status for
+// this long, so a stale pre-command status poll can't revert an in-flight command (#61).
+#define HISENSE_SYNC_HOLD_MS 3000
+static chip::System::Clock::Timestamp s_sync_hold_until = chip::System::Clock::kZero;
+
+// ---------------------------------------------------------------------------
+// Sleep-profile ModeSelect (ep6): 5 fixed modes. esp-matter installs this as the global
+// SupportedModesManager when passed as the mode_select config delegate.
+// ---------------------------------------------------------------------------
+namespace {
+using ModeOpt = chip::app::Clusters::ModeSelect::Structs::ModeOptionStruct::Type;
+const ModeOpt kSleepModes[] = {
+    { chip::CharSpan::fromCharString("Off"),     0, {} },
+    { chip::CharSpan::fromCharString("General"), 1, {} },
+    { chip::CharSpan::fromCharString("Old"),     2, {} },
+    { chip::CharSpan::fromCharString("Young"),   3, {} },
+    { chip::CharSpan::fromCharString("Kids"),    4, {} },
+};
+}
+class SleepModesMgr : public chip::app::Clusters::ModeSelect::SupportedModesManager
+{
+public:
+    ModeOptionsProvider getModeOptionsProvider(chip::EndpointId) const override
+    {
+        return ModeOptionsProvider(&kSleepModes[0], &kSleepModes[5]);
+    }
+    chip::Protocols::InteractionModel::Status
+    getModeOptionByMode(chip::EndpointId, uint8_t mode, const ModeOpt **out) const override
+    {
+        for (auto &m : kSleepModes)
+            if (m.mode == mode) { *out = &m; return chip::Protocols::InteractionModel::Status::Success; }
+        return chip::Protocols::InteractionModel::Status::InvalidCommand;
+    }
+};
+static SleepModesMgr s_sleep_mgr;
+
+// ---------------------------------------------------------------------------
+// Downlink: Matter attribute write (HA) -> RS-485 command frame.
+// ---------------------------------------------------------------------------
+static void arm_sync_hold()
+{
+    s_sync_hold_until = chip::System::SystemClock().GetMonotonicTimestamp()
+                      + chip::System::Clock::Milliseconds32(HISENSE_SYNC_HOLD_MS);
+}
+static void flush_cmd()
+{
+    uint8_t f[HISENSE_CMD_FRAME_LEN + 2];
+    size_t n = hisense_build_command(&s_cmd, f, sizeof(f));
+    if (!n) return;
+    if (hisense_send_frame(f, n)) arm_sync_hold();          // arm the settle only if it enqueued
+    else                          ESP_LOGW(TAG, "cmd dropped (TX queue full)");
+}
+static void send_power(bool on)
+{
+    uint8_t f[HISENSE_CMD_FRAME_LEN];
+    size_t n = hisense_build_power_frame(on, f, sizeof(f));
+    if (!n) return;
+    if (hisense_send_frame(f, n)) arm_sync_hold();
+    else                          ESP_LOGW(TAG, "power dropped (TX queue full)");
+}
+
+// Special-mode frame builders (ported from matter_drivers.cpp hisense_apply_*).
+static void apply_eco(bool on)
+{
+    if (on) {
+        s_cmd.feature = HISENSE_FEATURE_ECO;
+        flush_cmd();
+    } else {
+        // Clearing eco needs the explicit eco-off byte (ECO_OFF), NOT FEATURE_NONE
+        // (which is turbo-clear). Send once, then return the shadow to neutral.
+        s_cmd.feature = HISENSE_FEATURE_ECO_OFF;
+        flush_cmd();
+        s_cmd.feature = HISENSE_FEATURE_NONE;
+    }
+}
+static void apply_turbo(bool on)
+{
+    s_cmd.feature = on ? HISENSE_FEATURE_TURBO : HISENSE_FEATURE_NONE;
+    flush_cmd();
+}
+static void apply_mute(bool on)
+{
+    uint8_t f[HISENSE_CMD_FRAME_LEN + 2];
+    size_t n = hisense_build_mute_frame(on, f, sizeof(f));
+    if (n && hisense_send_frame(f, n)) arm_sync_hold();
+}
+static void apply_sleep(uint8_t profile)
+{
+    uint8_t f[HISENSE_CMD_FRAME_LEN + 2];
+    size_t n = hisense_build_sleep_frame(profile, f, sizeof(f));
+    if (n && hisense_send_frame(f, n)) arm_sync_hold();
+}
+// #19 cheap win: panel display on/off. display_on rides the combined command frame (@20:
+// 0xC0 on / 0x40 off); flush_cmd() rebuilds + sends it. No status feedback (the A/C doesn't
+// report display state), so the OnOff attr is optimistic — reflects the last command.
+static void apply_display(bool on)
+{
+    s_cmd.display_on = on;
+    flush_cmd();
+}
+
+static void on_recommission(uint8_t reason);   // fwd decl (defined in the "77" section below)
+static void trigger_https_ota(void);           // fwd decl (manual HTTPS-OTA backup, defined below)
+
+// Manual HTTPS-OTA backup URL: a plain-HTTP file server on the Pi, reached over the SAME
+// IPv6 subnet as this device (fd00:4::, no cross-VLAN routing). Change the host/port/path if
+// the Pi or file name moves. Used only as a fallback when the Matter (BDX) OTA won't complete.
+#define HTTPS_OTA_URL "http://[fd00:4::da3a:ddff:fef7:aed1]:8070/esp32-ota.bin"
+
+static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t endpoint_id,
+                                     uint32_t cluster_id, uint32_t attribute_id,
+                                     esp_matter_attr_val_t *val, void *priv)
+{
+    // Act on the committed value of a client write; never on our own status echo. (esp-matter
+    // fires PRE then POST synchronously inside attribute::update; s_from_bus is held across the
+    // whole downlink push so both are suppressed. OnOff/ModeSelect arrive as a command applied
+    // internally then surfaced as POST_UPDATE, so POST is the one type that catches everything.)
+    if (type != attribute::POST_UPDATE || s_from_bus) return ESP_OK;
+
+    // Manual "77" recommission trigger: writing Identify.IdentifyTime = 77 on ep1 fires the same
+    // recommission flow the A/C's "77" request would (opens a commissioning window etc.). Lets us
+    // exercise + field-recover the flow without the A/C initiating it. (77 = the mode's mnemonic.)
+    if (endpoint_id == s_ep_id && cluster_id == Identify::Id &&
+        attribute_id == Identify::Attributes::IdentifyTime::Id && val->val.u16 == 77) {
+        ESP_LOGW(TAG, "manual recommission trigger (Identify=77)");
+        on_recommission(0x77);
+        return ESP_OK;
+    }
+    // Manual HTTPS-OTA backup: writing Identify.IdentifyTime = 88 on ep1 pulls firmware over
+    // HTTP (TCP) from the Pi file server -- the break-glass path when the Matter BDX OTA won't
+    // complete (e.g. marginal Wi-Fi). Bypasses the Matter OTA provider entirely.
+    if (endpoint_id == s_ep_id && cluster_id == Identify::Id &&
+        attribute_id == Identify::Attributes::IdentifyTime::Id && val->val.u16 == 88) {
+        ESP_LOGW(TAG, "manual HTTPS-OTA trigger (Identify=88)");
+        trigger_https_ota();
+        return ESP_OK;
+    }
+
+    // Current A/C status for the guards below (snapshotted by on_status under the CHIP stack
+    // lock, which is held while a client-write callback is dispatched).
+    const HisenseState st = s_status;
+
+    // ---- Special-mode switch endpoints (ep3/4/5 OnOff, ep6 ModeSelect) ------------------
+    if (endpoint_id == s_ep_eco && cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
+        if (!(st.valid && val->val.b == st.eco_on)) apply_eco(val->val.b);      // echo guard
+        return ESP_OK;
+    }
+    if (endpoint_id == s_ep_turbo && cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
+        if (!(st.valid && val->val.b == st.turbo_on)) apply_turbo(val->val.b);
+        return ESP_OK;
+    }
+    if (endpoint_id == s_ep_mute && cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
+        if (!(st.valid && val->val.b == st.mute_on)) apply_mute(val->val.b);
+        return ESP_OK;
+    }
+    // #19: panel display switch (ep9). No status feedback -> no echo guard; always command.
+    if (endpoint_id == s_ep_display && cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
+        apply_display(val->val.b);
+        return ESP_OK;
+    }
+    if (endpoint_id == s_ep_sleep && cluster_id == ModeSelect::Id &&
+        attribute_id == ModeSelect::Attributes::CurrentMode::Id) {
+        if (!(st.valid && val->val.u8 == (uint8_t)(st.sleep_raw / 2))) apply_sleep(val->val.u8);
+        return ESP_OK;
+    }
+
+    // ---- Room A/C endpoint (ep1) ---------------------------------------------------------
+    if (endpoint_id != s_ep_id) return ESP_OK;
+
+    if (cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
+        if (!(st.valid && val->val.b == st.power_on)) send_power(val->val.b);   // echo guard
+
+    } else if (cluster_id == Thermostat::Id) {
+        if (attribute_id == Thermostat::Attributes::SystemMode::Id) {
+            // #5: Off must actively power the unit DOWN; picking a real mode must ensure it's
+            // ON (a mode frame alone won't wake an off unit). Mirrors matter_drivers.cpp:526-534.
+            uint8_t matter_mode = val->val.u8;
+            if (st.valid) {   // echo guard vs what we currently report (Auto preserved, see below)
+                uint8_t cur = st.power_on ? (s_user_matter_mode == 1 ? 1 : hisense_mode_to_matter(st.mode)) : 0;
+                if (matter_mode == cur) return ESP_OK;
+            }
+            if (matter_mode == 0) {                        // Off
+                send_power(false);
+                s_user_matter_mode = 0;
+            } else {
+                HisenseMode hm;
+                if (matter_mode_to_hisense(matter_mode, &hm)) {
+                    s_cmd.mode = hm;
+                    s_user_matter_mode = matter_mode;      // remember the choice (esp. Auto=1)
+                    send_power(true);                      // ensure the unit is on
+                    flush_cmd();
+                }
+            }
+        } else if (attribute_id == Thermostat::Attributes::OccupiedCoolingSetpoint::Id ||
+                   attribute_id == Thermostat::Attributes::OccupiedHeatingSetpoint::Id) {
+            // #4: no setpoint changes while the A/C is OFF (a temp write on an off unit is a
+            // confusing no-op -- select a mode to turn it on first).
+            if (st.valid && !st.power_on) return ESP_OK;
+            // #3: the A/C has a SINGLE setpoint; which Matter attr is authoritative depends on
+            // mode (HEAT -> heating, else cooling). Ignore the inactive one so HA's deadband
+            // adjusting the *other* setpoint can't command a wrong temperature (the HIL-v6
+            // "18C over our 20C" bug). Mirrors matter_drivers.cpp:548-550.
+            bool attr_is_heat = (attribute_id == Thermostat::Attributes::OccupiedHeatingSetpoint::Id);
+            bool mode_is_heat = (st.valid && st.mode == HISENSE_MODE_HEAT);
+            if (st.valid && attr_is_heat != mode_is_heat) return ESP_OK;
+            // Round on the full int, clamp last (never narrow to int8 before the clamp).
+            int whole_c = matter_round_setpoint_c(val->val.i16);
+            if (st.valid && whole_c == st.setpoint_c) return ESP_OK;   // echo guard (pre-clamp)
+            s_cmd.setpoint   = (int8_t) matter_clamp_setpoint_c(whole_c);
+            s_cmd.fahrenheit = false;
+            flush_cmd();
+        }
+
+    } else if (cluster_id == FanControl::Id) {
+        // #4: no fan changes while the A/C is OFF (fan is meaningless with the unit off).
+        if (st.valid && !st.power_on) return ESP_OK;
+        if (attribute_id == FanControl::Attributes::FanMode::Id) {
+            HisenseFanSpeed nf = fanmode_to_hisense_fan(val->val.u8);
+            if (nf != s_cmd.fan) { s_cmd.fan = nf; flush_cmd(); }
+        } else if (attribute_id == FanControl::Attributes::PercentSetting::Id) {
+            HisenseFanSpeed nf = percent_to_hisense_fan(val->val.u8);
+            if (nf != s_cmd.fan) { s_cmd.fan = nf; flush_cmd(); }
+        } else if (attribute_id == FanControl::Attributes::RockSetting::Id) {
+            // #19: vertical swing. RockUpDown (0x02) -> vswing on. Echo-guard vs status.
+            bool sw = (val->val.u8 & 0x02) != 0;
+            if (sw != (st.valid && st.vswing_on)) {
+                s_cmd.vswing = sw ? HISENSE_SWING_SWING : HISENSE_SWING_OFF;
+                flush_cmd();
+            }
+        }
+    }
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Uplink: parsed RS-485 status -> Matter attributes. Runs in the driver's bus
+// task, so take the CHIP stack lock and guard against the echo loop.
+// ---------------------------------------------------------------------------
+static void set_attr(uint16_t ep, uint32_t cluster, uint32_t attr, esp_matter_attr_val_t val)
+{
+    attribute::update(ep, cluster, attr, &val);
+}
+
+// TemperatureMeasurement MeasuredValue must be set through the REGISTERED cluster object, not
+// attribute::update: esp-matter is mid-migration and reads for 0x0402 come from the new
+// TemperatureMeasurementCluster's own member, while attribute::update only writes the legacy
+// shadow store -> reads would return null. (LocalTemperature has no such registry integration,
+// so it works via attribute::update.) SetMeasuredValue also emits the change report for HA.
+static void set_temp_measured(uint16_t ep, chip::app::DataModel::Nullable<int16_t> v)
+{
+    using namespace chip::app;
+    auto *iface = esp_matter::data_model::provider::get_instance().registry()
+                    .Get(ConcreteClusterPath(ep, Clusters::TemperatureMeasurement::Id));
+    if (!iface) return;
+    static_cast<Clusters::TemperatureMeasurementCluster *>(iface)->SetMeasuredValue(v);
+}
+
+static void on_status(const HisenseState *st)
+{
+    if (!st || !st->valid) return;
+
+    // esp-matter's lock API is RAII: construct to take the CHIP stack lock, released at scope exit.
+    lock::ScopedChipStackLock lk(portMAX_DELAY);
+    s_from_bus = true;
+
+    // Snapshot for the uplink guards (read under this same lock in on_attribute_update).
+    s_status = *st;
+    diag_on_status(st);   // snapshot-only (no I/O) -> safe under the CHIP stack lock
+
+    // #2: keep the uplink command shadow in sync with the A/C's ACTUAL state, so a later
+    // single-field write rebuilds the combined frame from reality instead of a stale shadow
+    // (which would clobber an out-of-band IR-remote / turbo change, or force COOL/24 after a
+    // reboot). Held off for a settle window after our own commands so an in-flight command
+    // isn't reverted by a pre-command status frame (#61). Mirrors matter_drivers.cpp:732-749.
+    if (chip::System::SystemClock().GetMonotonicTimestamp() >= s_sync_hold_until) {
+        s_cmd.mode     = st->mode;
+        s_cmd.setpoint = st->setpoint_c;
+        HisenseFanSpeed sf = hisense_fan_raw_to_cmd(st->fan_raw);
+        if (sf != HISENSE_FAN_NOCHANGE) s_cmd.fan = sf;    // keep previous fan on an unknown raw (#59)
+        s_cmd.vswing  = st->vswing_on ? HISENSE_SWING_SWING : HISENSE_SWING_OFF;
+        s_cmd.hswing  = HISENSE_SWING_OFF;                 // no H-swing motor on this unit
+        s_cmd.feature = st->eco_on   ? HISENSE_FEATURE_ECO
+                      : st->turbo_on ? HISENSE_FEATURE_TURBO
+                                     : HISENSE_FEATURE_NONE;
+    }
+
+    // --- Room A/C ep1 ---------------------------------------------------------------------
+    // OnOff power
+    set_attr(s_ep_id, OnOff::Id, OnOff::Attributes::OnOff::Id, esp_matter_bool(st->power_on));
+    // Thermostat: mode (Off when the unit reports powered down / #6), local temp (0.01C),
+    // the mode-appropriate setpoint, running state
+    set_attr(s_ep_id, Thermostat::Id, Thermostat::Attributes::SystemMode::Id,
+             esp_matter_enum8(st->power_on ? (s_user_matter_mode == 1 ? 1 : hisense_mode_to_matter(st->mode)) : 0));
+    set_attr(s_ep_id, Thermostat::Id, Thermostat::Attributes::LocalTemperature::Id,
+             esp_matter_nullable_int16(nullable<int16_t>((int16_t)(st->indoor_temp_c * 100))));
+    int16_t sp = (int16_t)(st->setpoint_c * 100);
+    if (st->mode == HISENSE_MODE_HEAT)
+        set_attr(s_ep_id, Thermostat::Id, Thermostat::Attributes::OccupiedHeatingSetpoint::Id, esp_matter_int16(sp));
+    else
+        set_attr(s_ep_id, Thermostat::Id, Thermostat::Attributes::OccupiedCoolingSetpoint::Id, esp_matter_int16(sp));
+    set_attr(s_ep_id, Thermostat::Id, Thermostat::Attributes::ThermostatRunningState::Id,
+             esp_matter_bitmap16(hisense_to_running_state(st->power_on, st->mode, st->compressor_freq)));
+    // FanControl: mode + current percent
+    set_attr(s_ep_id, FanControl::Id, FanControl::Attributes::FanMode::Id,
+             esp_matter_enum8(hisense_fan_raw_to_fanmode(st->fan_raw, st->power_on)));
+    set_attr(s_ep_id, FanControl::Id, FanControl::Attributes::PercentCurrent::Id,
+             esp_matter_uint8(hisense_fan_raw_to_percent(st->fan_raw)));
+    // #19: vertical swing -> RockSetting (RockUpDown 0x02). Re-enters the uplink handler; the
+    // echo guard there stops it re-commanding its own readback.
+    set_attr(s_ep_id, FanControl::Id, FanControl::Attributes::RockSetting::Id,
+             esp_matter_bitmap8(st->vswing_on ? 0x02 : 0x00));
+
+    // Outdoor + condenser-coil temperatures -> their own TemperatureMeasurement endpoints
+    // (0.01 C). Via the registered cluster (see set_temp_measured).
+    set_temp_measured(s_ep_outdoor, chip::app::DataModel::MakeNullable<int16_t>((int16_t)(st->outdoor_temp_c * 100)));
+    set_temp_measured(s_ep_coil,    chip::app::DataModel::MakeNullable<int16_t>((int16_t)(st->coil_temp_c * 100)));
+
+    // Special-mode switch endpoints (ep3/4/5) -> HA-controllable OnOff mirror. Each re-enters
+    // the uplink handler; the per-endpoint echo guards there stop it re-commanding its readback.
+    set_attr(s_ep_eco,   OnOff::Id, OnOff::Attributes::OnOff::Id, esp_matter_bool(st->eco_on));
+    set_attr(s_ep_mute,  OnOff::Id, OnOff::Attributes::OnOff::Id, esp_matter_bool(st->mute_on));
+    set_attr(s_ep_turbo, OnOff::Id, OnOff::Attributes::OnOff::Id, esp_matter_bool(st->turbo_on));
+    // Sleep-profile ModeSelect (ep6) tracks the actual profile (0=off..4=Kids).
+    set_attr(s_ep_sleep, ModeSelect::Id, ModeSelect::Attributes::CurrentMode::Id,
+             esp_matter_uint8((uint8_t)(st->sleep_raw / 2)));
+    // Aux/PTC electric-heat relay -> BooleanState contact sensor (ep7).
+    set_attr(s_ep_aux, BooleanState::Id, BooleanState::Attributes::StateValue::Id,
+             esp_matter_bool(st->heat_relay_on));
+
+    // ElectricalPowerMeasurement (ep1) -> HA-native Watts/Volts/Amps. Matter base units are
+    // mW / mV / mA; power_estimate.h returns exactly those from the calibrated proxies. Fed
+    // through the delegate (NOT attribute::update -- these attrs are MANAGED_INTERNALLY and
+    // read via the delegate's Get*()). Setters take chip DataModel::Nullable, not esp_matter's.
+    {
+        int64_t p_mw = st->power_on ? hisense_active_power_mw(st->current_raw) : 0;
+        int64_t i_ma = st->power_on ? hisense_active_current_ma(st->current_raw, st->voltage_raw) : 0;
+        int64_t v_mv = hisense_voltage_mv(st->voltage_raw);
+        s_epm_delegate.SetActivePower(chip::app::DataModel::MakeNullable(p_mw));
+        s_epm_delegate.SetVoltage(chip::app::DataModel::MakeNullable(v_mv));
+        s_epm_delegate.SetActiveCurrent(chip::app::DataModel::MakeNullable(i_ma));
+    }
+
+    // Hisense manufacturer cluster (0xFFF1FC00) read-back on ep1 (HA has no schema; parity only).
+    set_attr(s_ep_id, kMfgClusterId, 0x0000, esp_matter_bool(st->eco_on));
+    set_attr(s_ep_id, kMfgClusterId, 0x0001, esp_matter_bool(st->turbo_on));
+    set_attr(s_ep_id, kMfgClusterId, 0x0002, esp_matter_bool(st->mute_on));
+    set_attr(s_ep_id, kMfgClusterId, 0x0003, esp_matter_uint8((uint8_t)(st->sleep_raw / 2)));
+
+    s_from_bus = false;
+    // lk (ScopedChipStackLock) releases the CHIP stack lock here at scope exit.
+}
+
+// 0x66/40 ProductType feature-flags (bus-task context) -> log. Bit positions RE'd from the
+// stock firmware; decoded in the shared driver, not surfaced to HA (capability flags are static).
+static void on_features(const HisenseFeatures *f)
+{
+    ESP_LOGI(TAG, "A/C features (0x66/40): ai=%d display=%d swing8=%d eco=%d mute=%d purify=%d",
+             f->ai, f->power_display, f->swing_dir_8, f->power_save, f->fan_mute, f->purify);
+}
+
+// Bus link lost/restored (#56). On loss, null every liveness attribute (LocalTemperature +
+// outdoor + coil temps) so HA marks the entities unavailable instead of holding stale values;
+// the next good status repopulates them. Mirrors matter_drivers.cpp:703-713 (no EPM null here
+// -- HA reads ActivePower as steady 0 when off, not a liveness signal).
+static void on_link(bool up)
+{
+    ESP_LOGW(TAG, "A/C RS-485 link %s", up ? "restored" : "lost (bus silent)");
+    if (!up) {
+        lock::ScopedChipStackLock lk(portMAX_DELAY);
+        esp_matter_attr_val_t nullv = esp_matter_nullable_int16(nullable<int16_t>());
+        attribute::update(s_ep_id, Thermostat::Id, Thermostat::Attributes::LocalTemperature::Id, &nullv);
+        set_temp_measured(s_ep_outdoor, chip::app::DataModel::Nullable<int16_t>());   // null = unavailable
+        set_temp_measured(s_ep_coil,    chip::app::DataModel::Nullable<int16_t>());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// "77" recommission (F1): the A/C asked us to re-provision (shared-driver bus-task
+// callback). Rather than wipe the fabric, OPEN a commissioning window keeping the
+// current fabric so HA stays connected while a new controller pairs, and only swap
+// once it does. Ported 1:1 from the AmebaZ2 matter_drivers.cpp reference (same CHIP APIs).
+//   "77"             -> snapshot fabric(s), OpenBasicCommissioningWindow, arm expiry.
+//   new fabric joins -> delete the snapshotted old fabric(s) (swap done).
+//   window expires   -> keep old fabric + tell the A/C to leave "77".
+// Window/fabric/timer calls must run in Matter context, so the bus-task callback
+// defers via PlatformMgr().ScheduleWork.
+// ---------------------------------------------------------------------------
+static const uint32_t    kRecommissionWindowSec = 180;
+static bool              s_recommission_pending  = false;
+static chip::FabricIndex s_old_fabrics[16];
+static uint8_t           s_old_fabric_count      = 0;
+
+static void recommission_timeout(chip::System::Layer *, void *);
+
+// A NEW fabric committing while our window is open means the re-pair succeeded ->
+// drop the old fabric(s) and stand down.
+class RecommissionFabricDelegate : public chip::FabricTable::Delegate
+{
+public:
+    void OnFabricCommitted(const chip::FabricTable &, chip::FabricIndex newIndex) override
+    {
+        if (!s_recommission_pending) return;
+        for (uint8_t i = 0; i < s_old_fabric_count; i++)
+            if (s_old_fabrics[i] == newIndex) return;   // not a newly-added fabric
+        ESP_LOGI(TAG, "recommission: new fabric %u joined -> deleting %u old fabric(s)",
+                 newIndex, s_old_fabric_count);
+        s_recommission_pending = false;
+        chip::DeviceLayer::SystemLayer().CancelTimer(recommission_timeout, nullptr);
+        for (uint8_t i = 0; i < s_old_fabric_count; i++)
+            chip::Server::GetInstance().GetFabricTable().Delete(s_old_fabrics[i]);
+        s_old_fabric_count = 0;
+        hisense_set_provisioning(false);   // paired on the new fabric -> clear "77"
+    }
+};
+static RecommissionFabricDelegate s_recommission_delegate;
+
+// Window expired with no new pairing -> keep the old fabric, tell the A/C to exit "77".
+static void recommission_timeout(chip::System::Layer *, void *)
+{
+    if (!s_recommission_pending) return;
+    s_recommission_pending = false;
+    s_old_fabric_count     = 0;
+    ESP_LOGI(TAG, "recommission: window expired, no new pairing -> revert + signal A/C out of 77");
+    hisense_send_exit_77();
+}
+
+// Matter-context entry (via ScheduleWork): snapshot fabrics + open the window + arm the timer.
+static void recommission_open_window(intptr_t)
+{
+    if (s_recommission_pending) return;   // a window is already open
+    s_old_fabric_count = 0;
+    for (auto it = chip::Server::GetInstance().GetFabricTable().begin();
+         it != chip::Server::GetInstance().GetFabricTable().end(); ++it) {
+        if (s_old_fabric_count < (uint8_t)(sizeof(s_old_fabrics) / sizeof(s_old_fabrics[0])))
+            s_old_fabrics[s_old_fabric_count++] = it->GetFabricIndex();
+    }
+    CHIP_ERROR err = chip::Server::GetInstance().GetCommissioningWindowManager()
+                         .OpenBasicCommissioningWindow(chip::System::Clock::Seconds32(kRecommissionWindowSec));
+    if (err != CHIP_NO_ERROR) {
+        ESP_LOGE(TAG, "recommission: OpenBasicCommissioningWindow failed: %" CHIP_ERROR_FORMAT, err.Format());
+        s_old_fabric_count = 0;
+        return;
+    }
+    // Spec: a commissioned node re-pairs over IP (_matterc._udp), not BLE. Suppress the
+    // CHIPoBLE advert the window would restart -- BUT only when Wi-Fi is actually up. If
+    // Wi-Fi is down, BLE is the only transport left to push new creds, so keep it (audit
+    // fix #1: unconditional suppress = lockout).
+    if (chip::DeviceLayer::ConnectivityMgr().IsWiFiStationConnected()) {
+        err = chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false);
+        if (err != CHIP_NO_ERROR)
+            ESP_LOGE(TAG, "recommission: SetBLEAdvertisingEnabled(false) failed: %" CHIP_ERROR_FORMAT, err.Format());
+    } else {
+        ESP_LOGI(TAG, "recommission: Wi-Fi down -> keeping BLE up so creds can be pushed");
+    }
+    s_recommission_pending = true;
+    chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(kRecommissionWindowSec),
+                                                recommission_timeout, nullptr);
+    hisense_set_provisioning(true);   // report prov=1 -> A/C lights "77" while the window is open
+    ESP_LOGI(TAG, "recommission: window open %us, snapshot %u old fabric(s)",
+             (unsigned) kRecommissionWindowSec, s_old_fabric_count);
+}
+
+// Driver "77" callback (bus-task context) -> defer the real work to Matter context.
+static void on_recommission(uint8_t reason)
+{
+    ESP_LOGW(TAG, "A/C requested recommission (\"77\") payload[4]=0x%02x", reason);
+    chip::DeviceLayer::PlatformMgr().ScheduleWork(recommission_open_window, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Manual HTTPS-OTA backup (Identify=88). Fetches a full firmware image over HTTP (TCP) from
+// the Pi file server and applies it via esp_https_ota (writes the idle OTA slot, verifies,
+// reboots). TCP's window/retransmit is far more robust than Matter BDX on a lossy link -- this
+// is the break-glass path when the standard Matter OTA fails. Runs off the Matter task.
+// ---------------------------------------------------------------------------
+static void https_ota_task(void *arg)
+{
+    ESP_LOGW(TAG, "HTTPS-OTA: fetching %s", HTTPS_OTA_URL);
+    esp_http_client_config_t http_cfg = {};
+    http_cfg.url               = HTTPS_OTA_URL;
+    http_cfg.timeout_ms        = 30000;
+    http_cfg.keep_alive_enable = true;
+    esp_https_ota_config_t ota_cfg = {};
+    ota_cfg.http_config = &http_cfg;
+
+    esp_err_t err = esp_https_ota(&ota_cfg);
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG, "HTTPS-OTA: success -> rebooting into the new image");
+        esp_restart();
+    } else {
+        ESP_LOGE(TAG, "HTTPS-OTA: failed: %s", esp_err_to_name(err));
+    }
+    vTaskDelete(NULL);
+}
+
+static void trigger_https_ota(void)
+{
+    // 8 KB stack: esp_https_ota + the HTTP client + TLS-off buffers fit comfortably.
+    xTaskCreate(https_ota_task, "https_ota", 8192, NULL, 5, NULL);
+}
+
+// ---------------------------------------------------------------------------
+// UserLabel entity naming (cluster 0x0041). esp-matter's UserLabel cluster VerifyOrDie's
+// without a DeviceInfoProvider, and ESP32DeviceInfoProvider isn't linkable without the
+// factory-data path (which would break test-cred commissioning). So provide a minimal in-RAM
+// DeviceInfoProvider that only serves UserLabels; installed via set_custom_device_info_provider
+// BEFORE start() (runs before Server::Init -> the cluster init sees a non-null provider). Labels
+// are re-applied each boot; HA caches the names after interview. (ports matter_drivers.cpp labels)
+// ---------------------------------------------------------------------------
+namespace {
+using UserLabelType = chip::DeviceLayer::DeviceInfoProvider::UserLabelType;
+class AppDeviceInfoProvider : public chip::DeviceLayer::DeviceInfoProvider
+{
+public:
+    static AppDeviceInfoProvider &Instance() { static AppDeviceInfoProvider i; return i; }
+    FixedLabelIterator *IterateFixedLabel(chip::EndpointId) override { return nullptr; }
+    SupportedLocalesIterator *IterateSupportedLocales() override { return nullptr; }
+    SupportedCalendarTypesIterator *IterateSupportedCalendarTypes() override { return nullptr; }
+    UserLabelIterator *IterateUserLabel(chip::EndpointId ep) override
+    {
+        return chip::Platform::New<Iter>(mStore[ep]);
+    }
+protected:
+    struct Entry {
+        char name[chip::DeviceLayer::kMaxLabelNameLength + 1];
+        char value[chip::DeviceLayer::kMaxLabelValueLength + 1];
+    };
+    CHIP_ERROR GetUserLabelLength(chip::EndpointId ep, size_t &val) override
+    {
+        auto it = mStore.find(ep); val = (it == mStore.end()) ? 0 : it->second.size();
+        return CHIP_NO_ERROR;
+    }
+    CHIP_ERROR SetUserLabelLength(chip::EndpointId ep, size_t val) override
+    {
+        mStore[ep].resize(val); return CHIP_NO_ERROR;
+    }
+    CHIP_ERROR SetUserLabelAt(chip::EndpointId ep, size_t idx, const UserLabelType &l) override
+    {
+        auto &v = mStore[ep];
+        if (idx >= v.size()) v.resize(idx + 1);
+        chip::Platform::CopyString(v[idx].name,  sizeof(v[idx].name),  l.label);
+        chip::Platform::CopyString(v[idx].value, sizeof(v[idx].value), l.value);
+        return CHIP_NO_ERROR;
+    }
+    CHIP_ERROR DeleteUserLabelAt(chip::EndpointId ep, size_t idx) override
+    {
+        auto &v = mStore[ep];
+        if (idx < v.size()) v.erase(v.begin() + idx);
+        return CHIP_NO_ERROR;
+    }
+private:
+    class Iter : public UserLabelIterator
+    {
+    public:
+        explicit Iter(std::vector<Entry> &v) : mVec(v) {}
+        size_t Count() override { return mVec.size(); }
+        bool Next(UserLabelType &out) override
+        {
+            if (mIndex >= mVec.size()) return false;
+            out.label = chip::CharSpan::fromCharString(mVec[mIndex].name);
+            out.value = chip::CharSpan::fromCharString(mVec[mIndex].value);
+            ++mIndex; return true;
+        }
+        void Release() override { chip::Platform::Delete(this); }
+    private:
+        std::vector<Entry> &mVec; size_t mIndex = 0;
+    };
+    std::map<chip::EndpointId, std::vector<Entry>> mStore;
+};
+
+static void set_entity_label(chip::EndpointId ep, const char *name)
+{
+    UserLabelType l;
+    l.label = chip::CharSpan::fromCharString("ha_entitylabel");
+    l.value = chip::CharSpan::fromCharString(name);
+    AppDeviceInfoProvider::Instance().SetUserLabelList(ep, chip::Span<const UserLabelType>(&l, 1));
+}
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Endpoint construction helpers.
+// ---------------------------------------------------------------------------
+// Minimal On/Off plug-in unit MATCHING the AmebaZ2 .zap switch endpoints exactly: device type
+// 0x010A with only Identify + OnOff (DeadFront feature -> FeatureMap=2, like node 14) + UserLabel.
+// esp-matter's endpoint::on_off_plug_in_unit::create() would ALSO add Groups (0x04),
+// ScenesManagement (0x62), and the OnOff Lighting feature (StartUpOnOff = HA's "power-on
+// behavior") -- none of which the kitchen unit has -- so build the endpoint by hand instead.
+static uint16_t make_onoff_switch(node_t *node)
+{
+    endpoint_t *ep = endpoint::create(node, ENDPOINT_FLAG_NONE, NULL);
+    endpoint::add_device_type(ep, endpoint::on_off_plug_in_unit::get_device_type_id(),
+                              endpoint::on_off_plug_in_unit::get_device_type_version());
+
+    // Raw endpoint::create doesn't add the mandatory Descriptor (0x1d); the device-type
+    // helpers add it via common::create. Add it by hand (matches every other endpoint).
+    cluster::descriptor::config_t descriptor_cfg;
+    cluster::descriptor::create(ep, &descriptor_cfg, CLUSTER_FLAG_SERVER);
+
+    cluster::identify::config_t identify_cfg;
+    cluster_t *idc = cluster::identify::create(ep, &identify_cfg, CLUSTER_FLAG_SERVER);
+    cluster::identify::command::create_trigger_effect(idc);
+
+    cluster::on_off::config_t onoff_cfg;
+    cluster_t *ooc = cluster::on_off::create(ep, &onoff_cfg, CLUSTER_FLAG_SERVER);
+    cluster::on_off::feature::dead_front_behavior::add(ooc);   // FeatureMap=2, matches node 14 (no Lighting/StartUpOnOff)
+    cluster::on_off::command::create_on(ooc);
+    cluster::on_off::command::create_toggle(ooc);
+
+    cluster::user_label::create(ep, NULL, CLUSTER_FLAG_SERVER);
+    return endpoint::get_id(ep);
+}
+
+// ---------------------------------------------------------------------------
+extern "C" void app_main()
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase(); nvs_flash_init();
+    }
+
+    node::config_t node_cfg;
+    node_t *node = node::create(&node_cfg, on_attribute_update, NULL);
+
+    // ep1: Room Air Conditioner. The device type creates ONLY identify + on_off +
+    // thermostat(COOLING ONLY); add FanControl, Thermostat RunningState + the Heating & AutoMode
+    // features, ElectricalPowerMeasurement, the Hisense mfg cluster, and UserLabel to reach
+    // parity with the AmebaZ2 .zap.
+    endpoint::room_air_conditioner::config_t rac_cfg;
+    endpoint_t *ep = endpoint::room_air_conditioner::create(node, &rac_cfg, ENDPOINT_FLAG_NONE, NULL);
+    s_ep_id = endpoint::get_id(ep);
+
+    cluster_t *th = cluster::get(ep, Thermostat::Id);
+    cluster::thermostat::attribute::create_thermostat_running_state(th, 0);
+    // The RAC device type enables ONLY the Cooling feature, so HA offers just Cool/Off. Add
+    // Heating + AutoMode to reach FeatureMap 35 (Heat+Cool+Auto) like the kitchen (node 14),
+    // so Heat/Auto appear; the driver also maps Dry->SystemMode Dry and Fan->FanOnly.
+    // (AutoMode mandates Heating+Cooling, which are both present.)
+    cluster::thermostat::feature::heating::config_t heat_feat;
+    cluster::thermostat::feature::heating::add(th, &heat_feat);
+    cluster::thermostat::feature::auto_mode::config_t auto_feat;
+    cluster::thermostat::feature::auto_mode::add(th, &auto_feat);
+
+    cluster::fan_control::config_t fc_cfg;              // FanMode=0(Off), seq=2, PercentCurrent=0
+    cluster_t *fc = cluster::fan_control::create(ep, &fc_cfg, CLUSTER_FLAG_SERVER);
+    // #19 cheap win: vertical swing via the Rocking feature (RockSupport/RockSetting). The A/C
+    // has a vertical louvre motor only -> advertise RockUpDown (0x02); HA gets a swing toggle.
+    cluster::fan_control::feature::rocking::config_t rock_cfg;
+    rock_cfg.rock_support = 0x02;   // RockUpDown supported
+    rock_cfg.rock_setting = 0x00;
+    cluster::fan_control::feature::rocking::add(fc, &rock_cfg);
+
+    // ElectricalPowerMeasurement: create() auto-adds PowerMode/NumMeasTypes/Accuracy/ActivePower;
+    // add Voltage + ActiveCurrent (the AC feature only sets the feature-map bit).
+    cluster::electrical_power_measurement::config_t epm_cfg;
+    epm_cfg.feature_flags = cluster::electrical_power_measurement::feature::alternating_current::get_id();
+    epm_cfg.delegate      = &s_epm_delegate;   // reads route through the delegate's Get*()
+    cluster_t *epm = cluster::electrical_power_measurement::create(ep, &epm_cfg, CLUSTER_FLAG_SERVER);
+    cluster::electrical_power_measurement::attribute::create_voltage(epm, nullable<int64_t>());
+    cluster::electrical_power_measurement::attribute::create_active_current(epm, nullable<int64_t>());
+
+    // Hisense manufacturer cluster 0xFFF1FC00 (4 attrs, non-volatile read-back).
+    cluster_t *mfg = cluster::create(ep, kMfgClusterId, CLUSTER_FLAG_SERVER);
+    attribute::create(mfg, 0x0000, ATTRIBUTE_FLAG_NONVOLATILE, esp_matter_bool(false));
+    attribute::create(mfg, 0x0001, ATTRIBUTE_FLAG_NONVOLATILE, esp_matter_bool(false));
+    attribute::create(mfg, 0x0002, ATTRIBUTE_FLAG_NONVOLATILE, esp_matter_bool(false));
+    attribute::create(mfg, 0x0003, ATTRIBUTE_FLAG_NONVOLATILE, esp_matter_uint8(0));
+
+    cluster::user_label::create(ep, NULL, CLUSTER_FLAG_SERVER);
+
+    // ep2: outdoor temperature.
+    endpoint::temperature_sensor::config_t outdoor_cfg;
+    endpoint_t *ep_out = endpoint::temperature_sensor::create(node, &outdoor_cfg, ENDPOINT_FLAG_NONE, NULL);
+    cluster::user_label::create(ep_out, NULL, CLUSTER_FLAG_SERVER);
+    s_ep_outdoor = endpoint::get_id(ep_out);
+
+    // ep3/4/5: Eco / Quiet / Turbo On-Off switches.
+    s_ep_eco   = make_onoff_switch(node);
+    s_ep_mute  = make_onoff_switch(node);
+    s_ep_turbo = make_onoff_switch(node);
+
+    // ep6: Sleep-profile ModeSelect (Off/General/Old/Young/Kids).
+    endpoint::mode_select::config_t sleep_cfg;
+    strncpy(sleep_cfg.mode_select.description, "Sleep", sizeof(sleep_cfg.mode_select.description) - 1);
+    sleep_cfg.mode_select.current_mode = 0;
+    sleep_cfg.mode_select.delegate     = &s_sleep_mgr;   // installed as the global SupportedModesManager
+    endpoint_t *ep_sleep = endpoint::mode_select::create(node, &sleep_cfg, ENDPOINT_FLAG_NONE, NULL);
+    cluster::user_label::create(ep_sleep, NULL, CLUSTER_FLAG_SERVER);
+    s_ep_sleep = endpoint::get_id(ep_sleep);
+
+    // ep7: aux/PTC heat relay -> Contact Sensor (BooleanState).
+    endpoint::contact_sensor::config_t aux_cfg;
+    endpoint_t *ep_aux = endpoint::contact_sensor::create(node, &aux_cfg, ENDPOINT_FLAG_NONE, NULL);
+    cluster::user_label::create(ep_aux, NULL, CLUSTER_FLAG_SERVER);
+    s_ep_aux = endpoint::get_id(ep_aux);
+
+    // ep8: coil temperature.
+    endpoint::temperature_sensor::config_t coil_cfg;
+    endpoint_t *ep_coil = endpoint::temperature_sensor::create(node, &coil_cfg, ENDPOINT_FLAG_NONE, NULL);
+    cluster::user_label::create(ep_coil, NULL, CLUSTER_FLAG_SERVER);
+    s_ep_coil = endpoint::get_id(ep_coil);
+
+    // ep9: panel display -> OnOff switch (#19 cheap win). Created LAST so ep1..8 keep their IDs
+    // (renumbering would break the HA entity map + AmebaZ2 .zap parity; endpoints stay contiguous).
+    s_ep_display = make_onoff_switch(node);
+
+    ESP_LOGI(TAG, "endpoints: aircon=%u outdoor=%u eco=%u mute=%u turbo=%u sleep=%u aux=%u coil=%u display=%u",
+             s_ep_id, s_ep_outdoor, s_ep_eco, s_ep_mute, s_ep_turbo, s_ep_sleep, s_ep_aux, s_ep_coil, s_ep_display);
+
+    // Install the in-RAM DeviceInfoProvider BEFORE start() so the UserLabel cluster init
+    // (during Server::Init) sees a non-null provider (else it VerifyOrDie's).
+    esp_matter::set_custom_device_info_provider(&AppDeviceInfoProvider::Instance());
+
+    esp_matter::start(NULL);   // brings up Wi-Fi/Matter + commissioning
+
+    // HA entity labels (UserLabel key "ha_entitylabel") -> distinguishable same-type entities.
+    // start() has returned (Server::Init done, endpoints exist); take the stack lock since we
+    // run on a different task than the Matter event loop. Read live by the UserLabel cluster.
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    set_entity_label(s_ep_id,      "Climate");
+    set_entity_label(s_ep_outdoor, "Outdoor");
+    set_entity_label(s_ep_eco,     "Eco");
+    set_entity_label(s_ep_mute,    "Quiet");
+    set_entity_label(s_ep_turbo,   "Turbo");
+    set_entity_label(s_ep_sleep,   "Sleep");
+    set_entity_label(s_ep_aux,     "Aux Heat");
+    set_entity_label(s_ep_coil,    "Coil");
+    set_entity_label(s_ep_display, "Display");
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+
+    // F1: swap the fabric when a new controller pairs during a "77" window.
+    chip::Server::GetInstance().GetFabricTable().AddFabricDelegate(&s_recommission_delegate);
+
+    // Start the (unchanged) RS-485 driver; wire status uplink + "77" / feature / link downlinks.
+    hisense_set_recommission_cb(on_recommission);
+    hisense_set_features_cb(on_features);   // 0x66/40 ProductType flags -> log
+    hisense_set_link_cb(on_link);           // #56: bus silence -> null liveness attrs
+    if (hisense_init(on_status) != pdPASS) ESP_LOGE(TAG, "hisense_init failed");
+
+    diag_console_start();   // :2323 telnet diagnostics (token/poll/watch/decode/selftest)
+}

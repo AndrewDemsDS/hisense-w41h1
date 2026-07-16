@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!--
+  Manufacturer-specific cluster for the Hisense W41H1 A/C "exotic" toggles that
+  have no standard Matter home: eco / turbo / mute / sleep, plus two read-only
+  telemetry fields. Modeled on chip/sample-mei-cluster.xml.
+
+  <code> = (VendorID << 16) | ClusterID.  0xFFF1 is the CSA test VendorID (matches
+  the device's attestation VID); 0xFC00 is our self-assigned manufacturer cluster.
+-->
+<configurator>
+  <domain name="CHIP"/>
+
+  <cluster>
+    <domain>General</domain>
+    <name>Hisense Aircon</name>
+    <code>0xFFF1FC00</code>
+    <define>HISENSE_AIRCON_CLUSTER</define>
+    <description>W41H1 vendor toggles: eco/turbo/mute/sleep + read-only telemetry.</description>
+
+    <attribute side="server" code="0x0000" define="ECO"           type="boolean" writable="true"  default="false" optional="false">Eco</attribute>
+    <attribute side="server" code="0x0001" define="TURBO"         type="boolean" writable="true"  default="false" optional="false">Turbo</attribute>
+    <attribute side="server" code="0x0002" define="MUTE"          type="boolean" writable="true"  default="false" optional="false">Mute</attribute>
+    <attribute side="server" code="0x0003" define="SLEEP_PROFILE" type="int8u"   writable="true"  default="0"     optional="false">SleepProfile</attribute>
+    <attribute side="server" code="0x0010" define="COMPRESSOR_HZ" type="int8u"   writable="false" default="0"     optional="true">CompressorHz</attribute>
+    <attribute side="server" code="0x0011" define="OUTDOOR_TEMP"  type="int8s"   writable="false" default="0"     optional="true">OutdoorTemp</attribute>
+
+    <command source="client" code="0x00" name="Refresh" optional="true">
+      <description>No-op; present so the cluster attaches to an endpoint.</description>
+    </command>
+  </cluster>
+</configurator>
