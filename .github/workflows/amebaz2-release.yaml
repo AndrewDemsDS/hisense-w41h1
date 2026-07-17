@@ -14,6 +14,9 @@ permissions:
 
 jobs:
   build:
+    # GitHub-only: Gitea auto-reads .github/workflows but its runner is labeled `sdk-builder`
+    # (not `self-hosted`), so this runs-on would never match there. Skip on Gitea.
+    if: ${{ github.server_url == 'https://github.com' }}
     runs-on: [self-hosted, sdk-builder]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

@@ -15,6 +15,10 @@ permissions:
 
 jobs:
   host-qa:
+    # GitHub-only: Gitea mirrors this repo and auto-reads .github/workflows, but has no
+    # ubuntu-latest runner (its self-hosted runner is sdk-builder). Skip on Gitea so the job
+    # doesn't queue forever there; the Gitea build lives in .gitea/workflows/build.yaml.
+    if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

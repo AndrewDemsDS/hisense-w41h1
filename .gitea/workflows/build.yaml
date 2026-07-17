@@ -1,0 +1,35 @@
+name: Firmware build (Gitea)
+
+# Runs on the self-hosted `sdk-builder` runner (this dev box, HOST mode) which has the ~15 GB
+# AmebaZ2 SDK (~/ameba-dev) + ARM toolchain locally -- the real SDK build a hosted runner can't do.
+# This is the deep build on the private Gitea dev remote: it catches SDK-side compile breaks BEFORE
+# a release tag. GitHub keeps the fast host-only qa (.github/workflows/qa.yaml) + the tagged release
+# builds; those are guarded to skip on Gitea. Path-filtered so doc-only pushes don't rebuild.
+#
+# NOTE: like the GitHub sdk-builder release build, this mutates ~/ameba-dev (mirror sync + full
+# clean + rebuild). Narrow the trigger to tags or workflow_dispatch if that's too eager during dev.
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - firmware/src/**
+      - firmware/test/**
+      - firmware/scripts/**
+  workflow_dispatch:
+
+jobs:
+  amebaz2-build:
+    runs-on: sdk-builder   # host-mode Gitea runner: ~/ameba-dev + ARM toolchain on PATH
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision build env from the runner host
+        run: |
+          : "${W41H1_OTA_ENV:?set W41H1_OTA_ENV in the gitea-runner service env}"
+          cp "$W41H1_OTA_ENV" firmware/scripts/ota-release.env
+
+      - name: Host lint (codec/map tests + .zap contiguity + version)
+        run: bash firmware/scripts/ota-release.sh lint
+
+      - name: Full AmebaZ2 SDK build (verifies serial + endpoints)
+        run: bash firmware/scripts/ota-release.sh build
