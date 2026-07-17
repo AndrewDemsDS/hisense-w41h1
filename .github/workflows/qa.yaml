@@ -45,9 +45,12 @@ jobs:
         env:
           BASE: ${{ github.base_ref }}
         run: |
+          # Scope to firmware/src (the shipped image is built from it + the .zap under sdk-edits).
+          # firmware/test is host-only QA that never changes the image, so a test-tooling edit must
+          # NOT force a softwareVersion bump.
           git fetch --no-tags --depth=1 origin "$BASE" || true
-          if git diff --quiet FETCH_HEAD -- firmware/src firmware/test; then
-            echo "no firmware/src|test change vs $BASE -- bump not required"; exit 0
+          if git diff --quiet FETCH_HEAD -- firmware/src; then
+            echo "no firmware/src change vs $BASE -- bump not required"; exit 0
           fi
           new=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
           oldsem=$(git show "FETCH_HEAD:firmware/src/version.txt" 2>/dev/null | tr -d '[:space:]' || true)
