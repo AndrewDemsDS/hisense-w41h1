@@ -21,7 +21,7 @@ jobs:
       run:
         shell: bash   # ESP-IDF export.sh + esp-matter export.sh are bash
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Tag must match CMake PROJECT_VER
         run: |
@@ -48,7 +48,7 @@ jobs:
             partition_table/partition-table.bin ota_data_initial.bin flasher_args.json > SHA256SUMS.txt
 
       - name: Attach to the GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true   # auto "What's Changed" from commits/PRs since the last tag
           files: |
