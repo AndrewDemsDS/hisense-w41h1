@@ -2,7 +2,7 @@
 #   . ~/esp/esp-idf-v5.5.4/export.sh && . $ESP_MATTER_PATH/export.sh
 #   idf.py set-target esp32 && idf.py build flash monitor
 cmake_minimum_required(VERSION 3.16)
-set(PROJECT_VER "1.0.7")
+set(PROJECT_VER "1.0.8")
 
 # Unified versioning (issue #77): the Matter softwareVersion INT is DERIVED from PROJECT_VER --
 # MAJOR*10000+MINOR*100+PATCH -> a readable, strictly-monotonic uint32. This keeps the human
@@ -14,6 +14,14 @@ list(GET _ver_parts 0 _ver_major)
 list(GET _ver_parts 1 _ver_minor)
 list(GET _ver_parts 2 _ver_patch)
 math(EXPR PROJECT_VER_INT "${_ver_major}*10000 + ${_ver_minor}*100 + ${_ver_patch}")
+
+# esp-matter's build reads PROJECT_VER_NUMBER (NOT our PROJECT_VER_INT) to set the GN arg
+# chip_config_software_version_number -> CHIP_CONFIG_SOFTWARE_VERSION_NUMBER, and that macro is what
+# ESP32 ConfigurationManagerImpl::GetSoftwareVersion() returns -- i.e. the BasicInformation
+# SoftwareVersion attribute (0/40/9) that HA + Matter OTA see. esp-matter/CMakeLists.txt defaults it
+# to 0 when PROJECT_VER_NUMBER is undefined, which is why the device reported softwareVersion 0
+# despite the correct semver string. Define the name esp-matter looks for. (issue #77)
+set(PROJECT_VER_NUMBER ${PROJECT_VER_INT})
 
 if(NOT DEFINED ENV{ESP_MATTER_PATH})
     message(FATAL_ERROR "ESP_MATTER_PATH not set -- run: . <esp-matter>/export.sh")
@@ -48,9 +56,9 @@ idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-secur
 # keeps the literal path out of this tracked file; everything (IDF, esp-matter, project) sits under it.
 idf_build_set_property(COMPILE_OPTIONS "-ffile-prefix-map=$ENV{HOME}=/build" APPEND)
 
-# Force the Matter softwareVersion int from PROJECT_VER (issue #77). Wins over sdkconfig's
-# CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER because CHIPDeviceConfig.h guards the macro with #ifndef,
-# so the OTA int can never drift from the semver. (The string stays in sdkconfig.defaults, kept
-# equal to PROJECT_VER.)
+# Also pin CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION (a DIFFERENT macro from the
+# CHIP_CONFIG_SOFTWARE_VERSION_NUMBER above that GetSoftwareVersion actually returns) for the CHIP
+# code paths that read it (e.g. some OTA-requestor defaults). Belt-and-suspenders; the reported
+# softwareVersion attribute comes from PROJECT_VER_NUMBER -> chip_config_software_version_number.
 idf_build_set_property(COMPILE_DEFINITIONS "CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION=${PROJECT_VER_INT}" APPEND)
 message(STATUS "hisense: Matter softwareVersion ${PROJECT_VER_INT} (\"${PROJECT_VER}\") [issue #77]")
