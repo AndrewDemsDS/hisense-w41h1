@@ -10,6 +10,13 @@ if git diff --cached --name-only | grep -qE '^firmware/(src|test)/|room-air-cond
     echo "[pre-commit] LINT FAILED. Fix, or bypass with: git commit --no-verify"; exit 1; }
 fi
 
+# ESP32 tree has no SDK-free build gate; esp32-lint.sh checks version consistency (host-only).
+if git diff --cached --name-only | grep -qE '^firmware/esp32-matter/'; then
+  echo "[pre-commit] esp32 firmware changed -> esp32-lint.sh"
+  bash "$REPO/firmware/scripts/esp32-lint.sh" || {
+    echo "[pre-commit] ESP32 LINT FAILED. Fix, or bypass with: git commit --no-verify"; exit 1; }
+fi
+
 # Prose slop gate: block em dashes in newly-added markdown (no-op when no .md is staged).
 bash "$REPO/firmware/scripts/stop-slop.sh" || exit 1
 
