@@ -17,9 +17,25 @@ jobs:
   host-qa:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0   # PR version-diff needs base history
+
+      # Static lint first (cheap, fails fast). Run these same two commands locally for parity.
+      # shellcheck ships on the runner image; --severity=warning gates real bugs (quoting, unset
+      # vars, logic) and skips the info/style nits the scripts intentionally use. ruff reads the
+      # committed ruff.toml; it's pinned via pipx (bump with the local version + Dependabot).
+      - name: Shell lint (shellcheck)
+        run: |
+          shellcheck --version
+          shellcheck --severity=warning firmware/scripts/*.sh firmware/test/*.sh \
+            firmware/.githooks/pre-commit firmware/.githooks/prepare-commit-msg
+
+      - name: Python lint (ruff)
+        run: pipx run ruff==0.15.20 check .
+
+      - name: ESP32 version consistency
+        run: bash firmware/scripts/esp32-lint.sh
 
       - name: Host QA + lint
         run: bash firmware/scripts/ota-release.sh lint

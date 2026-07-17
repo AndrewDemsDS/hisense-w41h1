@@ -23,4 +23,5 @@ SYNC_FILES_REQUIRED=(
 SYNC_FILES_OPTIONAL=(
   firmware/src/rs485-driver/power_estimate.h
 )
+# shellcheck disable=SC2034  # consumed by sourcing scripts (ota-release.sh, setup.sh), not this file
 SYNC_FILES=( "${SYNC_FILES_REQUIRED[@]}" "${SYNC_FILES_OPTIONAL[@]}" )

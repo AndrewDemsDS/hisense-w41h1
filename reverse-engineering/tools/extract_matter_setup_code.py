@@ -40,7 +40,7 @@ print("custom factory commissioning KV entries:", custom or "none (using test de
 
 if has_pc and has_disc and not custom:
     print("\n=> Device uses the STANDARD MATTER TEST CREDENTIALS:")
-    print(f"   Manual pairing code: 34970112332  (3497-011-2332)")
+    print("   Manual pairing code: 34970112332  (3497-011-2332)")
     print(f"   QR payload:          {KNOWN_TEST_QR}")
     print(f"   Discriminator/Passcode: {DEFAULT_DISCRIMINATOR} / {DEFAULT_PASSCODE}")
 else:

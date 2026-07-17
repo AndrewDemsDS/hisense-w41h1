@@ -1,0 +1,6 @@
+# Third-party deps for the reverse-engineering/tools/*.py scripts.
+# Pinned from the working venv so a fresh checkout is reproducible; Dependabot proposes bumps.
+#   python -m venv ~/.fw-analysis-venv && ~/.fw-analysis-venv/bin/pip install -r reverse-engineering/tools/requirements.txt
+capstone==5.0.9   # disasm_ac_protocol.py (ARM/Thumb disassembly of the vendor blob)
+qrcode==8.2       # gen_matter_qr.py (render the Matter onboarding QR)
+pyserial==3.5     # sniff.py, map_diff.py (RS-485 bus capture over a serial adapter)

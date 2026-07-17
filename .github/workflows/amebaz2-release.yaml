@@ -16,7 +16,7 @@ jobs:
   build:
     runs-on: [self-hosted, sdk-builder]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Provision build env from the runner host
         run: |
@@ -43,8 +43,9 @@ jobs:
           sha256sum "flash_rac-integrated-v$V.bin" "rac-v$V.ota" "rac-v$V.json" > "SHA256SUMS-v$V.txt"
 
       - name: Attach to the GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
+          generate_release_notes: true   # auto "What's Changed" from commits/PRs since the last tag
           files: |
             firmware/built-images/flash_rac-integrated-v${{ env.V }}.bin
             firmware/built-images/rac-v${{ env.V }}.ota
