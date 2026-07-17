@@ -106,6 +106,15 @@ integration in HA and control the A/C.
 firmware/scripts/ota-release.sh release --bump --flash
 ```
 
+> **⚠️ No remote way back to stock (yet).** Once a module has been OTA-flashed to this custom
+> firmware, there is currently **no way to revert it to the stock ConnectLife firmware over the air**.
+> The only supported recovery path is a whole-chip CH341A write of the stock recovery image
+> (`built-images/flash_rac-stock-v1.bin`, see [`firmware/docs/10`](firmware/docs/10-firmware-ota-procedure.md)),
+> which means you **must already have a dump of the stock firmware** (and physical access with a
+> SOIC-8 clip). If you did not capture a stock dump before flashing, there is no clean rollback.
+> Making stock revert (and remote dump capture) possible is tracked in the
+> [issues](https://github.com/AndrewDemsDS/hisense-w41h1/issues).
+
 > **⚠️ AmebaZ2 OTA serial gotcha (this cost a whole debugging session):** the bootloader A/B-selects
 > the fw1/fw2 slot by the image **`FWHS.header.serial`** (`amebaz2_firmware_is.json`), **not** the
 > Matter software version. Every OTA build must **bump the serial** or the device applies the update
