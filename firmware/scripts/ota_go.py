@@ -3,7 +3,7 @@ import ms_ws
 
 
 async def main():
-    nid = ms_ws.node_id(9)
+    nid = ms_ws.node_id()
     # wait for node available
     for attempt in range(20):
         try:
@@ -26,7 +26,7 @@ async def main():
                         )
                         print("update_node result:", json.dumps(r)[:400])
                     return
-        except Exception as e:
+        except Exception:
             pass
         await asyncio.sleep(10)
     print(f"node{nid} never became available")
