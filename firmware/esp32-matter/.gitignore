@@ -1,7 +1,8 @@
-# ESP-IDF / esp-matter build outputs (all regenerable from source + sdkconfig.defaults)
+# ESP-IDF / esp-matter build outputs (regenerable from source + sdkconfig.defaults).
+# NOTE: dependencies.lock is intentionally TRACKED (not ignored) -- it pins the exact
+# managed-component versions/hashes for reproducible builds, per ESP-IDF's own guidance.
 build/
 .cache/
 managed_components/
-dependencies.lock
 sdkconfig
 sdkconfig.old

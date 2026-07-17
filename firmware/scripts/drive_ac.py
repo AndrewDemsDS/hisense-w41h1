@@ -3,7 +3,7 @@ import ms_ws
 
 
 async def main():
-    nid = ms_ws.node_id(9)
+    nid = ms_ws.node_id()
     async with ms_ws.connect(heartbeat=30, hello_timeout=20) as (ws, _):
         seq = [
             ("SystemMode=Off", "1/513/28", 0),

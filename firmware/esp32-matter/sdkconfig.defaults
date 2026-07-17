@@ -42,10 +42,12 @@ CONFIG_ENABLE_OTA_REQUESTOR=y
 CONFIG_CUSTOM_DEVICE_INFO_PROVIDER=y
 # Matter OTA software version. Unified scheme (issue #77): the int is DERIVED from PROJECT_VER
 # in CMakeLists.txt (MAJOR*10000+MINOR*100+PATCH) and injected as a compile definition that WINS
-# over this Kconfig value (CHIPDeviceConfig.h #ifndef guard). These are kept equal to PROJECT_VER
-# "1.0.3" (-> 10003) for clarity/fallback; edit PROJECT_VER, not this, and they stay in sync.
-CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10005
-CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.0.5"
+# over this Kconfig NUMBER (CHIPDeviceConfig.h #ifndef guard). The STRING is NOT overridden by CMake,
+# so it (and the fallback NUMBER) MUST stay equal to PROJECT_VER or the device reports a stale
+# softwareVersionString. Edit PROJECT_VER in CMakeLists.txt, then update both lines below.
+# esp32-lint.sh enforces this equality (fails the commit/CI if they drift).
+CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10008
+CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.0.8"
 # --- OTA hardening (faster + reliable on marginal Wi-Fi) ---
 # Delta OTA: ship a diff (tens of KB) instead of the full ~1.5MB image over BDX.
 CONFIG_ENABLE_DELTA_OTA=y

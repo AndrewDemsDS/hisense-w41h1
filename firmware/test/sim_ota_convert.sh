@@ -64,7 +64,7 @@ timeout 60 "$CT" otasoftwareupdaterequestor announce-otaprovider 1 0 0 0 2 0 --s
 
 echo "-- watch for QueryImage -> BDX -> ApplyUpdateRequest (up to 240s; 1.2MB over loopback is slow) --"
 ok=0
-for i in $(seq 1 80); do
+for _ in $(seq 1 80); do
   if grep -qiE "ApplyUpdateRequest|Applying.*update|kApplying|BlockAckEOF|Transfer completed" "$WORK/provider.log" "$WORK/requestor.log" 2>/dev/null; then ok=1; break; fi
   sleep 3
 done

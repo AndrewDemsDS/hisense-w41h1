@@ -1,0 +1,10 @@
+# Committed so local `ruff check` and the CI gate use the same rule set (static-analysis parity).
+# The gate targets real bugs: pyflakes `F` (undefined names, unused imports/vars, bad f-strings)
+# and `E9` (syntax/IO errors). It deliberately does NOT enforce pycodestyle line-style rules
+# (E4/E7) -- this repo's Python tooling uses a compact one-statement-per-semicolon terminal style
+# on purpose, and reflowing it would be churn, not a fix.
+target-version = "py311"
+extend-exclude = ["sdk", "**/managed_components", "**/build", "integrations"]
+
+[lint]
+select = ["E9", "F"]

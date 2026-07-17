@@ -1,0 +1,29 @@
+version: 2
+# Automated dependency-update PRs. GitHub Actions are SHA-pinned in the workflows
+# (supply-chain safety); Dependabot proposes the bumps as reviewable PRs so the pins
+# stay current without hand-resolving SHAs. Python ecosystems track the pinned
+# requirements files added for the OTA + reverse-engineering tooling.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /firmware/scripts
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+
+  - package-ecosystem: pip
+    directory: /reverse-engineering/tools
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build

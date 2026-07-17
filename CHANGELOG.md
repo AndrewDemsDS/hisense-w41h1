@@ -21,4 +21,4 @@ First public cut. Everything below already ran privately; this release drops the
   covers codec, Matter↔A/C mapping, and virtual-A/C round-trip checks.
 - Reverse-engineering docs: RS-485 protocol, cloud/firewall, stock-FW init, hardware.
 - CI: a host lint gate on every push/PR, plus tagged-release builds that attach `.bin`/`.ota` to
-  GitHub Releases (ESP32 on a hosted runner, AmebaZ2 on a self-hosted SDK runner).
+  GitHub Releases (both the AmebaZ2 and ESP32 builds run on a self-hosted SDK runner).
