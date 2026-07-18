@@ -255,6 +255,16 @@ bool hisense_parse_features(const uint8_t *buf, size_t len, HisenseFeatures *out
     out->swing_dir_8   = (buf[28] & 0x10) != 0;   // [15]&0x10
     out->humidity      = (buf[32] & 0x01) != 0;   // [19]&0x01
     out->demand_resp   = (uint8_t)(buf[35] & 0x03); // [22]&0x03
+
+    // Extended tier ([0x19]/[0x1A] = bytes 38/39). Stock enables the higher
+    // fields by payload length (docs/10 §5a); a shorter reply is still valid, it
+    // just does not carry them -- so gate rather than widen the reject above.
+    out->ext_valid    = (len > 39);
+    out->q_display    = out->ext_valid && (buf[39] & 0x40) != 0;  // [0x1A]&0x40
+    out->enable_8heat = out->ext_valid && (buf[39] & 0x04) != 0;  // [0x1A]&0x04
+    out->trans_102_64 = out->ext_valid && (buf[38] & 0x08) != 0;  // [0x19]&0x08
+    out->reply_len    = (uint8_t)(len > 255 ? 255 : len);         // diagnostic, see header
+
     out->valid = true;
     return true;
 }

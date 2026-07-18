@@ -330,10 +330,24 @@ typedef struct {
     // [PROVEN] flag table in RE docs/10 §5a. No behaviour change -- same bytes, right names.
     bool    heat_8c;           // [0x0D]&0x80  ac_8heat  (8 C frost-guard heat; was `purify`)
     bool    purify;            // [0x0A]&0x08  ac_purify (was `q_display`)
-    // NOT parsed (need payload > [0x1A], and our len gate rejects len<=35 -- see docs/11 §6):
-    //   ac_q_display   [0x1A]&0x40   <- the REAL q_display
-    //   ac_enable_8heat[0x1A]&0x04
-    //   ac_trans_102_64[0x19]&0x08   (set -> stock profile '199')
+
+    // --- Extended tier: payload [0x19]/[0x1A] = frame bytes 38/39 -----------
+    // Stock gates the higher fields on payload length (docs/10 §5a: `len-2 ∈
+    // {>0x14, >0x17, >0x18}`), so a valid-but-short 0x66/40 reply simply does not
+    // carry them. We mirror that: the base tier above parses from len >= 36, and
+    // these three need len >= 40. `ext_valid` says which happened -- without it a
+    // `0` here is ambiguous between "this unit lacks the feature" and "the frame
+    // was too short to say", and docs/11 §5.1's design rule (gate at runtime, per
+    // unit) depends on telling those two apart.
+    bool    ext_valid;         // false => the three fields below are UNKNOWN, not 0
+    bool    q_display;         // [0x1A]&0x40  ac_q_display  (the REAL q_display)
+    bool    enable_8heat;      // [0x1A]&0x04  ac_enable_8heat
+    bool    trans_102_64;      // [0x19]&0x08  ac_trans_102_64 (set -> stock profile '199')
+    uint8_t reply_len;         // raw 0x66/40 frame length that produced this parse (0 = unset,
+                               // capped at 255). Diagnostic only: it disambiguates an
+                               // `ext_valid == false` -- a 38-byte reply is 2 bytes short of the
+                               // tier, whereas a >39-byte reply with ext_valid false would mean a
+                               // parser bug. No consumer should gate behaviour on it.
 } HisenseFeatures;
 
 /* Feature-flags callback: invoked (bus-task context) each time a 0x66/40

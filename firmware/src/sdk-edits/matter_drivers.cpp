@@ -346,6 +346,14 @@ static void matter_driver_on_features(const HisenseFeatures *f)
         "swing_follow=%d display=%d dr=%d humidity=%d purify=%d 8heat=%d",
         f->cool_heat, f->ai, f->infinite_fan, f->power_save, f->fan_mute, f->swing_dir_8,
         f->swing_follow, f->power_display, f->demand_resp, f->humidity, f->purify, f->heat_8c);
+    if (f->ext_valid) {
+        ChipLogProgress(DeviceLayer,
+            "A/C features (ext, reply %uB): q_display=%d enable_8heat=%d trans_102_64=%d",
+            (unsigned)f->reply_len, f->q_display, f->enable_8heat, f->trans_102_64);
+    } else {
+        ChipLogProgress(DeviceLayer,
+            "A/C features (ext): unknown -- reply %uB, need >39B", (unsigned)f->reply_len);
+    }
 }
 
 // Driver link-health callback (#56, bus-task context) -> latch the state and post one

@@ -305,7 +305,10 @@ Also: `payload[3]` (frame 16) → raw global `0x100096c9` (bits1,3 feed a state 
 > ⚠️ **The table above is authoritative. Our driver disagreed with it until 2026-07-16.**
 > `hisense_parse_features()` read the right *bytes* and mislabeled two: its `q_display` held
 > `[0x0A]&0x08` = **`ac_purify`**, and its `purify` held `[0x0D]&0x80` = **`ac_8heat`**. True
-> `ac_q_display` (`[0x1A]&0x40`) still goes unparsed. Confirmed against the stock printf arg order
+> `ac_q_display` (`[0x1A]&0x40`) went unparsed until 2026-07-18, when the three `[0x19]`/`[0x1A]`
+> flags (`ac_q_display`, `ac_enable_8heat`, `ac_trans_102_64`) were added behind a length gate
+> (`ext_valid`, needs frame len > 39) mirroring stock's own tiered gates. Confirmed against the
+> stock printf arg order
 > and renamed (`heat_8c` + `purify`); the byte reads were correct, so behaviour did not change.
 
 ### 5b. Command `0x65` — `matter_pack_devType_cmd` `0x9b6f2c60` **[PROVEN]**
