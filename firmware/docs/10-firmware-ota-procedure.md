@@ -268,6 +268,33 @@ strictly increasing with the version. `build` sets it before `is_matter` and **v
 - **Forgetting the version bump** and **leaving an endpoint gap** — both already blocked by the
   pre-commit `lint` (version > `.released-version`; contiguous `.zap` endpoints).
 
+### Build flavours (#22 / #23)
+
+Every tagged release publishes **two** images. They differ only in diagnostics.
+
+| flavour | build | contains |
+|---|---|---|
+| release (default) | `ota-release.sh build` | no console, no bring-up logging |
+| debug | `ota-release.sh build --debug` | `:2323` console (`features`, `poll`, `version`) + verbose logging |
+
+`--debug` generates `hisense_flavour.h` into the SDK example dir; a plain build removes it, so
+release is what you get unless you ask, and the unauthenticated console cannot ship by forgetting a
+flag. Set `HISENSE_FLAVOUR=debug` in `ota-release.env` to make debug your local default.
+
+The version int is identical for both (versioning stays unified); the flavour lives in the
+**filename**: `flash_rac-integrated-v<N>-debug.bin`, `rac-v<N>-debug.ota`.
+
+Three traps specific to flavours:
+
+1. **`package` does not know what you built.** It takes the flavour from the environment and the
+   content from `build/`, so it verifies the binary against the claimed flavour (by looking for the
+   console's log string) and hard-fails on a mismatch. If that fires, you packaged after the wrong
+   build.
+2. **Same version, different binaries.** A debug and a release image at one version are not
+   interchangeable: never use one as the other's delta base or recovery image.
+3. **One served image per version.** The Matter OTA provider keys on `softwareVersion`, so both
+   flavours existing does not mean both can be staged at once.
+
 ### Guard summary (what the hook + build now enforce)
 | Mistake | Guard | Where |
 |---|---|---|
