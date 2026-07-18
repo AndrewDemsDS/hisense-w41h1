@@ -54,6 +54,34 @@ semver_to_int() {
 }
 cur_int() { semver_to_int "$(cur_semver)"; }
 released_int() { [ -f "$RELEASED_MARK" ] && cat "$RELEASED_MARK" || echo 0; }
+
+# ---- IDF toolchain guard -------------------------------------------------------------------
+# dependencies.lock records the IDF that produced the last committed build. Sourcing a different
+# IDF export.sh silently builds against another toolchain: it still boots, but the whole binary
+# shifts, which (a) blows up the delta-OTA patch (a 45 KB patch became 854 KB) and (b) rewrites
+# the lock as a side effect, so the drift only shows up in `git status` after the fact. This bit
+# us on 1.0.9 (built on 5.3.1 against a 5.5.4 lock) and cost a version + an extra OTA cycle.
+# Checked BEFORE the build, because the build itself rewrites the lock.
+lock_idf_version() {   # the `version:` under the top-level `idf:` block whose source type is idf
+  awk '/^  idf:$/{f=1;next} f&&/^    version:/{gsub(/[ \t]*version:[ \t]*/,"");gsub(/[\r"'"'"']/,"");print;exit}' \
+    "$ESP/dependencies.lock" 2>/dev/null
+}
+live_idf_version() {   # "ESP-IDF v5.5.4" / "ESP-IDF v5.5.4-dirty" -> 5.5.4
+  idf.py --version 2>/dev/null | sed -n 's/.*ESP-IDF v\([0-9][0-9.]*\).*/\1/p' | tail -1
+}
+assert_idf_matches_lock() {
+  local want live; want="$(lock_idf_version)"; live="$(live_idf_version)"
+  if [ -z "$want" ]; then say "no IDF version in dependencies.lock -- skipping toolchain check"; return 0; fi
+  if [ -z "$live" ]; then die "could not determine the live IDF version from 'idf.py --version'"; fi
+  if [ "$want" != "$live" ]; then
+    die "IDF MISMATCH: dependencies.lock expects v$want but the sourced IDF is v$live (IDF_PATH=${IDF_PATH:-unset}).
+     Source the matching export.sh and rebuild, e.g.  source ~/esp/esp-idf-v$want/export.sh
+     Building on the wrong IDF still boots but shifts the whole binary: the delta-OTA patch
+     balloons and dependencies.lock is silently rewritten. If the bump is INTENTIONAL, re-run with
+     ESP32_ALLOW_IDF_MISMATCH=1 and commit the resulting dependencies.lock change deliberately."
+  fi
+  say "IDF v$live matches dependencies.lock"
+}
 int_to_semver_bin() {  # archived full-image path for a given INT, by scanning built-images
   local want="$1" f v
   for f in "$IMG"/esp32-hisense_ac_matter-v*.bin; do
@@ -74,6 +102,11 @@ load_env() {
 # ---- build (issue #82: archive-before-overwrite, then archive the fresh image) --------------
 build() {
   command -v idf.py >/dev/null || die "idf.py not on PATH -- source the IDF + esp-matter env first"
+  if [ "${ESP32_ALLOW_IDF_MISMATCH:-0}" = "1" ]; then
+    say "WARNING: ESP32_ALLOW_IDF_MISMATCH=1 -- toolchain check skipped (lock v$(lock_idf_version) vs live v$(live_idf_version))"
+  else
+    assert_idf_matches_lock
+  fi
   local semver int rel; semver="$(cur_semver)"; int="$(cur_int)"; rel="$(released_int)"
   bash "$HERE/esp32-lint.sh"   # PROJECT_VER<->sdkconfig sync + semver bounds (fails hard on drift)
   (( int > rel )) || die "PROJECT_VER $semver (int $int) is not > last released ($rel) -- bump PROJECT_VER + sdkconfig (#77)"

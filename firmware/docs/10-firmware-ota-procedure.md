@@ -276,6 +276,21 @@ strictly increasing with the version. `build` sets it before `is_matter` and **v
 | endpoint gap (non-contiguous) | `.zap` contiguity check + build-output check | `lint` + `build` |
 | flash false-positive (stale cache) | fresh `read_attribute`, sustained ×3 | `flash` |
 | manifest/version cache | restart matter-server; unique versions | `stage` (§9) |
+| ESP32 built on the wrong IDF | live `idf.py --version` vs `dependencies.lock` | `esp32-release.sh build` |
+
+**The IDF-mismatch guard (ESP32).** `dependencies.lock` records the IDF that produced the last
+committed build. Sourcing a different `export.sh` (easy to do: `~/esp/esp-idf` is **v5.3.1** while
+`~/esp/esp-idf-v5.5.4` is the locked one) silently builds against another toolchain. The image still
+boots and passes every functional check, so nothing catches it at runtime, but:
+
+- the whole binary shifts, so the **delta-OTA patch balloons** (measured: a 45 KB patch became
+  854 KB, which matters precisely on the lossy links where OTA already fails), and
+- the build **rewrites `dependencies.lock` as a side effect**, so the drift only surfaces in
+  `git status` afterwards.
+
+This shipped 1.0.9 on 5.3.1 against a 5.5.4 lock and cost a version plus an extra OTA cycle. The
+check runs **before** the build (the build itself rewrites the lock). Intentional bumps:
+`ESP32_ALLOW_IDF_MISMATCH=1`, then commit the lock change deliberately.
 
 ## 12. OTA reliability + distribution (issues #76 / #78 / #79)
 
