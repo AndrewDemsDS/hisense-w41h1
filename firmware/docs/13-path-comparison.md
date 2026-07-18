@@ -23,7 +23,7 @@ Every number below was measured on this project's own hardware and builds (2026-
 | **Transport** | Matter over Wi-Fi (2.4 GHz) | Matter over Wi-Fi (2.4 GHz) |
 | **OTA** | Delta, mandatory (a full image is rejected). 873 KB this release | Full image, 1.2 MB `.ota` |
 | **Flash budget** | 4 MB, app 1.66 MB in a 1.88 MB slot (~84 % used) | 4 MB, `firmware_is.bin` 1.23 MB |
-| **Remote diagnostics** | `:2323` console (`features`, `poll`, `decode`, `selftest`) | None yet (tracked separately) |
+| **Remote diagnostics** | `:2323` console (`features`, `poll`, `decode`, `selftest`) | `:2323` console (`features`, `poll`, `version`), debug flavour |
 | **Energy** | Not a differentiator, see below | Not a differentiator, see below |
 | **Build time** | ~7 min clean | ~110 s clean (parallel `-j`) |
 
@@ -124,9 +124,14 @@ This is not a nicety. It is how per-unit A/C capabilities get measured at all: r
 `0x66/40` ProductType reply on a live unit is what confirmed the extended capability flags and the
 reply length on real hardware.
 
-The AmebaZ2 has **no remote diagnostic surface**. Its only output is the Matter log over UART, which
-needs physical access to the module. A capability question about an AmebaZ2 unit currently cannot be
-answered without opening the A/C. This gap is tracked as its own issue.
+The AmebaZ2 gained a console too (2026-07-18), so this is no longer a differentiator. It is a
+smaller instrument: `features`, `poll` and `version`, without `decode` or `selftest`, because it is
+a line-oriented REPL rather than a port of the ESP32's `esp_console` machinery, which depends on
+per-task stdout redirection that does not exist on this target.
+
+Both consoles are **debug-flavour only**. They have no authentication and can drive the A/C bus, so
+release images on both paths exclude them. If you need to ask a deployed unit what it supports, flash
+the debug image, ask, and flash back.
 
 ## Recommendation
 

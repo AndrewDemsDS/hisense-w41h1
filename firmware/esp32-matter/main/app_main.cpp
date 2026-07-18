@@ -42,7 +42,9 @@
 #include "hisense_rs485.h"
 #include "matter_aircon_map.h"
 #include "power_estimate.h"
-#include "diag_console.h"   // embedded :2323 diagnostic console (keeps Matter + adds recon shell)
+#ifdef CONFIG_HISENSE_DEBUG_BUILD
+#include "diag_console.h"   // embedded :2323 diagnostic console (DEBUG flavour only, see Kconfig)
+#endif
 #include <ElectricalPowerMeasurementDelegate.h>     // reused from firmware/src/sdk-edits (CHIP EPM delegate)
 #include <app/clusters/temperature-measurement-server/TemperatureMeasurementCluster.h>  // registered-cluster SetMeasuredValue
 #include <data_model_provider/esp_matter_data_model_provider.h>                           // provider registry
@@ -373,7 +375,9 @@ static void on_status(const HisenseState *st)
 
     // Snapshot for the uplink guards (read under this same lock in on_attribute_update).
     s_status = *st;
+#ifdef CONFIG_HISENSE_DEBUG_BUILD
     diag_on_status(st);   // snapshot-only (no I/O) -> safe under the CHIP stack lock
+#endif
 
     // #2: keep the uplink command shadow in sync with the A/C's ACTUAL state, so a later
     // single-field write rebuilds the combined frame from reality instead of a stale shadow
@@ -844,5 +848,7 @@ extern "C" void app_main()
     hisense_set_link_cb(on_link);           // #56: bus silence -> null liveness attrs
     if (hisense_init(on_status) != pdPASS) ESP_LOGE(TAG, "hisense_init failed");
 
+#ifdef CONFIG_HISENSE_DEBUG_BUILD
     diag_console_start();   // :2323 telnet diagnostics (token/poll/watch/decode/selftest)
+#endif
 }

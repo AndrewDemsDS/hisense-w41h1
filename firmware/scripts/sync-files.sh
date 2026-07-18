@@ -18,6 +18,7 @@ SYNC_FILES_REQUIRED=(
   firmware/src/sdk-edits/matter_drivers.cpp
   firmware/src/sdk-edits/ElectricalPowerMeasurementDelegate.h
   firmware/src/sdk-edits/ElectricalPowerMeasurementDelegate.cpp
+  firmware/src/sdk-edits/hisense_diag_console.h
   firmware/src/sdk-edits/room-air-conditioner-app.zap
 )
 SYNC_FILES_OPTIONAL=(

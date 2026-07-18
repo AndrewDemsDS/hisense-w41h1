@@ -23,6 +23,7 @@
 #include "matter_aircon_map.h"
 #include <clusters/HisenseAircon/ClusterId.h>   // mfg cluster + attribute id constants (synced to zzz_generated)
 #include "power_estimate.h"
+#include "hisense_diag_console.h"   // #23 debug-flavour :2323 console (no-op in release)
 #include "ElectricalPowerMeasurementDelegate.h"
 #include <mode_select/ameba_mode_select_manager.h>   // Sleep profile ModeSelect (ep6)
 #include <memory>
@@ -164,6 +165,7 @@ static void hisense_on_status(const HisenseState *state)
     }
     // Bus-task write vs the CHIP-task snapshot reads (uplink echo-guard / downlink):
     // guard the multi-word store so a reader can't observe a torn HisenseState (#57).
+    hisense_diag_on_status(state);   // #23: snapshot for the debug console (no-op in release)
     taskENTER_CRITICAL();
     s_status = *state;
     s_status_fresh = true;
@@ -408,6 +410,7 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     hisense_set_recommission_cb(matter_driver_on_recommission);   // F1: remote "77" -> open window
     hisense_set_link_cb(matter_driver_on_link);                   // #56: bus silence -> mark unavailable
     hisense_set_features_cb(matter_driver_on_features);           // 0x66/40 feature flags -> device log
+    hisense_diag_console_start();                                 // #23: :2323 console, DEBUG flavour only
 
     // HA entity labels (UserLabel key "ha_entitylabel") so the same-type entities are
     // distinguishable in Home Assistant. Requires the UserLabel cluster (0x0041) enabled
