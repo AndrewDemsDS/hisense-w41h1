@@ -257,17 +257,42 @@ tag_release() {
 
 # ---- top-level -----------------------------------------------------------------------------
 cmd="${1:-}"; shift || true
+# ---- publish the DEPLOYED artifacts to the GitHub release (#89) -------------------------------
+# Most acute on this target: delta OTA embeds the BASE image's hash and the device verifies it
+# against its running partition, so a patch built against a CI REBUILD is rejected. ESP-IDF builds
+# are not byte-reproducible (measured: rebuild c73d1de8 vs deployed 3d003d66), so the release asset
+# has to be the archived deployed .bin, not whatever CI produced. Losing that binary once already
+# stranded a node on USB-only flashing (#82).
+publish() {
+  command -v gh >/dev/null || die "gh not on PATH -- needed to upload release assets"
+  local rel semver base n=0
+  rel="$(released_int)"
+  [ "$rel" != 0 ] || die "no on-device version recorded -- run 'flash' first"
+  semver="$(( rel / 10000 )).$(( (rel / 100) % 100 )).$(( rel % 100 ))"
+  gh release view "esp32-v$semver" >/dev/null 2>&1 || die "no release esp32-v$semver -- push the tag first"
+  base="$(int_to_semver_bin "$rel")" \
+    || die "deployed image (int $rel) not archived in built-images/ (#82) -- nothing trustworthy to publish"
+  gh release upload "esp32-v$semver" "$base" --clobber >/dev/null && { say "  uploaded $(basename "$base")"; n=1; }
+  local f
+  for f in "$IMG/esp32-v$rel.ota" "$IMG/esp32-v$rel.json"; do
+    [ -f "$f" ] || continue
+    gh release upload "esp32-v$semver" "$f" --clobber >/dev/null && { say "  uploaded $(basename "$f")"; n=$((n+1)); }
+  done
+  say "published $n deployed artifact(s) to esp32-v$semver -- THIS is the valid delta base for the next release"
+}
+
 case "$cmd" in
   build)   build ;;
   package) package "${1:-}" ;;
   stage)   stage ;;
   flash)   flash ;;
   tag)     tag_release ;;
+  publish) publish ;;
   verint)  cur_int ;;
   release)
     FLASH=0; for a in "$@"; do [ "$a" = --flash ] && FLASH=1; done
     build; package; stage
     [ "$FLASH" = 1 ] && flash || say "staged, not flashed. run: esp32-release.sh flash"
     ;;
-  *) die "usage: esp32-release.sh {build|package [--full]|stage|flash|tag|verint|release [--flash]}" ;;
+  *) die "usage: esp32-release.sh {build|package [--full]|stage|flash|tag|publish|verint|release [--flash]}" ;;
 esac

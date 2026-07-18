@@ -51,10 +51,15 @@ jobs:
 
       - name: Collect artifacts + checksums
         run: |
+          # #89: ESP-IDF builds are not byte-reproducible, so this rebuild is NOT the deployed
+          # image. Critically, delta OTA verifies the BASE image's hash, so a patch built against
+          # this file is rejected by the device. The valid delta base is uploaded under the
+          # canonical name by `esp32-release.sh publish` from the box that flashed the node.
           cd firmware/esp32-matter
-          cp build.debug/hisense_ac_matter.bin build/hisense_ac_matter-debug.bin
+          cp build.debug/hisense_ac_matter.bin build/hisense_ac_matter-debug-CI-REBUILD.bin
+          mv build/hisense_ac_matter.bin build/hisense_ac_matter-CI-REBUILD.bin
           cd build
-          sha256sum hisense_ac_matter.bin hisense_ac_matter-debug.bin bootloader/bootloader.bin \
+          sha256sum hisense_ac_matter-CI-REBUILD.bin hisense_ac_matter-debug-CI-REBUILD.bin bootloader/bootloader.bin \
             partition_table/partition-table.bin ota_data_initial.bin flasher_args.json > SHA256SUMS.txt
 
       - name: Attach to the GitHub Release
@@ -62,8 +67,8 @@ jobs:
         with:
           generate_release_notes: true   # auto "What's Changed" from commits/PRs since the last tag
           files: |
-            firmware/esp32-matter/build/hisense_ac_matter.bin
-            firmware/esp32-matter/build/hisense_ac_matter-debug.bin
+            firmware/esp32-matter/build/hisense_ac_matter-CI-REBUILD.bin
+            firmware/esp32-matter/build/hisense_ac_matter-debug-CI-REBUILD.bin
             firmware/esp32-matter/build/bootloader/bootloader.bin
             firmware/esp32-matter/build/partition_table/partition-table.bin
             firmware/esp32-matter/build/ota_data_initial.bin
