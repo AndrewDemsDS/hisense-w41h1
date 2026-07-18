@@ -209,6 +209,27 @@ mechanism behaves as the disassembly describes, so trust the `supported` gate.
 | `ac_humidity` | **0** | No humidity capability here, so the unfed Humidity endpoint in `firmware/docs/01` is **not a firmware gap on this unit**. Gate the endpoint on the flag rather than delete it: a unit reporting `1` should get it. |
 | `ac_purify` | **0** | Absent here. Gate, don't remove. |
 
+### 5.2 MEASURED: node 14 returns the SAME flags as node 28 **[PROVEN on hardware, 2026-07-18]**
+
+Read from node 14 (AmebaZ2, fw `1.2.12` debug flavour) via the `:2323` console added for issue #23.
+Until then the AmebaZ2 had no remote diagnostic surface, so this unit had never been measured.
+
+```
+cool_heat=1 ai=0 infinite_fan=0 power_save/eco=1 fan_mute/quiet=1
+swing_dir_8=0 swing_follow=0 humidity=0 power_display=1 demand_resp=0
+purify=0  8heat=1  q_display=1  enable_8heat=0  trans_102_64=0
+raw 0x66/40 reply length = 45B
+```
+
+**Byte-identical to node 28** (§5.1), including the 45 B reply length and the extended
+`[0x19]`/`[0x1A]` tier. This answers §6 Q1b.
+
+Read it as two units of the same model agreeing, not as a general rule. The design rule in §5.1 is
+unchanged: ProductType answers **per unit**, so keep gating at runtime rather than assuming this
+result holds for someone else's A/C. What it does buy is confidence that the decode is stable across
+units and that a flag reading 0 here is a property of the model range as fielded, not a per-board
+quirk.
+
 ### Recommendations
 1. **Gate at runtime on the ProductType flags, never on the static `supported` baseline.** §5.1
    shows the baseline exists to be refined; read it alone and you would conclude eco, quiet and fan
@@ -233,7 +254,7 @@ mechanism behaves as the disassembly describes, so trust the `supported` gate.
 | # | Open question | How to settle |
 |---|---|---|
 | ~~1~~ | ~~Does our A/C reply to the `0x66/40` poll?~~ **ANSWERED §5.1: yes.** | ✅ `features` cmd on the esp32 `:2323` console (fw ≥ 1.0.7). Re-run per unit. |
-| 1b | Does **node 14**'s A/C return the same flags as node 28's? | The AmebaZ2 has no diag console. Either port `features` to a Matter attribute, or trust per-unit gating only where measured. |
+| ~~1b~~ | ~~Does **node 14**'s A/C return the same flags as node 28's?~~ **ANSWERED 2026-07-18: yes, byte-identical.** | ✅ AmebaZ2 debug-flavour `:2323` console (`features`), fw 1.2.12. See §5.2. |
 | 2 | Which profile (`100`–`129`/`199`) our unit resolves to. **Narrowed 2026-07-18: NOT `199`** (node 28's `ac_trans_102_64` reads 0 (§5.1), and that bit set is what selects `'199'`). So it is in `100`–`129`. | Log the `0x66/40` payload, or read `0x100096dc` (getter `0x9b6f308c`) on a stock dongle. |
 | 3 | `desc` `(b0,b1)`=command vs `(b2,b3)`=status frame. **[INFERRED]** | Dump the mask table in `0x9b6f8adc`'s prologue; check `t_temp` (b2=4 → status byte 6) against a live `0x66` capture. |
 | 4 | `word0` `b0`/`b1`/`b3` semantics. | Unknown; no consumer found, but dataflow tracing was not exhaustive. |
