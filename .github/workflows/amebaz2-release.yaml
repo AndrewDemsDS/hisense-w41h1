@@ -31,9 +31,17 @@ jobs:
           want="amebaz2-v$(tr -d '[:space:]' < firmware/src/version.txt)"
           [ "$GITHUB_REF_NAME" = "$want" ] || { echo "::error::tag $GITHUB_REF_NAME != $want"; exit 1; }
 
-      - name: Build + package OTA
+      # Both flavours are published (#22). RELEASE is built second so build/ is left holding the
+      # image users should actually deploy, and so the release artifacts are the last thing written.
+      # The version int is identical for both by design; the flavour lives in the FILENAME.
+      - name: Build + package DEBUG flavour (bench instrument, :2323 console)
         run: |
           mkdir -p firmware/built-images   # gitignored, absent on a fresh checkout
+          bash firmware/scripts/ota-release.sh build --debug
+          HISENSE_FLAVOUR=debug bash firmware/scripts/ota-release.sh package
+
+      - name: Build + package RELEASE flavour (default, no console)
+        run: |
           bash firmware/scripts/ota-release.sh build
           bash firmware/scripts/ota-release.sh package
 
@@ -43,7 +51,9 @@ jobs:
           V=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
           echo "V=$V" >> "$GITHUB_ENV"
           cd firmware/built-images
-          sha256sum "flash_rac-integrated-v$V.bin" "rac-v$V.ota" "rac-v$V.json" > "SHA256SUMS-v$V.txt"
+          sha256sum "flash_rac-integrated-v$V.bin" "rac-v$V.ota" "rac-v$V.json" \
+                    "flash_rac-integrated-v$V-debug.bin" "rac-v$V-debug.ota" "rac-v$V-debug.json" \
+                    > "SHA256SUMS-v$V.txt"
 
       - name: Attach to the GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
@@ -53,4 +63,7 @@ jobs:
             firmware/built-images/flash_rac-integrated-v${{ env.V }}.bin
             firmware/built-images/rac-v${{ env.V }}.ota
             firmware/built-images/rac-v${{ env.V }}.json
+            firmware/built-images/flash_rac-integrated-v${{ env.V }}-debug.bin
+            firmware/built-images/rac-v${{ env.V }}-debug.ota
+            firmware/built-images/rac-v${{ env.V }}-debug.json
             firmware/built-images/SHA256SUMS-v${{ env.V }}.txt

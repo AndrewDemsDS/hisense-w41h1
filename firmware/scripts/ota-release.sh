@@ -304,21 +304,37 @@ PYS
 package() {
   load_env
   local v semver; v="$(cur_version)"; semver="$(cur_semver)"
+  # Both flavours ship publicly, so their artifacts must be distinguishable. Same version int on
+  # purpose (#77 keeps versioning unified); the FLAVOUR lives in the filename, never in the version.
+  # A debug and a release image at one version are DIFFERENT binaries -- never treat one as the
+  # other's delta base or recovery image (#82).
+  local sfx=""; [ "${HISENSE_FLAVOUR:-release}" = "debug" ] && sfx="-debug"
   local fw="$GCC_RELEASE/application_is/Debug/bin/firmware_is.bin"
   local flash="$GCC_RELEASE/application_is/Debug/bin/flash_is.bin"
-  local clip="$REPO/firmware/built-images/flash_rac-integrated-v$v.bin"
-  local ota="$REPO/firmware/built-images/rac-v$v.ota"
+  local clip="$REPO/firmware/built-images/flash_rac-integrated-v$v$sfx.bin"
+  local ota="$REPO/firmware/built-images/rac-v$v$sfx.ota"
   [ -f "$fw" ] || die "no firmware_is.bin -- build first"
+  # The flavour comes from the environment but the CONTENT comes from whatever build/ holds, so a
+  # `package` after the wrong `build` would silently mislabel an image -- and a debug image landing
+  # under a release name is exactly the mistake #22 exists to prevent. Verify the binary against
+  # the claimed flavour using the console's own log string.
+  if strings "$fw" | grep -q "diag console listening"; then
+    [ "${HISENSE_FLAVOUR:-release}" = "debug" ] || \
+      die "built image CONTAINS the :2323 console but flavour is release -- rebuild without --debug, or package with HISENSE_FLAVOUR=debug"
+  else
+    [ "${HISENSE_FLAVOUR:-release}" != "debug" ] || \
+      die "flavour is debug but the built image has NO console -- rebuild with 'build --debug' first"
+  fi
   # otaUrl (#79): default to a LOCAL file:// (staged into --ota-provider-dir). If OTA_RELEASE_BASE
   # is set, point at the GitHub release asset instead -- python-matter-server's OTA provider
   # downloads an http(s):// otaUrl (checksum-verified) then re-serves it over BDX, so the big .ota
   # can live in the release and only the small .json need be staged on the Pi.
-  local otaurl="file:///rac-v$v.ota"
-  [ -n "${OTA_RELEASE_BASE:-}" ] && otaurl="${OTA_RELEASE_BASE%/}/amebaz2-v$semver/rac-v$v.ota"
-  say "package v$semver (softwareVersion $v): clip image + .ota + manifest"
+  local otaurl="file:///rac-v$v$sfx.ota"
+  [ -n "${OTA_RELEASE_BASE:-}" ] && otaurl="${OTA_RELEASE_BASE%/}/amebaz2-v$semver/rac-v$v$sfx.ota"
+  say "package v$semver (softwareVersion $v, ${HISENSE_FLAVOUR:-release} flavour): clip image + .ota + manifest"
   python3 -c "d=open('$flash','rb').read(); open('$clip','wb').write(d + b'\xff'*(4194304-len(d)))"
   python3 "$OTA_TOOL" create -v "$VID" -p "$PID" -vn "$v" -vs "$semver" -da sha256 -mi 1 -ma "$((v-1))" "$fw" "$ota" >/dev/null
-  python3 - "$ota" "$v" "$semver" "$otaurl" > "$REPO/firmware/built-images/rac-v$v.json" <<'PY'
+  python3 - "$ota" "$v" "$semver" "$otaurl" > "$REPO/firmware/built-images/rac-v$v$sfx.json" <<'PY'
 import sys,hashlib,base64,json
 ota,v,semver,otaurl=sys.argv[1],int(sys.argv[2]),sys.argv[3],sys.argv[4]; d=open(ota,'rb').read()
 print(json.dumps({"modelVersion":{"vid":0xFFF1,"pid":0x8001,"softwareVersion":v,"softwareVersionString":semver,"cdVersionNumber":1,"firmwareInformation":"","softwareVersionValid":True,"otaUrl":otaurl,"otaFileSize":len(d),"otaChecksum":base64.b64encode(hashlib.sha256(d).digest()).decode(),"otaChecksumType":1,"minApplicableSoftwareVersion":1,"maxApplicableSoftwareVersion":v-1,"releaseNotesUrl":""}}))
