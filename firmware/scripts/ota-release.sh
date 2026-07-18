@@ -431,6 +431,40 @@ tag_release() {  # create the path-prefixed semver tag amebaz2-vX.Y.Z locally (n
 
 # ---- top-level -------------------------------------------------------------
 cmd="${1:-}"; shift || true
+# ---- publish the DEPLOYED artifacts to the GitHub release (#89) -------------------------------
+# The release workflow REBUILDS at tag time and attaches that output, and neither target is
+# byte-reproducible (measured: AmebaZ2 rebuild 6763c8c5 vs deployed 184da838). So the CI asset is
+# NOT the image any device booted. Harmless-looking until someone reaches for "the release" as a
+# delta base or a recovery image, which is how the ESP32 1.0.3 base was lost (#82). This uploads
+# the bytes a device actually booted, under the CANONICAL names, so the plain filename is always
+# authoritative and the CI rebuild carries the -CI-REBUILD suffix instead.
+int_to_semver() { echo "$(( $1 / 10000 )).$(( ($1 / 100) % 100 )).$(( $1 % 100 ))"; }
+publish() {
+  command -v gh >/dev/null || die "gh not on PATH -- needed to upload release assets"
+  local v tag n=0 f
+  # Only ever publish what THIS box confirmed booted: `flash` writes the marker after the device
+  # sustained the new version across three fresh reads. Publishing an image no device ran would
+  # recreate exactly the problem this fixes.
+  v="$(released_version)"
+  [ "$v" != 0 ] || die "no on-device version recorded -- run 'flash' first"
+  tag="amebaz2-v$(int_to_semver "$v")"
+  gh release view "$tag" >/dev/null 2>&1 || die "no release $tag -- push the tag first ('ota-release.sh tag')"
+  # firmware_is-v<N>*.bin FIRST: on this path the raw firmware_is.bin is what the break-glass HTTP
+  # OTA actually streams to the device, so the archived copy is the byte-exact deployed payload.
+  # The clip/.ota are derived and only exist if `package` ran on this box for this build -- and
+  # regenerating them would mean rebuilding, whose bytes differ (non-reproducible), so they are
+  # published only when genuinely available rather than manufactured on demand.
+  for f in "firmware_is-v$v.bin" "firmware_is-v$v-debug.bin" \
+           "flash_rac-integrated-v$v.bin" "rac-v$v.ota" "rac-v$v.json" \
+           "flash_rac-integrated-v$v-debug.bin" "rac-v$v-debug.ota" "rac-v$v-debug.json"; do
+    [ -f "$REPO/firmware/built-images/$f" ] || continue
+    gh release upload "$tag" "$REPO/firmware/built-images/$f" --clobber >/dev/null \
+      && { say "  uploaded $f"; n=$((n+1)); }
+  done
+  (( n > 0 )) || die "no artifacts for v$v in built-images/ -- build + package first"
+  say "published $n deployed artifact(s) to $tag (on-device version $v)"
+}
+
 case "$cmd" in
   lint)    lint ;;
   build)   build "${1:-}" ;;
@@ -452,5 +486,6 @@ case "$cmd" in
     [ "$TAG" = 1 ] && tag_release || true
     [ "$FLASH" = 1 ] && flash || say "staged, not flashed. run: ota-release.sh flash"
     ;;
-  *) die "usage: ota-release.sh {lint|build [--bump[-minor|-major]] [--debug]|package|stage|flash|tag|verint [semver]|release [--bump[-minor|-major]] [--tag] [--flash]}" ;;
+  publish) publish ;;
+  *) die "usage: ota-release.sh {lint|build [--bump[-minor|-major]] [--debug]|package|stage|flash|tag|publish|verint [semver]|release [--bump[-minor|-major]] [--tag] [--flash]}" ;;
 esac
