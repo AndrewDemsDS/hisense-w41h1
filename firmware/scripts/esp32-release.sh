@@ -251,7 +251,7 @@ tag_release() {
   local semver t; semver="$(cur_semver)"; t="esp32-v$semver"
   git -C "$REPO" rev-parse -q --verify "refs/tags/$t" >/dev/null \
     && { say "tag $t already exists -- leaving it"; return; }
-  git -C "$REPO" tag -a "$t" -m "ESP32 firmware $semver (softwareVersion $(cur_int))"
+  git -C "$REPO" tag -s "$t" -m "ESP32 firmware $semver (softwareVersion $(cur_int))"
   say "tagged $t -- push with: git push origin $t"
 }
 

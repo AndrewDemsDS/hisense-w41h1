@@ -376,7 +376,7 @@ tag_release() {  # create the path-prefixed semver tag amebaz2-vX.Y.Z locally (n
   local semver t; semver="$(cur_semver)"; t="amebaz2-v$semver"
   git -C "$REPO" rev-parse -q --verify "refs/tags/$t" >/dev/null \
     && { say "tag $t already exists -- leaving it"; return; }
-  git -C "$REPO" tag -a "$t" -m "AmebaZ2 firmware $semver (softwareVersion $(cur_version))"
+  git -C "$REPO" tag -s "$t" -m "AmebaZ2 firmware $semver (softwareVersion $(cur_version))"
   say "tagged $t (softwareVersion $(cur_version)) -- push with: git push origin $t"
 }
 
