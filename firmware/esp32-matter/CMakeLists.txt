@@ -62,3 +62,17 @@ idf_build_set_property(COMPILE_OPTIONS "-ffile-prefix-map=$ENV{HOME}=/build" APP
 # softwareVersion attribute comes from PROJECT_VER_NUMBER -> chip_config_software_version_number.
 idf_build_set_property(COMPILE_DEFINITIONS "CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION=${PROJECT_VER_INT}" APPEND)
 message(STATUS "hisense: Matter softwareVersion ${PROJECT_VER_INT} (\"${PROJECT_VER}\") [issue #77]")
+
+# Manual HTTPS-OTA backup URL (issue #4 / the Identify=88 fallback). Deliberately NOT hardcoded:
+# this is a public repo and a real address publishes network topology, plus the server's MAC when
+# the address is SLAAC EUI-64 derived. Pass -DHISENSE_OTA_URL=... to idf.py, or export it, and the
+# firmware falls back to a non-resolvable placeholder when unset.
+if(DEFINED HISENSE_OTA_URL OR DEFINED ENV{HISENSE_OTA_URL})
+    if(NOT DEFINED HISENSE_OTA_URL)
+        set(HISENSE_OTA_URL $ENV{HISENSE_OTA_URL})
+    endif()
+    idf_build_set_property(COMPILE_DEFINITIONS "HISENSE_OTA_URL=\"${HISENSE_OTA_URL}\"" APPEND)
+    message(STATUS "hisense: manual OTA URL set from build config")
+else()
+    message(STATUS "hisense: HISENSE_OTA_URL unset -- manual HTTPS-OTA uses the placeholder URL")
+endif()
