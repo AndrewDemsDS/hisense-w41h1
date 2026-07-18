@@ -98,7 +98,7 @@ static const chip::EndpointId kDisplayEp   = 9;  // OnOff -> panel display (#19 
  * ------------------------------------------------------------------------ */
 static HisenseCommand s_cmd = { HISENSE_MODE_COOL, 24, false,
                                 HISENSE_FAN_AUTO, HISENSE_SWING_OFF,
-                                HISENSE_SWING_OFF, HISENSE_FEATURE_NONE, false };
+                                HISENSE_SWING_OFF, HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
 
 /* Latest parsed A/C status, written by the bus task, read by the downlink
  * handler. Poll cadence is seconds apart so a plain snapshot copy is adequate. */
@@ -494,13 +494,18 @@ static void hisense_apply_mute(bool on)
     if (n) hisense_send_frame(f, n);
 }
 
-/* Panel display on/off (#19 parity with the esp32 build). display_on rides the
- * combined command frame (@20: 0xC0 on / 0x40 off); flush rebuilds + sends it.
- * Write-only -- the A/C reports no display state, so there's no status echo. */
+/* Panel display on/off (#19 parity with the esp32 build). `display` rides the
+ * combined command frame (@20: 0xC0 on / 0x40 off / 0x00 leave-alone); flush rebuilds
+ * + sends it. Write-only -- the A/C reports no display state, so there's no status echo.
+ *
+ * ONE-SHOT (#52): reset to NOCHANGE afterwards. The field is packed into EVERY combined
+ * command, so a latched ON/OFF would re-assert the panel on every later mode/setpoint/fan
+ * change and fight the user's remote. */
 static void hisense_apply_display(bool on)
 {
-    s_cmd.display_on = on;
+    s_cmd.display = on ? HISENSE_DISPLAY_ON : HISENSE_DISPLAY_OFF;
     hisense_flush_command();
+    s_cmd.display = HISENSE_DISPLAY_NOCHANGE;
 }
 
 /* Sleep profile (0=off, 1..4 = General/Old/Young/Kids). Driven from two places --

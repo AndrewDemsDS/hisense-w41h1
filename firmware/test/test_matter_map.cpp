@@ -20,7 +20,7 @@ int main() {
     printf("== Matter <-> Hisense mapping tests ==\n");
     HisenseMode hm; bool v, h;
     HisenseCommand base = { HISENSE_MODE_COOL, 24, false, HISENSE_FAN_AUTO,
-                            HISENSE_SWING_OFF, HISENSE_SWING_OFF, HISENSE_FEATURE_NONE, false };
+                            HISENSE_SWING_OFF, HISENSE_SWING_OFF, HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
 
     // ---- mode mapping (both directions + round-trip) ----
     printf("[mode]\n");

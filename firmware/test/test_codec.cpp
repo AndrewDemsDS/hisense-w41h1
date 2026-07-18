@@ -48,35 +48,35 @@ int main() {
 
     // ---- COMMAND builder: hardware-confirmed golden bytes ----
     printf("[command builder vs sniffed dongle bytes]\n");
-    { HisenseCommand c={HISENSE_MODE_AUTO,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE,false};
+    { HisenseCommand c={HISENSE_MODE_AUTO,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
       hisense_build_command(&c,f,sizeof(f)); CHECK(f[18]==0x90,"AUTO byte18=0x%02X exp 0x90",f[18]); }
-    { HisenseCommand c={HISENSE_MODE_COOL,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE,false};
+    { HisenseCommand c={HISENSE_MODE_COOL,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
       hisense_build_command(&c,f,sizeof(f)); CHECK(f[18]==0x50,"COOL byte18=0x%02X exp 0x50",f[18]); }
-    { HisenseCommand c={HISENSE_MODE_HEAT,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE,false};
+    { HisenseCommand c={HISENSE_MODE_HEAT,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
       hisense_build_command(&c,f,sizeof(f)); CHECK(f[18]==0x30,"HEAT byte18=0x%02X exp 0x30",f[18]); }
-    { HisenseCommand c={HISENSE_MODE_DRY,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE,false};
+    { HisenseCommand c={HISENSE_MODE_DRY,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
       hisense_build_command(&c,f,sizeof(f)); CHECK(f[18]==0x70,"DRY byte18=0x%02X exp 0x70",f[18]); }
-    { HisenseCommand c={HISENSE_MODE_FAN,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE,false};
+    { HisenseCommand c={HISENSE_MODE_FAN,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
       hisense_build_command(&c,f,sizeof(f)); CHECK(f[18]==0x10,"FANmode byte18=0x%02X exp 0x10",f[18]); }
     // six fan speeds
     struct { HisenseFanSpeed s; uint8_t b; const char* n; } fans[] = {
       {HISENSE_FAN_AUTO,0x01,"auto"},{HISENSE_FAN_QUIET,0x03,"quiet"},{HISENSE_FAN_LOW,0x0B,"low"},
       {HISENSE_FAN_MED_LOW,0x0D,"med-low"},{HISENSE_FAN_MID,0x0F,"mid"},{HISENSE_FAN_MED_HIGH,0x11,"med-high"},{HISENSE_FAN_HIGH,0x13,"high"} };
-    for (auto &x : fans) { HisenseCommand c={HISENSE_MODE_COOL,24,false,x.s,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE,false};
+    for (auto &x : fans) { HisenseCommand c={HISENSE_MODE_COOL,24,false,x.s,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
       hisense_build_command(&c,f,sizeof(f)); CHECK(f[16]==x.b,"fan %s byte16=0x%02X exp 0x%02X",x.n,f[16],x.b); }
     // temp 22C -> 2n+1 = 0x2D
-    { HisenseCommand c={HISENSE_MODE_COOL,22,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE,false};
+    { HisenseCommand c={HISENSE_MODE_COOL,22,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
       hisense_build_command(&c,f,sizeof(f)); CHECK(f[19]==0x2D,"temp22 byte19=0x%02X exp 0x2D",f[19]); }
     // eco / turbo
-    { HisenseCommand c={HISENSE_MODE_COOL,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_ECO,false};
+    { HisenseCommand c={HISENSE_MODE_COOL,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_ECO, HISENSE_DISPLAY_NOCHANGE };
       hisense_build_command(&c,f,sizeof(f)); CHECK(f[33]==0x30,"eco byte33=0x%02X exp 0x30",f[33]); }
-    { HisenseCommand c={HISENSE_MODE_COOL,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_TURBO,false};
+    { HisenseCommand c={HISENSE_MODE_COOL,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_TURBO, HISENSE_DISPLAY_NOCHANGE };
       hisense_build_command(&c,f,sizeof(f)); CHECK(f[33]==0x0C,"turbo byte33=0x%02X exp 0x0C",f[33]); }
     // vertical swing
-    { HisenseCommand c={HISENSE_MODE_COOL,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_SWING,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE,false};
+    { HisenseCommand c={HISENSE_MODE_COOL,24,false,HISENSE_FAN_AUTO,HISENSE_SWING_SWING,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
       hisense_build_command(&c,f,sizeof(f)); CHECK(f[32]==0xC0,"vswing byte32=0x%02X exp 0xC0",f[32]); }
     // every command frame must carry a valid 2-byte checksum + F4 FB end
-    { HisenseCommand c={HISENSE_MODE_COOL,24,false,HISENSE_FAN_HIGH,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE,false};
+    { HisenseCommand c={HISENSE_MODE_COOL,24,false,HISENSE_FAN_HIGH,HISENSE_SWING_OFF,HISENSE_SWING_OFF,HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
       size_t n=hisense_build_command(&c,f,sizeof(f));
       uint16_t ck=besum(f,(int)n-4); CHECK(((f[n-4]<<8)|f[n-3])==ck,"cmd checksum mismatch");
       CHECK(f[n-2]==0xF4&&f[n-1]==0xFB,"cmd end tag"); }
@@ -89,7 +89,7 @@ int main() {
       HisenseFanSpeed fans[3]={HISENSE_FAN_LOW,HISENSE_FAN_MID,HISENSE_FAN_HIGH};
       HisenseFeature feats[3]={HISENSE_FEATURE_NONE,HISENSE_FEATURE_ECO,HISENSE_FEATURE_TURBO};
       for(int s=16;s<=32;s++) for(int mi=0;mi<5;mi++) for(int fi=0;fi<3;fi++) for(int qi=0;qi<3;qi++){
-        HisenseCommand c={modes[mi],(int8_t)s,false,fans[fi],HISENSE_SWING_OFF,HISENSE_SWING_OFF,feats[qi],false};
+        HisenseCommand c={modes[mi],(int8_t)s,false,fans[fi],HISENSE_SWING_OFF,HISENSE_SWING_OFF,feats[qi],HISENSE_DISPLAY_NOCHANGE};
         uint8_t o[64]; size_t n=hisense_build_command(&c,o,sizeof(o));
         if(n>HISENSE_CMD_FRAME_LEN){ found++;
           bool dbl=false; for(size_t i=HISENSE_CMD_CHK_OFFSET;i+2<n;i++) if(o[i]==0xF4&&o[i+1]==0xF4) dbl=true;
@@ -102,7 +102,7 @@ int main() {
 
     // ---- combined multi-field frame: the driver ALWAYS sends one -- assert all fields coexist ----
     printf("[combined multi-field command frame]\n");
-    { HisenseCommand c={HISENSE_MODE_COOL,22,false,HISENSE_FAN_LOW,HISENSE_SWING_SWING,HISENSE_SWING_OFF,HISENSE_FEATURE_ECO,false};
+    { HisenseCommand c={HISENSE_MODE_COOL,22,false,HISENSE_FAN_LOW,HISENSE_SWING_SWING,HISENSE_SWING_OFF,HISENSE_FEATURE_ECO, HISENSE_DISPLAY_NOCHANGE };
       uint8_t o[64]; size_t n=hisense_build_command(&c,o,sizeof(o));
       CHECK(o[16]==0x0B,"combined fan   byte16=0x%02X exp 0x0B",o[16]);
       CHECK(o[18]==0x50,"combined mode  byte18=0x%02X exp 0x50",o[18]);
@@ -351,6 +351,70 @@ int main() {
                                            1,1,out,4)==0,"reject too-small out_cap");
             CHECK(hisense_stamp_link_token(nullptr,20,1,1,out,sizeof(out))==0,"reject null in");
         }
+    }
+
+    // ---- display tri-state, frame[36] (#52) ---------------------------------
+    // All three values CONFIRMED on a live W41H1 2026-07-19: 0x40 darkened the panel,
+    // 0xC0 lit it. The regression this guards: `display` rides EVERY combined command,
+    // so NOCHANGE must emit 0x00 ("leave alone") or ordinary mode/temp/fan traffic would
+    // stomp the panel. The old code sent 0x00 for OFF, which is why off never worked.
+    {
+        printf("[display tri-state -> byte36]\n");
+        struct { HisenseDisplay d; uint8_t b; const char *n; } cases[] = {
+            { HISENSE_DISPLAY_NOCHANGE, 0x00, "nochange (leave alone)" },
+            { HISENSE_DISPLAY_ON,       0xC0, "on"  },
+            { HISENSE_DISPLAY_OFF,      0x40, "off" },
+        };
+        for (auto &x : cases) {
+            HisenseCommand c = { HISENSE_MODE_COOL, 24, false, HISENSE_FAN_AUTO,
+                                 HISENSE_SWING_OFF, HISENSE_SWING_OFF,
+                                 HISENSE_FEATURE_NONE, x.d };
+            uint8_t o[64];
+            hisense_build_command(&c, o, sizeof(o));
+            CHECK(o[36] == x.b, "display %s -> byte36=0x%02X exp 0x%02X", x.n, o[36], x.b);
+        }
+        // OFF must be distinguishable from NOCHANGE on the wire -- collapsing them is
+        // exactly the shipped bug.
+        CHECK(0x40 != 0x00, "display OFF is not the leave-alone value");
+    }
+
+    // ---- bench override builder (#52 display-byte sweep) --------------------
+    // The safety contract that makes an offset sweep runnable against a LIVE A/C:
+    // a probe frame differs from the current-state frame by exactly the byte under
+    // test, so a miss is a no-op instead of a surprise mode/setpoint change.
+    {
+        printf("[bench override builder]\n");
+        HisenseCommand c = { HISENSE_MODE_COOL, 22, false, HISENSE_FAN_LOW,
+                             HISENSE_SWING_OFF, HISENSE_SWING_OFF, HISENSE_FEATURE_ECO, HISENSE_DISPLAY_NOCHANGE };
+        uint8_t base[64], ovr[64];
+        size_t nb = hisense_build_command(&c, base, sizeof(base));
+        CHECK(nb > 0, "baseline command builds");
+
+        size_t n1 = hisense_build_command_override(&c, ovr, sizeof(ovr), 36, base[36]);
+        CHECK(n1 == nb && memcmp(base, ovr, nb) == 0, "same-value override == baseline");
+
+        size_t n2 = hisense_build_command_override(&c, ovr, sizeof(ovr), 36, 0x40);
+        CHECK(n2 > 0 && ovr[36] == 0x40, "override lands at the requested offset");
+        int diffs = 0;
+        for (size_t i = 0; i < HISENSE_CMD_CHK_OFFSET; i++) if (base[i] != ovr[i]) diffs++;
+        CHECK(diffs == 1, "exactly one payload byte differs (live-bench safety contract)");
+        CHECK(memcmp(base + HISENSE_CMD_CHK_OFFSET, ovr + HISENSE_CMD_CHK_OFFSET, 2) != 0,
+              "checksum recomputed over the patched frame, not stale");
+
+        // Header / checksum / terminator must be refused: those frames get dropped by
+        // the A/C, which looks identical to "this offset does nothing" during a sweep.
+        CHECK(hisense_build_command_override(&c,ovr,sizeof(ovr),0,0xFF)==0, "reject header[0]");
+        CHECK(hisense_build_command_override(&c,ovr,sizeof(ovr),
+              (int)HISENSE_CMD_HEADER_LEN-1,0xFF)==0, "reject last header byte");
+        CHECK(hisense_build_command_override(&c,ovr,sizeof(ovr),
+              (int)HISENSE_CMD_CHK_OFFSET,0xFF)==0, "reject checksum offset");
+        CHECK(hisense_build_command_override(&c,ovr,sizeof(ovr),
+              (int)HISENSE_CMD_END_OFFSET,0xFF)==0, "reject terminator offset");
+        CHECK(hisense_build_command_override(&c,ovr,sizeof(ovr),-1,0xFF)==0, "reject negative offset");
+        CHECK(hisense_build_command_override(&c,ovr,sizeof(ovr),
+              (int)HISENSE_CMD_HEADER_LEN,0xFF)>0, "accept first payload offset");
+        CHECK(hisense_build_command_override(&c,ovr,sizeof(ovr),
+              (int)HISENSE_CMD_CHK_OFFSET-1,0xFF)>0, "accept last payload offset");
     }
 
     printf("== %d passed, %d failed ==\n", g_pass, g_fail);

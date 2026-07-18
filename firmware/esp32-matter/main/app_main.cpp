@@ -83,7 +83,8 @@ static constexpr uint32_t kMfgClusterId = 0xFFF1FC00;
 // reference so the first combined frame is always valid.
 static HisenseCommand s_cmd   = { HISENSE_MODE_COOL, 24, false,
                                   HISENSE_FAN_AUTO, HISENSE_SWING_OFF,
-                                  HISENSE_SWING_OFF, HISENSE_FEATURE_NONE, false };
+                                  HISENSE_SWING_OFF, HISENSE_FEATURE_NONE,
+                                  HISENSE_DISPLAY_NOCHANGE };
 static volatile bool s_from_bus = false;// true while pushing status->attrs: suppress
                                         // the resulting PRE/POST_UPDATE from re-sending a cmd
 
@@ -152,6 +153,22 @@ static void flush_cmd()
     if (hisense_send_frame(f, n)) arm_sync_hold();          // arm the settle only if it enqueued
     else                          ESP_LOGW(TAG, "cmd dropped (TX queue full)");
 }
+/* Bench bridge for the diag console's `tx` (#52 display-byte hunt). Lives here, not
+ * in diag_console.cpp, so s_cmd and arm_sync_hold stay private: the probe frame is
+ * built from the CURRENT command state, so it differs from what the A/C is already
+ * running by exactly the byte under test. Arms the settle window like any other
+ * send, otherwise the next status frame resyncs s_cmd mid-probe.
+ * Returns 0 sent, -1 offset/build rejected, -2 TX queue full. */
+extern "C" int diag_tx_override(int off, uint8_t val)
+{
+    uint8_t f[HISENSE_CMD_FRAME_LEN + 2];
+    size_t n = hisense_build_command_override(&s_cmd, f, sizeof(f), off, val);
+    if (!n) return -1;
+    if (!hisense_send_frame(f, n)) return -2;
+    arm_sync_hold();
+    return 0;
+}
+
 static void send_power(bool on)
 {
     uint8_t f[HISENSE_CMD_FRAME_LEN];
@@ -192,13 +209,20 @@ static void apply_sleep(uint8_t profile)
     size_t n = hisense_build_sleep_frame(profile, f, sizeof(f));
     if (n && hisense_send_frame(f, n)) arm_sync_hold();
 }
-// #19 cheap win: panel display on/off. display_on rides the combined command frame (@20:
-// 0xC0 on / 0x40 off); flush_cmd() rebuilds + sends it. No status feedback (the A/C doesn't
-// report display state), so the OnOff attr is optimistic — reflects the last command.
+// #19 cheap win: panel display on/off. `display` rides the combined command frame (@20:
+// 0xC0 on / 0x40 off / 0x00 leave-alone); flush_cmd() rebuilds + sends it. No status feedback
+// (the A/C doesn't report display state), so the OnOff attr is optimistic — reflects the last
+// command.
+//
+// ONE-SHOT (#52): reset to NOCHANGE after the frame goes out. `display` is packed into EVERY
+// combined command, so leaving ON/OFF latched would re-assert the panel state on every later
+// mode/setpoint/fan change and fight the user's remote. Leave-alone is the only correct resting
+// value.
 static void apply_display(bool on)
 {
-    s_cmd.display_on = on;
+    s_cmd.display = on ? HISENSE_DISPLAY_ON : HISENSE_DISPLAY_OFF;
     flush_cmd();
+    s_cmd.display = HISENSE_DISPLAY_NOCHANGE;
 }
 
 static void on_recommission(uint8_t reason);   // fwd decl (defined in the "77" section below)

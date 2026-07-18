@@ -347,7 +347,14 @@ size_t hisense_build_sleep_frame(uint8_t profile, uint8_t *out, size_t out_cap)
     return hisense_build_single_field(17, v, out, out_cap);
 }
 
-size_t hisense_build_command(const HisenseCommand *cmd, uint8_t *out, size_t out_cap)
+/* Shared body for hisense_build_command() and hisense_build_command_override().
+ * ovr_off < 0 means "no override" and reproduces the original behaviour byte for
+ * byte, so the golden vectors keep passing. A non-negative ovr_off patches ONE
+ * pre-checksum byte just before finalize_frame(), which is the only correct place
+ * to do it: the checksum is computed over the patched frame and the 0xF4 stuffing
+ * happens afterwards, so callers can address true frame offsets and ignore both. */
+static size_t build_command_impl(const HisenseCommand *cmd, uint8_t *out, size_t out_cap,
+                                 int ovr_off, uint8_t ovr_val)
 {
     if (cmd == NULL || out == NULL || out_cap < HISENSE_CMD_FRAME_LEN + 2) {
         return 0;
@@ -448,13 +455,44 @@ size_t hisense_build_command(const HisenseCommand *cmd, uint8_t *out, size_t out
     // offset 35: baseline filler 0x00 (majority of single-purpose samples).
     frame[35] = 0x00;
 
-    // offset 36: display. 0xC0 on / 0x40 off / 0x00 "leave alone".
-    frame[36] = cmd->display_on ? 0xC0 : 0x00;
+    // offset 36: display. 0xC0 on / 0x40 off / 0x00 "leave alone". All three CONFIRMED
+    // on hardware 2026-07-19 (#52) -- previously this sent 0x00 for "off", i.e. the
+    // leave-alone value, which is why the ep9 Display switch never turned the panel off.
+    switch (cmd->display) {
+    case HISENSE_DISPLAY_ON:  frame[36] = 0xC0; break;
+    case HISENSE_DISPLAY_OFF: frame[36] = 0x40; break;
+    case HISENSE_DISPLAY_NOCHANGE:
+    default:                  frame[36] = 0x00; break;
+    }
+
+    // Bench override (#52 display-byte hunt): patch one payload byte AFTER the
+    // normal packing so the frame is otherwise a known-good current-state command,
+    // and BEFORE the checksum so the result is still a valid frame on the wire.
+    if (ovr_off >= 0 && (size_t) ovr_off < HISENSE_CMD_FRAME_LEN) {
+        frame[ovr_off] = ovr_val;
+    }
 
     finalize_frame(frame, HISENSE_CMD_CHK_OFFSET, HISENSE_CMD_END_OFFSET);
 
     // Byte-stuff an 0xF4 checksum byte before it goes on the wire.
     return hisense_stuff_checksum(frame, HISENSE_CMD_FRAME_LEN, out, out_cap);
+}
+
+size_t hisense_build_command(const HisenseCommand *cmd, uint8_t *out, size_t out_cap)
+{
+    return build_command_impl(cmd, out, out_cap, -1, 0);
+}
+
+size_t hisense_build_command_override(const HisenseCommand *cmd, uint8_t *out, size_t out_cap,
+                                      int ovr_off, uint8_t ovr_val)
+{
+    // Refuse the header and the checksum/terminator: patching those produces a
+    // frame the A/C drops (or, worse, a reframe), which reads as "this offset does
+    // nothing" and would silently poison a sweep.
+    if (ovr_off < (int) HISENSE_CMD_HEADER_LEN || ovr_off >= (int) HISENSE_CMD_CHK_OFFSET) {
+        return 0;
+    }
+    return build_command_impl(cmd, out, out_cap, ovr_off, ovr_val);
 }
 
 /* ---------------------------------------------------------------------------
