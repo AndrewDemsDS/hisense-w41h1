@@ -561,8 +561,16 @@ extern "C" {
 }
 #define HISENSE_OTA_OK 1   // matter_ota.h: OTA_SUCCESS = 1
 
-// Override at build (-DHISENSE_OTA_HOST=... etc.) if the Pi file server / image name moves.
-// Placeholder host per the private-repo scrub convention -- set it for your network.
+// Deployment-specific server address. This is a PUBLIC repo, so the real address must never be
+// committed here: `ota-release.sh build` generates hisense_ota_config.h into the SDK example dir
+// from OTA_HTTP_* in ota-release.env (gitignored), and it is picked up below when present. A build
+// without it falls back to the placeholder, which is inert rather than someone else's host.
+// Overriding by -DHISENSE_OTA_HOST=... still works.
+#if defined(__has_include)
+#  if __has_include("hisense_ota_config.h")
+#    include "hisense_ota_config.h"
+#  endif
+#endif
 #ifndef HISENSE_OTA_HOST
 #define HISENSE_OTA_HOST     "192.168.1.50"
 #endif
