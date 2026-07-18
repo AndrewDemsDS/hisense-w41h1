@@ -131,7 +131,15 @@ static int cmd_features(int, char **)
     // Names corrected 2026-07-16 (RE docs/10 §5a): same byte reads, right names.
     printf("  purify=%d ([0x0A]&0x08)   8heat=%d ([0x0D]&0x80, 8C frost-guard)\r\n",
            ft.purify, ft.heat_8c);
-    printf("  (true ac_q_display = [0x1A]&0x40 is not parsed — docs/11 §6)\r\n");
+    if (ft.ext_valid) {
+        printf("  q_display=%d ([0x1A]&0x40)  enable_8heat=%d ([0x1A]&0x04)  "
+               "trans_102_64=%d ([0x19]&0x08 -> profile '199')\r\n",
+               ft.q_display, ft.enable_8heat, ft.trans_102_64);
+    } else {
+        printf("  q_display/enable_8heat/trans_102_64: UNKNOWN "
+               "(reply %uB, need >39B to carry bytes 38/39)\r\n", (unsigned)ft.reply_len);
+    }
+    printf("  raw 0x66/40 reply length = %uB\r\n", (unsigned)ft.reply_len);
     return 0;
 }
 

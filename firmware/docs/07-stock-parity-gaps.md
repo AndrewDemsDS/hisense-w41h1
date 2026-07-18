@@ -26,8 +26,8 @@ to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` fl
 | Power (V/I/W) | ✅ | — | ✅ | ElectricalPowerMeasurement (see #16, `power_estimate.h`) |
 | **Vertical swing on/off** | ✅ | ✅ | ❌ | **CHEAP WIN** — decoded (`vswing_on`), controllable (`HisenseCommand.vswing`), but the esp32 build never creates/writes a FanControl **RockSetting** attr (only shadows it at `app_main.cpp:359`). Pure app-layer to expose. |
 | **Display / panel on/off** | cap only | ✅ | ❌ | **CHEAP WIN** — `HisenseCommand.display_on` (@20, 0xC0/0x40) is controllable but wired to no endpoint. Expose as an OnOff switch. (Dimmer *level* = `ac_power_display`, needs new RE.) |
-| 8 °C frost-guard heat | ⚠️ cap (mislabeled) | ❌ | ❌ | Capability bit `ac_8heat` (byte26 0x80) IS read — but under the wrong field name `purify` (see bug below). No control frame RE'd. `docs/05:79` marks it likely absent on this unit. |
-| Purify / ionizer | ⚠️ cap (mislabeled) | ❌ | ❌ | `ac_purify` (byte23 0x08) read under wrong name `q_display`; live `purify_on` (b36 0x20) "bit always 0 — feature absent on this unit". No builder. |
+| 8 °C frost-guard heat | ✅ cap | ❌ | ❌ | Capability bit `ac_8heat` (byte26 0x80) read as `heat_8c`; `ac_enable_8heat` (byte39 0x04) read as `enable_8heat` when `ext_valid`. No control frame RE'd. `docs/05:79` marks it likely absent on this unit. |
+| Purify / ionizer | ✅ cap | ❌ | ❌ | `ac_purify` (byte23 0x08) read as `purify`; live `purify_on` (b36 0x20) "bit always 0, feature absent on this unit". No builder. |
 | AI / smart | ✅ cap | ❌ | ❌ (logged) | `ai` (byte28 0x40). Capability only, no control frame. |
 | Demand-response | ✅ cap | ❌ | ❌ | `demand_resp` 2-bit (byte35). Capability only. |
 | Infinite / stepless fan | ✅ cap | ⚠️ | ⚠️ | `infinite_fan` (byte25 0x08); we drive 6 discrete speeds only, not stepless. |
@@ -55,14 +55,23 @@ to any Matter attribute, so it can't be read via matter-server. The only remote 
 telnet diag console `:2323` `decode` path. To make it HA-readable, map `hisense_get_features()` into
 extra `0xFFF1FC00` attributes (or a features console command) — see recommendation in #19.
 
-## Data-quality bugs found during this review (→ own issue)
+## Data-quality bugs found during this review (→ issue #83): RESOLVED
 
-- **`HisenseFeatures.purify` and `.q_display` read the wrong bits.** Per the Ghidra decode
-  (`docs/10 §5a`): `purify` actually carries **`ac_8heat`** (byte26 0x80) and `q_display` actually
-  carries **`ac_purify`** (byte23 0x08). The real `ac_q_display` is byte39 0x40 — **not decoded**.
-  Wrong labels flow into `on_features` logging, `diag_console.cpp:122`, and `matter_drivers.cpp:347`.
-- **Not decoded at all:** `ac_q_display` (byte39 0x40), `ac_enable_8heat` (byte39 0x04),
-  `ac_trans_102_64` (byte38 0x08).
+- ~~**`HisenseFeatures.purify` and `.q_display` read the wrong bits.**~~ Renamed 2026-07-16 to
+  `heat_8c` (byte26 0x80 = `ac_8heat`) and `purify` (byte23 0x08 = `ac_purify`), per the Ghidra
+  decode (`docs/10 §5a`). The byte reads were always correct, so behaviour did not change.
+- ~~**Not decoded at all:** `ac_q_display` (byte39 0x40), `ac_enable_8heat` (byte39 0x04),
+  `ac_trans_102_64` (byte38 0x08).~~ Added 2026-07-18 as `q_display` / `enable_8heat` /
+  `trans_102_64`. They live on payload `[0x19]`/`[0x1A]`, which stock gates by length, so they
+  decode only when the reply is long enough (frame len > 39) and `HisenseFeatures.ext_valid`
+  reports which case applied. **A `0` with `ext_valid == false` means "unknown", not "absent"**.
 
-These are capability-flag *labels* (not used for control today), so low-impact — but wrong. Fix =
-rename the two fields + add the three missing, per `docs/10 §5a`.
+**Verified on hardware 2026-07-18** (node 28, fw 1.0.10, `features` on the `:2323` console): the
+0x66/40 reply is **45 B**, so the extended tier is reachable, and **`ac_q_display` reads 1** on this
+unit, a capability that was invisible while the field name held `ac_purify`. `ac_enable_8heat` and
+`ac_trans_102_64` read 0. All base-tier flags match the 2026-07-16 capture unchanged. See
+`RE docs/11 §5.1`.
+
+These are capability-flag *labels* (not used for control today), so the fix was low-impact.
+Consumers updated: `matter_drivers.cpp` `on_features` logging and the esp32 `diag_console`
+`features` command, both of which now print the extended tier or explicitly say UNKNOWN.

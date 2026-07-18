@@ -228,6 +228,8 @@ int main() {
         ff[26]=0x80;                 // 8heat  ([0x0D]&0x80; swing_follow clear)
         ff[27]=(uint8_t)(0x02u<<6);  // power_display = 2
         ff[35]=0x03;                 // demand_resp = 3
+        ff[38]=0x08;                 // trans_102_64          ([0x19]&0x08)
+        ff[39]=0x40|0x04;            // q_display + enable_8heat ([0x1A] bits 0x40/0x04)
         HisenseFeatures fe; memset(&fe,0,sizeof(fe));
         CHECK(hisense_parse_features(ff,64,&fe),"parse 66/40 frame");
         CHECK(fe.cool_heat&&fe.ai&&fe.swing_dir_8,"cool_heat/ai/swing8 set");
@@ -236,6 +238,19 @@ int main() {
         CHECK(fe.power_display==2,"power_display=%d exp 2",fe.power_display);
         CHECK(fe.demand_resp==3,"demand_resp=%d exp 3",fe.demand_resp);
         CHECK(!fe.humidity&&!fe.fan_mute,"unset flags stay clear");
+        // Extended tier (bytes 38/39) -- present because len 64 > 39.
+        CHECK(fe.ext_valid,"ext tier decoded on a full-length frame");
+        CHECK(fe.q_display&&fe.enable_8heat,"q_display/enable_8heat set");
+        CHECK(fe.trans_102_64,"trans_102_64 set");
+        CHECK(fe.reply_len==64,"reply_len=%u exp 64",(unsigned)fe.reply_len);
+        // A base-tier-only frame (len 36..39) must still parse, and must report the
+        // ext fields as UNKNOWN rather than silently 0 -- docs/11 §5.1 gates per unit.
+        memset(&fe,0,sizeof(fe));
+        CHECK(hisense_parse_features(ff,38,&fe),"parse short-but-valid 66/40 frame");
+        CHECK(fe.valid&&fe.cool_heat&&fe.demand_resp==3,"base tier intact on short frame");
+        CHECK(!fe.ext_valid,"ext tier flagged UNKNOWN on short frame");
+        CHECK(!fe.q_display&&!fe.enable_8heat&&!fe.trans_102_64,"ext fields zeroed when unknown");
+        CHECK(fe.reply_len==38,"short-frame reply_len=%u exp 38",(unsigned)fe.reply_len);
         ff[14]=0x00; CHECK(!hisense_parse_features(ff,64,&fe),"reject non-0x40 subtype");
         ff[14]=0x40; CHECK(!hisense_parse_features(ff,30,&fe),"reject too-short frame");
     }

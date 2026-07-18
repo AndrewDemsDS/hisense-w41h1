@@ -158,6 +158,30 @@ Read live from node 28 (esp32 fw `1.0.7`, `features` command on the `:2323` diag
   q_display=0  <- MISLABELED: [0x0A]&0x08 is really ac_purify -> purify = 0
 ```
 
+**Re-measured 2026-07-18 on fw `1.0.10`**, after the mislabel fix + the extended `[0x19]`/`[0x1A]`
+tier landed (issue #83). Same node, same A/C:
+
+```
+  cool_heat=1 ai=0 infinite_fan=0 power_save/eco=1 fan_mute/quiet=1
+  swing_dir_8=0 swing_follow=0 humidity=0 power_display=1 demand_resp=0
+  purify=0 ([0x0A]&0x08)   8heat=1 ([0x0D]&0x80, 8C frost-guard)
+  q_display=1 ([0x1A]&0x40)  enable_8heat=0 ([0x1A]&0x04)  trans_102_64=0 ([0x19]&0x08)
+  raw 0x66/40 reply length = 45B
+```
+
+Three things this settles, all **[PROVEN on hardware]**:
+
+1. **The reply is 45 bytes, so the extended tier is reachable on this unit** (it needs > 39). This
+   was previously unknown and was the main risk that the three new flags would be undecidable.
+2. **`ac_q_display` = 1: a capability this project could not see before.** The old code's
+   `q_display` field actually held `ac_purify` (0), so the true Q-display capability read as absent
+   for as long as it has been parsed. It is present on this unit.
+3. **`ac_trans_102_64` = 0, so this unit does NOT resolve to the generic profile `199`** (docs/10
+   §5a: that bit set → `'199'`). Narrows §6 Q2 to the `100`–`129` range.
+
+Every base-tier flag is byte-identical to the 2026-07-16 capture above, which is the regression
+signal that the extended tier was added without disturbing the existing decode.
+
 This resolves the §5 paradox. The static baseline leaves eco, quiet and fan at `supported=0`; the
 ProductType reply enables them (`power_save=1`, `fan_mute=1`), and we drive them. The two-stage
 mechanism behaves as the disassembly describes, so trust the `supported` gate.
@@ -196,7 +220,8 @@ mechanism behaves as the disassembly describes, so trust the `supported` gate.
    the exposure, let the A/C decide. A feature this unit reports `0` for is a **deprioritised
    capture target**, not a dead one.
 3. **`hisense_parse_features` mislabeled two flags** (doc 10 §5a). Its `q_display` read
-   `ac_purify`, its `purify` read `ac_8heat`, and true `ac_q_display` goes unparsed. Renamed
+   `ac_purify`, its `purify` read `ac_8heat`, and true `ac_q_display` went unparsed (added
+   2026-07-18 with `ac_enable_8heat` + `ac_trans_102_64`, gated on `ext_valid`). Renamed
    2026-07-16: same byte reads, correct names.
 4. **`f_humidity` (record 44), `t_temp_type` and `f_temp_in`** give the docs/01 telemetry gaps a
    firmware-grounded gate.
@@ -209,7 +234,7 @@ mechanism behaves as the disassembly describes, so trust the `supported` gate.
 |---|---|---|
 | ~~1~~ | ~~Does our A/C reply to the `0x66/40` poll?~~ **ANSWERED §5.1: yes.** | ✅ `features` cmd on the esp32 `:2323` console (fw ≥ 1.0.7). Re-run per unit. |
 | 1b | Does **node 14**'s A/C return the same flags as node 28's? | The AmebaZ2 has no diag console. Either port `features` to a Matter attribute, or trust per-unit gating only where measured. |
-| 2 | Which profile (`100`–`129`/`199`) our unit resolves to. | Log the `0x66/40` payload, or read `0x100096dc` (getter `0x9b6f308c`) on a stock dongle. |
+| 2 | Which profile (`100`–`129`/`199`) our unit resolves to. **Narrowed 2026-07-18: NOT `199`** (node 28's `ac_trans_102_64` reads 0 (§5.1), and that bit set is what selects `'199'`). So it is in `100`–`129`. | Log the `0x66/40` payload, or read `0x100096dc` (getter `0x9b6f308c`) on a stock dongle. |
 | 3 | `desc` `(b0,b1)`=command vs `(b2,b3)`=status frame. **[INFERRED]** | Dump the mask table in `0x9b6f8adc`'s prologue; check `t_temp` (b2=4 → status byte 6) against a live `0x66` capture. |
 | 4 | `word0` `b0`/`b1`/`b3` semantics. | Unknown; no consumer found, but dataflow tracing was not exhaustive. |
 | 5 | Whether the 17 unconditional enables are ever written back to `0`. | Looked straight-line in asm; not exhaustively traced. Disable writes exist in the `0x37` branch (`+0x31a`). |
