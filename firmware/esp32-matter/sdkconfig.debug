@@ -1,0 +1,10 @@
+# DEBUG flavour overlay. Use ON TOP of sdkconfig.defaults, never instead of it:
+#
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.debug" build
+#
+# Adds the :2323 diagnostic console and verbose bring-up logging. That console has NO
+# authentication and can drive the A/C bus, so this flavour is a bench instrument and must not
+# be deployed. Only logging/console/diagnostics may differ from the release flavour: anything
+# that changes bus or Matter behaviour would make bench results meaningless for the shipped image.
+CONFIG_HISENSE_DEBUG_BUILD=y
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

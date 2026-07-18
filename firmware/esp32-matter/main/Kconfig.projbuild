@@ -1,0 +1,23 @@
+menu "Hisense A/C firmware"
+
+config HISENSE_DEBUG_BUILD
+    bool "Debug flavour (diagnostic console + verbose bring-up logging)"
+    default n
+    help
+        Build the DEBUG flavour of this firmware.
+
+        When set, the image includes the :2323 diagnostic console (features / poll /
+        watch / decode / selftest / token) and the verbose bring-up logging. That
+        console is a bench instrument: it has NO authentication and can drive the
+        A/C bus, so it must not ship on a deployed appliance controller.
+
+        Leave this OFF (the default) for release images. Build the debug flavour with
+        an explicit profile instead:
+
+            idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.debug" build
+
+        Only logging, the console and diagnostics may differ between the two
+        flavours. Anything that changes bus or Matter behaviour would make bench
+        results meaningless for the shipped image.
+
+endmenu
