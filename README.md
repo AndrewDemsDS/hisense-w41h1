@@ -55,7 +55,7 @@ reverse-engineered + sniff-validated — see [`reverse-engineering/docs/03`](rev
 | `firmware/scripts/` | `ota-release.sh` (build/package/flash/OTA), `gen-creds.sh`, Matter helpers |
 | `firmware/flasher/` | pyusb CH341A flasher (per-sector verify + retry — use this, **not flashrom**) |
 | `firmware/test/` | no-hardware QA — host codec + Matter-map tests + `virtual_ac.py` simulator |
-| `firmware/docs/` | wiring plan, attestation, QA strategy, energy monitoring, and the OTA/build procedure (`10-firmware-ota-procedure.md`) |
+| `firmware/docs/` | wiring plan, attestation, QA strategy, energy monitoring, the OTA/build procedure (`10-firmware-ota-procedure.md`), and the ESP32-vs-AmebaZ2 path comparison (`13-path-comparison.md`) |
 | `reverse-engineering/` | protocol/hardware/cloud/OTA RE, `tools/` (sniffer, decoders), `esphome/` (ESP32-replacement config) |
 | `patches/` | your delta to the two SDKs (`git apply`-able; base commits in [`NOTICE.md`](NOTICE.md)) |
 | `dumps/` | ⚠️ **local-only, gitignored** — raw flash (Wi-Fi creds + device RSA key + vendor blob). Never published. |

@@ -5,6 +5,10 @@ transceiver** on the indoor unit's Wi-Fi-module bus — replacing the (fragile,
 increasingly unobtainable) AEH-W41H1 RTL8710C module while **reusing the
 hardware-validated RS-485 protocol work unchanged**.
 
+> **Deciding between the two paths?** See
+> [`../docs/13-path-comparison.md`](../docs/13-path-comparison.md) for a measured comparison of
+> this path against the AmebaZ2 stock-module path (cost, toolchain, OTA, diagnostics, flash budget).
+
 ## Why this exists
 The W41H1 modules die easily (ESD/handling) and are hard to source in the EU. The
 *protocol* is the hard part, and it's already done and validated
