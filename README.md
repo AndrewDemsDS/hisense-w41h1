@@ -1,4 +1,4 @@
-# Hisense AEH-W41H1 — de-cloud with custom Matter firmware
+# Hisense AEH-W41H1 de-cloud with custom Matter firmware
 
 Replace the ConnectLife cloud on a Hisense **`AEH-W41H1`** A/C Wi-Fi module (Realtek
 **RTL8710C / AmebaZ2**) with custom **Matter** firmware, for local control from Home
