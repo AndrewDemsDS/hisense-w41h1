@@ -202,10 +202,18 @@ static void apply_display(bool on)
 static void on_recommission(uint8_t reason);   // fwd decl (defined in the "77" section below)
 static void trigger_https_ota(void);           // fwd decl (manual HTTPS-OTA backup, defined below)
 
-// Manual HTTPS-OTA backup URL: a plain-HTTP file server on the Pi, reached over the SAME
-// IPv6 subnet as this device (fd00:4::, no cross-VLAN routing). Change the host/port/path if
-// the Pi or file name moves. Used only as a fallback when the Matter (BDX) OTA won't complete.
-#define HTTPS_OTA_URL "http://[fd00:4::da3a:ddff:fef7:aed1]:8070/esp32-ota.bin"
+// Manual HTTPS-OTA backup URL: a plain-HTTP file server reachable from the device, used only as
+// a fallback when the Matter (BDX) OTA won't complete. The device and the server must be on the
+// same L2/subnet if there is no cross-VLAN routing, so an IPv6 literal is usually what you want:
+//
+//   idf.py -DHISENSE_OTA_URL="http://[<server-ipv6>]:8070/esp32-ota.bin" build
+//
+// The default below is a deliberately non-resolvable placeholder: this is a public repo, and a
+// real address here would publish network topology (and, with SLAAC EUI-64, the server's MAC).
+#ifndef HISENSE_OTA_URL
+#define HISENSE_OTA_URL "http://[fd00::1]:8070/esp32-ota.bin"   // placeholder, override at build time
+#endif
+#define HTTPS_OTA_URL HISENSE_OTA_URL
 
 static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t endpoint_id,
                                      uint32_t cluster_id, uint32_t attribute_id,

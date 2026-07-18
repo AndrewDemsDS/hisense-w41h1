@@ -89,7 +89,7 @@ Servers→IoT was fine; discovery was the missing piece.
        connection.autoconnect yes
    nmcli con up iot4
    ```
-   → `eth0.4` gets a VLAN4 SLAAC address (`fd00:4::…`); saved to
+   → `eth0.4` gets a VLAN4 SLAAC address (`fd00:X::…` for your ULA prefix); saved to
    `/etc/NetworkManager/system-connections/iot4.nmconnection`, survives reboot, managed
    independently of `eth0`.
 3. Restart matter-server so CHIP's mDNS resolver binds `eth0.4` (`docker restart matter-server`).
