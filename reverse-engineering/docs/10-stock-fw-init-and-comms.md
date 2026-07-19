@@ -476,3 +476,106 @@ and the full loop closes end-to-end — commissioned onto the Matter fabric, `Lo
 Standalone setpoint writes (`OccupiedCooling/HeatingSetpoint`) return IM `0x86` (a cluster
 deadband/limit constraint); the setpoint also rides the mode `0x65` at byte19. Build-by-build
 v3→v4→v5 debugging detail is in git history.
+
+## 7. Cloud attribute table (`t_*` / `f_*` / `f_e_*`) [PROVEN location, 2026-07-19]
+
+The module carries the full Hisense **cloud attribute** namespace as a name blob plus a
+lookup table. This is the vocabulary the ConnectLife app speaks, and it is the source of the
+app's "Self diagnostics" screen. Found by string+pointer analysis of `dumps/w41h1_dump1.bin`
+(local-only, gitignored); no bus tap required.
+
+### 7.1 Load base [PROVEN]
+
+**`base = 0x9b6d0000`**, so `address = 0x9b6d0000 + file_offset`.
+
+Derived by taking every attribute-name string offset, scanning the image for 32-bit LE words
+that could be pointers to them, and keeping the base with the most consistent hits:
+**77 of 77** names are referenced under this base and no other. Cross-checks against the
+addresses already in §5a hold: the `ac_8heat` getter `0x9b6f0ee6` maps to file `0x20ee6`,
+inside the code region.
+
+This base was not previously written down. It is what makes any further static RE on this
+dump reproducible, so record it before anything else.
+
+### 7.2 Name blob and lookup table [PROVEN]
+
+| item | file offset | address |
+|---|---|---|
+| attribute-name string blob | `0x13730a` .. `0x137700` | `0x9b80730a` .. |
+| attribute lookup table | starts `0x137e34` | `0x9b807e34` |
+
+Table entries are **12 bytes**: `[meta0: u32 LE][meta1: u32 LE][name_ptr: u32 LE]`, where
+`name_ptr` points into the blob. Walking the table yields 66 entries before the name-pointer
+sanity check fails.
+
+**The `meta0` encoding is NOT yet decoded.** See §7.5 before assuming anything about it.
+
+### 7.3 The fault namespace: what "Self diagnostics" reads [PROVEN names]
+
+27 `f_e_*` (fault/error) attributes exist. The app's four categories are a bucketing of these:
+
+| app category | attributes |
+|---|---|
+| Sensors | `f_e_intemp` `f_e_incoiltemp` `f_e_outtemp` `f_e_outcoiltemp` `f_e_outgastemp` `f_e_tubetemp` `f_e_inhumidity` `f_e_wetsensor` `f_e_temp` |
+| Communications | `f_e_incom` `f_e_inwifi` `f_e_push` |
+| Motors | `f_e_infanmotor` `f_e_pump` `f_e_arkgrille` `f_e_upmachine` `f_e_dwmachine` |
+| Others | `f_e_ineeprom` `f_e_outeeprom` `f_e_inkeys` `f_e_indisplay` `f_e_inele` `f_e_invzero` `f_e_filterclean` `f_e_waterfull` `f_e_over_cold` `f_e_over_hot` `f_e_dwmachine` |
+
+(The category mapping is inferred from the names, not read out of the firmware. The names
+themselves are `[PROVEN]`.)
+
+These are almost certainly bit-packed into the 160-byte status frame we already receive once
+per second, which means **no new polling is needed to build a diagnostics feature**, only the
+bit map.
+
+### 7.4 Settable attributes worth noting [PROVEN names]
+
+The `t_` prefix marks a settable attribute. Two matter for open issues:
+
+* **`t_8heat`** and **`t_8c_heater_onoff`** both exist. 8 °C frost-guard heat therefore **is**
+  commandable by the stock module. An earlier note in this session claimed no command verb
+  existed for it; that was wrong, and the absence of an 8 °C control in the ConnectLife app is
+  a UI choice, not a protocol limit.
+* `t_dimmer` exists alongside the display on/off control, which is the likely path to the
+  panel-brightness *level* (the 2-bit `ac_power_display`), currently out of scope.
+
+The table also names capabilities this unit probably does not implement: `t_fresh_air`,
+`f_co2_value`, `f_co2_level`, `t_onekey_selfclean`, `t_indoor_selfclean`,
+`t_outdoor_selfclean`, `t_hp_lock_onoff`, `t_ht_lock_onoff`, `t_heat_control_logic`,
+`t_interlock_onoff`, `t_demand_response`. Per the design rule in `docs/11 §5.1`, gate on the
+capability flags at runtime rather than deleting these paths.
+
+### 7.5 What is NOT established, and the trap in it
+
+`meta0` is **not** a plain (byte, bit) frame position. The tempting read is that byte 2 is an
+offset and byte 3 a bit index, because the fault entries look orderly:
+
+```
+f_e_incoiltemp  00 00 18 0f      f_e_inkeys     00 00 19 0f
+f_e_inhumidity  00 00 18 0e      f_e_inwifi     00 00 19 0e
+f_e_infanmotor  00 00 18 0d      f_e_inele      00 00 19 0d
+```
+
+Three things block that reading:
+
+1. **Duplicates.** `f_e_arkgrille` and `f_e_dwmachine` are both `00 00 18 0b`;
+   `f_e_invzero` and `f_e_over_cold` are both `00 00 18 0a`. Two faults cannot share one bit.
+2. **Non-uniform layout.** Entries such as `t_temp` (`03 03 03 0b`) and `t_fan_speed`
+   (`08 01 0b 09`) use bytes 0 and 1, which every `f_e_*` entry leaves zero. So `meta0` is at
+   least two different shapes, probably keyed by type.
+3. **Anchor conflict.** `t_eco` is `00 00 8c 80` while `t_super` (turbo) is `14 05 15 0a`, yet
+   eco and turbo are known to be **adjacent bits in status byte 35**. A position encoding that
+   puts them far apart is refuted by hardware we already trust.
+
+The duplicates most likely mean the walk crossed into a **second capability template**
+(`docs/11` documents multiple templates in flash), so the table bounds are themselves
+unconfirmed.
+
+### 7.6 Next step
+
+Extend the §5a method to the fault attributes: disassemble the getters and read the
+`(status byte, bitmask)` pairs out of the code, exactly as was done for the `ac_*` capability
+flags. §5a already gives the pattern and the neighbouring addresses
+(`0x9b6f0d0a`, `0x9b6f0ee6`), and §7.1 now gives the base needed to navigate there.
+
+Do **not** infer fault bit positions from `meta0` alone until §7.5 is resolved.
