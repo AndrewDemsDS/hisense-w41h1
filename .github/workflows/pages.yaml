@@ -57,3 +57,15 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+      # Tell IndexNow the site changed, instead of waiting to be crawled. Runs AFTER deploy so the
+      # URLs (and the key file it verifies) are actually live. The key is not a secret: engines
+      # authenticate by fetching it from the site, which is why it is committed rather than stored
+      # as a repo secret. Never allowed to fail the workflow -- a submission endpoint being down
+      # says nothing about whether the site published.
+      - uses: actions/checkout@v4
+      - name: Ping IndexNow
+        continue-on-error: true
+        env:
+          INDEXNOW_KEY: 851d5c2c194e53141e515a7c9f456d91
+        run: python3 .github/scripts/indexnow_ping.py
