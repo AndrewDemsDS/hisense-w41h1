@@ -325,7 +325,12 @@ bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out)
     // `any` deliberately ORs the RAW bytes, not the named bits: an undocumented bit in
     // one of these bytes is still the A/C reporting something wrong, and reporting
     // "healthy" because we lack a name for it would be the worst possible failure.
-    out->any = (out->raw_indoor | out->raw_module | out->raw_outdoor | out->raw_protect) != 0;
+    //
+    // The one exception is byte 66 bit 7, which is a MODE flag (set while 8 C frost-guard
+    // heat is engaged), proven on hardware. Without masking it, running frost-guard made
+    // this report a fault on a healthy unit. See HISENSE_FAULT_NONFAULT_PROTECT.
+    out->any = (out->raw_indoor | out->raw_module | out->raw_outdoor
+                | (uint8_t)(out->raw_protect & ~HISENSE_FAULT_NONFAULT_PROTECT)) != 0;
     out->valid = true;
     return true;
 }

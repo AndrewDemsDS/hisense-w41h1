@@ -491,6 +491,28 @@ int main() {
             CHECK(fl.any, "%s also raises any", c.name);
         }
 
+        // Byte 66 bit 7 is a MODE flag (8 C frost-guard engaged), not a fault. Observed on
+        // hardware setting and clearing with the mode. Counting it reported a fault on a
+        // healthy unit in frost-guard, which is the diagnostics feature crying wolf.
+        make_status(s, true, HISENSE_MODE_HEAT, 22, 25, 0x01, 0x00, 0x00, 0x00, 40, 30);
+        s[HISENSE_FAULT_BYTE_PROTECT] = 0x80;
+        CHECK(hisense_parse_faults(s, 160, &fl), "frost-guard frame parses");
+        CHECK(!fl.any, "byte66 bit7 alone does NOT report a fault (it is 8C heat engaged)");
+        CHECK(fl.raw_protect == 0x80, "raw byte still preserved for inspection");
+        // ...but a REAL fault in the same byte must still register, and so must the
+        // combination of the mode flag and a real fault.
+        s[HISENSE_FAULT_BYTE_PROTECT] = 0x10;
+        CHECK(hisense_parse_faults(s, 160, &fl) && fl.any && fl.over_temp,
+              "byte66 bit4 still reports over-temp");
+        s[HISENSE_FAULT_BYTE_PROTECT] = 0x90;
+        CHECK(hisense_parse_faults(s, 160, &fl) && fl.any && fl.over_temp,
+              "mode flag + real fault together still reports the fault");
+        // An unnamed bit in that byte OTHER than bit 7 must still count: the mask is a
+        // narrow proven exception, not a blanket relaxation.
+        s[HISENSE_FAULT_BYTE_PROTECT] = 0x01;
+        CHECK(hisense_parse_faults(s, 160, &fl) && fl.any,
+              "other unnamed bits in byte66 still raise any");
+
         // An UNNAMED bit must still raise `any`. Reporting "healthy" because we have no
         // name for a bit would be the worst possible failure of a diagnostics feature.
         make_status(s, true, HISENSE_MODE_COOL, 22, 25, 0x01, 0x00, 0x00, 0x00, 40, 30);

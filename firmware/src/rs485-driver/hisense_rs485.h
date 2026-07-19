@@ -588,6 +588,19 @@ static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit)
 #define HISENSE_FAULT_BYTE_OUTDOOR 64   /* payload 0x31 */
 #define HISENSE_FAULT_BYTE_PROTECT 66   /* payload 0x33 */
 
+/* Bits in a fault byte that are NOT faults.
+ *
+ * Byte 66 bit 7 sets while 8 C frost-guard heat is ENGAGED and clears when it is released
+ * (observed on hardware 2026-07-19 during the t_8heat bring-up). It is a mode flag sharing
+ * the byte, not a fault. Counting it made `faults` report FAULT(S) PRESENT on a perfectly
+ * healthy unit that happened to be in frost-guard mode.
+ *
+ * Only bits PROVEN not to be faults belong here. Unnamed bits stay counted on purpose: a
+ * bit we cannot name is still the A/C reporting something, and answering "healthy" because
+ * we lack a name for it is the worst failure a diagnostics feature can have. This mask is
+ * the narrow exception to that rule, not a relaxation of it. */
+#define HISENSE_FAULT_NONFAULT_PROTECT 0x80
+
 typedef struct {
     bool    valid;        // a long-enough status frame was parsed
     bool    any;          // true if ANY fault bit is set (cheap "is it healthy")
