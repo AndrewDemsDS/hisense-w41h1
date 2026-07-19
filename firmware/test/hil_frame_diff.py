@@ -34,6 +34,10 @@ import sys
 # an independent hardware anchor; see RE docs/10 §7. Bytes absent from this map are not
 # "unused", they are UNIDENTIFIED, which is exactly what makes a diff hit interesting.
 FIELDS = {
+    # 0..15 are the frame envelope (STX, type, ctrl, LEN, class 0x66 at 13, subtype at 14).
+    # Annotated so a change here reads as "the envelope moved", which would be alarming,
+    # rather than as an unidentified field.
+    **{i: ("envelope byte %d" % i, {}) for i in range(16)},
     16: ("fan_raw", {}),
     17: ("sleep_raw", {}),
     18: ("mode / run", {}),
@@ -75,12 +79,33 @@ FIELDS = {
     ),
     66: ("FAULT group 0x33", {4: "over_hot/over_cold"}),
     71: ("cooling counter", {}),
+    # Observed 2026-07-19 across both units. b46/b47 track compressor activity strongly
+    # (running unit 59/73 C, idle unit 40/49 C), which is a discharge-temperature
+    # signature. LIKELY, not confirmed: two samples, no controlled change yet. Diff them
+    # across a compressor start to settle it.
+    46: ("likely temp (tracks compressor)", {}),
+    47: ("likely temp (tracks compressor)", {}),
+    # Non-zero only on the running unit -> likely energy/runtime accumulators. UNCONFIRMED.
+    152: ("likely accumulator (running only)", {}),
+    153: ("likely accumulator (running only)", {}),
+    # The capability table puts t_power here at bit 7 with supported=1, and both units read
+    # 0x80. Consistent, not proven.
+    22: ("power? (t_power bit7 per table)", {7: "t_power (per table)"}),
     77: ("8 C heat status", {0: "t_8heat engaged"}),
+    # Known echo of the current block (RE docs/03): 144==56 and 145==55. Annotated so a
+    # change here is read as "the current block moved", not as a new mystery field.
+    144: ("current B (echo of 56)", {}),
+    145: ("current A (echo of 55)", {}),
+    156: ("checksum hi", {}),
+    157: ("checksum lo", {}),
+    158: ("end tag F4", {}),
+    159: ("end tag FB", {}),
 }
 
 # Bytes that move on their own between captures, so a change here is usually not the
 # thing you were testing. Reported separately rather than hidden.
-NOISY = {20, 41, 42, 43, 44, 45, 50, 55, 56, 60, 144, 145, 152, 153, 156, 157}
+NOISY = {20, 41, 42, 43, 44, 45, 46, 47, 50, 55, 56, 60,
+         144, 145, 152, 153, 156, 157}
 
 DEFAULT_NODES = {
     "14": "fd00:4::e23e:cbff:fe31:64c6",  # AmebaZ2, SLAAC from MAC e0:3e:cb:31:64:c6
@@ -133,18 +158,29 @@ def fetch(addr, via, key=None, port=2323, timeout=25):
 
 
 def annotate(byte, old, new):
+    """Label a change, and break it down per-bit ONLY where bits are the unit of meaning.
+
+    Numeric fields (temperatures, counters, current) change many bits for a small delta, so
+    a per-bit listing there is pure noise and buries the real per-bit findings. Bits are
+    shown for known flag bytes, and for UNIDENTIFIED bytes where the bit pattern is a clue.
+    """
+    known = byte in FIELDS
     name, bits = FIELDS.get(byte, (None, {}))
+    label = name if known else "UNIDENTIFIED BYTE"
+    show_bits = bool(bits) or not known
     parts = []
-    changed = old ^ new
-    for bit in range(8):
-        if changed & (1 << bit):
-            meaning = bits.get(bit)
-            state = "set" if new & (1 << bit) else "cleared"
-            parts.append(
-                "bit%d %s%s"
-                % (bit, state, " = " + meaning if meaning else " (UNNAMED)")
-            )
-    label = name if name else "UNIDENTIFIED BYTE"
+    if show_bits:
+        changed = old ^ new
+        for bit in range(8):
+            if changed & (1 << bit):
+                meaning = bits.get(bit)
+                state = "set" if new & (1 << bit) else "cleared"
+                parts.append(
+                    "bit%d %s%s"
+                    % (bit, state, " = " + meaning if meaning else " (UNNAMED)")
+                )
+    else:
+        parts.append("value %d -> %d (delta %+d)" % (old, new, new - old))
     return label, parts
 
 
