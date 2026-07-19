@@ -1,0 +1,45 @@
+# Jekyll config for the GitHub Pages documentation site.
+#
+# Why this exists: GitHub serves every /wiki/ URL with `X-Robots-Tag: none`, which is
+# noindex+nofollow at the HTTP level. No amount of wiki content can be found by a search engine
+# or an AI crawler. Pages sites carry no such header, so the same markdown becomes indexable here.
+#
+# The workflow assembles this directory at build time from the docs that already live in the repo
+# and in the wiki. Do not copy documentation in here by hand: it would fork the content and the
+# copies would drift.
+
+title: Hisense AEH-W41H1 de-cloud (RTL8710C / AmebaZ2 Matter firmware)
+description: >-
+  Replace the ConnectLife cloud on a Hisense AEH-W41H1 air-conditioner Wi-Fi module with custom
+  Matter firmware for local Home Assistant control. Reverse-engineered RS-485 protocol, AmebaZ2
+  and ESP32 builds, OTA, and full hardware documentation.
+url: https://andrewdemsds.github.io
+baseurl: /hisense-w41h1
+
+theme: jekyll-theme-primer
+
+plugins:
+  - jekyll-seo-tag     # per-page <title>, meta description, canonical, Open Graph, JSON-LD
+  - jekyll-sitemap     # /sitemap.xml, which is what you submit to Search Console
+
+# Surfaced by jekyll-seo-tag in the JSON-LD block.
+author: Andreas Demosthenous
+lang: en_GB
+
+# Keep Jekyll from trying to render things that are not site content.
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
+  - .jekyll-cache
+
+# Relative links inside the copied markdown point at .md files; this makes them resolve to the
+# generated .html without editing the sources.
+relative_links:
+  enabled: true
+  collections: false
+
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge

@@ -62,3 +62,5 @@ firmware/scripts/ota-release.env
 
 # python lint cache
 .ruff_cache/
+_site_src/
+wiki-src/
