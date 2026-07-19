@@ -16,6 +16,7 @@ on:
       - reverse-engineering/docs/**
       - README.md
       - .github/workflows/pages.yaml
+      - .github/scripts/assemble_docs_site.py   # the assembler IS the build; changing it must rebuild
   gollum:            # fires when a wiki page is edited, so wiki edits reach the indexable site
   workflow_dispatch:
 
