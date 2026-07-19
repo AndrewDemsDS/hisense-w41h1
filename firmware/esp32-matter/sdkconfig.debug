@@ -3,8 +3,22 @@
 #   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.debug" build
 #
 # Adds the :2323 diagnostic console and verbose bring-up logging. That console has NO
-# authentication and can drive the A/C bus, so this flavour is a bench instrument and must not
-# be deployed. Only logging/console/diagnostics may differ from the release flavour: anything
-# that changes bus or Matter behaviour would make bench results meaningless for the shipped image.
+# authentication and can drive the A/C bus (`tx` sends arbitrary command frames), so it must
+# never reach an END-USER release.
+#
+# It IS, however, what the bench nodes deliberately run while the project is in development:
+# there is usually no serial access to these modules, so the console is the only observability
+# path, and pulling it would make field diagnosis impossible. "Not for deployment" therefore
+# means "not for a shipped product", NOT "never flash this to a real unit". Drop back to the
+# release flavour before any end-user release.
+#
+# Only logging/console/diagnostics may differ from the release flavour: anything that changes
+# bus or Matter behaviour would make bench results meaningless for the shipped image.
+#
+# TRAP: a release-flavour build succeeds, links, and produces a perfectly valid image with the
+# console silently absent (main/CMakeLists.txt gates diag_console.cpp on CONFIG_HISENSE_DEBUG_BUILD).
+# Nothing in the build log flags it. Confirm the flavour actually took before staging:
+#
+#   strings build/hisense_ac_matter.bin | grep -q "usage: tx" && echo "console present"
 CONFIG_HISENSE_DEBUG_BUILD=y
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
