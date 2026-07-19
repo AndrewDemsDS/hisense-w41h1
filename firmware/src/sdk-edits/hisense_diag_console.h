@@ -121,6 +121,64 @@ static void diag_cmd_poll(int sock)
     diag_say(sock, b);
 }
 
+/* #38: decoded f_e_* fault bits. The payload base is PROVISIONAL (15, chosen because it
+ * is the only nearby base that reads all-zero on a healthy unit; the disassembly-derived
+ * 13 was falsified on hardware), so the raw bytes are always printed alongside. All-zero
+ * on a healthy unit validates nothing. */
+static void diag_cmd_faults(int sock)
+{
+    char b[HISENSE_DIAG_BUF];
+    HisenseFaults f;
+
+    if (!hisense_get_faults(&f)) {
+        diag_say(sock, "no fault data yet (no status frame long enough parsed this boot)\r\n");
+        return;
+    }
+    snprintf(b, sizeof(b),
+        "raw: [%d]=0x%02x [%d]=0x%02x [%d]=0x%02x [%d]=0x%02x  ->  %s\r\n",
+        HISENSE_FAULT_BYTE_INDOOR,  f.raw_indoor,
+        HISENSE_FAULT_BYTE_MODULE,  f.raw_module,
+        HISENSE_FAULT_BYTE_OUTDOOR, f.raw_outdoor,
+        HISENSE_FAULT_BYTE_PROTECT, f.raw_protect,
+        f.any ? "FAULT(S) PRESENT (map PROVISIONAL -- cross-check `raw`)" : "all clear");
+    diag_say(sock, b);
+    if (!f.any) {
+        diag_say(sock, "  (all-zero is expected on a healthy unit and does NOT validate the map)\r\n");
+        return;
+    }
+    snprintf(b, sizeof(b),
+        "  indoor : temp=%d coil=%d humid=%d water=%d fan/up=%d grille/dw=%d vzero=%d com=%d\r\n"
+        "  module : display=%d keys=%d wifi=%d ele=%d eeprom=%d\r\n"
+        "  outdoor: eeprom=%d coil=%d gas=%d temp=%d   protect: overtemp=%d\r\n",
+        f.in_temp, f.in_coil_temp, f.in_humidity, f.water_full,
+        f.in_fan_motor, f.grille, f.in_vzero, f.in_com,
+        f.in_display, f.in_keys, f.in_wifi, f.in_ele, f.in_eeprom,
+        f.out_eeprom, f.out_coil_temp, f.out_gas_temp, f.out_temp, f.over_temp);
+    diag_say(sock, b);
+}
+
+/* Hexdump the last status frame. This is what falsified the fault map's base on the esp32
+ * side within a minute of flashing, so it matters more than the decode does. */
+static void diag_cmd_raw(int sock)
+{
+    uint8_t f[HISENSE_RAW_SNAPSHOT_LEN];
+    char b[HISENSE_DIAG_BUF];
+    size_t n = hisense_get_last_status_frame(f, sizeof(f));
+    size_t i, k, off;
+
+    if (n == 0) { diag_say(sock, "no status frame captured yet\r\n"); return; }
+    snprintf(b, sizeof(b), "last status frame, %u bytes:\r\n", (unsigned) n);
+    diag_say(sock, b);
+    for (i = 0; i < n; i += 16) {
+        off = (size_t) snprintf(b, sizeof(b), "  %3u:", (unsigned) i);
+        for (k = i; k < i + 16 && k < n; k++) {
+            off += (size_t) snprintf(b + off, sizeof(b) - off, " %02x", f[k]);
+        }
+        snprintf(b + off, sizeof(b) - off, "\r\n");
+        diag_say(sock, b);
+    }
+}
+
 static void diag_handle_line(int sock, char *line)
 {
     while (*line == ' ') line++;
@@ -130,6 +188,8 @@ static void diag_handle_line(int sock, char *line)
     if (line[0] == 0)                       return;
     if (!strcmp(line, "features"))          { diag_cmd_features(sock); return; }
     if (!strcmp(line, "poll"))              { diag_cmd_poll(sock);     return; }
+    if (!strcmp(line, "faults"))            { diag_cmd_faults(sock);   return; }
+    if (!strcmp(line, "raw"))               { diag_cmd_raw(sock);      return; }
     if (!strcmp(line, "version")) {
         char b[128];
         snprintf(b, sizeof(b), "AmebaZ2 Hisense A/C, softwareVersion %u (DEBUG flavour)\r\n",
@@ -139,9 +199,11 @@ static void diag_handle_line(int sock, char *line)
     }
     if (!strcmp(line, "help")) {
         diag_say(sock,
-            "commands: features | poll | version | help | quit\r\n"
+            "commands: features | poll | faults | raw | version | help | quit\r\n"
             "  features  cached 0x66/40 ProductType capability flags for THIS unit\r\n"
-            "  poll      last decoded A/C status frame\r\n");
+            "  poll      last decoded A/C status frame\r\n"
+            "  faults    decoded f_e_* fault bits (#38; base PROVISIONAL)\r\n"
+            "  raw       hexdump the last status frame (what falsifies the map)\r\n");
         return;
     }
     diag_say(sock, "unknown command (try `help`)\r\n");

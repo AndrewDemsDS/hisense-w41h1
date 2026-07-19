@@ -775,6 +775,10 @@ static uint16_t make_onoff_switch(node_t *node)
     cluster::identify::command::create_trigger_effect(idc);
 
     cluster::on_off::config_t onoff_cfg;
+    // `on_off` defaults false. Callers that model something the A/C reports back (eco,
+    // turbo, mute) want that, because status resync corrects it within a second. The
+    // Display switch does NOT: the A/C reports no display state, so nothing can ever
+    // correct a wrong default. See make_display_switch below.
     cluster_t *ooc = cluster::on_off::create(ep, &onoff_cfg, CLUSTER_FLAG_SERVER);
     cluster::on_off::feature::dead_front_behavior::add(ooc);   // FeatureMap=2, matches node 14 (no Lighting/StartUpOnOff)
     cluster::on_off::command::create_on(ooc);
@@ -782,6 +786,28 @@ static uint16_t make_onoff_switch(node_t *node)
 
     cluster::user_label::create(ep, NULL, CLUSTER_FLAG_SERVER);
     return endpoint::get_id(ep);
+}
+
+/* ep9 Display (#33). Same switch, but the OnOff attribute starts TRUE.
+ *
+ * The panel is lit by default on this hardware, and the A/C reports no display state, so
+ * an attribute that starts false is wrong from boot and can never self-correct. That is
+ * not just cosmetic: Matter skips both attribute-change callbacks when a write does not
+ * change the value (emAfWriteAttribute returns early on !valueChanging), so our handler
+ * never runs and NO frame reaches the A/C. A user seeing "off" while the panel is lit and
+ * pressing off therefore got nothing at all, and had to toggle on-then-off.
+ *
+ * Starting true makes the common case a real transition, so the first press works.
+ *
+ * This does NOT make the attribute truthful in general: change the display from the IR
+ * remote and it drifts again, and no read-back exists to fix it. A stateless control would
+ * model this honestly, but OnOff is what Home Assistant renders as a switch. */
+static uint16_t make_display_switch(node_t *node)
+{
+    uint16_t id = make_onoff_switch(node);
+    esp_matter_attr_val_t on = esp_matter_bool(true);
+    attribute::update(id, OnOff::Id, OnOff::Attributes::OnOff::Id, &on);
+    return id;
 }
 
 // ---------------------------------------------------------------------------
@@ -875,7 +901,7 @@ extern "C" void app_main()
 
     // ep9: panel display -> OnOff switch (#19 cheap win). Created LAST so ep1..8 keep their IDs
     // (renumbering would break the HA entity map + AmebaZ2 .zap parity; endpoints stay contiguous).
-    s_ep_display = make_onoff_switch(node);
+    s_ep_display = make_display_switch(node);   // #33: starts TRUE, panel is lit by default
 
     ESP_LOGI(TAG, "endpoints: aircon=%u outdoor=%u eco=%u mute=%u turbo=%u sleep=%u aux=%u coil=%u display=%u",
              s_ep_id, s_ep_outdoor, s_ep_eco, s_ep_mute, s_ep_turbo, s_ep_sleep, s_ep_aux, s_ep_coil, s_ep_display);

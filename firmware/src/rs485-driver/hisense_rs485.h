@@ -520,23 +520,30 @@ static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit)
  * under one combined name rather than inventing a distinction the wire does not
  * make.
  * -------------------------------------------------------------------------*/
-/* PAYLOAD BASE: 15, NOT 13.
+/* PAYLOAD BASE: 15, NOT 13. [CONFIRMED]
  *
- * The disassembly says the extractor's caller passes a pointer to the frame's class
- * byte, which is wire byte 13, and RE docs/10 5a's two ac_* entries agree with base 13.
- * Base 13 is nevertheless WRONG for this frame, falsified on hardware 2026-07-19: it
- * puts the indoor fault byte at wire 37, which reads 0x80 on a healthy unit and would
- * report a permanent "indoor temp sensor" fault while that sensor reads a correct 25 C.
+ * The disassembly says the extractor is handed the frame's class byte (wire 13), and RE
+ * docs/10 5a's two ac_* entries agree with 13. Base 13 is nevertheless WRONG here: it puts
+ * the indoor fault byte at wire 37, which reads 0x80 on a healthy unit, so the decode
+ * claimed a permanent "indoor temp sensor" fault while that sensor read a correct 25 C.
  *
- * Sweeping the nearby bases against "a healthy unit must read all-zero", only 15 gives
- * 00/00/00/00 across all four groups (13 -> 80 05 00 00, 14 -> 05 00 00 00,
- * 16 -> 00 0f 00 00). So the extractor is fed the frame at +15, or the status reply
- * carries two more header bytes than the ProductType reply that 5a was derived from.
+ * Base 15 is CONFIRMED, not merely "the value that reads zero". Mapping the stock
+ * capability table through base 15 reproduces five bits this driver already had confirmed
+ * on hardware, independently and exactly:
  *
- * Base 15 is the best-supported value, NOT a proven one: it rests on one healthy
- * sample, and "reads zero" is weak evidence in a frame that is mostly zeros. It is
- * settled by injecting a real fault and diffing the frame. Until then treat any decoded
- * fault as provisional and check `raw`. */
+ *     t_up_down     -> wire 35 bit 7   == vswing_on   (flags1 & 0x80)
+ *     t_left_right  -> wire 35 bit 6   == hswing_on   (flags1 & 0x40)
+ *     t_eco         -> wire 35 bit 2   == eco_on      (flags1 & 0x04)
+ *     t_super       -> wire 35 bit 1   == turbo_on    (flags1 & 0x02)
+ *     t_fan_mute    -> wire 36 bit 2   == mute_on     (flags2 & 0x04)
+ *
+ * Five independent agreements with bits confirmed long before this table was decoded is
+ * not coincidence, so the base is settled without needing a fault to be injected.
+ *
+ * The same mapping identifies what wire 37 actually holds, and it is NOT faults:
+ *     t_dimmer  -> wire 37 bit 7   (explains the healthy 0x80 that falsified base 13)
+ *     f-filter  -> wire 37 bit 3   (filter-clean indicator)
+ * Wire 38 bits 0 and 2 read 0x05 on a healthy unit and remain unidentified. */
 #define HISENSE_FAULT_PAYLOAD_BASE 15   /* wire byte = 15 + payload offset */
 #define HISENSE_FAULT_BYTE_INDOOR  39   /* payload 0x18 */
 #define HISENSE_FAULT_BYTE_MODULE  40   /* payload 0x19 */
