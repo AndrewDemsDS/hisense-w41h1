@@ -636,6 +636,10 @@ bool hisense_parse_status(const uint8_t *buf, size_t len, HisenseState *out_stat
     // DIFFERENT encoding than the AEH-W4A1 reference's (raw-32)*0.5556, which
     // is what produced the bogus -5 C readings before this was captured.
     out_state->setpoint_c    = (int8_t)temp_setting_raw;   // offset 19
+    // #5: C/F unit bit. Byte 26 bit 1, from the stock table's t_temp_type record (see the
+    // HisenseState field comment). Read-only for now: we never SET it, and the temperature
+    // fields stay Celsius regardless, so this only reports what the panel is displaying.
+    out_state->temp_unit_f   = (buf[26] & 0x02) != 0;
     out_state->indoor_temp_c = (int8_t)temp_status_raw;    // offset 20
 
     // flags1 @35 / flags2 @36 -- bit assignments CONFIRMED on hardware by

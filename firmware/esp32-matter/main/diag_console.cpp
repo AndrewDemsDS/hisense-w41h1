@@ -47,12 +47,14 @@ static void print_state(FILE *out, const HisenseState *st)
 {
     fprintf(out,
         " power=%d mode=%s set=%dC in=%dC out=%dC coil=%dC fan=0x%02x comp=%dHz\r\n"
-        " eco=%d turbo=%d mute=%d sleep=%d(0x%02x) vswing=%d hswing=%d heatrelay=%d I=%u V=%u\r\n",
+        " eco=%d turbo=%d mute=%d sleep=%d(0x%02x) vswing=%d hswing=%d heatrelay=%d I=%u V=%u\r\n"
+        " unit=%s (#5, byte26 bit1; UNVERIFIED -- flip the remote to F and diff `raw`)\r\n",
         st->power_on, mode_name(st->mode), st->setpoint_c, st->indoor_temp_c,
         st->outdoor_temp_c, st->coil_temp_c, st->fan_raw, st->compressor_freq,
         st->eco_on, st->turbo_on, st->mute_on, st->sleep_on, st->sleep_raw,
         st->vswing_on, st->hswing_on, st->heat_relay_on,
-        (unsigned)st->current_raw, (unsigned)st->voltage_raw);
+        (unsigned)st->current_raw, (unsigned)st->voltage_raw,
+        st->temp_unit_f ? "F" : "C");
 }
 
 extern "C" void diag_on_status(const HisenseState *st)

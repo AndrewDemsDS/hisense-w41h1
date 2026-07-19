@@ -110,14 +110,16 @@ static void diag_cmd_poll(int sock)
     snprintf(b, sizeof(b),
         "last of %u frames:\r\n"
         " power=%d mode=%d set=%dC in=%dC out=%dC coil=%dC fan=0x%02x comp=%dHz\r\n"
-        " eco=%d turbo=%d mute=%d sleep=%d vswing=%d hswing=%d heatrelay=%d\r\n",
+        " eco=%d turbo=%d mute=%d sleep=%d vswing=%d hswing=%d heatrelay=%d\r\n"
+        " unit=%s (#5, byte26 bit1; UNVERIFIED)\r\n",
         (unsigned) s_diag_frames,
         s_diag_status.power_on, (int) s_diag_status.mode, s_diag_status.setpoint_c,
         s_diag_status.indoor_temp_c, s_diag_status.outdoor_temp_c, s_diag_status.coil_temp_c,
         s_diag_status.fan_raw, s_diag_status.compressor_freq,
         s_diag_status.eco_on, s_diag_status.turbo_on, s_diag_status.mute_on,
         s_diag_status.sleep_on, s_diag_status.vswing_on, s_diag_status.hswing_on,
-        s_diag_status.heat_relay_on);
+        s_diag_status.heat_relay_on,
+        s_diag_status.temp_unit_f ? "F" : "C");
     diag_say(sock, b);
 }
 
