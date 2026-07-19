@@ -1,5 +1,6 @@
 ---
 title: Hisense AEH-W41H1 de-cloud with custom Matter firmware
+nav_order: 1
 description: >-
   Replace the ConnectLife cloud on a Hisense AEH-W41H1 (Realtek RTL8710C / AmebaZ2) air-conditioner
   Wi-Fi module with custom Matter firmware for local Home Assistant control. Zero cloud.
@@ -20,21 +21,26 @@ Two hardware paths are documented and both are running on real units:
 Everything below is written from a working system, not a plan. The RS-485 protocol was
 reverse-engineered from the stock firmware and validated against live hardware.
 
+## Not sure if your A/C is supported?
+
+**[Check compatibility](compatibility.html)** — which units are confirmed, and how to tell in a minute
+without opening anything.
+
 ## Start here
 
 | | |
 |---|---|
-| [Hardware and wiring](guide/Hardware-and-Wiring) | pinout, the 4-pin module port, RS-485 A/B |
-| [Installing the custom firmware](guide/Installing-Custom-Firmware) | CH341A clip, or convert a stock unit over the air |
-| [Commissioning and Home Assistant](guide/Commissioning-and-HA-Setup) | pairing into python-matter-server and HA |
-| [Everyday control](guide/Everyday-Control) | modes, fan, swing, Eco / Quiet / Turbo / Sleep |
-| [OTA updates](guide/OTA-Updates) | Matter OTA, the break-glass HTTP path, and the serial trap |
-| [Recovery and reflash](guide/Recovery-and-Reflash) | getting back from a bad flash |
-| [FAQ and gotchas](guide/FAQ-Gotchas) | the things that actually bite |
+| [Hardware and wiring](guide/Hardware-and-Wiring.html) | pinout, the 4-pin module port, RS-485 A/B |
+| [Installing the custom firmware](guide/Installing-Custom-Firmware.html) | CH341A clip, or convert a stock unit over the air |
+| [Commissioning and Home Assistant](guide/Commissioning-and-HA-Setup.html) | pairing into python-matter-server and HA |
+| [Everyday control](guide/Everyday-Control.html) | modes, fan, swing, Eco / Quiet / Turbo / Sleep |
+| [OTA updates](guide/OTA-Updates.html) | Matter OTA, the break-glass HTTP path, and the serial trap |
+| [Recovery and reflash](guide/Recovery-and-Reflash.html) | getting back from a bad flash |
+| [FAQ and gotchas](guide/FAQ-Gotchas.html) | the things that actually bite |
 
 ## Choosing a path
 
-[ESP32 vs AmebaZ2](firmware/13-path-comparison) compares the two on cost, toolchain,
+[ESP32 vs AmebaZ2](firmware/13-path-comparison.html) compares the two on cost, toolchain,
 reproducibility, OTA mechanics, flash headroom and diagnostics, with figures measured on this
 project's own hardware rather than taken from datasheets.
 
@@ -43,17 +49,17 @@ project's own hardware rather than taken from datasheets.
 The protocol and firmware analysis, if you want to port this to another Hisense unit or verify the
 claims:
 
-- [RS-485 A/C protocol](internals/03-rs485-ac-protocol) — framing, checksum, every byte offset
-- [Stock firmware init and comms](internals/10-stock-fw-init-and-comms) — disassembly of the stock dongle
-- [Device-type to capability map](internals/11-model-capability-map) — how the A/C advertises its own features
-- [Hardware](internals/01-hardware) · [Cloud and firewall](internals/04-cloud-and-firewall) · [ESP32 replacement](internals/05-esp32-replacement)
+- [RS-485 A/C protocol](internals/03-rs485-ac-protocol.html) — framing, checksum, every byte offset
+- [Stock firmware init and comms](internals/10-stock-fw-init-and-comms.html) — disassembly of the stock dongle
+- [Device-type to capability map](internals/11-model-capability-map.html) — how the A/C advertises its own features
+- [Hardware](internals/01-hardware.html) · [Cloud and firewall](internals/04-cloud-and-firewall.html) · [ESP32 replacement](internals/05-esp32-replacement.html)
 
 ## Firmware and build
 
-- [Firmware build and OTA procedure](firmware/10-firmware-ota-procedure) — the canonical reference
-- [Matter clusters exposed](firmware/01-expose-all-clusters) · [Attestation](firmware/02-fix-attestation)
-- [QA strategy](firmware/04-qa-strategy) · [Energy monitoring](firmware/09-energy-monitoring)
-- [Stock parity gaps](firmware/07-stock-parity-gaps) — what the stock firmware does that this does not, yet
+- [Firmware build and OTA procedure](firmware/10-firmware-ota-procedure.html) — the canonical reference
+- [Matter clusters exposed](firmware/01-expose-all-clusters.html) · [Attestation](firmware/02-fix-attestation.html)
+- [QA strategy](firmware/04-qa-strategy.html) · [Energy monitoring](firmware/09-energy-monitoring.html)
+- [Stock parity gaps](firmware/07-stock-parity-gaps.html) — what the stock firmware does that this does not, yet
 
 ## Source
 

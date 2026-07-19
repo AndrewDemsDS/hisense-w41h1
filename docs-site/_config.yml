@@ -16,7 +16,31 @@ description: >-
 url: https://andrewdemsds.github.io
 baseurl: /hisense-w41h1
 
-theme: jekyll-theme-primer
+# just-the-docs, not primer: primer renders a bare page with NO navigation, so anyone arriving
+# from a search engine on an inner page has no way to reach anything else. Every leading project
+# in this space (Tasmota, Zigbee2MQTT) uses a persistent sidebar plus search for exactly that
+# reason. remote_theme works on GitHub Pages via jekyll-remote-theme.
+remote_theme: just-the-docs/just-the-docs
+
+# Client-side search over every page. No server, no external service.
+search_enabled: true
+search:
+  heading_level: 3
+  previews: 3
+  tokenizer_separator: /[\s/]+/
+
+aux_links:
+  "Source on GitHub":
+    - "https://github.com/AndrewDemsDS/hisense-w41h1"
+aux_links_new_tab: true
+
+heading_anchors: true
+back_to_top: true
+back_to_top_text: "Back to top"
+
+nav_external_links:
+  - title: "Releases (firmware downloads)"
+    url: "https://github.com/AndrewDemsDS/hisense-w41h1/releases"
 
 plugins:
   - jekyll-seo-tag     # per-page <title>, meta description, canonical, Open Graph, JSON-LD
