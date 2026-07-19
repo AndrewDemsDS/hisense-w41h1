@@ -472,6 +472,34 @@ void hisense_deinit(void);
 // The returned length INCLUDES any byte-stuffing of an 0xF4 checksum byte,
 // so it may be HISENSE_CMD_FRAME_LEN or slightly larger -- always use the
 // return value, never assume HISENSE_CMD_FRAME_LEN.
+/* Sample-confirmed setpoint ranges. Exposed (rather than hardcoded in the builder)
+ * because CALLERS must validate too: a setpoint outside these bounds makes
+ * hisense_build_command() return 0, and an app layer that copies an out-of-range
+ * setpoint into its command shadow will then silently drop EVERY later combined
+ * frame. That is not hypothetical -- see hisense_setpoint_in_range(). */
+#define HISENSE_SETPOINT_MIN_C   16
+#define HISENSE_SETPOINT_MAX_C   32
+#define HISENSE_SETPOINT_MIN_F   61
+#define HISENSE_SETPOINT_MAX_F   90
+
+/* True if `setpoint` is a value the command builder will accept for the given unit.
+ *
+ * Call this before copying an A/C-reported setpoint into a command shadow. The A/C can
+ * legitimately report a value outside these bounds: this hardware answers ac_8heat=1
+ * (8 C frost-guard heat), and the bench confirmed it will report, and hold, setpoints
+ * well below 16 C (5 C was accepted verbatim). Copying such a value into the shadow
+ * poisons every subsequent hisense_build_command() call, which returns 0 and takes the
+ * whole frame with it -- mode, fan, swing and all -- with no error on the wire.
+ *
+ * Dry / Fan-only strip the setpoint from the frame entirely, so the builder skips the
+ * range check for those modes (#53); this helper reports the raw range only. */
+static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit)
+{
+    return fahrenheit
+        ? (setpoint >= HISENSE_SETPOINT_MIN_F && setpoint <= HISENSE_SETPOINT_MAX_F)
+        : (setpoint >= HISENSE_SETPOINT_MIN_C && setpoint <= HISENSE_SETPOINT_MAX_C);
+}
+
 size_t hisense_build_command(const HisenseCommand *cmd, uint8_t *out, size_t out_cap);
 
 // BENCH ONLY (#52 display-byte hunt). Same frame as hisense_build_command(), with

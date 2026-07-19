@@ -364,10 +364,7 @@ static size_t build_command_impl(const HisenseCommand *cmd, uint8_t *out, size_t
     // for Dry / Fan-only, where the setpoint is stripped from the wire anyway (#53)
     // -- an out-of-range (or stale) setpoint must not fail-and-drop the whole frame.
     if (cmd->mode != HISENSE_MODE_DRY && cmd->mode != HISENSE_MODE_FAN) {
-        if (!cmd->fahrenheit && (cmd->setpoint < 16 || cmd->setpoint > 32)) {
-            return 0;
-        }
-        if (cmd->fahrenheit && (cmd->setpoint < 61 || cmd->setpoint > 90)) {
+        if (!hisense_setpoint_in_range(cmd->setpoint, cmd->fahrenheit)) {
             return 0;
         }
     }

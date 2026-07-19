@@ -133,6 +133,16 @@ static void hisense_flush_command(void)
                           + chip::System::Clock::Milliseconds32(HISENSE_SYNC_HOLD_MS);
     } else if (len > 0) {
         ChipLogError(DeviceLayer, "hisense_flush_command: TX enqueue dropped (queue full)");
+    } else {
+        // len == 0: the builder refused the shadow. This used to be silent, which is how an
+        // out-of-range shadow setpoint could disable ALL combined-frame control with nothing
+        // in the log. The shadow is guarded at the resync now, so this should be unreachable;
+        // if it fires, every command is being dropped -- say so loudly.
+        ChipLogError(DeviceLayer,
+                     "hisense_flush_command: builder REJECTED the shadow (mode=%d setpoint=%d "
+                     "fahrenheit=%d) -- frame NOT sent; all combined control is dead until "
+                     "the shadow is valid again",
+                     (int) s_cmd.mode, (int) s_cmd.setpoint, (int) s_cmd.fahrenheit);
     }
 }
 
@@ -950,7 +960,20 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
             // pre-command) status frame yet (#61)
         } else {
             s_cmd.mode     = st.mode;
-            s_cmd.setpoint = st.setpoint_c;
+            // NEVER copy an out-of-range setpoint into the shadow. The A/C legitimately
+            // reports them (this unit answers ac_8heat=1, and the bench saw it accept and
+            // hold 5 C), and an out-of-range shadow makes hisense_build_command() return 0
+            // for EVERY later command -- mode, fan and swing included -- silently killing
+            // all combined-frame control until a reboot. Keeping the last good value
+            // degrades gracefully: the shadow is only a base for the next command.
+            if (hisense_setpoint_in_range(st.setpoint_c, s_cmd.fahrenheit)) {
+                s_cmd.setpoint = st.setpoint_c;
+            } else {
+                ChipLogError(DeviceLayer,
+                             "status setpoint %d out of range -- keeping shadow at %d "
+                             "(copying it would drop every later command)",
+                             (int) st.setpoint_c, (int) s_cmd.setpoint);
+            }
             // Keep the previous fan on an unknown/garbled raw instead of clobbering to
             // AUTO (#59): hisense_fan_raw_to_cmd returns NOCHANGE for an unrecognized raw.
             {

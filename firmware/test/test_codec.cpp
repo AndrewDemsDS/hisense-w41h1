@@ -353,6 +353,49 @@ int main() {
         }
     }
 
+    // ---- setpoint range helper: the shadow-poisoning guard -------------------
+    // Regression guard for a bug found on hardware: the A/C reported setpoint 8 (it
+    // answers ac_8heat=1 and will hold setpoints well below 16), the app layer copied
+    // that into its command shadow unvalidated, and hisense_build_command() then returned
+    // 0 for EVERY later command -- mode, fan, swing included -- with no wire error. All
+    // combined-frame control was dead until reboot. Callers must gate on this helper, so
+    // it has to agree with the builder exactly.
+    {
+        printf("[setpoint range helper vs builder]\n");
+        CHECK(hisense_setpoint_in_range(16, false), "16C in range");
+        CHECK(hisense_setpoint_in_range(32, false), "32C in range");
+        CHECK(hisense_setpoint_in_range(22, false), "22C in range");
+        CHECK(!hisense_setpoint_in_range(15, false), "15C out of range");
+        CHECK(!hisense_setpoint_in_range(33, false), "33C out of range");
+        CHECK(!hisense_setpoint_in_range(8,  false), "8C out of range (the bench value)");
+        CHECK(!hisense_setpoint_in_range(5,  false), "5C out of range (A/C accepted it)");
+        CHECK(hisense_setpoint_in_range(61, true),  "61F in range");
+        CHECK(hisense_setpoint_in_range(90, true),  "90F in range");
+        CHECK(!hisense_setpoint_in_range(60, true), "60F out of range");
+        CHECK(!hisense_setpoint_in_range(91, true), "91F out of range");
+
+        // The helper must predict the builder for every Celsius value, or a caller that
+        // trusts it still poisons the shadow. Dry/Fan strip the setpoint, so the builder
+        // skips the check there (#53) -- assert that exemption too.
+        uint8_t o[64];
+        for (int sp = 0; sp <= 40; sp++) {
+            HisenseCommand c = { HISENSE_MODE_COOL, (int8_t) sp, false, HISENSE_FAN_AUTO,
+                                 HISENSE_SWING_OFF, HISENSE_SWING_OFF,
+                                 HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
+            bool built  = hisense_build_command(&c, o, sizeof(o)) > 0;
+            bool predict = hisense_setpoint_in_range((int8_t) sp, false);
+            CHECK(built == predict, "setpoint %d: builder=%d helper=%d (must agree)",
+                  sp, built, predict);
+        }
+        for (int sp = 0; sp <= 40; sp += 8) {
+            HisenseCommand c = { HISENSE_MODE_FAN, (int8_t) sp, false, HISENSE_FAN_AUTO,
+                                 HISENSE_SWING_OFF, HISENSE_SWING_OFF,
+                                 HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
+            CHECK(hisense_build_command(&c, o, sizeof(o)) > 0,
+                  "FAN mode builds at setpoint %d (setpoint stripped, #53)", sp);
+        }
+    }
+
     // ---- display tri-state, frame[36] (#52) ---------------------------------
     // All three values CONFIRMED on a live W41H1 2026-07-19: 0x40 darkened the panel,
     // 0xC0 lit it. The regression this guards: `display` rides EVERY combined command,
