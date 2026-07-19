@@ -52,12 +52,17 @@ jobs:
           # Scope to firmware/src (the shipped image is built from it + the .zap under sdk-edits).
           # firmware/test is host-only QA that never changes the image, so a test-tooling edit must
           # NOT force a softwareVersion bump.
-          git fetch --no-tags --depth=1 origin "$BASE" || true
-          if git diff --quiet FETCH_HEAD -- firmware/src; then
-            echo "no firmware/src change vs $BASE -- bump not required"; exit 0
+          # Compare against the MERGE-BASE, not the base tip. Against the tip, a branch that has
+          # merely fallen behind main sees main's own firmware commits as its own and is told to
+          # bump a version it never touched. That fired twice on docs-only PRs. The merge-base is
+          # the fork point, so the diff is only ever what this branch actually changed.
+          git fetch --no-tags origin "$BASE" || true
+          MERGE_BASE=$(git merge-base FETCH_HEAD HEAD 2>/dev/null || echo FETCH_HEAD)
+          if git diff --quiet "$MERGE_BASE" -- firmware/src; then
+            echo "no firmware/src change vs $BASE (merge-base $(git rev-parse --short "$MERGE_BASE")) -- bump not required"; exit 0
           fi
           new=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
-          oldsem=$(git show "FETCH_HEAD:firmware/src/version.txt" 2>/dev/null | tr -d '[:space:]' || true)
+          oldsem=$(git show "$MERGE_BASE:firmware/src/version.txt" 2>/dev/null | tr -d '[:space:]' || true)
           old=$(bash firmware/scripts/ota-release.sh verint "${oldsem:-0}" 2>/dev/null || echo 0)
           echo "softwareVersion int: base($BASE)=$old  head=$new"
           if [ "${new:-0}" -le "$old" ]; then
