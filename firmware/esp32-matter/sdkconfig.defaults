@@ -46,8 +46,8 @@ CONFIG_CUSTOM_DEVICE_INFO_PROVIDER=y
 # so it (and the fallback NUMBER) MUST stay equal to PROJECT_VER or the device reports a stale
 # softwareVersionString. Edit PROJECT_VER in CMakeLists.txt, then update both lines below.
 # esp32-lint.sh enforces this equality (fails the commit/CI if they drift).
-CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10014
-CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.0.14"
+CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10015
+CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.0.15"
 # --- OTA hardening (faster + reliable on marginal Wi-Fi) ---
 # Delta OTA: ship a diff (tens of KB) instead of the full ~1.5MB image over BDX.
 CONFIG_ENABLE_DELTA_OTA=y
