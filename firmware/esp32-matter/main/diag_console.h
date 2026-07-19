@@ -16,6 +16,11 @@ void diag_console_start(void);
 // bus callback while the CHIP stack lock is held.
 void diag_on_status(const HisenseState *st);
 
+// Implemented in app_main.cpp. Why the last boot happened (#12). Captured once at startup.
+// The point is diagnosing an unresponsive module without a serial cable: a BROWNOUT here
+// would confirm the A/C 5 V rail sagging, which is currently only a hypothesis.
+void diag_get_boot_reason(int *code, const char **text);
+
 // Implemented in app_main.cpp. Sends the current command frame with ONE payload byte
 // overridden (see hisense_build_command_override). Backs the console's `tx`.
 // Returns 0 sent, -1 offset rejected, -2 TX queue full, -3 shadow invalid (builder

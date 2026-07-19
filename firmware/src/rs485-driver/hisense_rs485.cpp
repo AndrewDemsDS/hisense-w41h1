@@ -635,12 +635,28 @@ bool hisense_parse_status(const uint8_t *buf, size_t len, HisenseState *out_stat
     // 19 read 0x16 (=22) and offset 20 read 0x15 (=21) exactly. This is a
     // DIFFERENT encoding than the AEH-W4A1 reference's (raw-32)*0.5556, which
     // is what produced the bogus -5 C readings before this was captured.
-    out_state->setpoint_c    = (int8_t)temp_setting_raw;   // offset 19
-    // #5: C/F unit bit. Byte 26 bit 1, from the stock table's t_temp_type record (see the
-    // HisenseState field comment). Read-only for now: we never SET it, and the temperature
-    // fields stay Celsius regardless, so this only reports what the panel is displaying.
+    // #5: C/F unit bit. Byte 26 bit 1, from the stock table's t_temp_type record.
+    // CONFIRMED on hardware 2026-07-19: flipping a remote to F set this bit.
     out_state->temp_unit_f   = (buf[26] & 0x02) != 0;
-    out_state->indoor_temp_c = (int8_t)temp_status_raw;    // offset 20
+
+    /* The setpoint and indoor temperature are reported in the A/C's DISPLAY unit, so when
+     * the panel is set to Fahrenheit these arrive as F and must be converted. Confirmed on
+     * hardware the same way: switching a unit to F changed byte 19 from 22 to 72 and byte
+     * 20 from 26 to 78, i.e. the same temperatures re-expressed in F.
+     *
+     * Passing them through unconverted is not cosmetic. It told Home Assistant the room was
+     * 78 degrees Celsius, which drives HVAC logic and any automation reading the entity.
+     *
+     * Only these two follow the display unit. Outdoor (44) and coil (45) stayed Celsius
+     * across the same switch, so they are NOT converted here. Converting them would break
+     * the common case to fix a case that does not exist. */
+    if (out_state->temp_unit_f) {
+        out_state->setpoint_c    = hisense_f_to_c((int)temp_setting_raw);
+        out_state->indoor_temp_c = hisense_f_to_c((int)temp_status_raw);
+    } else {
+        out_state->setpoint_c    = (int8_t)temp_setting_raw;   // offset 19
+        out_state->indoor_temp_c = (int8_t)temp_status_raw;    // offset 20
+    }
 
     // flags1 @35 / flags2 @36 -- bit assignments CONFIRMED on hardware by
     // toggling each control and diffing (vswing/turbo/eco/mute). NOTE the eco

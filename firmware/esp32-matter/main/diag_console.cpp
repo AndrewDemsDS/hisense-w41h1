@@ -301,6 +301,26 @@ static int cmd_raw(int, char **)
     return 0;
 }
 
+// #12: why did this module last reboot? No serial cable required.
+//
+// Added after a module went unresponsive following an OTA and had to be recovered by
+// powering it from USB. The leading hypothesis is the A/C 5 V rail sagging under the
+// current draw of flash writes plus Wi-Fi TX, but there was NO evidence either way.
+// ESP_RST_BROWNOUT here would confirm it; ESP_RST_PANIC would point somewhere else
+// entirely. Either beats guessing.
+static int cmd_bootreason(int, char **)
+{
+    int code = -1;
+    const char *text = "unavailable";
+    diag_get_boot_reason(&code, &text);
+    printf("last boot: %s (code %d)\r\n", text, code);
+    printf("  ESP_RST_SW after our own OTA is expected and healthy.\r\n"
+           "  ESP_RST_BROWNOUT means the supply sagged: that is the A/C 5 V rail\r\n"
+           "  hypothesis confirmed, and an argument for raising the brownout threshold\r\n"
+           "  (currently the LOWEST, so a sag can hang the chip instead of resetting it).\r\n");
+    return 0;
+}
+
 // Compact codec self-check (subset of the host golden vectors).
 static int cmd_selftest(int, char **)
 {
@@ -416,6 +436,8 @@ extern "C" void diag_console_start(void)
             { "decode",   "offline-decode a pasted hex frame", NULL, cmd_decode, NULL, NULL },
             { "selftest", "compact on-target codec self-check", NULL, cmd_selftest, NULL, NULL },
             { "faults",   "#38: decoded f_e_* fault bits + raw fault bytes", NULL, cmd_faults, NULL, NULL },
+            { "bootreason", "#12: why the module last rebooted (brownout / panic / OTA)",
+                          NULL, cmd_bootreason, NULL, NULL },
             { "raw",      "hexdump the last status frame (falsifies the fault map)", NULL, cmd_raw, NULL, NULL },
             { "tx",       "#52 bench probe: tx <offset> <value> — current frame, one byte overridden",
                           NULL, cmd_tx, NULL, NULL },
