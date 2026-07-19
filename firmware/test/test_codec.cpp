@@ -353,6 +353,31 @@ int main() {
         }
     }
 
+    // ---- C/F unit bit (#5), frame byte 26 bit 1 ------------------------------
+    {
+        printf("[temp unit bit]\n");
+        uint8_t s2[160];
+        HisenseState st2;
+        // parse_status VALIDATES the checksum, so byte 26 cannot just be poked after
+        // make_status: re-checksum, exactly as the A/C would.
+        auto set26 = [&](uint8_t v) {
+            make_status(s2, true, HISENSE_MODE_COOL, 22, 25, 0x01, 0x00, 0x00, 0x00, 40, 30);
+            s2[26] = v;
+            uint16_t ck = besum(s2, 156);
+            s2[156] = (uint8_t)(ck >> 8); s2[157] = (uint8_t)(ck & 0xFF);
+        };
+        set26(0x61);                         // observed on BOTH bench units (Celsius)
+        CHECK(hisense_parse_status(s2, 160, &st2) && !st2.temp_unit_f,
+              "byte26=0x61 -> Celsius (both bench units read this)");
+        set26(0x63);                         // same byte with bit 1 set
+        CHECK(hisense_parse_status(s2, 160, &st2) && st2.temp_unit_f,
+              "byte26 bit1 set -> Fahrenheit");
+        // Only bit 1 may matter: the rest of byte 26 must not leak into the flag.
+        set26((uint8_t) ~0x02);
+        CHECK(hisense_parse_status(s2, 160, &st2) && !st2.temp_unit_f,
+              "every other bit of byte 26 ignored");
+    }
+
     // ---- f_e_* fault bits (#38) ---------------------------------------------
     // Mapping derived from the stock firmware: payload offset + 13 = wire byte, bit
     // index - 8 = bit in that byte. Frame bytes 37/38/62/64.
