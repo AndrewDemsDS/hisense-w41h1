@@ -264,6 +264,17 @@ typedef struct {
     bool     valid;             // false until first good frame parsed
     bool     power_on;          // run_status != 0 (byte18 bits2-3)
     HisenseMode mode;           // byte18 bits4-7
+    /* C/F display unit the A/C is set to (#5). Frame byte 26 bit 1: 0 = Celsius.
+     *
+     * Located from the stock capability table, not guessed. Its `t_temp_type` record
+     * decodes to (offset 0x0B, 1-bit, shift 1) under the same rule that reproduces six
+     * fields we already had confirmed on hardware (vswing/hswing/eco/turbo/mute as 1-bit
+     * flags, and t_temp as the 7-bit setpoint at byte 19). See RE docs/10 7.
+     *
+     * UNVERIFIED direction: both bench units are Celsius and read 0 here, so "1 means
+     * Fahrenheit" is the obvious reading but has not been seen. Switch a unit to F on its
+     * remote and diff `raw` to confirm before trusting it for anything user-facing. */
+    bool     temp_unit_f;
     int8_t   indoor_temp_c;     // offset 20, DIRECT integer C. CONFIRMED on
                                  // hardware: 21 C room -> 0x15. (NOT the
                                  // reference's (raw-32)*0.5556 -- that was the
