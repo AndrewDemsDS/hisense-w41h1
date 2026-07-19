@@ -73,6 +73,7 @@ static uint16_t s_ep_sleep   = 0;  // ep6 ModeSelect Sleep profile
 static uint16_t s_ep_aux     = 0;  // ep7 BooleanState aux/PTC heat relay
 static uint16_t s_ep_coil    = 0;  // ep8 TemperatureMeasurement coil
 static uint16_t s_ep_display = 0;  // ep9 OnOff panel display (#19 cheap win)
+static uint16_t s_ep_fault   = 0;  // ep10 BooleanState -> any A/C fault (#38)
 
 // Hisense manufacturer cluster (ember-only on Ameba; HA has no schema for it, but it exists
 // for node parity). 4 attrs: 0x00 Eco / 0x01 Turbo / 0x02 Mute (bool), 0x03 SleepProfile (u8).
@@ -514,6 +515,20 @@ static void on_status(const HisenseState *st)
     set_attr(s_ep_sleep, ModeSelect::Id, ModeSelect::Attributes::CurrentMode::Id,
              esp_matter_uint8((uint8_t)(st->sleep_raw / 2)));
     // Aux/PTC electric-heat relay -> BooleanState contact sensor (ep7).
+    // #5: report the A/C's display unit. Read side only; writes are rejected (see the
+    // write-access override) until the byte-23 command is bench-verified.
+    set_attr(s_ep_id, ThermostatUserInterfaceConfiguration::Id,
+             ThermostatUserInterfaceConfiguration::Attributes::TemperatureDisplayMode::Id,
+             esp_matter_enum8(st->temp_unit_f ? 1 : 0));
+    // #38: aggregate fault flag. HisenseFaults.any already ORs the raw fault bytes (minus
+    // the one bit proven to be a mode flag), so do not re-derive it from the named bools.
+    {
+        HisenseFaults fl;
+        if (hisense_get_faults(&fl)) {
+            set_attr(s_ep_fault, BooleanState::Id, BooleanState::Attributes::StateValue::Id,
+                     esp_matter_bool(fl.any));
+        }
+    }
     set_attr(s_ep_aux, BooleanState::Id, BooleanState::Attributes::StateValue::Id,
              esp_matter_bool(st->heat_relay_on));
 
@@ -922,6 +937,40 @@ extern "C" void diag_get_boot_reason(int *code, const char **text)
     if (text) *text = reset_reason_str(s_boot_reason);
 }
 
+/* Make TemperatureDisplayMode genuinely READ-ONLY at the protocol layer (#5).
+ *
+ * Home Assistant renders this attribute as a WRITABLE select. We can read the A/C's display
+ * unit correctly, but the WRITE path is unverified: RE docs/10 7.4b predicts command byte 23
+ * (0x03 = F, 0x01 = C) and nobody has tested it. Guessing wrong here is not cosmetic; sending
+ * the wrong unit previously made a unit target 23 F and run at 74 Hz toward -5 C.
+ *
+ * A comment saying "do not wire this yet" is not a gate. This repo already shipped that
+ * failure once: the ep9 Display switch appeared in HA and silently did nothing (#33). So the
+ * rejection is enforced in code.
+ *
+ * emberAfAttributeWriteAccessCallback is a weak symbol in the SDK (generic-callback-stubs.cpp)
+ * checked by attribute-storage.cpp BEFORE the value reaches storage. Returning false yields
+ * Status::UnsupportedAccess, so a HA write fails VISIBLY rather than appearing to succeed and
+ * silently reverting on the next status poll.
+ *
+ * When the bench check passes (tx 23 0x03 / tx 23 0x01, watch the panel, confirm byte 26
+ * bit 1 follows), implement the builder, wire the uplink, and define
+ * HISENSE_TUIC_WRITE_VERIFIED to lift this. */
+// NOTE: C++ linkage, NOT extern "C". The SDK declares this weak hook as a C++ symbol, so an
+// extern "C" definition here does not override it (and fails to compile against the decl).
+bool emberAfAttributeWriteAccessCallback(chip::EndpointId endpoint,
+                                         chip::ClusterId clusterId,
+                                         chip::AttributeId attributeId)
+{
+#ifndef HISENSE_TUIC_WRITE_VERIFIED
+    if (clusterId == ThermostatUserInterfaceConfiguration::Id) {
+        return false;   // read-only until the byte-23 command is proven on hardware
+    }
+#endif
+    (void) endpoint; (void) attributeId;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 extern "C" void app_main()
 {
@@ -973,6 +1022,20 @@ extern "C" void app_main()
     cluster::electrical_power_measurement::attribute::create_voltage(epm, nullable<int64_t>());
     cluster::electrical_power_measurement::attribute::create_active_current(epm, nullable<int64_t>());
 
+    /* C/F display unit (#5) via the STANDARD ThermostatUserInterfaceConfiguration cluster
+     * (0x0204) on ep1, so Home Assistant renders it natively. No new endpoint.
+     *
+     * KeypadLockout is created whether we want it or not: esp-matter's create() makes both
+     * attributes unconditionally, and the cluster spec marks only ScheduleProgrammingVisibility
+     * optional. Seeded to NoLockout(0) and never fed; the A/C has no keypad-lockout concept.
+     * Harmless in practice because HA gates its child-lock switch on that attribute to Eve's
+     * vendor id, and we report 0xFFF1, so no stray entity appears.
+     *
+     * TemperatureDisplayMode is READ-ONLY here on purpose: see the write-access override
+     * below. */
+    cluster::thermostat_user_interface_configuration::config_t tuic_cfg;
+    cluster::thermostat_user_interface_configuration::create(ep, &tuic_cfg, CLUSTER_FLAG_SERVER);
+
     // Hisense manufacturer cluster 0xFFF1FC00 (4 attrs, non-volatile read-back).
     cluster_t *mfg = cluster::create(ep, kMfgClusterId, CLUSTER_FLAG_SERVER);
     attribute::create(mfg, 0x0000, ATTRIBUTE_FLAG_NONVOLATILE, esp_matter_bool(false));
@@ -1008,6 +1071,16 @@ extern "C" void app_main()
     cluster::user_label::create(ep_aux, NULL, CLUSTER_FLAG_SERVER);
     s_ep_aux = endpoint::get_id(ep_aux);
 
+    // ep10: aggregate A/C fault -> Contact Sensor (BooleanState), a structural clone of
+    // ep7 above. ONE aggregate rather than 18 per-fault endpoints: only f_e_incom has a
+    // confirmed trigger/clear cycle on real hardware, and 17 entities reading false forever
+    // is clutter, not diagnostics. Promote an individual fault to its own endpoint later if
+    // one earns it. Must stay contiguous after ep9 (a gap hard-faults AmebaZ2 on boot).
+    endpoint::contact_sensor::config_t fault_cfg;
+    endpoint_t *ep_fault = endpoint::contact_sensor::create(node, &fault_cfg, ENDPOINT_FLAG_NONE, NULL);
+    cluster::user_label::create(ep_fault, NULL, CLUSTER_FLAG_SERVER);
+    s_ep_fault = endpoint::get_id(ep_fault);
+
     // ep8: coil temperature.
     endpoint::temperature_sensor::config_t coil_cfg;
     endpoint_t *ep_coil = endpoint::temperature_sensor::create(node, &coil_cfg, ENDPOINT_FLAG_NONE, NULL);
@@ -1040,6 +1113,7 @@ extern "C" void app_main()
     set_entity_label(s_ep_aux,     "Aux Heat");
     set_entity_label(s_ep_coil,    "Coil");
     set_entity_label(s_ep_display, "Display");
+    set_entity_label(s_ep_fault,   "Fault");
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 
     // F1: swap the fabric when a new controller pairs during a "77" window.
