@@ -209,6 +209,23 @@ typedef enum {
     // simultaneously will just pick turbo.
 } HisenseFeature;
 
+/* Panel display / LED, frame[36] (= payload @20). All three values CONFIRMED on the
+ * bench 2026-07-19 against a live W41H1 (issue #52): 0x40 darkened the panel and 0xC0
+ * lit it again, with every other byte held at the unit's current state.
+ *
+ * The tri-state is REQUIRED, not a nicety. `display` rides the combined command frame,
+ * so it is present on every mode / setpoint / fan / swing change. A plain bool mapping
+ * false->0x40 would force the display off on every one of those commands; NOCHANGE's
+ * 0x00 ("leave alone") is what keeps ordinary traffic from touching the panel. Only an
+ * explicit display request should send ON/OFF, and it should be one-shot (reset to
+ * NOCHANGE after the frame goes out), otherwise later frames keep re-asserting it and
+ * fight the user's remote. */
+typedef enum {
+    HISENSE_DISPLAY_NOCHANGE = 0,  // frame[36]=0x00 leave the panel alone (default)
+    HISENSE_DISPLAY_ON       = 1,  // frame[36]=0xC0 CONFIRMED lights the panel
+    HISENSE_DISPLAY_OFF      = 2,  // frame[36]=0x40 CONFIRMED darkens the panel
+} HisenseDisplay;
+
 /* ---------------------------------------------------------------------------
  * Command struct: everything hisense_build_command() can pack into ONE
  * combined "write" frame.
@@ -236,13 +253,8 @@ typedef struct {
     HisenseSwingMode vswing;
     HisenseSwingMode hswing;
     HisenseFeature   feature;          // eco / turbo / none
-    bool             display_on;       // VERIFY: 0x00 body byte 20 is
-                                        // assumed "don't touch display"; only
-                                        // display_on={true->0xC0,false->0x40}
-                                        // triggers an explicit write. There's
-                                        // no tri-state "leave alone" flag here
-                                        // -- add one if the bench test shows
-                                        // 0x00 actually forces display off.
+    HisenseDisplay   display;          // panel display/LED. CONFIRMED on the bench
+                                        // 2026-07-19 (see HisenseDisplay).
 } HisenseCommand;
 
 /* ---------------------------------------------------------------------------
@@ -461,6 +473,23 @@ void hisense_deinit(void);
 // so it may be HISENSE_CMD_FRAME_LEN or slightly larger -- always use the
 // return value, never assume HISENSE_CMD_FRAME_LEN.
 size_t hisense_build_command(const HisenseCommand *cmd, uint8_t *out, size_t out_cap);
+
+// BENCH ONLY (#52 display-byte hunt). Same frame as hisense_build_command(), with
+// exactly ONE pre-checksum byte replaced. Every other byte stays at the caller's
+// current known-good state, so a failed probe is a no-op rather than a surprise
+// mode/setpoint change -- that is what makes an offset sweep safe to run against a
+// live A/C.
+//
+// `ovr_off` is an ABSOLUTE frame offset and must land in the payload:
+// [HISENSE_CMD_HEADER_LEN, HISENSE_CMD_CHK_OFFSET). Header and checksum/terminator
+// offsets are rejected (returns 0) because patching them yields a frame the A/C
+// simply drops, which is indistinguishable from "this byte does nothing" and would
+// poison a sweep with false negatives.
+//
+// Returns the on-the-wire length (byte-stuffing included), or 0 on a rejected
+// offset / the same errors as hisense_build_command().
+size_t hisense_build_command_override(const HisenseCommand *cmd, uint8_t *out, size_t out_cap,
+                                      int ovr_off, uint8_t ovr_val);
 
 // Builds the literal power on/off frame, ported byte-for-byte from
 // messages.h `on[]`/`off[]` (NOT synthesized -- these carry several bytes

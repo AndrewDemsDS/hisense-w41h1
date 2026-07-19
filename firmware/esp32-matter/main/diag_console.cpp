@@ -3,6 +3,7 @@
 // for Matter coexistence: diag_on_status() only snapshots (no socket I/O under the
 // CHIP stack lock); the `watch` stream and the TCP accept loop run in their own tasks.
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
@@ -176,13 +177,52 @@ static int cmd_decode(int argc, char **argv)
     return 0;
 }
 
+// Bench probe for #52 (display byte unknown). Sends the CURRENT command frame with one
+// payload byte replaced, so a miss is a no-op rather than a surprise mode/setpoint change.
+//
+// Deliberately single-shot: there is no auto-sweep. hisense_parse_status() decodes no
+// display state (power_display/q_display are ProductType CAPABILITY bits, not live
+// status), so the only oracle is the panel LED and every probe needs a human looking at
+// the unit before the next one goes out. An unattended sweep would just log offsets.
+static int cmd_tx(int argc, char **argv)
+{
+    if (argc < 3) {
+        printf("usage: tx <offset> <value>   (both accept 0x.. or decimal)\r\n"
+               "  payload offsets %u..%u; header and checksum/terminator are rejected\r\n"
+               "  current suspect (#52): tx 36 0xC0  then  tx 36 0x40\r\n"
+               "  watch the PANEL after each probe -- there is no status read-back\r\n",
+               (unsigned) HISENSE_CMD_HEADER_LEN, (unsigned) HISENSE_CMD_CHK_OFFSET - 1);
+        return 1;
+    }
+    long off = strtol(argv[1], NULL, 0);
+    long val = strtol(argv[2], NULL, 0);
+    if (val < 0 || val > 0xFF) { printf("value out of range (0..0xFF)\r\n"); return 1; }
+
+    switch (diag_tx_override((int) off, (uint8_t) val)) {
+    case -1:
+        printf("rejected: offset %ld is outside the payload [%u,%u)\r\n",
+               off, (unsigned) HISENSE_CMD_HEADER_LEN, (unsigned) HISENSE_CMD_CHK_OFFSET);
+        return 1;
+    case -2:
+        printf("TX queue full -- NOT sent, retry\r\n");
+        return 1;
+    default:
+        break;
+    }
+    printf("sent: frame[%ld] = 0x%02lX (every other byte = current A/C state)\r\n"
+           "  -> check the panel now; any change is attributable to this byte alone\r\n"
+           "  -> to undo, drive the unit normally from HA (rebuilds the baseline frame)\r\n",
+           off, (unsigned long) val);
+    return 0;
+}
+
 // Compact codec self-check (subset of the host golden vectors).
 static int cmd_selftest(int, char **)
 {
     int fails = 0;
     uint8_t f[64];
     HisenseCommand c = { HISENSE_MODE_COOL, 22, false, HISENSE_FAN_LOW,
-                         HISENSE_SWING_OFF, HISENSE_SWING_OFF, HISENSE_FEATURE_ECO, false };
+                         HISENSE_SWING_OFF, HISENSE_SWING_OFF, HISENSE_FEATURE_ECO, HISENSE_DISPLAY_NOCHANGE };
     size_t n = hisense_build_command(&c, f, sizeof(f));
     if (!(n && f[16] == 0x0B && f[18] == 0x50 && f[19] == 0x2D && f[33] == 0x30)) fails++;
     uint8_t hi = 0, lo = 0;
@@ -290,6 +330,8 @@ extern "C" void diag_console_start(void)
             { "watch",    "stream decoded frames ~1Hz: watch [on|off]", NULL, cmd_watch, NULL, NULL },
             { "decode",   "offline-decode a pasted hex frame", NULL, cmd_decode, NULL, NULL },
             { "selftest", "compact on-target codec self-check", NULL, cmd_selftest, NULL, NULL },
+            { "tx",       "#52 bench probe: tx <offset> <value> — current frame, one byte overridden",
+                          NULL, cmd_tx, NULL, NULL },
         };
         for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) esp_console_cmd_register(&cmds[i]);
     }

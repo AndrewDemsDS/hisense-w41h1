@@ -1,6 +1,6 @@
 // Diagnostic telnet console (:2323) embedded in the esp-matter A/C firmware, so the
 // node stays a Matter device AND exposes recon-style diagnostics over the network:
-//   nc <node-ip> 2323   ->  token | poll | watch | decode | selftest | help
+//   nc <node-ip> 2323   ->  token | poll | watch | decode | selftest | tx | help
 #pragma once
 #include "hisense_rs485.h"
 
@@ -15,6 +15,11 @@ void diag_console_start(void);
 // Feed each valid status frame. Snapshots ONLY (no I/O) — safe to call from the
 // bus callback while the CHIP stack lock is held.
 void diag_on_status(const HisenseState *st);
+
+// Implemented in app_main.cpp. Sends the current command frame with ONE payload byte
+// overridden (see hisense_build_command_override). Backs the console's `tx`.
+// Returns 0 sent, -1 offset/build rejected, -2 TX queue full.
+int diag_tx_override(int off, uint8_t val);
 
 #ifdef __cplusplus
 }
