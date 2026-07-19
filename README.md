@@ -10,8 +10,12 @@ Assistant — **zero cloud**.
 > interoperability. Do this at your own risk — a bad flash can brick the module (recoverable with
 > the stock dump).
 
-**User guide:** the operator + developer guides (commissioning, HA control, OTA, recovery, build
-pipeline) live in [`firmware/docs/`](firmware/docs/) and [`reverse-engineering/docs/`](reverse-engineering/docs/).
+**📖 Documentation: [andrewdemsds.github.io/hisense-w41h1](https://andrewdemsds.github.io/hisense-w41h1/)**
+— wiring, flashing, commissioning, everyday control, OTA, recovery, and the reverse-engineering
+write-ups, all searchable in one place.
+
+The same guides live in the repo under [`firmware/docs/`](firmware/docs/) and
+[`reverse-engineering/docs/`](reverse-engineering/docs/); the site is generated from them.
 
 ## What you get
 
