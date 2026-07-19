@@ -761,6 +761,102 @@ static void trigger_https_ota(void)
     xTaskCreate(https_ota_task, "https_ota", 8192, NULL, 5, NULL);
 }
 
+/* #61: break-glass OTA trigger that does NOT ride the Matter layer.
+ *
+ * Identify=88 is unreachable exactly when it is needed: a controller that has marked the node
+ * unavailable refuses the write before it reaches the device ("Node <id> is not (yet)
+ * available"). That is what happened to the AmebaZ2 node after an OTA broke its subscriptions --
+ * healthy on the network, answering its console, but un-reflashable over the air.
+ *
+ * Deliberately NOT a diag-console command: that console is debug-flavour only, so a trigger
+ * there would be missing from precisely the images most likely to need it. This is compiled
+ * unconditionally, and therefore authenticated and fail-closed -- with no token configured the
+ * socket is never opened. No default token: a default in a public repo is not authentication.
+ */
+#ifdef HISENSE_BREAKGLASS_TOKEN
+
+#ifndef HISENSE_BREAKGLASS_PORT
+#define HISENSE_BREAKGLASS_PORT 2324
+#endif
+
+// Non-short-circuiting compare: an early-return memcmp leaks the matched prefix across repeated
+// attempts. Cheap to avoid even though the attacker must already be on the LAN.
+static bool breakglass_token_ok(const char *got, size_t got_len)
+{
+    const char  *want     = HISENSE_BREAKGLASS_TOKEN;
+    const size_t want_len = sizeof(HISENSE_BREAKGLASS_TOKEN) - 1;
+    unsigned char diff = 0;
+
+    if (got_len != want_len) return false;
+    for (size_t i = 0; i < want_len; i++) diff |= (unsigned char) (got[i] ^ want[i]);
+    return diff == 0;
+}
+
+static void breakglass_task(void *arg)
+{
+    int srv = socket(AF_INET6, SOCK_STREAM, 0);
+    struct sockaddr_in6 a = {};
+    int one = 1;
+
+    (void) arg;
+    if (srv < 0) { ESP_LOGE(TAG, "break-glass: socket failed"); vTaskDelete(NULL); return; }
+    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    a.sin6_family = AF_INET6;
+    a.sin6_port   = htons(HISENSE_BREAKGLASS_PORT);
+    if (bind(srv, (struct sockaddr *) &a, sizeof(a)) != 0 || listen(srv, 1) != 0) {
+        ESP_LOGE(TAG, "break-glass: bind/listen failed on %d", HISENSE_BREAKGLASS_PORT);
+        close(srv);
+        vTaskDelete(NULL);
+        return;
+    }
+    ESP_LOGI(TAG, "break-glass listener up on :%d (#61)", HISENSE_BREAKGLASS_PORT);
+
+    for (;;) {
+        int cs = accept(srv, NULL, NULL);
+        char buf[96];
+        if (cs < 0) continue;
+
+        int n = recv(cs, buf, sizeof(buf) - 1, 0);
+        if (n <= 0) { close(cs); continue; }
+        buf[n] = 0;
+
+        size_t len = strlen(buf);
+        while (len > 0 && (buf[len - 1] == '\r' || buf[len - 1] == '\n' || buf[len - 1] == ' ')) {
+            buf[--len] = 0;
+        }
+
+        if (breakglass_token_ok(buf, len)) {
+            static const char kOk[] =
+                "ok: fetching; device reboots into the idle slot.\r\n"
+                "verify the RUNNING version afterwards -- a failed apply\r\n"
+                "looks like success until you check.\r\n";
+            ESP_LOGW(TAG, "break-glass: token accepted, starting OTA fetch");
+            send(cs, kOk, sizeof(kOk) - 1, 0);
+            close(cs);
+            trigger_https_ota();
+        } else {
+            // No detail: do not reveal whether the length or the bytes were wrong.
+            ESP_LOGW(TAG, "break-glass: rejected (bad token)");
+            send(cs, "no\r\n", 4, 0);
+            close(cs);
+        }
+    }
+}
+
+static void breakglass_start(void)
+{
+    xTaskCreate(breakglass_task, "breakglass", 4096, NULL, 5, NULL);
+}
+
+#else  /* fail closed, and say so at boot rather than silently */
+static void breakglass_start(void)
+{
+    ESP_LOGE(TAG, "break-glass DISABLED: no HISENSE_BREAKGLASS_TOKEN at build time (#61). "
+                  "Recovery depends on the Matter layer being healthy.");
+}
+#endif /* HISENSE_BREAKGLASS_TOKEN */
+
 // ---------------------------------------------------------------------------
 // UserLabel entity naming (cluster 0x0041). esp-matter's UserLabel cluster VerifyOrDie's
 // without a DeviceInfoProvider, and ESP32DeviceInfoProvider isn't linkable without the
@@ -1127,5 +1223,6 @@ extern "C" void app_main()
 
 #ifdef CONFIG_HISENSE_DEBUG_BUILD
     diag_console_start();   // :2323 telnet diagnostics (token/poll/watch/decode/selftest)
+    breakglass_start();     // #61: OTA trigger off the Matter path (compiled into BOTH flavours)
 #endif
 }

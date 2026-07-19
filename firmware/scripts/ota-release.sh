@@ -149,8 +149,20 @@ sync_mirror() {
       echo "#define HISENSE_OTA_HOST     \"${OTA_HTTP_HOST}\""
       echo "#define HISENSE_OTA_PORT     ${OTA_HTTP_PORT:-8070}"
       echo "#define HISENSE_OTA_RESOURCE \"${OTA_HTTP_RESOURCE:-/rac-ota.bin}\""
+      # #61: break-glass TRIGGER token. Ships in both flavours, so it is authenticated and
+      # fails closed -- no token here means the listener is never opened. There is deliberately
+      # no default: a default in a public repo is the same as no authentication.
+      if [ -n "${BREAKGLASS_TOKEN:-}" ]; then
+        echo "#define HISENSE_BREAKGLASS_TOKEN \"${BREAKGLASS_TOKEN}\""
+        echo "#define HISENSE_BREAKGLASS_PORT  ${BREAKGLASS_PORT:-2324}"
+      fi
     } > "$EXAMPLE_DIR/hisense_ota_config.h"
     say "  break-glass OTA target: ${OTA_HTTP_HOST}:${OTA_HTTP_PORT:-8070}${OTA_HTTP_RESOURCE:-/rac-ota.bin}"
+    if [ -n "${BREAKGLASS_TOKEN:-}" ]; then
+      say "  break-glass trigger: listening on :${BREAKGLASS_PORT:-2324} (token set, both flavours)"
+    else
+      say "  break-glass trigger: DISABLED (BREAKGLASS_TOKEN unset -- recovery needs a healthy Matter layer)"
+    fi
   else
     rm -f "$EXAMPLE_DIR/hisense_ota_config.h"
     say "  OTA_HTTP_HOST unset -- break-glass OTA keeps the inert placeholder host"

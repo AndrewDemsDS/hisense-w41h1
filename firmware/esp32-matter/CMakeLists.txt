@@ -2,7 +2,7 @@
 #   . ~/esp/esp-idf-v5.5.4/export.sh && . $ESP_MATTER_PATH/export.sh
 #   idf.py set-target esp32 && idf.py build flash monitor
 cmake_minimum_required(VERSION 3.16)
-set(PROJECT_VER "1.0.22")
+set(PROJECT_VER "1.0.23")
 
 # Unified versioning (issue #77): the Matter softwareVersion INT is DERIVED from PROJECT_VER --
 # MAJOR*10000+MINOR*100+PATCH -> a readable, strictly-monotonic uint32. This keeps the human
@@ -75,4 +75,26 @@ if(DEFINED HISENSE_OTA_URL OR DEFINED ENV{HISENSE_OTA_URL})
     message(STATUS "hisense: manual OTA URL set from build config")
 else()
     message(STATUS "hisense: HISENSE_OTA_URL unset -- manual HTTPS-OTA uses the placeholder URL")
+endif()
+
+# #61: break-glass OTA TRIGGER token. The Identify=88 trigger rides Matter, so it is refused
+# exactly when recovery is needed (the controller rejects writes to a node it has marked
+# unavailable). The listener that replaces it is compiled into BOTH flavours -- unlike the
+# :2323 diag console, which is debug-only and unauthenticated -- so it is authenticated and
+# fails CLOSED: with no token the socket is never opened. No default token on purpose; a
+# default in a public repo is equivalent to no authentication.
+if(DEFINED HISENSE_BREAKGLASS_TOKEN OR DEFINED ENV{HISENSE_BREAKGLASS_TOKEN})
+    if(NOT DEFINED HISENSE_BREAKGLASS_TOKEN)
+        set(HISENSE_BREAKGLASS_TOKEN $ENV{HISENSE_BREAKGLASS_TOKEN})
+    endif()
+    idf_build_set_property(COMPILE_DEFINITIONS "HISENSE_BREAKGLASS_TOKEN=\"${HISENSE_BREAKGLASS_TOKEN}\"" APPEND)
+    if(DEFINED HISENSE_BREAKGLASS_PORT OR DEFINED ENV{HISENSE_BREAKGLASS_PORT})
+        if(NOT DEFINED HISENSE_BREAKGLASS_PORT)
+            set(HISENSE_BREAKGLASS_PORT $ENV{HISENSE_BREAKGLASS_PORT})
+        endif()
+        idf_build_set_property(COMPILE_DEFINITIONS "HISENSE_BREAKGLASS_PORT=${HISENSE_BREAKGLASS_PORT}" APPEND)
+    endif()
+    message(STATUS "hisense: break-glass trigger ENABLED (token set from build config)")
+else()
+    message(STATUS "hisense: HISENSE_BREAKGLASS_TOKEN unset -- break-glass trigger DISABLED (recovery needs a healthy Matter layer)")
 endif()
