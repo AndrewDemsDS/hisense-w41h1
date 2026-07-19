@@ -24,6 +24,10 @@
 #include <clusters/HisenseAircon/ClusterId.h>   // mfg cluster + attribute id constants (synced to zzz_generated)
 #include "power_estimate.h"
 #include "hisense_diag_console.h"   // #23 debug-flavour :2323 console (no-op in release)
+
+// #61: defined further down this TU (it needs hisense_trigger_https_ota, which is defined
+// below), but called from the init path above it -- so it needs a forward declaration.
+static void hisense_breakglass_start(void);
 #include "ElectricalPowerMeasurementDelegate.h"
 #include <mode_select/ameba_mode_select_manager.h>   // Sleep profile ModeSelect (ep6)
 #include <memory>
@@ -421,6 +425,7 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     hisense_set_link_cb(matter_driver_on_link);                   // #56: bus silence -> mark unavailable
     hisense_set_features_cb(matter_driver_on_features);           // 0x66/40 feature flags -> device log
     hisense_diag_console_start();                                 // #23: :2323 console, DEBUG flavour only
+    hisense_breakglass_start();                                   // #61: OTA trigger off the Matter path (BOTH flavours)
 
     // HA entity labels (UserLabel key "ha_entitylabel") so the same-type entities are
     // distinguishable in Home Assistant. Requires the UserLabel cluster (0x0041) enabled
@@ -720,6 +725,118 @@ static void hisense_trigger_https_ota(void)
         ChipLogError(DeviceLayer, "HTTPS-OTA: task create failed");
     }
 }
+
+/* --------------------------------------------------------------------------
+ * #61: break-glass OTA trigger that does NOT ride the Matter layer.
+ *
+ * The Identify=88 trigger is unreachable exactly when it is needed: a controller that has
+ * marked the node unavailable refuses the write before it reaches the device ("Node <id> is
+ * not (yet) available"). That happened after an OTA that broke Matter subscriptions -- the
+ * device was healthy on the network and answering its console, but could not be re-flashed
+ * over the air, because the only escape hatch sat on the transport that was broken.
+ *
+ * Deliberately NOT part of the :2323 diagnostic console: that console is DEBUG-flavour only
+ * and unauthenticated by design, so a trigger living there would be absent from exactly the
+ * images most likely to need it. This listener is compiled into BOTH flavours.
+ *
+ * Because it ships in release, it is authenticated and fails CLOSED: with no token configured
+ * at build time the socket is never opened. A default token in a public repo would be
+ * equivalent to no authentication at all, so there is no default.
+ *
+ * Set HISENSE_BREAKGLASS_TOKEN via ota-release.env (gitignored) -> -D on the build.
+ * ------------------------------------------------------------------------ */
+#ifdef HISENSE_BREAKGLASS_TOKEN
+
+#ifndef HISENSE_BREAKGLASS_PORT
+#define HISENSE_BREAKGLASS_PORT 2324
+#endif
+
+// Length-checked, non-short-circuiting compare. The token is low-value and the attacker is
+// already on the LAN, but an early-return memcmp leaks the matched prefix over repeated tries
+// and costs nothing to avoid.
+static bool hisense_token_ok(const char *got, size_t got_len)
+{
+    const char  *want     = HISENSE_BREAKGLASS_TOKEN;
+    const size_t want_len = sizeof(HISENSE_BREAKGLASS_TOKEN) - 1;
+    unsigned char diff = (unsigned char) (got_len ^ want_len);
+    size_t i;
+
+    if (got_len != want_len) return false;
+    for (i = 0; i < want_len; i++) diff |= (unsigned char) (got[i] ^ want[i]);
+    return diff == 0;
+}
+
+static void hisense_breakglass_task(void *arg)
+{
+    int srv = lwip_socket(AF_INET6, SOCK_STREAM, 0);
+    struct sockaddr_in6 a;
+    int one = 1;
+
+    (void) arg;
+    if (srv < 0) { ChipLogError(DeviceLayer, "break-glass: socket failed"); vTaskDelete(NULL); return; }
+    lwip_setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    memset(&a, 0, sizeof(a));
+    a.sin6_family = AF_INET6;
+    a.sin6_port   = htons(HISENSE_BREAKGLASS_PORT);
+    if (lwip_bind(srv, (struct sockaddr *) &a, sizeof(a)) != 0 || lwip_listen(srv, 1) != 0) {
+        ChipLogError(DeviceLayer, "break-glass: bind/listen failed on %d", HISENSE_BREAKGLASS_PORT);
+        lwip_close(srv);
+        vTaskDelete(NULL);
+        return;
+    }
+    ChipLogProgress(DeviceLayer, "break-glass listener up on :%d (#61)", HISENSE_BREAKGLASS_PORT);
+
+    for (;;) {
+        int cs = lwip_accept(srv, NULL, NULL);
+        char buf[96];
+        int  n;
+        size_t len;
+
+        if (cs < 0) continue;
+        n = lwip_read(cs, buf, sizeof(buf) - 1);
+        if (n <= 0) { lwip_close(cs); continue; }
+        buf[n] = 0;
+
+        len = strlen(buf);
+        while (len > 0 && (buf[len - 1] == '\r' || buf[len - 1] == '\n' || buf[len - 1] == ' ')) {
+            buf[--len] = 0;
+        }
+
+        if (hisense_token_ok(buf, len)) {
+            ChipLogProgress(DeviceLayer, "break-glass: token accepted, starting OTA fetch");
+            static const char kOk[] =
+                "ok: fetching; device reboots into the idle slot.\r\n"
+                "verify the RUNNING version afterwards -- a failed apply\r\n"
+                "looks like success until you check (docs/10).\r\n";
+            lwip_write(cs, kOk, sizeof(kOk) - 1);
+            lwip_close(cs);
+            hisense_trigger_https_ota();
+        } else {
+            // No detail on failure, and no hint whether the length or the bytes were wrong.
+            ChipLogError(DeviceLayer, "break-glass: rejected (bad token)");
+            lwip_write(cs, "no\r\n", 4);
+            lwip_close(cs);
+        }
+    }
+}
+
+static void hisense_breakglass_start(void)
+{
+    if (xTaskCreate(hisense_breakglass_task, "hisense_bg", 1024, NULL,
+                    tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+        ChipLogError(DeviceLayer, "break-glass: task create failed");
+    }
+}
+
+#else  /* no token configured -> fail closed, and say so loudly at boot */
+static void hisense_breakglass_start(void)
+{
+    ChipLogError(DeviceLayer,
+                 "break-glass DISABLED: no HISENSE_BREAKGLASS_TOKEN at build time (#61). "
+                 "Recovery depends on the Matter layer being healthy.");
+}
+#endif /* HISENSE_BREAKGLASS_TOKEN */
 
 /* --------------------------------------------------------------------------
  * Uplink: Matter attribute write -> A/C command frame.
@@ -1070,6 +1187,16 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // standard binary_sensor (#51). Decoded from status offset-35 bit4; normally 0,
         // asserts in cold/defrost. Standard cluster => HA-readable (unlike the mfg attrs).
         BoolAttr::StateValue::Set(kHeatRelayEp, st.heat_relay_on);
+
+        // REVERTED (was: TUIC display-unit on ep1 + aggregate fault on ep10).
+        // Both were added by a hand-edited .zap and, once booted, the device's Matter
+        // SUBSCRIPTIONS failed persistently with CHIP Error 0x24 "Invalid TLV tag" while
+        // reads still worked -- so matter-server marked the node unavailable and HA lost the
+        // kitchen unit. The generated tables looked correct (ENUM8/size 1, min/max present,
+        // FIXED_ENDPOINT_COUNT 11), so the defect is subtler than a bad attribute type.
+        // Reverted here to restore service; re-land once the root cause is understood and a
+        // SUBSCRIPTION smoke-test exists (a clean build + contiguity lint did NOT catch this).
+        // The ESP32 half is unaffected and keeps both features.
 
         // Manufacturer cluster read-back (no generated accessors for a custom
         // cluster -> raw ember writes). Types: boolean=0x10, int8u=0x20, int8s=0x28.

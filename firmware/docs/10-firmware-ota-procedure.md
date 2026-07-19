@@ -349,3 +349,113 @@ ported from the ESP32 esp-matter build to AmebaZ2:
   big `.ota` lives in the GitHub release and only the small `.json` need be staged. CI
   (`.github/workflows/amebaz2-release.yaml`) already attaches `rac-v*.{ota,json}` on `release: published`
   (needs the self-hosted `sdk-builder` runner; until it exists, build+publish from the dev box).
+
+## 13. Break-glass trigger that does not depend on Matter (issue #61)
+
+`#78`'s `Identify = 88` trigger travels **over Matter**, so it is refused exactly when it is needed.
+python-matter-server checks a client-side `node.available` flag *before* it contacts the device:
+
+```python
+if (node := self._nodes.get(node_id)) is None or not node.available:
+    raise NodeNotReady(f"Node {node_id} is not (yet) available.")
+```
+
+That flag is set only after a **subscription** succeeds. A node whose subscriptions fail but whose
+reads still work is therefore refused, even though the device would answer. On 2026-07-19 the
+AmebaZ2 node was in exactly that state: console answering, A/C bus polling 293 frames, no faults,
+and un-reflashable over the air because the only escape hatch sat on the broken transport.
+
+**The listener.** A small authenticated TCP listener on `BREAKGLASS_PORT` (default 2324), compiled
+into **both flavours**. Send the token, get `ok` and the device starts the same `#78` fetch; send
+anything else and get a bare `no`.
+
+```
+printf 'TOKEN\r\n' | nc <device-ip> 2324
+```
+
+It is deliberately **not** a `:2323` diag-console command. That console is debug-flavour only and
+unauthenticated by design, so a trigger living there would be absent from precisely the images most
+likely to need it.
+
+**Fails closed.** No `BREAKGLASS_TOKEN` in `ota-release.env` means the socket is never opened, and
+the boot log says so instead of staying silent. There is deliberately no default token: a default in
+a public repo is equivalent to no authentication. Set it in `ota-release.env` (gitignored); the
+build injects it via `-D`, mirroring `HISENSE_OTA_URL`.
+
+**Limits.** A plaintext secret over an unencrypted LAN socket that can start a firmware fetch. Real
+improvement over an unauthenticated port, not strong authentication. And it only exists from the
+next successful flash onward, so it cannot rescue an image that shipped without it.
+
+## 14. Trust the device, not the tool (four cases in one session)
+
+`ota-release.sh flash` reported the wrong outcome **four times** on 2026-07-19. The device's own
+report was correct every time.
+
+| tool said | reality |
+|---|---|
+| `declined: 11` x3, then silence | OTA had applied; device was running the new build |
+| `FAILED: never sustained v10226` | device was on the newer v10227 (a later flash superseded it) |
+| exit 0, no verdict line | v10227 booted fine |
+| matter-server `avail=False` | device healthy, console answering instantly |
+
+Verify against the device, in this order:
+
+1. **The diag console** (`version` on `:2323`) is the most direct answer to "what is actually
+   running", and it works when Matter does not.
+2. **`read_attribute`**, not `get_node`, which returns cached attributes.
+3. matter-server's node state is a **cache plus a client-side flag**. It can lag reality by a whole
+   firmware version.
+
+Corollary: `avail=False` does **not** mean the device is unreachable. Check the console before
+concluding anything about the network. Pinging a link-local address also needs the right interface
+(these devices sit on a tagged VLAN), so a failed ping from the wrong interface proves nothing.
+
+## 15. After a structure-changing OTA, re-interview (not optional)
+
+Adding or removing an endpoint or cluster changes the data model. matter-server keeps the **old**
+cached model and will keep failing against it, including with TLV decode errors, until it is
+re-interviewed:
+
+```python
+await ms_ws.call(ws, "interview_node", {"node_id": <id>}, "1", timeout=180)
+```
+
+Observed both directions in one session: after adding ep10, and again after reverting it, the node
+stayed `avail=False` with a stale model (`sw` and endpoint list both wrong) until re-interviewed.
+`interview_node` has **no** availability guard, which is why it works on a node that `write_attribute`
+refuses.
+
+## 16. A green build is not a working data model
+
+The 2026-07-19 regression shipped with **every** existing gate passing: full clean build, contiguous
+endpoint lint, host codec and Matter-map tests, and correct-looking generated `endpoint_config.h`
+(right types, sizes, min/max entries, matching counts). None of them exercise a **subscription**,
+which is what broke: reads worked, subscription priming reports failed with CHIP error `0x24`
+"Invalid TLV tag", and Home Assistant lost the node.
+
+Two theories were investigated and **refuted**, so do not re-tread them:
+
+- the hand-written globals' `defaultValue` `""` vs `null` is inert. ZAP forces `External`
+  attributes' defaults to `undefined` before codegen, so output is byte-identical.
+- the `60` vs `61` cluster-count delta is correct, not an off-by-one: 60 server clusters plus one
+  client-side OTA-requestor cluster on ep0.
+
+Best-supported lead is upstream
+[connectedhomeip#32273](https://github.com/project-chip/connectedhomeip/issues/32273): identical
+signature while encoding global attributes during a wildcard subscription's **priming report** on a
+stock example app. That fits the asymmetry seen here, since an interview issues many narrow reads
+while a subscription does one wildcard expansion across every server cluster.
+
+**Before re-landing a data-model change:** confirm `Subscription succeeded` in the matter-server log
+and `avail=True` after a re-interview. Pinning the exact culprit needs verbose `CHIP:DMG` logging
+during a failing subscribe; the line before the error names the cluster and attribute.
+
+### Editing the `.zap` without the GUI
+
+Scripted JSON edits do work for **standard** clusters (they resolve against stock ZCL metadata), and
+a full build confirmed correct codegen: `FIXED_ENDPOINT_COUNT`, both clusters present in the
+`.matter`, contiguity lint clean. But that build passed while shipping the model that broke
+subscriptions, so treat GUI-free editing as **build-verified, not runtime-verified**. Manufacturer
+clusters still require the GUI plus the `zzz_generated` edits. Cheap insurance either way: open the
+`.zap` in the GUI once and plain-Save before building, which forces ZAP to re-derive all metadata in
+one canonical pass.
