@@ -353,6 +353,71 @@ int main() {
         }
     }
 
+    // ---- f_e_* fault bits (#38) ---------------------------------------------
+    // Mapping derived from the stock firmware: payload offset + 13 = wire byte, bit
+    // index - 8 = bit in that byte. Frame bytes 37/38/62/64.
+    {
+        printf("[fault bit decode]\n");
+        uint8_t s[160];
+        HisenseFaults fl;
+
+        // healthy unit: every fault byte zero
+        make_status(s, true, HISENSE_MODE_COOL, 22, 25, 0x01, 0x00, 0x00, 0x00, 40, 30);
+        CHECK(hisense_parse_faults(s, 160, &fl), "healthy frame parses");
+        CHECK(fl.valid && !fl.any, "healthy unit reports no faults");
+        CHECK(!fl.in_temp && !fl.in_com && !fl.out_temp && !fl.over_temp, "no named fault set");
+
+        // one bit at a time, across all four bytes, checking bit->name mapping
+        struct { int byte; uint8_t mask; const char *name; bool HisenseFaults::*field; } cases[] = {
+            { HISENSE_FAULT_BYTE_INDOOR,  0x80, "in_temp",       &HisenseFaults::in_temp },
+            { HISENSE_FAULT_BYTE_INDOOR,  0x40, "in_coil_temp",  &HisenseFaults::in_coil_temp },
+            { HISENSE_FAULT_BYTE_INDOOR,  0x20, "in_humidity",   &HisenseFaults::in_humidity },
+            { HISENSE_FAULT_BYTE_INDOOR,  0x10, "water_full",    &HisenseFaults::water_full },
+            { HISENSE_FAULT_BYTE_INDOOR,  0x08, "in_fan_motor",  &HisenseFaults::in_fan_motor },
+            { HISENSE_FAULT_BYTE_INDOOR,  0x04, "grille",        &HisenseFaults::grille },
+            { HISENSE_FAULT_BYTE_INDOOR,  0x02, "in_vzero",      &HisenseFaults::in_vzero },
+            { HISENSE_FAULT_BYTE_INDOOR,  0x01, "in_com",        &HisenseFaults::in_com },
+            { HISENSE_FAULT_BYTE_MODULE,  0x80, "in_display",    &HisenseFaults::in_display },
+            { HISENSE_FAULT_BYTE_MODULE,  0x40, "in_keys",       &HisenseFaults::in_keys },
+            { HISENSE_FAULT_BYTE_MODULE,  0x20, "in_wifi",       &HisenseFaults::in_wifi },
+            { HISENSE_FAULT_BYTE_MODULE,  0x10, "in_ele",        &HisenseFaults::in_ele },
+            { HISENSE_FAULT_BYTE_MODULE,  0x08, "in_eeprom",     &HisenseFaults::in_eeprom },
+            { HISENSE_FAULT_BYTE_OUTDOOR, 0x40, "out_eeprom",    &HisenseFaults::out_eeprom },
+            { HISENSE_FAULT_BYTE_OUTDOOR, 0x20, "out_coil_temp", &HisenseFaults::out_coil_temp },
+            { HISENSE_FAULT_BYTE_OUTDOOR, 0x10, "out_gas_temp",  &HisenseFaults::out_gas_temp },
+            { HISENSE_FAULT_BYTE_OUTDOOR, 0x08, "out_temp",      &HisenseFaults::out_temp },
+            { HISENSE_FAULT_BYTE_PROTECT, 0x10, "over_temp",     &HisenseFaults::over_temp },
+        };
+        for (auto &c : cases) {
+            make_status(s, true, HISENSE_MODE_COOL, 22, 25, 0x01, 0x00, 0x00, 0x00, 40, 30);
+            s[c.byte] = c.mask;
+            CHECK(hisense_parse_faults(s, 160, &fl) && fl.*(c.field),
+                  "byte %d mask 0x%02X -> %s set", c.byte, c.mask, c.name);
+            CHECK(fl.any, "%s also raises any", c.name);
+        }
+
+        // An UNNAMED bit must still raise `any`. Reporting "healthy" because we have no
+        // name for a bit would be the worst possible failure of a diagnostics feature.
+        make_status(s, true, HISENSE_MODE_COOL, 22, 25, 0x01, 0x00, 0x00, 0x00, 40, 30);
+        s[HISENSE_FAULT_BYTE_MODULE] = 0x01;      // no name assigned to bit 0
+        CHECK(hisense_parse_faults(s, 160, &fl) && fl.any,
+              "unnamed fault bit still raises any");
+        CHECK(fl.raw_module == 0x01, "raw byte preserved for logging");
+
+        // Short frames: each group is gated independently, and a frame too short for
+        // even the first group must not report a bogus clean bill of health.
+        CHECK(!hisense_parse_faults(s, 20, &fl), "frame too short for faults -> false");
+        CHECK(!fl.valid, "too-short frame leaves valid=false (not a false all-clear)");
+        make_status(s, true, HISENSE_MODE_COOL, 22, 25, 0x01, 0x00, 0x00, 0x00, 40, 30);
+        s[HISENSE_FAULT_BYTE_INDOOR] = 0x80;
+        CHECK(hisense_parse_faults(s, HISENSE_FAULT_BYTE_INDOOR + 2, &fl) && fl.in_temp,
+              "indoor group readable on a frame that just reaches it");
+        CHECK(fl.raw_outdoor == 0 && !fl.out_temp, "unreachable groups stay clear");
+
+        CHECK(!hisense_parse_faults(nullptr, 160, &fl), "null buf rejected");
+        CHECK(!hisense_parse_faults(s, 160, nullptr), "null out rejected");
+    }
+
     // ---- setpoint range helper: the shadow-poisoning guard -------------------
     // Regression guard for a bug found on hardware: the A/C reported setpoint 8 (it
     // answers ac_8heat=1 and will hold setpoints well below 16), the app layer copied

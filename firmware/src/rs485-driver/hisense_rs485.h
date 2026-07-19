@@ -500,6 +500,102 @@ static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit)
         : (setpoint >= HISENSE_SETPOINT_MIN_C && setpoint <= HISENSE_SETPOINT_MAX_C);
 }
 
+/* ---------------------------------------------------------------------------
+ * Fault / error flags (the `f_e_*` cloud attributes behind the vendor app's
+ * "Self diagnostics" screen). Decoded from the SAME 0x66 status reply we already
+ * poll once per second, so this costs no extra bus traffic.
+ *
+ * Derived from the stock firmware, not guessed: the capability table at file
+ * 0x137e20 stores, per attribute, a payload offset and a bit index, and the
+ * extractor at 0x9b6f8ac8 reads
+ *     u16 = (payload[group] << 8) | payload[group + 1]
+ * then selects bit (index - 8). Its caller passes a pointer to the frame's CLASS
+ * byte, which is wire byte 13, so `frame_byte = 13 + payload_offset`. That base
+ * agrees with the two entries already in RE docs/10 5a (ac_8heat payload 0x0D =
+ * byte 26; ac_enable_8heat payload 0x1A = byte 39). Full derivation: RE docs/10 7.
+ *
+ * NOTE the aliases: three bits carry two names each, because the meaning depends
+ * on unit type (a floor-standing grille versus a wall unit, over-hot versus
+ * over-cold protection). One bit, two possible readings, so they are exposed
+ * under one combined name rather than inventing a distinction the wire does not
+ * make.
+ * -------------------------------------------------------------------------*/
+/* PAYLOAD BASE: 15, NOT 13.
+ *
+ * The disassembly says the extractor's caller passes a pointer to the frame's class
+ * byte, which is wire byte 13, and RE docs/10 5a's two ac_* entries agree with base 13.
+ * Base 13 is nevertheless WRONG for this frame, falsified on hardware 2026-07-19: it
+ * puts the indoor fault byte at wire 37, which reads 0x80 on a healthy unit and would
+ * report a permanent "indoor temp sensor" fault while that sensor reads a correct 25 C.
+ *
+ * Sweeping the nearby bases against "a healthy unit must read all-zero", only 15 gives
+ * 00/00/00/00 across all four groups (13 -> 80 05 00 00, 14 -> 05 00 00 00,
+ * 16 -> 00 0f 00 00). So the extractor is fed the frame at +15, or the status reply
+ * carries two more header bytes than the ProductType reply that 5a was derived from.
+ *
+ * Base 15 is the best-supported value, NOT a proven one: it rests on one healthy
+ * sample, and "reads zero" is weak evidence in a frame that is mostly zeros. It is
+ * settled by injecting a real fault and diffing the frame. Until then treat any decoded
+ * fault as provisional and check `raw`. */
+#define HISENSE_FAULT_PAYLOAD_BASE 15   /* wire byte = 15 + payload offset */
+#define HISENSE_FAULT_BYTE_INDOOR  39   /* payload 0x18 */
+#define HISENSE_FAULT_BYTE_MODULE  40   /* payload 0x19 */
+#define HISENSE_FAULT_BYTE_OUTDOOR 64   /* payload 0x31 */
+#define HISENSE_FAULT_BYTE_PROTECT 66   /* payload 0x33 */
+
+typedef struct {
+    bool    valid;        // a long-enough status frame was parsed
+    bool    any;          // true if ANY fault bit is set (cheap "is it healthy")
+    uint8_t raw_indoor;   // frame[37] verbatim, for logging an unknown bit
+    uint8_t raw_module;   // frame[38]
+    uint8_t raw_outdoor;  // frame[62]
+    uint8_t raw_protect;  // frame[64]
+
+    // frame[37] (payload 0x18), bit 7 down to bit 0
+    bool in_temp;         // f_e_intemp        indoor temp sensor
+    bool in_coil_temp;    // f_e_incoiltemp    indoor coil sensor
+    bool in_humidity;     // f_e_inhumidity    indoor humidity sensor
+    bool water_full;      // f_e_waterfull     condensate tray full
+    bool in_fan_motor;    // f_e_infanmotor / f_e_upmachine   (aliased bit)
+    bool grille;          // f_e_arkgrille  / f_e_dwmachine   (aliased bit)
+    bool in_vzero;        // f_e_invzero       zero-cross detect
+    bool in_com;          // f_e_incom         indoor<->outdoor comms
+
+    // frame[38] (payload 0x19)
+    bool in_display;      // f_e_indisplay
+    bool in_keys;         // f_e_inkeys
+    bool in_wifi;         // f_e_inwifi
+    bool in_ele;          // f_e_inele
+    bool in_eeprom;       // f_e_ineeprom
+
+    // frame[62] (payload 0x31)
+    bool out_eeprom;      // f_e_outeeprom
+    bool out_coil_temp;   // f_e_outcoiltemp
+    bool out_gas_temp;    // f_e_outgastemp
+    bool out_temp;        // f_e_outtemp
+
+    // frame[64] (payload 0x33)
+    bool over_temp;       // f_e_over_hot / f_e_over_cold     (aliased bit)
+} HisenseFaults;
+
+// Parse fault bits out of a 0x66 status frame. Returns false (and leaves
+// out->valid == false) if the frame is too short to carry them. Pure, so the host
+// tests can drive it with synthetic frames.
+bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out);
+
+// Latest faults parsed from the bus. false until a long-enough frame has arrived.
+bool hisense_get_faults(HisenseFaults *out);
+
+// Raw copy of the most recent status frame, for bench inspection. Copies up to `cap`
+// bytes and returns how many. 0 if nothing has been received yet.
+//
+// This exists because the fault map above is DERIVED from the stock firmware and has not
+// yet been seen against a unit actually reporting a fault. A healthy unit reads all-zero,
+// which confirms nothing on its own, so being able to read the bytes directly is what
+// makes the mapping falsifiable.
+#define HISENSE_RAW_SNAPSHOT_LEN 160
+size_t hisense_get_last_status_frame(uint8_t *out, size_t cap);
+
 size_t hisense_build_command(const HisenseCommand *cmd, uint8_t *out, size_t out_cap);
 
 // BENCH ONLY (#52 display-byte hunt). Same frame as hisense_build_command(), with

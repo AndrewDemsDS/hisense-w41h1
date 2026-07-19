@@ -1,6 +1,6 @@
 // Diagnostic telnet console (:2323) embedded in the esp-matter A/C firmware, so the
 // node stays a Matter device AND exposes recon-style diagnostics over the network:
-//   nc <node-ip> 2323   ->  token | poll | watch | decode | selftest | tx | help
+//   nc <node-ip> 2323   ->  token | poll | watch | decode | selftest | tx | faults | raw | help
 #pragma once
 #include "hisense_rs485.h"
 
