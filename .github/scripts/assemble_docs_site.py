@@ -84,7 +84,23 @@ def yaml_quote(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def convert(src, dst):
+# Wiki markdown links to sibling pages WITHOUT an extension ("[Recovery](Recovery-and-Reflash)").
+# GitHub's wiki resolves that; a static site does not, so every one of them 404s unless rewritten.
+# Home is special: this site has its own landing page and Home.md is skipped.
+def rewrite_wiki_links(text, pages):
+    def sub(m):
+        label, target, anchor = m.group(1), m.group(2), m.group(3) or ""
+        if target == "Home":
+            return f"[{label}](../{anchor})"
+        if target in pages:
+            return f"[{label}]({target}.html{anchor})"
+        return m.group(0)
+    # The (#anchor) group matters: "[x](OTA-Updates#delta)" is common in these pages and would
+    # otherwise be left alone and 404.
+    return re.sub(r"\[([^\]]*)\]\(([A-Za-z][A-Za-z0-9._-]*)(#[^)]*)?\)", sub, text)
+
+
+def convert(src, dst, pages=None):
     with open(src, encoding="utf-8") as fh:
         lines = fh.readlines()
 
@@ -104,9 +120,12 @@ def convert(src, dst):
         fm.append(f"description: {yaml_quote(desc)}")
     fm += ["---", ""]
 
+    body = "".join(lines)
+    if pages:
+        body = rewrite_wiki_links(body, pages)
     with open(dst, "w", encoding="utf-8") as fh:
         fh.write("\n".join(fm))
-        fh.writelines(lines)
+        fh.write(body)
     return True
 
 
@@ -122,13 +141,30 @@ def main():
             continue
         out_dir = os.path.join(SITE, sub)
         os.makedirs(out_dir, exist_ok=True)
+        # Page-name set for the link rewrite above (wiki only; repo docs link by filename).
+        pages = {os.path.splitext(f)[0] for f in os.listdir(src_dir) if f.endswith(".md")} \
+            if src_dir == "wiki-src" else None
         n = 0
         for name in sorted(os.listdir(src_dir)):
             if name in SKIP or not name.endswith(".md"):
                 continue
-            convert(os.path.join(src_dir, name), os.path.join(out_dir, name))
+            convert(os.path.join(src_dir, name), os.path.join(out_dir, name), pages)
             n += 1
-        print(f"  {label}: {n} page(s) -> /{sub}/")
+        # Copy assets too. Pages reference them RELATIVELY (![](images/foo.png)), so they have to
+        # land beside the markdown that points at them or every image 404s -- which is exactly
+        # what happened on the first deploy: only *.md was copied.
+        assets = 0
+        for root, dirs, files in os.walk(src_dir):
+            dirs[:] = [d for d in dirs if d != ".git"]
+            for fn in files:
+                if fn.endswith(".md") or fn in SKIP:
+                    continue
+                rel = os.path.relpath(os.path.join(root, fn), src_dir)
+                dest = os.path.join(out_dir, rel)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copyfile(os.path.join(root, fn), dest)
+                assets += 1
+        print(f"  {label}: {n} page(s) -> /{sub}/" + (f", {assets} asset(s)" if assets else ""))
         total += n
 
     # Explicit robots.txt. jekyll-sitemap writes /sitemap.xml; pointing at it is what makes a
