@@ -46,8 +46,8 @@ CONFIG_CUSTOM_DEVICE_INFO_PROVIDER=y
 # so it (and the fallback NUMBER) MUST stay equal to PROJECT_VER or the device reports a stale
 # softwareVersionString. Edit PROJECT_VER in CMakeLists.txt, then update both lines below.
 # esp32-lint.sh enforces this equality (fails the commit/CI if they drift).
-CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10015
-CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.0.15"
+CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10021
+CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.0.21"
 # --- OTA hardening (faster + reliable on marginal Wi-Fi) ---
 # Delta OTA: ship a diff (tens of KB) instead of the full ~1.5MB image over BDX.
 CONFIG_ENABLE_DELTA_OTA=y
@@ -60,3 +60,20 @@ CONFIG_MRP_RETRY_INTERVAL_SENDER_BOOST_FOR_WIFI_ETHERNET=300
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # HTTPS-OTA manual backup path (plain HTTP from a local file server; LAN-only).
 CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
+
+# Brownout threshold (#12). REVERTED to level 0 (~2.43 V, the LOWEST) to
+# level 4 (~2.67 V) after a module hung during an OTA and needed USB power to recover,
+# and a later OTA reported ESP_RST_BROWNOUT on the console's `bootreason`.
+#
+# Level 0 is the worst setting for this failure: the rail can sag far enough to upset the
+# flash chip or the PHY while the CPU keeps executing, so an OTA write can HANG the module
+# rather than reset it. A hang needs physical access; a reset recovers itself. This module
+# lives inside an A/C, so self-recovery is worth a lot.
+#
+# Level 4 rather than the maximum on purpose: high enough to trip before the flash-unsafe
+# zone, low enough to leave headroom against normal dips. If `bootreason` starts reporting
+# frequent brownouts at idle, this is too high and the supply needs fixing, not the
+# threshold raising further.
+CONFIG_ESP_BROWNOUT_DET=y
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_0=y
+CONFIG_ESP_BROWNOUT_DET_LVL=0

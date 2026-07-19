@@ -378,6 +378,76 @@ int main() {
               "every other bit of byte 26 ignored");
     }
 
+    // ---- Fahrenheit display unit converts (#5) -------------------------------
+    // Confirmed on hardware 2026-07-19: switching a unit to F changed byte 19 from 22 to 72
+    // and byte 20 from 26 to 78, i.e. the same temperatures re-expressed in F. Passing them
+    // through told Home Assistant the room was 78 degrees Celsius.
+    {
+        printf("[fahrenheit display unit]\n");
+        uint8_t s3[160];
+        HisenseState st3;
+        auto build = [&](uint8_t b26, int8_t setp, int8_t indoor) {
+            make_status(s3, true, HISENSE_MODE_COOL, setp, indoor, 0x01, 0x00, 0x00, 0x00, 40, 30);
+            s3[26] = b26;
+            uint16_t ck = besum(s3, 156);
+            s3[156] = (uint8_t)(ck >> 8); s3[157] = (uint8_t)(ck & 0xFF);
+        };
+        // the exact frame observed on hardware while the panel was in F
+        build(0x83, 72, 78);
+        CHECK(hisense_parse_status(s3, 160, &st3), "F frame parses");
+        CHECK(st3.temp_unit_f, "unit flag reads F");
+        CHECK(st3.setpoint_c == 22, "72F setpoint -> 22C (got %d)", st3.setpoint_c);
+        CHECK(st3.indoor_temp_c == 26, "78F indoor -> 26C (got %d)", st3.indoor_temp_c);
+        // outdoor/coil stayed Celsius across the same switch, so must NOT be converted
+        CHECK(st3.outdoor_temp_c == 30, "outdoor left alone (got %d)", st3.outdoor_temp_c);
+
+        // Celsius path unchanged: the regression that would matter most.
+        build(0x61, 22, 26);
+        CHECK(hisense_parse_status(s3, 160, &st3), "C frame parses");
+        CHECK(!st3.temp_unit_f, "unit flag reads C");
+        CHECK(st3.setpoint_c == 22 && st3.indoor_temp_c == 26, "C values pass through");
+
+        // conversion maths, including the negative case naive integer division gets wrong
+        CHECK(hisense_f_to_c(32) == 0,    "32F -> 0C");
+        CHECK(hisense_f_to_c(212) == 100, "212F -> 100C");
+        CHECK(hisense_f_to_c(72) == 22,   "72F -> 22C");
+        CHECK(hisense_f_to_c(78) == 26,   "78F -> 26C");
+        CHECK(hisense_f_to_c(46) == 8,    "46F -> 8C (the 8C frost-guard setpoint)");
+        CHECK(hisense_f_to_c(14) == -10,  "14F -> -10C (negative rounds correctly)");
+    }
+
+    // ---- C<->F round trip on the COMMAND side (#5) ---------------------------
+    // The A/C reads the setpoint byte in its DISPLAY unit. Sending Celsius to a panel in F
+    // made a real unit target 23 F and run at 74 Hz toward -5 C, so this is not cosmetic.
+    {
+        printf("[celsius/fahrenheit round trip]\n");
+        CHECK(hisense_c_to_f(0) == 32,    "0C -> 32F");
+        // NOTE 100C -> 212F is NOT asserted: the return type is int8_t, so 212 cannot be
+        // represented and the helper clamps to 127. That is fine because the reachable
+        // setpoint range is 16..32C (61..90F), but the clamp is asserted rather than left
+        // implicit, so nobody later assumes this helper is general-purpose.
+        CHECK(hisense_c_to_f(100) == 127, "100C clamps to int8 max, not 212");
+        CHECK(hisense_c_to_f(22) == 72,   "22C -> 72F (the value seen on hardware)");
+        CHECK(hisense_c_to_f(23) == 73,   "23C -> 73F");
+        CHECK(hisense_c_to_f(-10) == 14,  "-10C -> 14F (negative)");
+        // Round trip must not drift for every setpoint we can actually command.
+        for (int c = HISENSE_SETPOINT_MIN_C; c <= HISENSE_SETPOINT_MAX_C; c++) {
+            int8_t f = hisense_c_to_f(c);
+            CHECK(hisense_f_to_c(f) == c, "%dC -> %dF -> %dC round trips", c, f, hisense_f_to_c(f));
+            CHECK(hisense_setpoint_in_range(f, true),
+                  "%dC maps to %dF, inside the F range the builder accepts", c, f);
+        }
+        // And a command built in F must encode the F value, not the Celsius one.
+        {
+            HisenseCommand c = { HISENSE_MODE_COOL, hisense_c_to_f(22), true, HISENSE_FAN_AUTO,
+                                 HISENSE_SWING_OFF, HISENSE_SWING_OFF,
+                                 HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
+            uint8_t o[64];
+            CHECK(hisense_build_command(&c, o, sizeof(o)) > 0, "F-unit command builds");
+            CHECK(o[19] == ((72 << 1) | 1), "byte19 carries 72F encoded (got 0x%02X)", o[19]);
+        }
+    }
+
     // ---- f_e_* fault bits (#38) ---------------------------------------------
     // Mapping derived from the stock firmware: payload offset + 13 = wire byte, bit
     // index - 8 = bit in that byte. Frame bytes 37/38/62/64.

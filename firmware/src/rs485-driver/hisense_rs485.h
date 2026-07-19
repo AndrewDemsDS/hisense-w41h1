@@ -504,6 +504,33 @@ void hisense_deinit(void);
  *
  * Dry / Fan-only strip the setpoint from the frame entirely, so the builder skips the
  * range check for those modes (#53); this helper reports the raw range only. */
+/* Fahrenheit to Celsius, rounded to nearest, for the display-unit temperature fields.
+ * Integer maths on purpose (no FPU in the hot path): (F - 32) * 5 / 9 with rounding.
+ * Handles negatives correctly, which naive integer division does not. */
+static inline int8_t hisense_f_to_c(int f)
+{
+    int n = (f - 32) * 5;
+    int c = (n >= 0) ? (n + 4) / 9 : (n - 4) / 9;
+    if (c > 127) c = 127;
+    if (c < -128) c = -128;
+    return (int8_t) c;
+}
+
+/* Celsius to Fahrenheit, rounded to nearest. Integer maths, mirrors hisense_f_to_c().
+ *
+ * Needed on the COMMAND side: the A/C interprets the setpoint byte in its own DISPLAY unit,
+ * both directions. Confirmed the hard way on hardware 2026-07-19: with the panel in F, a
+ * Celsius 23 was transmitted verbatim, the A/C read it as 23 F, and the unit went chasing
+ * -5 C at 74 Hz. So a command built while the panel is in F must carry Fahrenheit. */
+static inline int8_t hisense_c_to_f(int c)
+{
+    int n = c * 9;
+    int f = ((n >= 0) ? (n + 2) / 5 : (n - 2) / 5) + 32;
+    if (f > 127) f = 127;
+    if (f < -128) f = -128;
+    return (int8_t) f;
+}
+
 static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit)
 {
     return fahrenheit

@@ -18,9 +18,11 @@
 // fixes + special-mode/telemetry decode already live there; this file only surfaces them
 // through esp-matter clusters (the AmebaZ2 matter_drivers.cpp does the same via CHIP).
 #include <esp_err.h>
+#include <esp_system.h>   // esp_reset_reason (#12 brownout diagnosis)
 #include <esp_log.h>
 #include <nvs_flash.h>
 #include <string.h>
+#include <esp_wifi.h>        // TX-power throttle during OTA (#12 brownout mitigation)
 #include <esp_https_ota.h>     // manual HTTPS-OTA backup path (fallback for a failed Matter OTA)
 #include <esp_http_client.h>
 
@@ -365,8 +367,17 @@ static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t e
             // Round on the full int, clamp last (never narrow to int8 before the clamp).
             int whole_c = matter_round_setpoint_c(val->val.i16);
             if (st.valid && whole_c == st.setpoint_c) return ESP_OK;   // echo guard (pre-clamp)
-            s_cmd.setpoint   = (int8_t) matter_clamp_setpoint_c(whole_c);
-            s_cmd.fahrenheit = false;
+            /* The A/C reads the setpoint byte in ITS OWN display unit, so a command built
+             * while the panel is in Fahrenheit must carry Fahrenheit. Matter is always
+             * Celsius, so convert here and tell the builder which unit it is holding (that
+             * also selects the right range check: 61..90 rather than 16..32).
+             *
+             * Getting this wrong is not a silent no-op. On hardware, sending Celsius 23 to
+             * a panel in F made the A/C target 23 F and run at 74 Hz toward -5 C. */
+            int8_t want_c = (int8_t) matter_clamp_setpoint_c(whole_c);
+            bool   unit_f = st.valid && st.temp_unit_f;
+            s_cmd.fahrenheit = unit_f;
+            s_cmd.setpoint   = unit_f ? hisense_c_to_f(want_c) : want_c;
             flush_cmd();
         }
 
@@ -442,12 +453,17 @@ static void on_status(const HisenseState *st)
         // control until a reboot. Keeping the last good value degrades gracefully instead:
         // the shadow is only a base for the next command, so a stale setpoint is far cheaper
         // than a dead control path.
-        if (hisense_setpoint_in_range(st->setpoint_c, s_cmd.fahrenheit)) {
-            s_cmd.setpoint = st->setpoint_c;
+        /* Track the A/C's display unit, and hold the shadow setpoint in THAT unit, because
+         * that is what goes on the wire. st->setpoint_c is always Celsius (the parser
+         * converts), so convert back when the panel is in F. */
+        s_cmd.fahrenheit = st->temp_unit_f;
+        int8_t shadow_sp = st->temp_unit_f ? hisense_c_to_f(st->setpoint_c) : st->setpoint_c;
+        if (hisense_setpoint_in_range(shadow_sp, s_cmd.fahrenheit)) {
+            s_cmd.setpoint = shadow_sp;
         } else {
             ESP_LOGW(TAG, "status setpoint %d out of range -- keeping shadow at %d "
                           "(copying it would drop every later command)",
-                     (int) st->setpoint_c, (int) s_cmd.setpoint);
+                     (int) shadow_sp, (int) s_cmd.setpoint);
         }
         HisenseFanSpeed sf = hisense_fan_raw_to_cmd(st->fan_raw);
         if (sf != HISENSE_FAN_NOCHANGE) s_cmd.fan = sf;    // keep previous fan on an unknown raw (#59)
@@ -647,9 +663,41 @@ static void on_recommission(uint8_t reason)
 // reboots). TCP's window/retransmit is far more robust than Matter BDX on a lossy link -- this
 // is the break-glass path when the standard Matter OTA fails. Runs off the Matter task.
 // ---------------------------------------------------------------------------
+/* Brownout mitigation for the OTA path (#12).
+ *
+ * This module is powered from the A/C's 5 V rail, which is marginal. An OTA is the
+ * highest-current thing the chip ever does: flash writes spike 300-500 mA and Wi-Fi RX/TX
+ * runs concurrently to pull the image. On this hardware that combination browned the module
+ * out, and a brownout DURING a flash write can corrupt the image, which is why recovery
+ * needed a USB reflash rather than a power cycle (see espressif/arduino-esp32#10445).
+ *
+ * The real fix is a 470-1000 uF low-ESR cap across VCC near the chip. Until that exists,
+ * two software levers cut the peak:
+ *
+ *   1. Drop Wi-Fi TX power for the duration. TX bursts are the other half of the peak, and
+ *      the OTA source is a server on the LAN, so we can afford much less power. Restored
+ *      afterwards so normal Matter operation is unaffected.
+ *   2. Pace the download. Using the advanced begin/perform/finish API instead of the
+ *      one-shot esp_https_ota() lets us yield between chunks, which spreads the flash
+ *      writes out instead of issuing them back to back.
+ *
+ * Neither is a substitute for the capacitor. They reduce the probability of a brownout,
+ * they do not eliminate it, and the honest mitigation for a marginal supply is hardware. */
+#define HISENSE_OTA_TX_POWER_QDBM  40   /* 10 dBm, quarter-dBm units. Plenty for a LAN hop. */
+#define HISENSE_OTA_CHUNK_YIELD_MS 8    /* breathing room between flash writes */
+
 static void https_ota_task(void *arg)
 {
     ESP_LOGW(TAG, "HTTPS-OTA: fetching %s", HTTPS_OTA_URL);
+
+    int8_t saved_tx = 0;
+    bool   tx_saved = (esp_wifi_get_max_tx_power(&saved_tx) == ESP_OK);
+    if (tx_saved) {
+        esp_wifi_set_max_tx_power(HISENSE_OTA_TX_POWER_QDBM);
+        ESP_LOGW(TAG, "HTTPS-OTA: Wi-Fi TX power %d -> %d (quarter-dBm) to cut the current peak",
+                 (int) saved_tx, HISENSE_OTA_TX_POWER_QDBM);
+    }
+
     esp_http_client_config_t http_cfg = {};
     http_cfg.url               = HTTPS_OTA_URL;
     http_cfg.timeout_ms        = 30000;
@@ -657,12 +705,37 @@ static void https_ota_task(void *arg)
     esp_https_ota_config_t ota_cfg = {};
     ota_cfg.http_config = &http_cfg;
 
-    esp_err_t err = esp_https_ota(&ota_cfg);
-    if (err == ESP_OK) {
-        ESP_LOGW(TAG, "HTTPS-OTA: success -> rebooting into the new image");
-        esp_restart();
+    esp_https_ota_handle_t h = NULL;
+    esp_err_t err = esp_https_ota_begin(&ota_cfg, &h);
+    if (err != ESP_OK || h == NULL) {
+        ESP_LOGE(TAG, "HTTPS-OTA: begin failed: %s", esp_err_to_name(err));
+        if (tx_saved) esp_wifi_set_max_tx_power(saved_tx);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // Paced download: one chunk per iteration, then yield. Keeps flash writes from being
+    // issued back-to-back at full rate.
+    while ((err = esp_https_ota_perform(h)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
+        vTaskDelay(pdMS_TO_TICKS(HISENSE_OTA_CHUNK_YIELD_MS));
+    }
+
+    bool complete = esp_https_ota_is_complete_data_received(h);
+    if (err == ESP_OK && complete) {
+        err = esp_https_ota_finish(h);
+        if (tx_saved) esp_wifi_set_max_tx_power(saved_tx);
+        if (err == ESP_OK) {
+            ESP_LOGW(TAG, "HTTPS-OTA: success -> rebooting into the new image");
+            esp_restart();
+        }
+        ESP_LOGE(TAG, "HTTPS-OTA: finish failed: %s", esp_err_to_name(err));
     } else {
-        ESP_LOGE(TAG, "HTTPS-OTA: failed: %s", esp_err_to_name(err));
+        // Truncated transfer: abort rather than finish, so a partial image is never marked
+        // bootable. This is the case that previously left the module needing USB recovery.
+        ESP_LOGE(TAG, "HTTPS-OTA: incomplete (err=%s complete=%d) -- aborting, NOT booting it",
+                 esp_err_to_name(err), (int) complete);
+        esp_https_ota_abort(h);
+        if (tx_saved) esp_wifi_set_max_tx_power(saved_tx);
     }
     vTaskDelete(NULL);
 }
@@ -810,9 +883,51 @@ static uint16_t make_display_switch(node_t *node)
     return id;
 }
 
+/* Why the last boot happened (#12). Captured once at startup, before anything can
+ * overwrite it, and surfaced on the console.
+ *
+ * This exists because a module went unresponsive after an OTA and had to be recovered by
+ * powering it from USB, and we had NO evidence why. The suspicion is the A/C's 5 V rail
+ * sagging: flash writes during an OTA plus Wi-Fi TX peaks draw far more than steady state,
+ * and a marginal supply can hang the chip mid-write. That is a guess until a reset reason
+ * says ESP_RST_BROWNOUT, which is exactly the point of recording it.
+ *
+ * Note the brownout detector is at the LOWEST threshold (CONFIG_ESP_BROWNOUT_DET_LVL_SEL_0,
+ * about 2.43 V). That is the worst setting for this failure: the rail can sag far enough to
+ * upset the flash chip or the PHY while the CPU keeps running, so you get a HANG rather
+ * than a clean reset-and-recover. Raising it would trade a hang for an automatic reboot.
+ * Not changed here: it should be an evidence-driven decision, and this is the evidence. */
+static const char *reset_reason_str(esp_reset_reason_t r)
+{
+    switch (r) {
+    case ESP_RST_POWERON:  return "power-on";
+    case ESP_RST_EXT:      return "external pin";
+    case ESP_RST_SW:       return "software restart (expected after our OTA)";
+    case ESP_RST_PANIC:    return "PANIC / exception";
+    case ESP_RST_INT_WDT:  return "interrupt watchdog";
+    case ESP_RST_TASK_WDT: return "task watchdog";
+    case ESP_RST_WDT:      return "other watchdog";
+    case ESP_RST_DEEPSLEEP:return "deep sleep wake";
+    case ESP_RST_BROWNOUT: return "BROWNOUT (supply sagged)";
+    case ESP_RST_SDIO:     return "SDIO";
+    default:               return "unknown";
+    }
+}
+
+static esp_reset_reason_t s_boot_reason = ESP_RST_UNKNOWN;
+
+extern "C" void diag_get_boot_reason(int *code, const char **text)
+{
+    if (code) *code = (int) s_boot_reason;
+    if (text) *text = reset_reason_str(s_boot_reason);
+}
+
 // ---------------------------------------------------------------------------
 extern "C" void app_main()
 {
+    s_boot_reason = esp_reset_reason();
+    ESP_LOGW(TAG, "boot reason: %s (%d)", reset_reason_str(s_boot_reason), (int) s_boot_reason);
+
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         nvs_flash_erase(); nvs_flash_init();

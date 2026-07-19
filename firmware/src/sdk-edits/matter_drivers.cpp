@@ -782,7 +782,17 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
             // Echo-suppression: compare the raw whole-degree value BEFORE clamping
             // so an A/C setpoint outside 16..32 can't dodge the guard.
             if (st.valid && whole_c == st.setpoint_c) break;
-            s_cmd.setpoint   = matter_clamp_setpoint_c(whole_c);    // 16..32 on the wire
+            /* The A/C reads the setpoint byte in ITS OWN display unit, so a command built
+             * while the panel is in Fahrenheit must carry Fahrenheit. Matter is always
+             * Celsius, so convert here and tell the builder which unit it holds (that also
+             * selects the 61..90 range check instead of 16..32). Confirmed on the esp32
+             * bench: sending Celsius 23 to a panel in F made the A/C target 23 F. */
+            {
+                int8_t want_c = matter_clamp_setpoint_c(whole_c);
+                bool   unit_f = s_status.valid && s_status.temp_unit_f;
+                s_cmd.fahrenheit = unit_f;
+                s_cmd.setpoint   = unit_f ? hisense_c_to_f(want_c) : want_c;
+            }
             s_cmd.fahrenheit = false;
             hisense_flush_command();
         }
@@ -985,7 +995,11 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
             // all combined-frame control until a reboot. Keeping the last good value
             // degrades gracefully: the shadow is only a base for the next command.
             if (hisense_setpoint_in_range(st.setpoint_c, s_cmd.fahrenheit)) {
-                s_cmd.setpoint = st.setpoint_c;
+                // Hold the shadow setpoint in the A/C's DISPLAY unit: that is what goes on
+                // the wire. st.setpoint_c is always Celsius (the parser converts).
+                s_cmd.fahrenheit = st.temp_unit_f;
+                s_cmd.setpoint   = st.temp_unit_f ? hisense_c_to_f(st.setpoint_c)
+                                                  : st.setpoint_c;
             } else {
                 ChipLogError(DeviceLayer,
                              "status setpoint %d out of range -- keeping shadow at %d "
