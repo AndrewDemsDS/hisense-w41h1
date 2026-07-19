@@ -2,16 +2,16 @@
 
 Replace the ConnectLife cloud on a Hisense **`AEH-W41H1`** A/C Wi-Fi module (Realtek
 **RTL8710C / AmebaZ2**) with custom **Matter** firmware, for local control from Home
-Assistant — **zero cloud**.
+Assistant, **zero cloud**.
 
 > Not affiliated with, endorsed by, or supported by Hisense, Realtek, or the CSA. Uses Matter
 > **test** credentials → development/personal use only, **not a certified Matter product**, **not
 > for sale**. See [`NOTICE.md`](NOTICE.md). Reverse-engineering of hardware you own, for
-> interoperability. Do this at your own risk — a bad flash can brick the module (recoverable with
+> interoperability. Do this at your own risk, a bad flash can brick the module (recoverable with
 > the stock dump).
 
-**📖 Documentation: [andrewdemsds.github.io/hisense-w41h1](https://andrewdemsds.github.io/hisense-w41h1/)**
-— wiring, flashing, commissioning, everyday control, OTA, recovery, and the reverse-engineering
+**📖 Documentation: [andrewdemsds.github.io/hisense-w41h1](https://andrewdemsds.github.io/hisense-w41h1/)**,
+wiring, flashing, commissioning, everyday control, OTA, recovery, and the reverse-engineering
 write-ups, all searchable in one place.
 
 The same guides live in the repo under [`firmware/docs/`](firmware/docs/) and
@@ -19,12 +19,12 @@ The same guides live in the repo under [`firmware/docs/`](firmware/docs/) and
 
 ## What you get
 
-- **Local Matter control** — the A/C commissions into `python-matter-server` / Home Assistant; no
+- **Local Matter control**: the A/C commissions into `python-matter-server` / Home Assistant; no
   ConnectLife, no `hijuconn` cloud.
-- **Full control surface** — HVAC mode (incl. Auto), setpoint (16–32 °C), fan (6 speeds), vertical
+- **Full control surface**: HVAC mode (incl. Auto), setpoint (16–32 °C), fan (6 speeds), vertical
   swing, and Eco / Quiet / Turbo / Sleep special modes.
-- **Energy monitoring** — live power (W) + voltage, derived from the bus current proxy.
-- **OTA updates over Wi-Fi** — after the first CH341 flash, everything else is wireless.
+- **Energy monitoring**: live power (W) + voltage, derived from the bus current proxy.
+- **OTA updates over Wi-Fi**: after the first CH341 flash, everything else is wireless.
 
 ## How it works
 
@@ -38,7 +38,7 @@ Home Assistant ─┬─ python-matter-server ── Matter/Wi-Fi ──► RTL8
 
 The module runs the Realtek AmebaZ2 Matter `room_air_conditioner` example with **our RS-485
 driver** bridging Matter attributes ↔ the A/C's internal RS-485 bus (protocol
-reverse-engineered + sniff-validated — see [`reverse-engineering/docs/03`](reverse-engineering/docs/03-rs485-ac-protocol.md)).
+reverse-engineered + sniff-validated, see [`reverse-engineering/docs/03`](reverse-engineering/docs/03-rs485-ac-protocol.md)).
 
 ## Hardware
 
@@ -47,22 +47,22 @@ reverse-engineered + sniff-validated — see [`reverse-engineering/docs/03`](rev
 | SoC | Realtek RTL8710C (AmebaZ2), secure boot **OFF** |
 | Flash | GD25Q32 4 MB (JEDEC `c84016`) |
 | A/C bus | UART0 **TX=PA_14 RX=PA_13** @ 9600 8N1 (no DE/RE); log console PA_16 |
-| Module port | 4-pin: **5 V · GND · RS-485 A · B** (power from the A/C — bench power browns out the radio) |
+| Module port | 4-pin: **5 V · GND · RS-485 A · B** (power from the A/C, bench power browns out the radio) |
 | First flash | CH341A SPI programmer + SOIC-8 clip on the GD25Q32 (then OTA forever after) |
 
 ## Repository layout
 
 | Path | What |
 |---|---|
-| `firmware/src/rs485-driver/` | the bus driver (`hisense_rs485.{h,cpp}`) + pure `matter_aircon_map.h` + `power_estimate.h` — **our code (MIT)** |
-| `firmware/src/sdk-edits/` | the Matter integration: `matter_drivers.cpp` glue, the `.zap`, the `0xFFF1FC00` mfg-cluster def, and `core-patches/` — plus `README.md` documenting every in-place SDK edit |
+| `firmware/src/rs485-driver/` | the bus driver (`hisense_rs485.{h,cpp}`) + pure `matter_aircon_map.h` + `power_estimate.h`: **our code (MIT)** |
+| `firmware/src/sdk-edits/` | the Matter integration: `matter_drivers.cpp` glue, the `.zap`, the `0xFFF1FC00` mfg-cluster def, and `core-patches/`: plus `README.md` documenting every in-place SDK edit |
 | `firmware/scripts/` | `ota-release.sh` (build/package/flash/OTA), `gen-creds.sh`, Matter helpers |
-| `firmware/flasher/` | pyusb CH341A flasher (per-sector verify + retry — use this, **not flashrom**) |
-| `firmware/test/` | no-hardware QA — host codec + Matter-map tests + `virtual_ac.py` simulator |
+| `firmware/flasher/` | pyusb CH341A flasher (per-sector verify + retry, use this, **not flashrom**) |
+| `firmware/test/` | no-hardware QA, host codec + Matter-map tests + `virtual_ac.py` simulator |
 | `firmware/docs/` | wiring plan, attestation, QA strategy, energy monitoring, the OTA/build procedure (`10-firmware-ota-procedure.md`), and the ESP32-vs-AmebaZ2 path comparison (`13-path-comparison.md`) |
 | `reverse-engineering/` | protocol/hardware/cloud/OTA RE, `tools/` (sniffer, decoders), `esphome/` (ESP32-replacement config) |
 | `patches/` | your delta to the two SDKs (`git apply`-able; base commits in [`NOTICE.md`](NOTICE.md)) |
-| `dumps/` | ⚠️ **local-only, gitignored** — raw flash (Wi-Fi creds + device RSA key + vendor blob). Never published. |
+| `dumps/` | ⚠️ **local-only, gitignored**: raw flash (Wi-Fi creds + device RSA key + vendor blob). Never published. |
 
 ## Quickstart
 
@@ -105,7 +105,7 @@ Open the pairing window (remote **Horizon Airflow × 6 → display "77"**), then
 `python-matter-server` (your code from step 3, or the SDK test code `34970112332`). Add the Matter
 integration in HA and control the A/C.
 
-### 7. Updates — OTA, no clip
+### 7. Updates: OTA, no clip
 ```bash
 firmware/scripts/ota-release.sh release --bump --flash
 ```
@@ -135,11 +135,11 @@ page for the runner setup.
 
 ## Attestation & credentials
 
-CSA **test** creds (VID `0xFFF1`/PID `0x8001`) — dev-only, uncertified. Details: [`NOTICE.md`](NOTICE.md#matter-credentials).
+CSA **test** creds (VID `0xFFF1`/PID `0x8001`), dev-only, uncertified. Details: [`NOTICE.md`](NOTICE.md#matter-credentials).
 
 ## De-clouding your whole home
 
-Once local control works, block the module's WAN egress (deny `*.hijuconn.com` + the OTA host) — see
+Once local control works, block the module's WAN egress (deny `*.hijuconn.com` + the OTA host), see
 [`reverse-engineering/docs/04`](reverse-engineering/docs/04-cloud-and-firewall.md). Research on
 flashing the **other** units over the air (via the stock firmware's dormant Matter stack, no CH341) is
 tracked in the [issues](https://github.com/AndrewDemsDS/hisense-w41h1/issues) (Fleet-OTA).
@@ -151,5 +151,5 @@ I built this with AI assistance across the code, reverse-engineering, and docs. 
 
 ## License
 
-Original code and docs: **MIT** ([`LICENSE`](LICENSE)). Third-party components (Realtek SDKs —
-proprietary, not vendored; connectedhomeip — Apache-2.0) and the credential caveat: [`NOTICE.md`](NOTICE.md).
+Original code and docs: **MIT** ([`LICENSE`](LICENSE)). Third-party components (Realtek SDKs,
+proprietary, not vendored; connectedhomeip, Apache-2.0) and the credential caveat: [`NOTICE.md`](NOTICE.md).

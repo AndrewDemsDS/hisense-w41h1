@@ -21,20 +21,20 @@ to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` fl
 | Turbo / boost | ✅ | ✅ | ✅ | ep5 OnOff "Turbo" + mfg `/0x0002` |
 | Mute / quiet | ✅ | ✅ | ✅ | ep4 OnOff "Quiet" + mfg `/0x0002`; `hisense_build_mute_frame` |
 | Sleep profile (4) | ✅ | ✅ | ✅ | ep6 ModeSelect; `hisense_build_sleep_frame` |
-| Aux/PTC heat relay | ✅ | — | ✅ | ep7 BooleanState (read-only status) |
-| Outdoor + coil temp | ✅ | — | ✅ | ep2 / ep8 TemperatureMeasurement |
-| Power (V/I/W) | ✅ | — | ✅ | ElectricalPowerMeasurement (see #16, `power_estimate.h`) |
-| **Vertical swing on/off** | ✅ | ✅ | ❌ | **CHEAP WIN** — decoded (`vswing_on`), controllable (`HisenseCommand.vswing`), but the esp32 build never creates/writes a FanControl **RockSetting** attr (only shadows it at `app_main.cpp:359`). Pure app-layer to expose. |
-| **Display / panel on/off** | cap only | ✅ | ❌ | **CHEAP WIN** — `HisenseCommand.display_on` (@20, 0xC0/0x40) is controllable but wired to no endpoint. Expose as an OnOff switch. (Dimmer *level* = `ac_power_display`, needs new RE.) |
+| Aux/PTC heat relay | ✅ | – | ✅ | ep7 BooleanState (read-only status) |
+| Outdoor + coil temp | ✅ | – | ✅ | ep2 / ep8 TemperatureMeasurement |
+| Power (V/I/W) | ✅ | – | ✅ | ElectricalPowerMeasurement (see #16, `power_estimate.h`) |
+| **Vertical swing on/off** | ✅ | ✅ | ❌ | **CHEAP WIN**: decoded (`vswing_on`), controllable (`HisenseCommand.vswing`), but the esp32 build never creates/writes a FanControl **RockSetting** attr (only shadows it at `app_main.cpp:359`). Pure app-layer to expose. |
+| **Display / panel on/off** | cap only | ✅ | ❌ | **CHEAP WIN**: `HisenseCommand.display_on` (@20, 0xC0/0x40) is controllable but wired to no endpoint. Expose as an OnOff switch. (Dimmer *level* = `ac_power_display`, needs new RE.) |
 | 8 °C frost-guard heat | ✅ cap | ❌ | ❌ | Capability bit `ac_8heat` (byte26 0x80) read as `heat_8c`; `ac_enable_8heat` (byte39 0x04) read as `enable_8heat` when `ext_valid`. No control frame RE'd. `docs/05:79` marks it likely absent on this unit. |
 | Purify / ionizer | ✅ cap | ❌ | ❌ | `ac_purify` (byte23 0x08) read as `purify`; live `purify_on` (b36 0x20) "bit always 0, feature absent on this unit". No builder. |
 | AI / smart | ✅ cap | ❌ | ❌ (logged) | `ai` (byte28 0x40). Capability only, no control frame. |
 | Demand-response | ✅ cap | ❌ | ❌ | `demand_resp` 2-bit (byte35). Capability only. |
 | Infinite / stepless fan | ✅ cap | ⚠️ | ⚠️ | `infinite_fan` (byte25 0x08); we drive 6 discrete speeds only, not stepless. |
 | 8-position louvre aim | ✅ cap | ⚠️ | ❌ | `swing_dir_8`/`swing_follow` capability + on/off swing decoded, but no per-position index command. |
-| Fresh-air / dew | — | — | — | **No `ac_*` flag exists** — not in the stock feature set; nothing to mirror. |
+| Fresh-air / dew | – | (| – | **No `ac_*` flag exists**) not in the stock feature set; nothing to mirror. |
 
-## Cheap wins (do first — app-layer only, no protocol RE)
+## Cheap wins (do first: app-layer only, no protocol RE)
 
 1. **Vertical swing → FanControl RockSetting** on ep1: write `RockSetting` from `st->vswing_on`, and
    drive `s_cmd.vswing` on a Rock write. Mirrors the AmebaZ2 `matter_drivers.cpp` (which had it;
@@ -43,17 +43,17 @@ to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` fl
    `HisenseCommand.display_on`.
 
 Everything else (8 °C heat, purify, dimmer level, AI, demand-response, stepless fan, 8-pos louvre) is
-**capability-decoded only** — each needs its *control frame* reverse-engineered before it can be
+**capability-decoded only**: each needs its *control frame* reverse-engineered before it can be
 exposed, and several are argued physically-absent on this unit (`docs/05:79-80`). Not cheap; defer /
 track under #52.
 
 ## Reading capabilities live
 
 The `HisenseFeatures` set is polled (`hisense_build_producttype_request`) and cached
-(`hisense_get_features`) but **only logged** (`on_features`, `app_main.cpp:430`) — it is **not** written
+(`hisense_get_features`) but **only logged** (`on_features`, `app_main.cpp:430`), it is **not** written
 to any Matter attribute, so it can't be read via matter-server. The only remote read today is the
 telnet diag console `:2323` `decode` path. To make it HA-readable, map `hisense_get_features()` into
-extra `0xFFF1FC00` attributes (or a features console command) — see recommendation in #19.
+extra `0xFFF1FC00` attributes (or a features console command), see recommendation in #19.
 
 ## Data-quality bugs found during this review (→ issue #83): RESOLVED
 

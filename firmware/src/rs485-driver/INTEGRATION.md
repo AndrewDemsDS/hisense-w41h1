@@ -15,7 +15,7 @@ with real RS-485 TX/RX to a Hisense indoor unit, in
 attribute-write → RS-485 TX uplink and the RS-485 status → Matter attribute downlink) written
 before the integration was implemented. The **real, applied edits now live in the SDK tree**,
 captured at [`../sdk-edits/README.md`](../sdk-edits/README.md) (exact rebuild recipe + the
-actual diffs) — read that instead; this file no longer carries a separate sketch of it.
+actual diffs), read that instead; this file no longer carries a separate sketch of it.
 
 ## 3. Matter <-> Hisense enum mapping
 
@@ -82,7 +82,7 @@ task if you want explicit retry.)
 This section used to carry the protocol-provenance log (pins/DE-RE/checksum/byte-stuffing,
 the 160B status-frame-length fix, the full status/telemetry/command-frame byte maps, and the
 open "VERIFY" items). That log duplicated the protocol source of truth and has been moved
-there — see
+there, see
 [`../../../reverse-engineering/docs/03-rs485-ac-protocol.md`](../../../reverse-engineering/docs/03-rs485-ac-protocol.md)
 (Physical layer, Status-frame byte map, Diagnostic/telemetry byte map, Control-frame byte map,
 and Open / uncatalogued sections). Nothing here is unresolved beyond what's tracked there.

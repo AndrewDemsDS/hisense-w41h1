@@ -1,4 +1,4 @@
-# esp32-recon HIL runbook — settling the open bus/protocol issues
+# esp32-recon HIL runbook: settling the open bus/protocol issues
 
 Turnkey procedures for the hardware-in-the-loop issues, using `esp32-recon`. Each is
 "wire it, flash it, run these commands, record the result on the issue." No procedure
@@ -16,7 +16,7 @@ esp32-recon> wifi <ssid> <pass>  # then reach it remotely: nc esp32-recon.local 
 **Two rigs, depending on the issue:**
 - **Tap rig** (RE / byte-hunting): leave the **stock dongle** (or kitchen AmebaZ2) driving
   the bus; wire the ESP32 RX (GPIO18) + GND onto the same A/B pair; `mode tap`. You watch
-  real traffic + toggle features on the A/C's remote/app. DE stays low — the ESP32 is invisible.
+  real traffic + toggle features on the A/C's remote/app. DE stays low, the ESP32 is invisible.
 - **Master rig** (control): the ESP32 is the **only** module on the bus (no stock dongle);
   `mode master`. The ESP32 drives link + poll and you issue `set`/`power`.
 
@@ -27,7 +27,7 @@ setpoint `[19]`, etc.).
 
 ---
 
-## #55 (I22) · C/F unit bit — firmware always assumes Celsius
+## #55 (I22) · C/F unit bit: firmware always assumes Celsius
 
 **Goal:** find the status/command bit that encodes °C vs °F, so the firmware can read and
 track it instead of hardcoding Celsius.
@@ -44,7 +44,7 @@ snap cmd                  # baseline the dongle's command frame
 diff cmd                  # if the dongle echoes the unit in its command frame
 ```
 **Record:** the changed offset + bit mask (e.g. `off 19 bit0x…`). Cross-check against the
-setpoint at `[19]` (a °F setpoint reads in the 61–90 range vs 16–32 for °C — the driver's
+setpoint at `[19]` (a °F setpoint reads in the 61–90 range vs 16–32 for °C, the driver's
 `HisenseState.fahrenheit`/setpoint decode should branch on this bit).
 **Pass:** a single, repeatable bit flips with the unit and nothing else does.
 
@@ -71,7 +71,7 @@ snap cmd
 # --- toggle it again ---
 diff cmd                  # the command byte/value the dongle sends to set it
 ```
-Repeat for: display/LED dimmer, 8 °C frost-guard heat (a HEAT sub-state — also watch
+Repeat for: display/LED dimmer, 8 °C frost-guard heat (a HEAT sub-state, also watch
 `[18]` mode nibble + setpoint `[19]`), AI/smart mode, and the 8-position louvre aim
 (watch the swing bytes vs the 2-bit swing field the driver knows).
 **Record:** a small table {feature → command offset/value, status offset/bit} per feature on
@@ -102,7 +102,7 @@ precede a successful start. **Pass:** deterministic power-on from the off state.
 
 ---
 
-## #49 (I16) · Envelope `[7]/[8]` — RESOLVED ON HARDWARE 2026-07-16. No tap rig needed.
+## #49 (I16) · Envelope `[7]/[8]`: RESOLVED ON HARDWARE 2026-07-16. No tap rig needed.
 
 **Settled.** The "session token" premise was **wrong**. Measured on node 28 (fw 1.0.6) via the
 instrumented `token` console command, both sources read from the same `0x0A` DevType reply:
@@ -121,7 +121,7 @@ narrative + the v10207 post-mortem: RE `docs/10` §4.5.
 ```
 nc <node-ip> 2323   ->   token
 ```
-No bus wiring required — any esp32 node running the driver reports it. A tap capture
+No bus wiring required, any esp32 node running the driver reports it. A tap capture
 (`mode tap` + `watch hex` through a dongle power-cycle) is now purely optional corroboration.
 
 ---

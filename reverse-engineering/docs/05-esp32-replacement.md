@@ -1,13 +1,13 @@
-# ESP32 replacement — command ↔ A/C function mapping
+# ESP32 replacement: command ↔ A/C function mapping
 
-> **SUPERSEDED — byte offsets below are community-derived, not hardware-confirmed for this
+> **SUPERSEDED, byte offsets below are community-derived, not hardware-confirmed for this
 > unit.** [`03-rs485-ac-protocol.md`](03-rs485-ac-protocol.md) has the **real, W41H1-bus-
 > confirmed** status byte map (offsets 18/19/26/30/31/35/37), pinned by toggling each remote
-> control and diffing the live status reply — and it found several of the community offsets
+> control and diffing the live status reply, and it found several of the community offsets
 > below (esp. the status byte-35/36 flag bits) **wrong** for this unit. Treat this doc's byte
 > tables as a *starting point only*; use §03 as the source of truth for anything already
-> covered there. This doc's unique value — the ESP32 build path, physical wiring, and the
-> firmware `ac_*` field cross-reference — is still current and kept below.
+> covered there. This doc's unique value, the ESP32 build path, physical wiring, and the
+> firmware `ac_*` field cross-reference, is still current and kept below.
 
 Goal: an **ESP32 + RS-485 transceiver** that plugs into the A/C's 4-pin port in place of
 the W41H1 and drives every function locally. This is the full "what to send / what you get
@@ -17,8 +17,8 @@ Sources: the frame format is **confirmed from the W41H1 firmware disassembly**
 ([`03-rs485-ac-protocol.md`](03-rs485-ac-protocol.md)); the payload byte layout and value
 tables below are from the tested community implementations (`pslawinski/esphome_airconintl`
 `messages.h`/`device_status.h`, `deiger/AirCon`), which speak the identical Hisense A/C
-bus — **not yet reconciled against this unit's confirmed status map in §03**. Offsets marked
-*(verify)* should be confirmed against your unit with a capture — the framing is identical,
+bus, **not yet reconciled against this unit's confirmed status map in §03**. Offsets marked
+*(verify)* should be confirmed against your unit with a capture, the framing is identical,
 but a specific model can shift a field.
 
 ## Physical / link
@@ -27,9 +27,9 @@ but a specific model can shift a field.
   (`5V, GND, A, B`). Set the transceiver DE/RE from a GPIO (half-duplex).
 - Frame: `F4 F5 [LEN(2, big-endian)] [payload] [CKSUM(2, little-endian)] F4 FB`.
 
-## COMMAND frame (ESP32 → A/C) — "set" packet, and STATUS frame (A/C → ESP32) — "report" packet
+## COMMAND frame (ESP32 → A/C): "set" packet, and STATUS frame (A/C → ESP32): "report" packet
 
-Byte-offset tables for both frame directions **removed here — see
+Byte-offset tables for both frame directions **removed here, see
 [`03-rs485-ac-protocol.md`](03-rs485-ac-protocol.md#status-frame-byte-map--hardware-confirmed-160b-class-0x66-reply)**
 for the hardware-confirmed offsets (status byte map pinned by remote-button correlation on
 the real W41H1 bus) plus the general frame format (`F4 F5` … `F4 FB`, length, checksum). The
@@ -45,7 +45,7 @@ Mode, fan, etc. use these values on the bus (from `deiger/AirCon`, matching the 
 | **Mode** | FAN=0, HEAT=1, COOL=2, DRY=3, AUTO=4 |
 | **Fan speed** | AUTO=0, LOWER=5, LOW=6, MEDIUM=7, HIGH=8, HIGHER=9 |
 | **Power** | OFF=0, ON=1 |
-| **Temperature** | integer °C or °F; unit flag selects (status byte 26 / cmd temp bytes). Raw units may be 0.5° steps — verify. |
+| **Temperature** | integer °C or °F; unit flag selects (status byte 26 / cmd temp bytes). Raw units may be 0.5° steps, verify. |
 | **Vertical swing** | OFF=0, ON=1 |
 | **Horizontal swing** | OFF=0, ON=1 |
 | **Sleep** | STOP=0, 1, 2, 3, 4 |
@@ -72,7 +72,7 @@ The W41H1 firmware's status fields line up with the above (confirms the unit sup
 
 ## Recommended build
 
-Don't hand-roll the frame builder — flash **`pslawinski/esphome_airconintl`** (or
+Don't hand-roll the frame builder, flash **`pslawinski/esphome_airconintl`** (or
 `akrabi/hisense_ac_esphome`) which already implements this map, then wire the ESP32 as in
 [`../esphome/w41h1-esp32.yaml`](../esphome/w41h1-esp32.yaml). Verify against your unit by
 capturing a few real frames ([`../tools/sniff.py`](../tools/sniff.py)) and checking the

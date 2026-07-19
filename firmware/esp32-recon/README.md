@@ -1,15 +1,15 @@
-# esp32-recon — independent RS-485 A/C bus diagnostic tool
+# esp32-recon: independent RS-485 A/C bus diagnostic tool
 
 A standalone ESP-IDF app (no Matter, no commissioning) that talks the Hisense A/C
-RS-485 bus directly and lets you **verify everything** — wiring/UART/DE, link
+RS-485 bus directly and lets you **verify everything**: wiring/UART/DE, link
 bring-up, framing + checksum, every decoded field, command→status round-trips,
-ProductType feature flags, and open protocol questions — from a shell you can reach
+ProductType feature flags, and open protocol questions, from a shell you can reach
 **remotely over the network** (`nc esp32-recon.local 2323`) or over USB serial.
 
 It reuses the hardware-validated codec **unchanged**: the same
 `../src/rs485-driver/hisense_rs485.cpp` (via the `hisense_rs485` component) and the
 ESP32 `hisense_hal` shim that the `esp32-matter` firmware uses. So anything it
-reports is trustworthy — the on-device `selftest` proves the flashed codec is
+reports is trustworthy, the on-device `selftest` proves the flashed codec is
 byte-identical to the host-validated one.
 
 ## Why it exists
@@ -32,7 +32,7 @@ From `hisense_hal/include/PinNames.h` (shared with the Matter build):
 
 Transceiver A/B → the A/C RS-485 bus. 9600 8N1.
 
-## Build & flash (fast — no Matter)
+## Build & flash (fast: no Matter)
 
 ```sh
 . ~/esp/esp-idf-v5.5.4/export.sh
@@ -62,10 +62,10 @@ nc esp32-recon.local 2323
 
 Switch with `mode tap|master` (persisted in NVS; the device reboots into it).
 
-- **tap** (default, safe): drives nothing — DE held low. Passively decodes existing
+- **tap** (default, safe): drives nothing: DE held low. Passively decodes existing
   bus traffic in **both directions** (point it at the stock dongle ↔ A/C, or the
   kitchen AmebaZ2 ↔ A/C). Ground-truth check of the decode.
-- **master**: the ESP32 *is* the module — the driver auto-does link bring-up + ~1 Hz
+- **master**: the ESP32 *is* the module: the driver auto-does link bring-up + ~1 Hz
   polling; `set`/`power`/`producttype`/`raw` are enabled and `set` auto-verifies the
   next status reflects the change.
 
@@ -90,20 +90,20 @@ help                  list commands
 
 - **#55 (C/F unit bit):** `mode tap` the stock dongle while toggling the remote's
   °C/°F; `watch hex` and compare the changed byte, or `decode` a captured frame.
-- **#49 (envelope `[7]/[8]`): RESOLVED** — not a session token; it's the A/C's device-type/sub-type
+- **#49 (envelope `[7]/[8]`): RESOLVED**: not a session token; it's the A/C's device-type/sub-type
   from the `0x0A` reply's inner `[3]/[4]`. Measured 2026-07-16: inner `[3]/[4]`=`01 01`, envelope
   `[9]/[10]`=`00 00` on that frame (stamping the latter killed the link, v10207). `token` on any
-  esp32 node re-reports it — useful to see what a **different A/C model** returns.
+  esp32 node re-reports it, useful to see what a **different A/C model** returns.
 - **#50 (cold-off power-on):** `mode master`, `power on` on a physically-off unit and
   watch whether status reflects it.
 
 ## Notes
 
-- `raw` is send-only in master mode — the A/C's reply isn't surfaced inline (the
+- `raw` is send-only in master mode, the A/C's reply isn't surfaced inline (the
   driver consumes replies internally). To see a reply, run a second board in `mode
   tap`, or paste captured bytes into `decode`.
 - One remote client at a time. The UART console stays available in parallel.
-- WiFi creds live in NVS (flash), provisioned via the `wifi` command — nothing lands
+- WiFi creds live in NVS (flash), provisioned via the `wifi` command, nothing lands
   in a tracked file. `sdkconfig` is gitignored; never put creds in `sdkconfig.defaults`.
-- **Never** define `HISENSE_HAL_UART_INTERNAL_LOOPBACK` — it internally loops UART1
+- **Never** define `HISENSE_HAL_UART_INTERNAL_LOOPBACK`: it internally loops UART1
   TX→RX and would blind the tool to the real bus.

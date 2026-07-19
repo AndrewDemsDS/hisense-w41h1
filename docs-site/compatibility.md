@@ -59,7 +59,7 @@ targets.
 You do not need the original module. The [ESP32 route](guide/ESP32-Replacement-Build.html) puts an
 ESP32 plus an RS-485 transceiver in the module bay instead, speaking the same bus bytes. It costs
 about €5, needs no CH341A clip, and is the recommended path if you do not already have a working
-`AEH-W41H1` — those modules are fragile and increasingly hard to buy.
+`AEH-W41H1`: those modules are fragile and increasingly hard to buy.
 
 The [path comparison](firmware/13-path-comparison.html) covers the tradeoffs with figures measured
 on real hardware.

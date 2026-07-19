@@ -1,13 +1,13 @@
-# Hisense AEH-W41H1 — Reverse Engineering & Local Control
+# Hisense AEH-W41H1: Reverse Engineering & Local Control
 
 Reverse-engineering notes and tooling for the **Hisense `AEH-W41H1`** air-conditioner
-Wi-Fi module (ConnectLife), with the goal of **fully local control** — no ConnectLife
+Wi-Fi module (ConnectLife), with the goal of **fully local control**: no ConnectLife
 cloud, no Azure.
 
 The W41H1 is a newer ConnectLife-generation dongle. The older `AEH-W4A1` has ready-made
 local integrations; the W41H1 does not, which is what motivated this work.
 
-## TL;DR — two independent local-control paths
+## TL;DR: two independent local-control paths
 
 1. **Matter (preferred, no hardware).** The module's firmware is a Matter thermostat
    (Realtek RTL8710C running `connectedhomeip`). It can be commissioned into a local
@@ -28,7 +28,7 @@ local integrations; the W41H1 does not, which is what motivated this work.
 | Flash | GigaDevice **GD25Q32(B)** (4 MB SPI NOR) | external firmware storage |
 | Transceiver | Union Semi **UM3352E** (MAX485-compatible) | RS-485 to the A/C mainboard |
 | Board | `MW8415C.02`, Qingdao Hisense | carrier PCB |
-| Power | 5 V / 450 mA via the A/C's 4-pin port | — |
+| Power | 5 V / 450 mA via the A/C's 4-pin port | – |
 
 Full detail: [`docs/01-hardware.md`](docs/01-hardware.md).
 
@@ -54,7 +54,7 @@ hardware/ pinouts, the Matter QR image
 
 ## Note on the firmware image
 
-The raw flash dump is **intentionally not committed** — it contains the copyrighted
+The raw flash dump is **intentionally not committed**: it contains the copyrighted
 vendor firmware and the provisioned Wi-Fi credentials. It's kept locally and gitignored.
 All analysis here is derived from it. Reverse engineering is for **interoperability with
 hardware you own**.
