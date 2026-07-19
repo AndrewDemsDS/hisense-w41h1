@@ -18,6 +18,14 @@ on:
       - README.md
       - .github/workflows/pages.yaml
       - .github/scripts/assemble_docs_site.py   # the assembler IS the build; changing it must rebuild
+  pull_request:        # build-only on PRs: catches a broken site config BEFORE it reaches main
+    paths:
+      - docs-site/**
+      - docs/guide/**
+      - firmware/docs/**
+      - reverse-engineering/docs/**
+      - .github/workflows/pages.yaml
+      - .github/scripts/assemble_docs_site.py
   workflow_dispatch:
 
 permissions:
@@ -50,6 +58,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

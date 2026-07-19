@@ -16,10 +16,26 @@ import shutil
 SITE = "_site_src"
 
 # (source dir, destination subdir, label used only in log output)
+# (source dir, destination subdir, log label, sidebar parent title)
+# The parent title MUST match the `title:` of docs-site/<subdir>/index.md, which is how
+# just-the-docs nests a page under a section in the sidebar.
 SOURCES = [
-    ("firmware/docs", "firmware", "firmware docs"),
-    ("reverse-engineering/docs", "internals", "reverse engineering"),
-    ("docs/guide", "guide", "guide"),
+    ("firmware/docs", "firmware", "firmware docs", "Firmware"),
+    ("reverse-engineering/docs", "internals", "reverse engineering", "Reverse engineering"),
+    ("docs/guide", "guide", "guide", "Guide"),
+]
+
+# Guide pages read in a deliberate order rather than alphabetically: a newcomer needs wiring before
+# flashing before commissioning. Anything unlisted sorts after these, alphabetically.
+GUIDE_ORDER = [
+    "Hardware-and-Wiring",
+    "Installing-Custom-Firmware",
+    "Commissioning-and-HA-Setup",
+    "Everyday-Control",
+    "OTA-Updates",
+    "Recovery-and-Reflash",
+    "ESP32-Replacement-Build",
+    "FAQ-Gotchas",
 ]
 
 # Wiki pages that are navigation fragments, plus its own linter. Not content.
@@ -100,7 +116,7 @@ def rewrite_wiki_links(text, pages):
     return re.sub(r"\[([^\]]*)\]\(([A-Za-z][A-Za-z0-9._-]*)(#[^)]*)?\)", sub, text)
 
 
-def convert(src, dst, pages=None):
+def convert(src, dst, pages=None, parent=None, order=None):
     with open(src, encoding="utf-8") as fh:
         lines = fh.readlines()
 
@@ -118,6 +134,10 @@ def convert(src, dst, pages=None):
     fm = ["---", f"title: {yaml_quote(title)}"]
     if desc:
         fm.append(f"description: {yaml_quote(desc)}")
+    if parent:
+        fm.append(f"parent: {yaml_quote(parent)}")
+    if order is not None:
+        fm.append(f"nav_order: {order}")
     fm += ["---", ""]
 
     body = "".join(lines)
@@ -135,7 +155,7 @@ def main():
     shutil.copytree("docs-site", SITE)
 
     total = 0
-    for src_dir, sub, label in SOURCES:
+    for src_dir, sub, label, parent in SOURCES:
         if not os.path.isdir(src_dir):
             print(f"  skip {label}: {src_dir} absent")
             continue
@@ -144,12 +164,21 @@ def main():
         # Page-name set for the link rewrite above (wiki only; repo docs link by filename).
         pages = {os.path.splitext(f)[0] for f in os.listdir(src_dir) if f.endswith(".md")} \
             if src_dir == "docs/guide" else None
+        # Sidebar order: guide pages follow the reading order above; the numbered docs sort by
+        # their own filename prefix, which is already meaningful.
+        def sort_key(fn):
+            stem = os.path.splitext(fn)[0]
+            if sub == "guide":
+                return (GUIDE_ORDER.index(stem) if stem in GUIDE_ORDER else len(GUIDE_ORDER), stem)
+            return (0, stem)
+
         n = 0
-        for name in sorted(os.listdir(src_dir)):
+        for name in sorted(os.listdir(src_dir), key=sort_key):
             # Leading underscore = nav fragment or repo-facing note, never site content.
             if name in SKIP or name.startswith("_") or not name.endswith(".md"):
                 continue
-            convert(os.path.join(src_dir, name), os.path.join(out_dir, name), pages)
+            convert(os.path.join(src_dir, name), os.path.join(out_dir, name), pages,
+                    parent=parent, order=n + 1)
             n += 1
         # Copy assets too. Pages reference them RELATIVELY (![](images/foo.png)), so they have to
         # land beside the markdown that points at them or every image 404s -- which is exactly
