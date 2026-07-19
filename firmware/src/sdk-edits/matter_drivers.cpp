@@ -62,6 +62,8 @@ namespace ThermAttr    = chip::app::Clusters::Thermostat::Attributes;
 namespace FanAttr      = chip::app::Clusters::FanControl::Attributes;
 namespace TempMeasAttr = chip::app::Clusters::TemperatureMeasurement::Attributes;
 namespace BoolAttr     = chip::app::Clusters::BooleanState::Attributes;
+namespace TuicCl       = chip::app::Clusters::ThermostatUserInterfaceConfiguration;
+namespace TuicAttr     = chip::app::Clusters::ThermostatUserInterfaceConfiguration::Attributes;
 namespace HisenseCl    = chip::app::Clusters::HisenseAircon;
 namespace HisenseAttr  = chip::app::Clusters::HisenseAircon::Attributes;
 using chip::app::Clusters::Thermostat::SystemModeEnum;
@@ -89,6 +91,7 @@ static const chip::EndpointId kSleepEp = 6;  // OnOff -> sleep profile (on=Gener
 static const chip::EndpointId kHeatRelayEp = 7;  // BooleanState (Contact Sensor) -> aux/PTC electric-heat relay (#51)
 static const chip::EndpointId kCoilTempEp  = 8;  // TemperatureMeasurement -> outdoor/condenser coil temp (#51)
 static const chip::EndpointId kDisplayEp   = 9;  // OnOff -> panel display (#19 parity; on=0xC0/off=0x40 @20)
+static const chip::EndpointId kFaultEp     = 10; // BooleanState (Contact Sensor) -> aggregate A/C fault (#38)
 
 /* --------------------------------------------------------------------------
  * Command shadow: incrementally updated by each Matter write, flushed as one
@@ -1071,6 +1074,26 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // asserts in cold/defrost. Standard cluster => HA-readable (unlike the mfg attrs).
         BoolAttr::StateValue::Set(kHeatRelayEp, st.heat_relay_on);
 
+        // #5: report the A/C panel's display unit via TUIC (ep1). READ SIDE ONLY -- the
+        // write path is rejected by the write-access override below until the byte-23
+        // command is bench-verified. Writing the wrong unit is not cosmetic: a setpoint
+        // sent in C to a panel in F is interpreted as F (23C -> 23F -> the unit drives
+        // toward -5C at full compressor), which is why this stays read-only for now.
+        TuicAttr::TemperatureDisplayMode::Set(
+            kAirconEp, st.temp_unit_f ? TuicCl::TemperatureDisplayModeEnum::kFahrenheit
+                                      : TuicCl::TemperatureDisplayModeEnum::kCelsius);
+
+        // #38: aggregate fault flag -> BooleanState (Contact Sensor ep10). HisenseFaults.any
+        // already ORs the raw fault bytes minus HISENSE_FAULT_NONFAULT_PROTECT (byte 66 bit7
+        // reads 0x80 on a healthy unit -- it is a mode flag, not a fault). Do NOT re-derive
+        // this from the named bools.
+        {
+            HisenseFaults fl;
+            if (hisense_get_faults(&fl)) {
+                BoolAttr::StateValue::Set(kFaultEp, fl.any);
+            }
+        }
+
         // Manufacturer cluster read-back (no generated accessors for a custom
         // cluster -> raw ember writes). Types: boolean=0x10, int8u=0x20, int8s=0x28.
         {
@@ -1103,6 +1126,41 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
     }
 
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+}
+
+/* Make TemperatureDisplayMode genuinely READ-ONLY at the protocol layer (#5).
+ *
+ * Node-14 parity with the ESP32 half. HA renders this attribute as a writable select, but the
+ * WRITE path is unverified: RE docs/10 7.4b predicts command byte 23 (0x03 = F, 0x01 = C) and
+ * nobody has bench-tested it. Guessing wrong is not cosmetic -- sending the wrong unit already
+ * made a unit target 23 F and run at 74 Hz toward -5 C.
+ *
+ * A comment saying "do not wire this yet" is not a gate; this repo shipped that failure once
+ * already (the ep9 Display switch appeared in HA and silently did nothing, #33). So the
+ * rejection is enforced in code.
+ *
+ * emberAfAttributeWriteAccessCallback is a weak symbol (generic-callback-stubs.cpp) consulted by
+ * attribute-storage.cpp BEFORE the value reaches storage; returning false yields
+ * Status::UnsupportedAccess, so a HA write fails VISIBLY instead of appearing to succeed and
+ * reverting on the next status poll.
+ *
+ * NOTE: C++ linkage, NOT extern "C" -- the SDK declares this hook as a C++ symbol
+ * (generic-callbacks.h:50). An extern "C" definition would sit beside the weak stub without
+ * overriding it. Deliberately placed after the extern "C" block above.
+ *
+ * Lift this only once the bench check passes (tx 23 0x03 / tx 23 0x01, watch the panel, confirm
+ * byte 26 bit 1 follows): implement the builder, wire the uplink, then drop this guard. */
+bool emberAfAttributeWriteAccessCallback(chip::EndpointId endpoint, chip::ClusterId clusterId,
+                                         chip::AttributeId attributeId)
+{
+    if (endpoint == kAirconEp && clusterId == TuicCl::Id &&
+        attributeId == TuicAttr::TemperatureDisplayMode::Id) {
+        ChipLogProgress(DeviceLayer,
+                        "TUIC TemperatureDisplayMode write rejected: read-only until the "
+                        "byte-23 command is bench-verified (#5)");
+        return false;
+    }
+    return true;
 }
 
 /* The SDK build won't compile a newly-added SRC_CPP file (dep-tracking bug), so the
