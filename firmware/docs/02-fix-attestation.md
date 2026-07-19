@@ -1,12 +1,12 @@
 # Fixing attestation (err 604) properly
 
-> **HISTORICAL / CONDITIONAL.** This doc's central claim — that err 604 requires custom
-> self-signed VID/PID certs before commissioning will work — is **contradicted** by
+> **HISTORICAL / CONDITIONAL.** This doc's central claim, that err 604 requires custom
+> self-signed VID/PID certs before commissioning will work, is **contradicted** by
 > [`10-firmware-ota-procedure.md`](10-firmware-ota-procedure.md)'s stock-recovery-image note: the **stock built-in
 > test DAC/PAI/CD (VID `0xFFF1`)** commissioned fine on stock Home Assistant with no cert
 > surgery, just an "uncertified device" warning. The cert-generation recipe below is only
 > relevant if you actually need a **real VID/PID** (production/retail cert chain) or are
-> commissioning against a controller that enforces non-test-net DCL policy — not for normal
+> commissioning against a controller that enforces non-test-net DCL policy, not for normal
 > HIL/dev use. Kept for reference; don't treat it as a required step.
 
 Stock firmware ships test certs whose **Certification Declaration VID/PID doesn't cross-
@@ -18,7 +18,7 @@ provision **self-consistent** attestation credentials.
 
 Pick a VID/PID and use it EVERYWHERE (CD, PAI, DAC subject, Basic Information cluster).
 For local/dev use, the CSA **test** VID `0xFFF1` + a PID (e.g. `0x8004`) works because the
-Matter **test** PAA/CD-signing keys are trusted by controllers running with test-net DCL —
+Matter **test** PAA/CD-signing keys are trusted by controllers running with test-net DCL,
 but for zero-config commissioning on a *stock* controller, sign a CD with the test CD key
 and keep VID/PID identical across all three.
 
@@ -53,4 +53,4 @@ partition (matches what we found at flash ~`0x3da000` in the dump).
 ## Result
 
 With CD/DAC/PAI/Basic-Info all sharing one VID/PID, `err 604` disappears and the module
-commissions into a **stock** Home Assistant Matter server — no wheel patch, no downgrade.
+commissions into a **stock** Home Assistant Matter server, no wheel patch, no downgrade.

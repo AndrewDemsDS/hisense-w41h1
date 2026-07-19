@@ -13,11 +13,11 @@ Only the **latest release** of each firmware target is supported:
 | AmebaZ2 (RTL8710C) module firmware | `amebaz2-vX.Y.Z` |
 | ESP32 fallback bridge | `esp32-vX.Y.Z` |
 
-Older tags receive no fixes — update to the newest release before reporting.
+Older tags receive no fixes, update to the newest release before reporting.
 
 ## Reporting a vulnerability
 
-**Please report privately — do not open a public issue for a security bug.**
+**Please report privately, do not open a public issue for a security bug.**
 
 - Preferred: **GitHub → Security → "Report a vulnerability"** (private advisory) on this repo.
 - Or email **hello@andreasincode.com** with `[security] hisense-w41h1` in the subject line.
@@ -30,7 +30,7 @@ initial assessment within ~30 days.
 
 ## Scope
 
-In scope — defects in this repo's **own** code:
+In scope, defects in this repo's **own** code:
 
 - the RS-485 driver, Matter mapping, and firmware glue (`firmware/src/`)
 - build/OTA scripts (`firmware/scripts/`) and the recon tools (`reverse-engineering/tools/`)
@@ -39,12 +39,12 @@ In scope — defects in this repo's **own** code:
 Out of scope:
 
 - the upstream **Realtek AmebaZ2 SDK**, **Espressif ESP-IDF / esp-matter**, and
-  **connectedhomeip** — report those to their respective projects
-- the **Hisense stock firmware / ConnectLife cloud** — that's the *subject* of the
+  **connectedhomeip**: report those to their respective projects
+- the **Hisense stock firmware / ConnectLife cloud**: that's the *subject* of the
   reverse-engineering, not software maintained here
-- anything requiring the attacker to already have **physical flash access** — that is the threat
+- anything requiring the attacker to already have **physical flash access**: that is the threat
   model this project operates under, by design
-- the use of Matter **test** DAC/PAI/CD credentials — a documented, intentional property (the
+- the use of Matter **test** DAC/PAI/CD credentials: a documented, intentional property (the
   device is uncertified and not for sale), not a vulnerability
 
 ## A note on secrets

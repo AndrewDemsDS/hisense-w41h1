@@ -58,8 +58,11 @@ jobs:
           # the fork point, so the diff is only ever what this branch actually changed.
           git fetch --no-tags origin "$BASE" || true
           MERGE_BASE=$(git merge-base FETCH_HEAD HEAD 2>/dev/null || echo FETCH_HEAD)
-          if git diff --quiet "$MERGE_BASE" -- firmware/src; then
-            echo "no firmware/src change vs $BASE (merge-base $(git rev-parse --short "$MERGE_BASE")) -- bump not required"; exit 0
+          # Exclude markdown: firmware/src carries docs (INTEGRATION.md, UART_PINS.md,
+          # sdk-edits/README.md) that cannot reach the built image, so editing them must not demand
+          # a firmware version bump. Scoping to the whole directory made a docs-only pass fail.
+          if git diff --quiet "$MERGE_BASE" -- firmware/src ':(exclude)firmware/src/**/*.md'; then
+            echo "no firmware/src code change vs $BASE (merge-base $(git rev-parse --short "$MERGE_BASE")) -- bump not required"; exit 0
           fi
           new=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
           oldsem=$(git show "$MERGE_BASE:firmware/src/version.txt" 2>/dev/null | tr -d '[:space:]' || true)

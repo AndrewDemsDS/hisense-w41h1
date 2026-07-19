@@ -1,6 +1,6 @@
-# dumps/ — raw flash dumps & analysis (LOCAL ONLY)
+# dumps/: raw flash dumps & analysis (LOCAL ONLY)
 
-Everything in this directory except this README is **gitignored** — it holds the raw
+Everything in this directory except this README is **gitignored**: it holds the raw
 SPI-flash image and derived analysis, which contain the module's provisioned **Wi-Fi
 credentials + RSA device key** and the copyrighted vendor firmware. Never commit it.
 

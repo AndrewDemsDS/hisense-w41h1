@@ -8,7 +8,7 @@ control the A/C with no cloud.
 ## Commissioning credentials
 
 The firmware ships with the **standard Matter test credentials** (the connectedhomeip
-example defaults — not per-device values):
+example defaults, not per-device values):
 
 | Field | Value |
 |-------|-------|
@@ -34,10 +34,10 @@ entries, no `f/1/n`/`f/1/r`/`g/fidx` fabric keys, and **no Matter operational ce
 never in the writable partition). The `FabricTable`/`NOC`/`IPK`/`acl` strings are just the
 Matter *implementation* in firmware, not stored data.
 
-So the **Matter interface is un-commissioned and dormant** — it is *not* pre-associated to
+So the **Matter interface is un-commissioned and dormant**: it is *not* pre-associated to
 Hisense or anyone. Consequences:
 - Commissioning into a local controller will **not** be blocked by an existing fabric.
-- **ConnectLife does not use Matter** — it runs a separate cloud stack (see
+- **ConnectLife does not use Matter**: it runs a separate cloud stack (see
   [`04-cloud-and-firewall.md`](04-cloud-and-firewall.md)). Matter and the cloud are
   independent, so you can commission Matter locally without unbinding from ConnectLife.
 
@@ -59,7 +59,7 @@ but a fresh reset reliably guarantees an open window.
 
 1. Run a Matter server on the LAN (e.g. `ghcr.io/home-assistant-libs/python-matter-server`,
    host-networked, D-Bus mounted for BLE).
-2. **Enable test-net DCL** — because the device uses *test* attestation certs, a default
+2. **Enable test-net DCL**: because the device uses *test* attestation certs, a default
    Matter server rejects it (`AttestationVerification` failure). Run the server with
    `--enable-test-net-dcl` so it trusts the CSA **Test** PAA roots.
 3. HA → Settings → Devices & Services → **Matter** → point at the server
@@ -68,20 +68,20 @@ but a fresh reset reliably guarantees an open window.
    warning.
 5. Commissioning uses **BLE**, so the controller must be within Bluetooth range of the A/C.
 
-## Networking gotcha — cross-VLAN Matter (validated 2026-07-09)
+## Networking gotcha: cross-VLAN Matter (validated 2026-07-09)
 
 Matter operational discovery **and** transport are **IPv6-only** (`INET_CONFIG_ENABLE_IPV4=0`);
 discovery is mDNS. Neither crosses VLANs by default. With the A/C on IoT VLAN4 and the controller
 (python-matter-server on the Pi) on Servers VLAN3, the node commissions but then goes
-`available=False` — CASE can't discover/reach it.
+`available=False`: CASE can't discover/reach it.
 
 **What did NOT work:** UniFi's mDNS reflector (Gateway mDNS Proxy) does not reflect **IPv6** mDNS
 (`ff02::fb`) across VLANs, so operational discovery never crossed. Inter-VLAN IPv6 *routing*
 Servers→IoT was fine; discovery was the missing piece.
 
-**Working fix — put the controller on the A/C's L2 (dual-home the Pi onto VLAN4):**
+**Working fix, put the controller on the A/C's L2 (dual-home the Pi onto VLAN4):**
 1. Switch port carrying the Pi: add VLAN4 as a **tagged** network (keep Servers as the native/untagged).
-2. On the Pi (NetworkManager), a **persistent IPv6-only VLAN sub-interface** — no `dhclient`
+2. On the Pi (NetworkManager), a **persistent IPv6-only VLAN sub-interface**: no `dhclient`
    (raw `dhclient -1` on the sub-iface hangs and once wedged the primary link on a headless box):
    ```
    nmcli con add type vlan con-name iot4 dev eth0 id 4 \
@@ -102,7 +102,7 @@ Trust direction stays correct: the A/C is isolated on IoT; only the Matter contr
 - A Hisense A/C commissioned into a 3rd-party Matter controller (same swing-×6 reset):
   Hubitat community guide.
 
-## Recommission ("77") — protocol internals
+## Recommission ("77"): protocol internals
 
 For the firmware-RE narrative of how "77" works on the wire (the `0x1E` heartbeat request/reply
 bitfields, the stock `enter_provisioning_reset` state writes, and the bench-validated behavior of

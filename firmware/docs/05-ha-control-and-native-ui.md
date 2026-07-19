@@ -1,4 +1,4 @@
-# W41H1 — HA control layer: safety guards + native (no-JS) dashboard
+# W41H1: HA control layer: safety guards + native (no-JS) dashboard
 
 Design doc for locally driving the de-clouded Hisense AEH-W41H1 over Matter (via
 python-matter-server, HA 2026.6) with **built-in Lovelace cards only** and a correct set of
@@ -6,13 +6,13 @@ safety guards. Produced by a 4-lens research fan-out (stock cloud plugin `hisens
 our RS-485 driver, stock-FW/link RE docs 09/10, HA native-card docs) + adversarial verification.
 
 > **Superseded by a shipped integration.** The native unified dashboard/entity this doc designs
-> toward now ships as **`integrations/hisense-unified-ac`** — a HACS custom integration (separate
+> toward now ships as **`integrations/hisense-unified-ac`**: a HACS custom integration (separate
 > repo/submodule). Treat the YAML and tables below as reference *for that integration* rather than
 > an open design; the feature/guard matrix (§1), the guard-ownership table (§2), and the dashboard
 > YAML (§3) remain the load-bearing spec.
 
 Three design facts this doc is built on, load-bearing for the tables below:
-- **The firmware auto-powers-on on mode-select** — `matter_drivers.cpp:177-180`: a non-off
+- **The firmware auto-powers-on on mode-select**: `matter_drivers.cpp:177-180`: a non-off
   `SystemMode` write calls `hisense_send_power(true)` **then** `hisense_flush_command()` (mode
   frame), so `climate.set_hvac_mode: cool` already emits power-on-then-mode. HA does *not* own
   auto-power-on. The empirical "wrote SystemMode, unit stayed off" is a **link-readiness** issue (or
@@ -42,16 +42,16 @@ command bytes). Values in the cloud column are STRING property writes.
 ### HVAC modes
 | Mode | Cloud `t_work_mode` | Our SystemMode → 0x65 byte18 | Auto-powers-on? | Temp settable | HA control |
 |---|---|---|---|---|---|
-| Off | `"0"` power (`t_power:"0"`) | Off → literal OFF frame | n/a | — | native `set_hvac_mode: off` |
+| Off | `"0"` power (`t_power:"0"`) | Off → literal OFF frame | n/a | – | native `set_hvac_mode: off` |
 | Cool | `"2"` | 3 → `0x50` | **yes (firmware)** | yes | native |
 | Heat | `"1"` | 4 → `0x30` | **yes (firmware)** | yes | native |
 | Dry | `"3"` | 8 → `0x70` | **yes (firmware)** | **no** | native |
 | Fan-only | `"0"` | 7 → `0x10` | **yes (firmware)** | **no** | native |
-| Auto | absent on window AC (`0,1,2,3,5`) | 1 → `0x90` (driver-reachable) | (would) | — | **needs FeatureMap Auto bit (FW)** |
-| E-star/eco | `"5"` (a *mode*, unmapped in HA) | ≈ mfg-Eco special (byte33 `0x30`) | assumed | — | none today; reconcile w/ mfg-Eco (open Q) |
+| Auto | absent on window AC (`0,1,2,3,5`) | 1 → `0x90` (driver-reachable) | (would) | – | **needs FeatureMap Auto bit (FW)** |
+| E-star/eco | `"5"` (a *mode*, unmapped in HA) | ≈ mfg-Eco special (byte33 `0x30`) | assumed | – | none today; reconcile w/ mfg-Eco (open Q) |
 
 Setpoint rides **inside** the mode 0x65 at byte19 (`temp*2+1`); a standalone
-`OccupiedCooling/HeatingSetpoint` write returns IM `0x86` — the firmware already flushes setpoint in
+`OccupiedCooling/HeatingSetpoint` write returns IM `0x86`: the firmware already flushes setpoint in
 its own 0x65, so `climate.set_temperature` works when it lands with/after a mode. Temp is only
 honored in Cool/Heat (cloud strips it in dry/fan; our range is 16–32 on the wire, model spec 16–30).
 
@@ -59,14 +59,14 @@ honored in Cool/Heat (cloud strips it in dry/fan; our range is 16–32 on the wi
 `SpeedSetting 1..6` → byte16 `0x03/0x0B/0x0D/0x0F/0x11/0x13` (quiet…high; `0x03` quiet is VERIFY).
 Cloud exposes only 3 (`t_fan_speed 5/7/9` = low/med/high). **Conflict to resolve on HW:** the live
 glue `INTEGRATION.md:127,237` maps `PercentSetting` through `mapPercentToMode()` into ~4 buckets
-(off/low/med/high), *not* the 6-step `percent_to_hisense_fan()` — so the fan-speed slider may yield
+(off/low/med/high), *not* the 6-step `percent_to_hisense_fan()`: so the fan-speed slider may yield
 4 buckets, not 6. Fan never auto-powers-on; fan is not settable in Dry; `0%` sends **AUTO fan**, not off.
 
 ### Special functions
 
 Byte-level mfg-cluster encodings (attr IDs ↔ RS-485 command bytes) and the CompressorHz/OutdoorTemp
-telemetry-gap status are owned by [docs/01](01-expose-all-clusters.md#manufacturer-cluster-phase-3--chosen-approach)
-— not repeated here; this table only adds the HA-facing columns (cloud mapping, interlocks, reachability).
+telemetry-gap status are owned by [docs/01](01-expose-all-clusters.md#manufacturer-cluster-phase-3--chosen-approach),
+not repeated here; this table only adds the HA-facing columns (cloud mapping, interlocks, reachability).
 
 | Special | Cloud | Our path (mfg cluster) | Interlocks (per driver) | HA today |
 |---|---|---|---|---|
@@ -81,17 +81,17 @@ Cloud-only, absent on our hardware (drop): `ac_purify`/health (status bit always
 
 ---
 
-## 2. Guards — where each actually lives (corrected)
+## 2. Guards: where each actually lives (corrected)
 
 | # | Guard | Owner | Status |
 |---|---|---|---|
-| G1 | Mode-select powers the unit on | **Firmware** (`matter_drivers.cpp:177-180`) | already done; **verify on HW (P4)** — the empirical cold-off failure is the open risk |
+| G1 | Mode-select powers the unit on | **Firmware** (`matter_drivers.cpp:177-180`) | already done; **verify on HW (P4)**: the empirical cold-off failure is the open risk |
 | G2 | Setpoint rides with the mode frame (no bare 0x86 write) | **Firmware** (flushes setpoint in its own 0x65) | done; HA should still prefer `set_temperature` with `hvac_mode` so a mode is present |
-| G3 | Half-duplex pacing / ~1 Hz transaction | **Firmware bus task** (send→listen ≤500 ms) | done; HA adds a light slider **debounce** (≥1.5 s) only as courtesy — cloud uses 3 s cmd-cache + 10 s switch-debounce, so lean generous |
-| G4 | Link-ready gate (don't command before DevType/0x07 handshake) | **HA reactive** | **template `binary_sensor.ac_link` = `LocalTemperature` is live**; surface it; optionally block special/automation writes on it. (This is a *link* signal, not a *power* signal — there is no power readback.) |
+| G3 | Half-duplex pacing / ~1 Hz transaction | **Firmware bus task** (send→listen ≤500 ms) | done; HA adds a light slider **debounce** (≥1.5 s) only as courtesy, cloud uses 3 s cmd-cache + 10 s switch-debounce, so lean generous |
+| G4 | Link-ready gate (don't command before DevType/0x07 handshake) | **HA reactive** | **template `binary_sensor.ac_link` = `LocalTemperature` is live**; surface it; optionally block special/automation writes on it. (This is a *link* signal, not a *power* signal, there is no power readback.) |
 | G5 | Reconnect resync after A/C-initiated reset/OTA/reconfig | **HA automation** | on `climate` `unavailable→available`, re-send last mode/setpoint from `input_*` mirrors; do **not** fight a reconfig |
 | G6 | Special-function interlocks (Eco⊕Turbo, mode-restrict, forced fan) | **Firmware** (once specials move to standard Matter) | deferred with the specials; today unreachable so moot |
-| — | Temp/fan validity per mode (no temp in dry/fan; no fan in dry) | **Firmware** should reject; HA card can't clamp | verify HA card behavior on HW; if the card leaves temp dialable in dry, add a reactive automation that reverts it |
+| – | Temp/fan validity per mode (no temp in dry/fan; no fan in dry) | **Firmware** should reject; HA card can't clamp | verify HA card behavior on HW; if the card leaves temp dialable in dry, add a reactive automation that reverts it |
 
 Key point: **no imperative guard scripts sit in front of the native cards** (they can't). The firmware
 is the enforcement layer; HA contributes G4 (link awareness) and G5 (reconnect resync) as reactive
@@ -102,7 +102,7 @@ automations, plus optional slider debounce.
 ## 3. Native (no-JS) dashboard
 
 Two entities stitched with built-in cards (the climate entity has **no** `fan_mode`/`swing_mode`
-attrs, so `climate-fan-modes`/`climate-swing-modes` features render empty — fan+swing come from the
+attrs, so `climate-fan-modes`/`climate-swing-modes` features render empty, fan+swing come from the
 fan tile). Feature strings are **hyphenated** (current docs).
 
 ```yaml
@@ -136,7 +136,7 @@ cards:
     name: A/C link
 ```
 
-**Specials are intentionally absent** until the firmware exposes them via standard Matter — a
+**Specials are intentionally absent** until the firmware exposes them via standard Matter, a
 `matter_write` template switch for the mfg cluster does not work (see §0.3). When Sleep/Eco become
 Thermostat **Presets**, add a `climate-preset-modes` feature to the thermostat card (native); Quiet is
 already a fan speed; Turbo becomes a preset or a boost.
@@ -152,8 +152,8 @@ Do **not** place ep2 Humidity / ep3 Temperature tiles (report NULL).
 | **P0** | Rename device → "Living Room AC" (HA device registry; NodeLabel write doesn't persist). Remove the JS `climate-cluster-card` dashboard + resource (pivot to native). | no |
 | **P1** | Native `vertical-stack` dashboard (§3): thermostat + fan tile + power tile. `binary_sensor.ac_link` template. | no (renders + fires) |
 | **P2** | Reactive automations: G5 reconnect-resync (last mode/setpoint mirrors via `input_*`); optional G4 link-gate + notification; optional fan-slider debounce. | authoring no; validating yes |
-| **P3 (firmware/OTA)** | (a) Thermostat **Auto** FeatureMap `3 → 35` (`0x23` = kHeating\|kCooling\|**kAutoMode**); HA lists us in `SINGLE_SETPOINT_DEVICES` (via `matter_ac_unlock`) so Auto renders as a single-setpoint mode — consider the `MinSetpointDeadBand` (thermostat `0x19`) companion if CHIP/device complains → `auto` renders. (b) Re-expose specials via **standard Matter**: Sleep/Eco as Thermostat **Presets** (kPresets + populate `Presets`/`PresetTypes`), Turbo as a preset/boost — retire the mfg-cluster control surface for HA. (c) Wire explicit eco-off (`HISENSE_FEATURE_ECO_OFF`, byte33 `0x10`, via `hisense_apply_eco()`)/turbo-off/display-off frames. Rebuild + serial-bump + OTA (proven pipeline). | reflash + verify |
-| **P4 (HIL)** | With the A/C **on + linked**: confirm mode-select really powers on from cold-off (the empirical failure), setpoint (no 0x86), fan slider bucket count (4 vs 6), swing, and — once P3 lands — presets. Confirm the `LocalTemperature`-live link proxy tracks the real handshake. | **yes** |
+| **P3 (firmware/OTA)** | (a) Thermostat **Auto** FeatureMap `3 → 35` (`0x23` = kHeating\|kCooling\|**kAutoMode**); HA lists us in `SINGLE_SETPOINT_DEVICES` (via `matter_ac_unlock`) so Auto renders as a single-setpoint mode, consider the `MinSetpointDeadBand` (thermostat `0x19`) companion if CHIP/device complains → `auto` renders. (b) Re-expose specials via **standard Matter**: Sleep/Eco as Thermostat **Presets** (kPresets + populate `Presets`/`PresetTypes`), Turbo as a preset/boost, retire the mfg-cluster control surface for HA. (c) Wire explicit eco-off (`HISENSE_FEATURE_ECO_OFF`, byte33 `0x10`, via `hisense_apply_eco()`)/turbo-off/display-off frames. Rebuild + serial-bump + OTA (proven pipeline). | reflash + verify |
+| **P4 (HIL)** | With the A/C **on + linked**: confirm mode-select really powers on from cold-off (the empirical failure), setpoint (no 0x86), fan slider bucket count (4 vs 6), swing, and (once P3 lands) presets. Confirm the `LocalTemperature`-live link proxy tracks the real handshake. | **yes** |
 
 ---
 
@@ -161,12 +161,12 @@ Do **not** place ep2 Humidity / ep3 Temperature tiles (report NULL).
 
 1. **Cold-off power-on:** does an explicit on-frame actually power a physically-off unit? (empirical
    failure; firmware already sends it, so this is an on-frame/link question, not an HA one).
-2. **Fan slider granularity:** 6-step (`percent_to_hisense_fan`) vs ~4-bucket (`mapPercentToMode`) —
+2. **Fan slider granularity:** 6-step (`percent_to_hisense_fan`) vs ~4-bucket (`mapPercentToMode`),
    which does the live glue use? Reconcile the two source mappings.
 3. **Temp visibility in dry/fan:** does HA's Matter climate card auto-hide `set_temperature` when the
    entity is in dry/fan, or stay dialable? (Matter advertises setpoints unconditionally.)
 4. **OnOff vs SystemMode display:** with `OnOff=0` while `SystemMode=Cool`, does the climate entity
-   show OFF or "cool"? (HA shows off when the OnOff switch is off — confirm.)
+   show OFF or "cool"? (HA shows off when the OnOff switch is off, confirm.)
 5. **Presets feasibility:** can the AmebaZ2 Thermostat cluster advertise kPresets + serve `Presets`
    for Sleep/Eco cleanly? (the clean native path for specials).
 6. **Do specials auto-clear** on mode-change/power-off, and are Turbo/Mute truly exclusive (they use
@@ -186,10 +186,10 @@ critic), reconciled with live matter-server/HA checks. Command byte offsets are 
 
 Copy-paste starting points, wired to a **renamed node's** entity IDs (e.g. a device you renamed to
 `living_room_ac`). A second, un-renamed node keeps the un-suffixed auto IDs (`climate.test_product`,
-`switch.test_product_switch_3`, …). Matter auto-names are ugly — rename in *Settings → Devices →
+`switch.test_product_switch_3`, …). Matter auto-names are ugly, rename in *Settings → Devices →
 Entities* and the IDs stabilize.
 Vertical swing is exposed as **fan oscillation** on the `fan.*` entity (FanControl Rocking → `fan.oscillate`);
-the panel **Display** is a plain switch (write-only — the A/C reports no display state back).
+the panel **Display** is a plain switch (write-only, the A/C reports no display state back).
 
 ### Lovelace view
 
