@@ -657,11 +657,12 @@ bool hisense_parse_status(const uint8_t *buf, size_t len, HisenseState *out_stat
                                                       // only fires in cold/defrost.
 
     out_state->mute_on       = (flags2 & 0x04) != 0; // bit2  CONFIRMED
-    out_state->purify_on     = (flags2 & 0x20) != 0; // bit5  (feature ABSENT on
-                                                      // this unit -- no app/
-                                                      // remote control; always
-                                                      // 0. Kept for units that
-                                                      // do have it.)
+    // bit7, NOT bit5. The stock capability table puts t_purify at wire 36 bit 7, and that
+    // table's base is confirmed by five other bits it reproduces exactly (see the fault
+    // base note in the header). bit5 was never validated: purify is absent on both bench
+    // units, so the field reads 0 either way here and the error was invisible.
+    // Still UNVERIFIED on hardware, because no unit available reports purify at all.
+    out_state->purify_on     = (flags2 & 0x80) != 0;
 
     // Sleep @17. CONFIRMED on hw: 0x00 off / 0x02 on (also forces fan low).
     out_state->sleep_raw = buf[17];

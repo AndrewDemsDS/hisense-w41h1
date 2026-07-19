@@ -318,7 +318,14 @@ package() {
   # `package` after the wrong `build` would silently mislabel an image -- and a debug image landing
   # under a release name is exactly the mistake #22 exists to prevent. Verify the binary against
   # the claimed flavour using the console's own log string.
-  if strings "$fw" | grep -q "diag console listening"; then
+  # NOTE: `strings ... | grep -q` is WRONG under `set -o pipefail`. grep -q exits the moment it
+  # matches, strings then dies of SIGPIPE, and pipefail turns that into a failed pipeline -- so the
+  # test reads FALSE exactly when the string IS present. Release builds passed only because grep
+  # found nothing and strings ran to completion, which made the bug invisible until the first debug
+  # package attempt. grep -c consumes all input, so strings exits cleanly.
+  local console_hits
+  console_hits="$(strings "$fw" | grep -c "diag console listening" || true)"
+  if [ "${console_hits:-0}" -gt 0 ]; then
     [ "${HISENSE_FLAVOUR:-release}" = "debug" ] || \
       die "built image CONTAINS the :2323 console but flavour is release -- rebuild without --debug, or package with HISENSE_FLAVOUR=debug"
   else
@@ -348,10 +355,26 @@ stage() {
   load_env
   : "${PI_HOST:?}" "${PI_OTA_DIR:?}" "${PI_SSH_KEY:?}"
   local v; v="$(cur_version)"
-  say "stage v$v on $PI_HOST:$PI_OTA_DIR + restart matter-server"
-  scp -o BatchMode=yes -i "$PI_SSH_KEY" \
-    "$REPO/firmware/built-images/rac-v$v.ota" "$REPO/firmware/built-images/rac-v$v.json" \
+  # Honour the flavour suffix that `package` writes. Without this, `package` produces
+  # rac-vNNNNN-debug.ota while stage uploads the unsuffixed rac-vNNNNN.ota, so a debug
+  # build silently deploys the RELEASE image: the flash succeeds, the version verifies
+  # (both flavours share one version int by design, #77), and the only symptom is that
+  # the console you built the image for is not there.
+  local sfx=""; [ "${HISENSE_FLAVOUR:-release}" = "debug" ] && sfx="-debug"
+  local src_ota="$REPO/firmware/built-images/rac-v$v$sfx.ota"
+  local src_json="$REPO/firmware/built-images/rac-v$v$sfx.json"
+  [ -f "$src_ota" ] || die "no $src_ota -- run 'package' for this flavour first"
+  say "stage v$v${sfx:+ ($HISENSE_FLAVOUR)} on $PI_HOST:$PI_OTA_DIR + restart matter-server"
+  # Upload under the manifest's OWN names: the .json's otaUrl already references
+  # rac-v$v$sfx.ota, so renaming on upload would break the reference.
+  scp -o BatchMode=yes -i "$PI_SSH_KEY" "$src_ota" "$src_json" \
     "$PI_HOST:$PI_OTA_DIR/" >/dev/null
+  # Then remove any OTHER flavour's manifest at this same version int. Both flavours share
+  # one version by design (#77), so leaving both on the provider gives it two candidates it
+  # cannot disambiguate, and it may serve the one you did not build.
+  local other=""; [ -n "$sfx" ] && other="rac-v$v.json" || other="rac-v$v-debug.json"
+  ssh -o BatchMode=yes -i "$PI_SSH_KEY" "$PI_HOST" \
+    "rm -f $PI_OTA_DIR/$other 2>/dev/null" >/dev/null 2>&1 || true
   # cache hygiene: prune the ephemeral OTA-provider junk that piles up per attempt
   # (KVS + per-run logs). Leave .ota/.json manifests (needed for rollback images).
   ssh -o BatchMode=yes -i "$PI_SSH_KEY" "$PI_HOST" \
@@ -474,18 +497,24 @@ case "$cmd" in
   tag)     tag_release ;;
   verint)  semver_to_int "${1:-$(cur_semver)}" ;;   # semver -> Matter softwareVersion int (CI uses this; no SDK/env)
   release)
-    BUMP=""; FLASH=0; TAG=0
+    BUMP=""; FLASH=0; TAG=0; DEBUGF=""
     for a in "$@"; do
       case "$a" in
         --bump|--bump-patch|--bump-minor|--bump-major) BUMP="$a" ;;
         --flash) FLASH=1 ;;
         --tag)   TAG=1 ;;
+        --debug) DEBUGF="--debug" ;;
+        # Anything else is almost certainly a typo or a flag that only `build` understands.
+        # Silently ignoring it is how a build ends up the wrong flavour: `release --debug`
+        # used to accept the flag, drop it, and ship a console-less image that looks fine
+        # until the console does not answer.
+        -*) die "unknown flag for release: $a" ;;
       esac
     done
-    build $BUMP; package; stage
+    build $BUMP $DEBUGF; package; stage
     [ "$TAG" = 1 ] && tag_release || true
     [ "$FLASH" = 1 ] && flash || say "staged, not flashed. run: ota-release.sh flash"
     ;;
   publish) publish ;;
-  *) die "usage: ota-release.sh {lint|build [--bump[-minor|-major]] [--debug]|package|stage|flash|tag|publish|verint [semver]|release [--bump[-minor|-major]] [--tag] [--flash]}" ;;
+  *) die "usage: ota-release.sh {lint|build [--bump[-minor|-major]] [--debug]|package|stage|flash|tag|publish|verint [semver]|release [--bump[-minor|-major]] [--tag] [--flash] [--debug]}" ;;
 esac

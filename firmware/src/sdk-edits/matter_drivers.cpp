@@ -435,6 +435,24 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     set_ha_entity_label(kCoilTempEp,    "Coil");
     set_ha_entity_label(kDisplayEp,     "Display");
 
+    /* ep9 Display starts ON (#33). The panel is lit by default and the A/C reports no
+     * display state, so a switch that boots "off" is wrong from the first second and
+     * nothing can ever correct it. Worse, Matter skips both attribute-change callbacks
+     * when a write does not change the value (emAfWriteAttribute returns early on
+     * !valueChanging), so pressing "off" on an already-false attribute ran no handler and
+     * put NO frame on the bus: the user saw a lit panel, pressed off, and nothing happened.
+     * Seeding true makes that first press a real transition.
+     *
+     * Not a general fix: change the display from the IR remote and the attribute drifts
+     * again, with no read-back to recover. Set here rather than in the .zap so the data
+     * model does not need a GUI round-trip for a one-bit default. */
+    {
+        bool display_default = true;
+        emberAfWriteAttribute(kDisplayEp, chip::app::Clusters::OnOff::Id,
+                              chip::app::Clusters::OnOff::Attributes::OnOff::Id,
+                              (uint8_t *) &display_default, kHisenseTypeBool);
+    }
+
     matter_power_meter_init(kAirconEp);
 
     // Register the Sleep-profile ModeSelect supported-modes (Off/General/Old/Young/Kids on ep6).
