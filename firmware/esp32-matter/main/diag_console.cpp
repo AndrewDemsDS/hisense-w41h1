@@ -267,7 +267,10 @@ static int cmd_faults(int, char **)
     };
     for (auto &x : named) if (x.v) printf("  FAULT: %s\r\n", x.n);
     // A set bit with no name still matters: warn rather than imply we understood the byte.
-    uint8_t known[4] = { 0xFF, 0xF8, 0x78, 0x10 };
+    // Byte 66 bit 7 is a mode flag, not a fault, so it must not be reported as an unnamed
+    // fault bit either (see HISENSE_FAULT_NONFAULT_PROTECT).
+    uint8_t known[4] = { 0xFF, 0xF8, 0x78,
+                         (uint8_t)(0x10 | HISENSE_FAULT_NONFAULT_PROTECT) };
     uint8_t rawb[4]  = { f.raw_indoor, f.raw_module, f.raw_outdoor, f.raw_protect };
     int off[4] = { HISENSE_FAULT_BYTE_INDOOR, HISENSE_FAULT_BYTE_MODULE,
                    HISENSE_FAULT_BYTE_OUTDOOR, HISENSE_FAULT_BYTE_PROTECT };
