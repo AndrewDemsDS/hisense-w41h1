@@ -206,6 +206,20 @@ static int cmd_tx(int argc, char **argv)
     case -2:
         printf("TX queue full -- NOT sent, retry\r\n");
         return 1;
+    case -3: {
+        // The offset was fine; the SHADOW is unbuildable. Almost always an out-of-range
+        // setpoint resynced from the A/C, which drops every combined frame, not just this
+        // probe. Print the state and the fix rather than making the next person derive it.
+        int mode = -1, sp = -1, f = -1;
+        diag_get_cmd_state(&mode, &sp, &f);
+        printf("rejected: the command SHADOW is invalid, so the builder refused.\r\n"
+               "  shadow: mode=%d setpoint=%d fahrenheit=%d (valid setpoint: %d..%d C)\r\n"
+               "  the offset was fine -- EVERY combined command is being dropped, not just\r\n"
+               "  this probe. Fix: write the setpoint attribute matching the CURRENT mode\r\n"
+               "  (HeatSetpoint while in heat), which reloads the shadow with a legal value.\r\n",
+               mode, sp, f, HISENSE_SETPOINT_MIN_C, HISENSE_SETPOINT_MAX_C);
+        return 1;
+    }
     default:
         break;
     }

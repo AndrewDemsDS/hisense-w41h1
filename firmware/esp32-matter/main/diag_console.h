@@ -18,8 +18,13 @@ void diag_on_status(const HisenseState *st);
 
 // Implemented in app_main.cpp. Sends the current command frame with ONE payload byte
 // overridden (see hisense_build_command_override). Backs the console's `tx`.
-// Returns 0 sent, -1 offset/build rejected, -2 TX queue full.
+// Returns 0 sent, -1 offset rejected, -2 TX queue full, -3 shadow invalid (builder
+// refused). -1 and -3 are deliberately distinct: conflating them made `tx` blame the
+// offset for what was really a poisoned shadow setpoint.
 int diag_tx_override(int off, uint8_t val);
+
+// Current command shadow, so the console can explain a -3 instead of guessing.
+void diag_get_cmd_state(int *mode, int *setpoint, int *fahrenheit);
 
 #ifdef __cplusplus
 }

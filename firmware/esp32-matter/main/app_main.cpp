@@ -149,7 +149,17 @@ static void flush_cmd()
 {
     uint8_t f[HISENSE_CMD_FRAME_LEN + 2];
     size_t n = hisense_build_command(&s_cmd, f, sizeof(f));
-    if (!n) return;
+    // A build rejection used to return silently, which is how an out-of-range shadow
+    // setpoint could disable ALL combined-frame control with nothing in the log to show
+    // for it. The shadow is guarded above now, so this should be unreachable; if it ever
+    // fires, the shadow is invalid and every command is being dropped -- say so loudly.
+    if (!n) {
+        ESP_LOGE(TAG, "combined command REJECTED by the builder (mode=%d setpoint=%d "
+                      "fahrenheit=%d) -- frame NOT sent; all combined control is dead "
+                      "until the shadow is valid again",
+                 (int) s_cmd.mode, (int) s_cmd.setpoint, (int) s_cmd.fahrenheit);
+        return;
+    }
     if (hisense_send_frame(f, n)) arm_sync_hold();          // arm the settle only if it enqueued
     else                          ESP_LOGW(TAG, "cmd dropped (TX queue full)");
 }
@@ -158,15 +168,30 @@ static void flush_cmd()
  * built from the CURRENT command state, so it differs from what the A/C is already
  * running by exactly the byte under test. Arms the settle window like any other
  * send, otherwise the next status frame resyncs s_cmd mid-probe.
- * Returns 0 sent, -1 offset/build rejected, -2 TX queue full. */
+ * Returns 0 sent, -1 offset rejected, -2 TX queue full, -3 the SHADOW is invalid so the
+ * builder refused (distinct from -1: nothing is wrong with the offset). Conflating -1 and
+ * -3 cost real bench time -- `tx` reported "offset 19 is outside the payload [16,46)" while
+ * 19 was plainly inside it, and the actual cause was an out-of-range shadow setpoint
+ * silently killing every build. */
 extern "C" int diag_tx_override(int off, uint8_t val)
 {
+    if (off < (int) HISENSE_CMD_HEADER_LEN || off >= (int) HISENSE_CMD_CHK_OFFSET) {
+        return -1;
+    }
     uint8_t f[HISENSE_CMD_FRAME_LEN + 2];
     size_t n = hisense_build_command_override(&s_cmd, f, sizeof(f), off, val);
-    if (!n) return -1;
+    if (!n) return -3;
     if (!hisense_send_frame(f, n)) return -2;
     arm_sync_hold();
     return 0;
+}
+
+/* Current shadow, for the console to explain a -3 without guessing. */
+extern "C" void diag_get_cmd_state(int *mode, int *setpoint, int *fahrenheit)
+{
+    if (mode)       *mode       = (int) s_cmd.mode;
+    if (setpoint)   *setpoint   = (int) s_cmd.setpoint;
+    if (fahrenheit) *fahrenheit = (int) s_cmd.fahrenheit;
 }
 
 static void send_power(bool on)
@@ -410,7 +435,20 @@ static void on_status(const HisenseState *st)
     // isn't reverted by a pre-command status frame (#61). Mirrors matter_drivers.cpp:732-749.
     if (chip::System::SystemClock().GetMonotonicTimestamp() >= s_sync_hold_until) {
         s_cmd.mode     = st->mode;
-        s_cmd.setpoint = st->setpoint_c;
+        // NEVER copy an out-of-range setpoint into the shadow. The A/C legitimately reports
+        // them (this unit answers ac_8heat=1, and the bench saw it accept and hold 5 C), and
+        // an out-of-range shadow makes hisense_build_command() return 0 for EVERY later
+        // command -- mode, fan and swing included -- silently killing all combined-frame
+        // control until a reboot. Keeping the last good value degrades gracefully instead:
+        // the shadow is only a base for the next command, so a stale setpoint is far cheaper
+        // than a dead control path.
+        if (hisense_setpoint_in_range(st->setpoint_c, s_cmd.fahrenheit)) {
+            s_cmd.setpoint = st->setpoint_c;
+        } else {
+            ESP_LOGW(TAG, "status setpoint %d out of range -- keeping shadow at %d "
+                          "(copying it would drop every later command)",
+                     (int) st->setpoint_c, (int) s_cmd.setpoint);
+        }
         HisenseFanSpeed sf = hisense_fan_raw_to_cmd(st->fan_raw);
         if (sf != HISENSE_FAN_NOCHANGE) s_cmd.fan = sf;    // keep previous fan on an unknown raw (#59)
         s_cmd.vswing  = st->vswing_on ? HISENSE_SWING_SWING : HISENSE_SWING_OFF;
