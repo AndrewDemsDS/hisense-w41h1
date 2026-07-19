@@ -1,10 +1,10 @@
 # Publish the documentation to GitHub Pages so it is INDEXABLE.
 #
-# The wiki is not. GitHub serves every /wiki/ URL with `X-Robots-Tag: none` (noindex, nofollow at
-# the HTTP level), so no wiki page can appear in Google, Bing, or the crawlers behind AI search.
-# Pages sites carry no such header. This workflow assembles the docs that already exist -- in the
-# repo and in the wiki -- into one Jekyll site, rather than forking the content into a second copy
-# that would drift.
+# The GitHub wiki was not: GitHub serves every /wiki/ URL with `X-Robots-Tag: none` (noindex,
+# nofollow at the HTTP level), so nothing there could appear in a search engine or the crawlers
+# behind AI search. Pages carries no such header. The guide pages therefore now live in the repo
+# under docs/guide/ and the wiki is retired, so there is ONE copy of each document and no chance
+# of the two drifting apart.
 name: Docs site
 
 on:
@@ -12,12 +12,12 @@ on:
     branches: [main]
     paths:
       - docs-site/**
+      - docs/guide/**
       - firmware/docs/**
       - reverse-engineering/docs/**
       - README.md
       - .github/workflows/pages.yaml
       - .github/scripts/assemble_docs_site.py   # the assembler IS the build; changing it must rebuild
-  gollum:            # fires when a wiki page is edited, so wiki edits reach the indexable site
   workflow_dispatch:
 
 permissions:
@@ -34,12 +34,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # Public wiki, so no token needed. Failure here must not sink the whole site: the repo docs
-      # are the larger half and should still publish.
-      - name: Fetch the wiki
-        continue-on-error: true
-        run: git clone --depth 1 https://github.com/${{ github.repository }}.wiki.git wiki-src
 
       - name: Assemble the site
         run: |

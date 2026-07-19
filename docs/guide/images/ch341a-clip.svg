@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 480" font-family="DejaVu Sans, Arial, sans-serif">
+  <rect x="0" y="0" width="760" height="480" rx="12" fill="#f7f8fa" stroke="#d0d5dd"/>
+  <text x="24" y="40" font-size="22" font-weight="bold" fill="#111">CH341A SPI clip → GD25Q32 flash (SOIC-8)</text>
+  <text x="24" y="66" font-size="15" fill="#475467">8-pin SOIC clip maps 1:1 to the flash. Pin 1 = dot corner.</text>
+
+  <!-- chip body -->
+  <rect x="300" y="130" width="160" height="230" rx="8" fill="#222" stroke="#000"/>
+  <circle cx="322" cy="152" r="7" fill="#f7f8fa"/>
+  <text x="380" y="250" font-size="15" fill="#cbd5e1" text-anchor="middle">GD25Q32</text>
+  <text x="380" y="270" font-size="12" fill="#94a3b8" text-anchor="middle">SOIC-8</text>
+
+  <!-- left pins 1..4 -->
+  <g font-size="16" fill="#111">
+    <rect x="270" y="150" width="30" height="14" fill="#9aa4b2"/><text x="264" y="162" text-anchor="end">1  CS</text>
+    <rect x="270" y="200" width="30" height="14" fill="#9aa4b2"/><text x="264" y="212" text-anchor="end">2  DO (MISO)</text>
+    <rect x="270" y="250" width="30" height="14" fill="#9aa4b2"/><text x="264" y="262" text-anchor="end">3  WP</text>
+    <rect x="270" y="300" width="30" height="14" fill="#9aa4b2"/><text x="264" y="312" text-anchor="end">4  GND</text>
+  </g>
+  <!-- right pins 8..5 -->
+  <g font-size="16" fill="#111">
+    <rect x="460" y="150" width="30" height="14" fill="#9aa4b2"/><text x="496" y="162">8  VCC → 3.3 V</text>
+    <rect x="460" y="200" width="30" height="14" fill="#9aa4b2"/><text x="496" y="212">7  HOLD</text>
+    <rect x="460" y="250" width="30" height="14" fill="#9aa4b2"/><text x="496" y="262">6  CLK</text>
+    <rect x="460" y="300" width="30" height="14" fill="#9aa4b2"/><text x="496" y="312">5  DI (MOSI)</text>
+  </g>
+
+  <!-- warnings -->
+  <rect x="24" y="400" width="712" height="60" rx="8" fill="#fff4e5" stroke="#f0a955"/>
+  <text x="40" y="424" font-size="15" font-weight="bold" fill="#8a5300">⚠ Power the clip at 3.3 V — NOT 5 V (5 V can kill the chip).</text>
+  <text x="40" y="446" font-size="15" fill="#8a5300">⚠ A/C UNPLUGGED while clipped. In-circuit reads can fail — verify JEDEC C8 40 16 first.</text>
+</svg>

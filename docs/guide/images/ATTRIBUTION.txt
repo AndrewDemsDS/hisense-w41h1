@@ -1,0 +1,6 @@
+Image provenance
+================
+module-external.png       — FCC ID 2AGCCAEH-W41H1, External Photos exhibit (public record)
+module-internal-annotated.png — FCC ID 2AGCCAEH-W41H1, Internal Photos exhibit (public record); labels added
+module-internal-back.png  — FCC ID 2AGCCAEH-W41H1, Internal Photos exhibit (public record)
+commission-qr.png         — generated from the repo's Matter test credentials (pairing 3497-011-2332)

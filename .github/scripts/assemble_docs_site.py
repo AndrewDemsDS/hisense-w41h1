@@ -19,7 +19,7 @@ SITE = "_site_src"
 SOURCES = [
     ("firmware/docs", "firmware", "firmware docs"),
     ("reverse-engineering/docs", "internals", "reverse engineering"),
-    ("wiki-src", "guide", "wiki guide"),
+    ("docs/guide", "guide", "guide"),
 ]
 
 # Wiki pages that are navigation fragments, plus its own linter. Not content.
@@ -84,7 +84,7 @@ def yaml_quote(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-# Wiki markdown links to sibling pages WITHOUT an extension ("[Recovery](Recovery-and-Reflash)").
+# These pages came from the GitHub wiki and keep its link style: sibling pages WITHOUT an extension ("[Recovery](Recovery-and-Reflash)").
 # GitHub's wiki resolves that; a static site does not, so every one of them 404s unless rewritten.
 # Home is special: this site has its own landing page and Home.md is skipped.
 def rewrite_wiki_links(text, pages):
@@ -143,10 +143,11 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
         # Page-name set for the link rewrite above (wiki only; repo docs link by filename).
         pages = {os.path.splitext(f)[0] for f in os.listdir(src_dir) if f.endswith(".md")} \
-            if src_dir == "wiki-src" else None
+            if src_dir == "docs/guide" else None
         n = 0
         for name in sorted(os.listdir(src_dir)):
-            if name in SKIP or not name.endswith(".md"):
+            # Leading underscore = nav fragment or repo-facing note, never site content.
+            if name in SKIP or name.startswith("_") or not name.endswith(".md"):
                 continue
             convert(os.path.join(src_dir, name), os.path.join(out_dir, name), pages)
             n += 1
@@ -157,7 +158,7 @@ def main():
         for root, dirs, files in os.walk(src_dir):
             dirs[:] = [d for d in dirs if d != ".git"]
             for fn in files:
-                if fn.endswith(".md") or fn in SKIP:
+                if fn.endswith(".md") or fn in SKIP or fn.startswith("_"):
                     continue
                 rel = os.path.relpath(os.path.join(root, fn), src_dir)
                 dest = os.path.join(out_dir, rel)
