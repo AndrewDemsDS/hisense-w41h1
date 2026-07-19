@@ -214,23 +214,35 @@ static void diag_handle_line(int sock, char *line)
 static void hisense_diag_console_task(void *arg)
 {
     (void) arg;
-    struct sockaddr_in a;
-    int ls = lwip_socket(AF_INET, SOCK_STREAM, 0);
+    /* IPv6 dual-stack (#42). Matter runs over IPv6, so the node's IPv6 address is the one
+     * we always know: matter-server addresses it that way and it appears in the Pi's
+     * neighbour table. Its IPv4 address is DHCP, never ARP'd by anything we control, and
+     * absent from every neighbour table, so an AF_INET-only console is effectively
+     * unfindable. Locating this console once cost a port scan of two /24 subnets.
+     *
+     * Bind AF_INET6 with IPV6_V6ONLY off so it answers on BOTH, exactly as the esp32
+     * console does. Setting V6ONLY is best-effort: if the option is unsupported the bind
+     * still succeeds and we simply lose the v4-mapped half. */
+    struct sockaddr_in6 a;
+    int ls = lwip_socket(AF_INET6, SOCK_STREAM, 0);
     if (ls < 0) { ChipLogError(DeviceLayer, "diag: socket failed"); vTaskDelete(NULL); return; }
 
     int one = 1;
     lwip_setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    int v6only = 0;
+    lwip_setsockopt(ls, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only));
 
     memset(&a, 0, sizeof(a));
-    a.sin_family      = AF_INET;
-    a.sin_port        = htons(HISENSE_DIAG_PORT);
-    a.sin_addr.s_addr = htonl(INADDR_ANY);
+    a.sin6_family = AF_INET6;
+    a.sin6_port   = htons(HISENSE_DIAG_PORT);
+    a.sin6_addr   = in6addr_any;
 
     if (lwip_bind(ls, (struct sockaddr *) &a, sizeof(a)) < 0 || lwip_listen(ls, 1) < 0) {
         ChipLogError(DeviceLayer, "diag: bind/listen :%d failed", HISENSE_DIAG_PORT);
         lwip_close(ls); vTaskDelete(NULL); return;
     }
-    ChipLogProgress(DeviceLayer, "diag console listening on :%d (DEBUG build)", HISENSE_DIAG_PORT);
+    ChipLogProgress(DeviceLayer, "diag console listening on :%d (DEBUG build, IPv6 dual-stack)",
+                    HISENSE_DIAG_PORT);
 
     for (;;) {
         int cs = lwip_accept(ls, NULL, NULL);
