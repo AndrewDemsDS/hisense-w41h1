@@ -477,105 +477,207 @@ Standalone setpoint writes (`OccupiedCooling/HeatingSetpoint`) return IM `0x86` 
 deadband/limit constraint); the setpoint also rides the mode `0x65` at byte19. Build-by-build
 v3→v4→v5 debugging detail is in git history.
 
-## 7. Cloud attribute table (`t_*` / `f_*` / `f_e_*`) [PROVEN location, 2026-07-19]
+## 7. Cloud attribute table (`t_*` / `f_*` / `f_e_*`) [PROVEN, 2026-07-19]
 
-The module carries the full Hisense **cloud attribute** namespace as a name blob plus a
-lookup table. This is the vocabulary the ConnectLife app speaks, and it is the source of the
-app's "Self diagnostics" screen. Found by string+pointer analysis of `dumps/w41h1_dump1.bin`
-(local-only, gitignored); no bus tap required.
+The module carries the full Hisense **cloud attribute** namespace as a name blob plus capability
+tables. This is the vocabulary the ConnectLife app speaks, and the source of its "Self
+diagnostics" screen. Found by static analysis of `dumps/w41h1_dump1.bin` (local-only,
+gitignored). No bus tap required.
 
 ### 7.1 Load base [PROVEN]
 
 **`base = 0x9b6d0000`**, so `address = 0x9b6d0000 + file_offset`.
 
 Derived by taking every attribute-name string offset, scanning the image for 32-bit LE words
-that could be pointers to them, and keeping the base with the most consistent hits:
-**77 of 77** names are referenced under this base and no other. Cross-checks against the
-addresses already in §5a hold: the `ac_8heat` getter `0x9b6f0ee6` maps to file `0x20ee6`,
-inside the code region.
+that could point at them, and keeping the base with the most consistent hits: **77 of 77**
+names resolve under this base and no other. Cross-check against §5a holds: the `ac_8heat`
+getter `0x9b6f0ee6` maps to file `0x20ee6`, inside the code region.
 
-This base was not previously written down. It is what makes any further static RE on this
-dump reproducible, so record it before anything else.
+This base was not previously written down, and without it no static RE on this dump is
+reproducible.
 
-### 7.2 Name blob and lookup table [PROVEN]
+### 7.2 Capability tables [PROVEN]
 
-| item | file offset | address |
-|---|---|---|
-| attribute-name string blob | `0x13730a` .. `0x137700` | `0x9b80730a` .. |
-| attribute lookup table | starts `0x137e34` | `0x9b807e34` |
+Two tables, 12-byte stride, entries `[word0: u32][name_ptr: u32][desc: u32]` (all LE):
 
-Table entries are **12 bytes**: `[meta0: u32 LE][meta1: u32 LE][name_ptr: u32 LE]`, where
-`name_ptr` points into the blob. Walking the table yields 66 entries before the name-pointer
-sanity check fails.
+| table | file offset | records | ends |
+|---|---|---|---|
+| TEMPLATE_A | `0x137e20` | 67 | `0x138144` (= `0x137e20 + 67*12`) |
+| TEMPLATE_B | `0x138144` | 15 | `0x1381f8`, then plain ASCII (`uart_server_clr` ...) |
 
-**The `meta0` encoding is NOT yet decoded.** See §7.5 before assuming anything about it.
+`word0` byte +2 is a 0/1 "supported" gate. `name_ptr` points into the name blob at
+`0x13730a`..`0x1376ca`.
 
-### 7.3 The fault namespace: what "Self diagnostics" reads [PROVEN names]
+A **bit-width lookup table** sits immediately before TEMPLATE_A at file `0x137e0c`:
 
-27 `f_e_*` (fault/error) attributes exist. The app's four categories are a bucketing of these:
+```
+00 01 03 07 0f 1f 3f 7f ff        mask = (1 << width) - 1
+```
 
-| app category | attributes |
+**Alignment warning.** `0x137e34` is *not* a record boundary; it is 20 bytes past the base and
+not a multiple of the stride. Walking from there yields a table that looks plausible but is
+phase-shifted by one field, pairing every name with the previous record's `desc`. An earlier
+pass in this repo did exactly that and drew the wrong conclusion from it (see §7.5). The
+literal `0x9b807e34` appears nowhere in the image, which is a quick way to confirm it was never
+a real boundary.
+
+Note `TEMPLATE_A[1]` is named `t_power` only as an artifact: its `name_ptr` (`0x9b813402`) lands
+one byte inside an unrelated Bluetooth AT string, so that slot is reserved/invalid rather than a
+real capability.
+
+### 7.3 The fault namespace: what "Self diagnostics" reads
+
+27 `f_e_*` fault attributes exist. The app's four categories are a bucketing of these
+(the bucketing is inferred from the names; the names are `[PROVEN]`).
+
+`desc` byte +2 is a **group** and byte +3 a **bit index**, giving contiguous runs:
+
+| group | bits (high to low) |
 |---|---|
-| Sensors | `f_e_intemp` `f_e_incoiltemp` `f_e_outtemp` `f_e_outcoiltemp` `f_e_outgastemp` `f_e_tubetemp` `f_e_inhumidity` `f_e_wetsensor` `f_e_temp` |
-| Communications | `f_e_incom` `f_e_inwifi` `f_e_push` |
-| Motors | `f_e_infanmotor` `f_e_pump` `f_e_arkgrille` `f_e_upmachine` `f_e_dwmachine` |
-| Others | `f_e_ineeprom` `f_e_outeeprom` `f_e_inkeys` `f_e_indisplay` `f_e_inele` `f_e_invzero` `f_e_filterclean` `f_e_waterfull` `f_e_over_cold` `f_e_over_hot` `f_e_dwmachine` |
+| `0x18` | `0f` intemp, `0e` incoiltemp, `0d` inhumidity, `0c` waterfull, `0b` upmachine / infanmotor, `0a` dwmachine / arkgrille, `09` invzero, `08` incom |
+| `0x19` | `0f` indisplay, `0e` inkeys, `0d` inwifi, `0c` inele, `0b` ineeprom |
+| `0x31` | `0e` outeeprom, `0d` outcoiltemp, `0c` outgastemp, `0b` outtemp |
+| `0x33` | `0c` over_hot / over_cold |
+| `0x00` | `00` push (no position; likely not a wire bit) |
 
-(The category mapping is inferred from the names, not read out of the firmware. The names
-themselves are `[PROVEN]`.)
-
-These are almost certainly bit-packed into the 160-byte status frame we already receive once
-per second, which means **no new polling is needed to build a diagnostics feature**, only the
-bit map.
+**Three genuine collisions** survive correct alignment and are NOT artifacts:
+`infanmotor`/`upmachine`, `arkgrille`/`dwmachine`, `over_cold`/`over_hot`. Read these as one
+bit whose meaning depends on the unit type (a floor-standing grille versus a wall unit, hot
+versus cold protection). Any decoder must accept that some names alias one bit.
 
 ### 7.4 Settable attributes worth noting [PROVEN names]
 
 The `t_` prefix marks a settable attribute. Two matter for open issues:
 
-* **`t_8heat`** and **`t_8c_heater_onoff`** both exist. 8 °C frost-guard heat therefore **is**
-  commandable by the stock module. An earlier note in this session claimed no command verb
-  existed for it; that was wrong, and the absence of an 8 °C control in the ConnectLife app is
-  a UI choice, not a protocol limit.
-* `t_dimmer` exists alongside the display on/off control, which is the likely path to the
-  panel-brightness *level* (the 2-bit `ac_power_display`), currently out of scope.
+* **`t_8heat`** and **`t_8c_heater_onoff`** both exist. 8 C frost-guard heat therefore **is**
+  commandable by the stock module. Its absence from the ConnectLife app is a UI choice, not a
+  protocol limit.
+* `t_dimmer` exists alongside display on/off, the likely path to panel-brightness *level*
+  (the 2-bit `ac_power_display`).
 
-The table also names capabilities this unit probably does not implement: `t_fresh_air`,
-`f_co2_value`, `f_co2_level`, `t_onekey_selfclean`, `t_indoor_selfclean`,
-`t_outdoor_selfclean`, `t_hp_lock_onoff`, `t_ht_lock_onoff`, `t_heat_control_logic`,
-`t_interlock_onoff`, `t_demand_response`. Per the design rule in `docs/11 §5.1`, gate on the
-capability flags at runtime rather than deleting these paths.
+Supporting evidence for the group/bit reading: `t_eco` (`desc=0a140512`) and `t_super`
+(`desc=09140312`) share group `0x14` at adjacent bits `0x0a`/`0x09`, which matches the
+hardware-confirmed adjacency of eco and turbo in status byte 35.
 
-### 7.5 What is NOT established, and the trap in it
+The tables also name capabilities this unit likely lacks: `t_fresh_air`, `f_co2_value`,
+`f_co2_level`, `t_onekey_selfclean`, `t_indoor_selfclean`, `t_outdoor_selfclean`,
+`t_hp_lock_onoff`, `t_ht_lock_onoff`, `t_heat_control_logic`, `t_interlock_onoff`,
+`t_demand_response`. Per `docs/11 §5.1`, gate on capability flags at runtime rather than
+deleting these paths.
 
-`meta0` is **not** a plain (byte, bit) frame position. The tempting read is that byte 2 is an
-offset and byte 3 a bit index, because the fault entries look orderly:
+### 7.4a The `desc` word decodes [CONFIRMED]
+
+`desc` byte +2 is a **payload offset** and byte +3 packs **width and bit position**:
 
 ```
-f_e_incoiltemp  00 00 18 0f      f_e_inkeys     00 00 19 0f
-f_e_inhumidity  00 00 18 0e      f_e_inwifi     00 00 19 0e
-f_e_infanmotor  00 00 18 0d      f_e_inele      00 00 19 0d
+frame_byte = 15 + desc[2]
+width      = widthtable[ desc[3] >> 3 ]     table at file 0x137e0c: 00 01 03 07 0f 1f 3f 7f ff
+shift      = desc[3] & 7                     (mask = (1 << width_bits) - 1)
 ```
 
-Three things block that reading:
+Confirmed by six fields this repo had already established on hardware, independently of the
+table:
 
-1. **Duplicates.** `f_e_arkgrille` and `f_e_dwmachine` are both `00 00 18 0b`;
-   `f_e_invzero` and `f_e_over_cold` are both `00 00 18 0a`. Two faults cannot share one bit.
-2. **Non-uniform layout.** Entries such as `t_temp` (`03 03 03 0b`) and `t_fan_speed`
-   (`08 01 0b 09`) use bytes 0 and 1, which every `f_e_*` entry leaves zero. So `meta0` is at
-   least two different shapes, probably keyed by type.
-3. **Anchor conflict.** `t_eco` is `00 00 8c 80` while `t_super` (turbo) is `14 05 15 0a`, yet
-   eco and turbo are known to be **adjacent bits in status byte 35**. A position encoding that
-   puts them far apart is refuted by hardware we already trust.
+| attribute | `desc` | decodes to | matches |
+|---|---|---|---|
+| `t_up_down` | `0f140711` | byte 35 bit 7, 1-bit | `vswing_on` |
+| `t_left_right` | `0e140511` | byte 35 bit 6, 1-bit | `hswing_on` |
+| `t_eco` | `0a140512` | byte 35 bit 2, 1-bit | `eco_on` |
+| `t_super` | `09140312` | byte 35 bit 1, 1-bit | `turbo_on` |
+| `t_fan_mute` | `0a150514` | byte 36 bit 2, 1-bit | `mute_on` |
+| `t_temp` | `38040104` | byte 19, **7-bit** | setpoint |
 
-The duplicates most likely mean the walk crossed into a **second capability template**
-(`docs/11` documents multiple templates in flash), so the table bounds are themselves
-unconfirmed.
+The last one matters most: it is the only non-1-bit anchor, so it exercises the width table
+rather than just the shift.
+
+**Fields this newly locates**, all previously unknown:
+
+| attribute | `desc` | frame position | status |
+|---|---|---|---|
+| `t_temp_type` | `090b0108` | byte 26 bit 1, 1-bit | C/F display unit. Both bench units read 0 (Celsius). Direction UNVERIFIED. |
+| `t_work_mode` | `1c030503` | byte 18 bits 4-6, 3-bit | matches the mode nibble we already decode |
+| `t_dimmer` | `0f160715` | byte 37 bit 7, 1-bit | explains the healthy `0x80` at byte 37 |
+| `f-filter` | `0b160000` | byte 37 bit 3, 1-bit | filter-clean indicator |
+
+Byte 38 reads `0x05` identically on both bench units while state-dependent bytes differ, so it
+is structural, but **no attribute in either template claims payload offset 0x17**, so it stays
+unidentified.
+
+### 7.4b The COMMAND encoding decodes too [CONFIRMED 16/16]
+
+`desc` bytes +0 and +1 serve the command frame, mirroring +2/+3 on the status side:
+
+```
+command_byte = 15 + desc[0]                  same base as the status side
+shift        = desc[1] & 7
+value        = ((logical << 1) | 1) << (shift - 1)      0x00 = leave this field alone
+```
+
+The `| 1` is a "this field is being set" marker, which is why every control on this bus has
+odd-looking values.
+
+**Verified against all 16 command values this repo had confirmed on hardware**, with no
+exceptions:
+
+| field | shift | logical | computed | confirmed |
+|---|---|---|---|---|
+| display on / off | 7 | 1 / 0 | `0xC0` / `0x40` | `0xC0` / `0x40` |
+| eco on / off | 5 | 1 / 0 | `0x30` / `0x10` | `0x30` / `0x10` |
+| turbo on / off | 3 | 1 / 0 | `0x0C` / `0x04` | `0x0C` / `0x04` |
+| setpoint 16 / 22 / 32 C | 1 | 16 / 22 / 32 | `0x21` / `0x2D` / `0x41` | same |
+| fan auto..high | 1 | 0..9 | `0x01`..`0x13` | same |
+
+This is the rule behind several things previously recorded as separate empirical facts: the
+setpoint's `value*2+1`, the fan ladder, the eco/turbo values that disagreed with the reference
+project, and the display tri-state (`0xC0` on, `0x40` off, `0x00` leave alone) that was
+established the hard way on the bench.
+
+`desc[0]` is independently confirmed by nine attributes landing on command bytes this repo
+already drives: `t_fan_speed` -> 16, `t_power` -> 18, `t_temp` -> 19, `t_swing_angle` -> 31,
+`t_up_down`/`t_left_right` -> 32, `t_eco`/`t_super` -> 33, `t_dimmer` -> 36.
+
+**Predicted commands for controls we do not implement yet.** All UNVERIFIED on hardware:
+
+| attribute | command byte | ON | OFF |
+|---|---|---|---|
+| `t_8heat` (8 C frost-guard) | 37 | `0x03` | `0x01` |
+| `t_purify` (ionizer) | 34 | `0xC0` | `0x40` |
+| `t_temp_type` (C/F display unit) | 23 | `0x03` | `0x01` |
+
+Note byte 37 already carries the horizontal-swing companion (`0x14`, bits 2 and 4) while
+`t_8heat` occupies bits 0 and 1, so an implementation must OR into that byte rather than
+assign, exactly as a bit-packed frame implies.
+
+These are testable from the debug console with no firmware change:
+`tx 37 0x03` should engage 8 C heat, `tx 37 0x01` should clear it.
+
+### 7.5 The extractor, and what is still unproven
+
+A status-bit extractor lives at **`0x9b6f8ac8`** (file `0x28ac8`). It loads a RAM struct pointer
+from `0x1000b8a8`, reads struct bytes `+0xa` and `+0xb`, and indexes the width table at
+`0x137e0c` to build its mask. Its only call site, **`0x9b6f9b26`** (file `0x29b26`), first
+checks frame byte 0 == `0x66` and byte 1 == 0.
+
+Open questions, none of which should be guessed at:
+
+1. **Which frame the groups index.** The call site gates on a `0x66`-class reply, which may not
+   be the 160-byte periodic status frame parsed in `firmware/src/rs485-driver/hisense_rs485.cpp`.
+   Until that is settled, treat `0x18`/`0x19`/`0x31`/`0x33` as **group ids, not confirmed wire
+   byte offsets**.
+2. **Record-count discrepancy.** The extractor's loop bound is `base + 0x33c` (69 records) while
+   TEMPLATE_A is 67 records (`0x324`). Either the RAM copy is padded to a fixed capacity with
+   zeroed slots the extractor skips, or the walk spills two records into TEMPLATE_B. Settle it
+   by reading the allocation size that fills `0x1000b8a8`, or by dumping that RAM on a live
+   device.
+3. **`desc` semantics for ranged/settable records** (`t_temp`, `t_fan_speed`, the
+   `t_heat_control_logic` cluster). Undecoded. Note the setpoint range (16/32 C) does **not**
+   appear in `t_temp`'s `desc` in any byte position, so the naive (min, max, step, type) reading
+   is already refuted.
+4. **Whether `0x9b6f8ac8` and the §5a getter `0x9b6f0ee6` number the same wire bytes.** They are
+   distinct code paths and have not been compared.
 
 ### 7.6 Next step
 
-Extend the §5a method to the fault attributes: disassemble the getters and read the
-`(status byte, bitmask)` pairs out of the code, exactly as was done for the `ac_*` capability
-flags. §5a already gives the pattern and the neighbouring addresses
-(`0x9b6f0d0a`, `0x9b6f0ee6`), and §7.1 now gives the base needed to navigate there.
-
-Do **not** infer fault bit positions from `meta0` alone until §7.5 is resolved.
+Disassemble `0x9b6f9b26`'s caller to identify exactly which reply frame feeds the extractor,
+then map one fault bit end to end and confirm it against a unit reporting that fault. A healthy
+unit reads all-clear, so a decode that returns "no faults" proves nothing.
