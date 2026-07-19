@@ -89,6 +89,31 @@ assertion: `decode_ac_frames.py --port <tap>` confirms the firmware puts the
 *correct bytes on the wire* for each Matter action, against the real A/C. This is
 the only layer that covers RF, real bus timing, and the physical unit.
 
+### Scripted HIL checks
+
+`firmware/test/hil_display_actuation.py` drives the ep9 Display switch on every
+commissioned node (ids from `ota-release.env`, so nothing is hardcoded) and asserts
+two things: the OnOff attribute really transitions in both directions, and no other
+A/C attribute moves as a side effect.
+
+The second assertion is the interesting one. `display` rides the *combined* command
+frame, so every display command resends mode, setpoint, fan, and swing from the
+command shadow. If the shadow drifts, or the one-shot reset to
+`HISENSE_DISPLAY_NOCHANGE` leaks, those fields move and driving the panel silently
+retunes the A/C.
+
+Two traps this encodes, both of which produced false results by hand:
+
+1. `OnOff.OnOff` is read-only. Writing it returns `0x88 UNSUPPORTED_WRITE`; the switch
+   must be driven with On/Off *commands*, which is also how Home Assistant drives it.
+2. A command matching the current attribute value is a no-op. No attribute change, no
+   update callback, no frame on the wire. The script seeds a known state first so both
+   legs are genuine transitions and it cannot pass on a no-op.
+
+It is deliberately **not** wired into `run_tests.sh`, which stays no-hardware. The panel
+itself is not asserted: the A/C reports no display state, so whether it physically lit
+remains a human observation.
+
 ## Standing methodology — glue code is host-untestable as written
 
 `matter_drivers.cpp` (the SDK-side Matter glue) needs CHIP headers to compile, so it cannot run
