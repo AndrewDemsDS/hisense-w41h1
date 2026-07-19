@@ -1,0 +1,47 @@
+{%- comment -%}
+Dark mode, applied BEFORE first paint.
+
+The theme's own jtd.setTheme() only becomes available once just-the-docs.js has run at the end of
+the body, so using it alone would render the light stylesheet first and then repaint dark: a white
+flash on every navigation, which is worse than having no dark mode. This runs in <head> instead and
+rewrites the stylesheet href directly, so the correct scheme is the only one ever fetched.
+
+just-the-docs has no native prefers-color-scheme support: its docs offer only a static
+`color_scheme` setting plus jtd.setTheme(), so automatic switching has to be added here.
+
+Two things were checked against the deployed theme rather than assumed: the scheme stylesheet is the
+FIRST <link rel="stylesheet"> in the document (which is also what jtd.setTheme itself assumes), and
+just-the-docs-dark.css is served alongside the default. If a future theme version reorders those,
+the guard below leaves the page on its default scheme rather than breaking styling entirely.
+
+Preference order: an explicit choice the reader made (localStorage), otherwise the operating
+system's setting. Readers who never touch the toggle simply get what their OS asked for.
+{%- endcomment -%}
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem('jtd-theme');
+      var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var theme = saved || (prefersDark ? 'dark' : 'default');
+      if (theme === 'dark') {
+        var link = document.querySelector('link[rel="stylesheet"]');
+        if (link && /just-the-docs-default\.css/.test(link.getAttribute('href'))) {
+          link.setAttribute('href', link.getAttribute('href').replace('just-the-docs-default.css', 'just-the-docs-dark.css'));
+        }
+      }
+      document.documentElement.setAttribute('data-theme', theme);
+    } catch (e) {
+      /* Private mode can throw on localStorage. Falling through leaves the default scheme. */
+    }
+  })();
+</script>
+<style>
+  /* The toggle sits in the sidebar footer; keep it quiet so it does not compete with the nav. */
+  .theme-toggle {
+    display: inline-flex; align-items: center; gap: .4em;
+    background: none; border: 1px solid rgba(128,128,128,.4); border-radius: 4px;
+    padding: .25em .6em; margin-top: .5em;
+    font-size: .75rem; cursor: pointer; color: inherit; opacity: .8;
+  }
+  .theme-toggle:hover { opacity: 1; }
+</style>

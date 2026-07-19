@@ -1,0 +1,60 @@
+{%- comment -%}
+The dark-mode toggle. Lives in the sidebar footer so it is reachable from every page without
+taking space in the nav itself.
+
+jtd.setTheme() is the theme's only documented switching API (per its customization docs); there is
+no native "auto" or prefers-color-scheme support in just-the-docs, which is why this is hand-rolled.
+The href fallback keeps the button working if that API changes.
+
+The light scheme is named "default", not "light", in the generated CSS this site serves. Both files
+happen to exist, so the pattern below accepts either rather than assuming one. The choice is stored
+in localStorage and read back by head_custom.html on the next page load, which is what makes the
+preference stick without a flash.
+{%- endcomment -%}
+<button class="theme-toggle" type="button" aria-label="Toggle dark mode">
+  <span class="theme-toggle-icon" aria-hidden="true">◐</span>
+  <span class="theme-toggle-label">Theme</span>
+</button>
+
+<script>
+  (function () {
+    var btn = document.querySelector('.theme-toggle');
+    if (!btn) return;
+
+    function current() {
+      var link = document.querySelector('link[rel="stylesheet"]');
+      return link && /just-the-docs-dark\.css/.test(link.getAttribute('href') || '') ? 'dark' : 'default';
+    }
+
+    function apply(theme) {
+      if (window.jtd && typeof window.jtd.setTheme === 'function') {
+        window.jtd.setTheme(theme);
+      } else {
+        var link = document.querySelector('link[rel="stylesheet"]');
+        if (link) {
+          link.setAttribute('href', link.getAttribute('href')
+            .replace(/just-the-docs-(default|light|dark)\.css/, 'just-the-docs-' + theme + '.css'));
+        }
+      }
+      document.documentElement.setAttribute('data-theme', theme);
+      try { localStorage.setItem('jtd-theme', theme); } catch (e) { /* private mode */ }
+    }
+
+    btn.addEventListener('click', function () {
+      apply(current() === 'dark' ? 'default' : 'dark');
+    });
+
+    // Follow the OS if the reader has never chosen explicitly, so changing the system setting
+    // mid-session is reflected rather than ignored.
+    if (window.matchMedia) {
+      var mq = window.matchMedia('(prefers-color-scheme: dark)');
+      var onChange = function (e) {
+        var saved = null;
+        try { saved = localStorage.getItem('jtd-theme'); } catch (err) { /* private mode */ }
+        if (!saved) apply(e.matches ? 'dark' : 'default');
+      };
+      if (mq.addEventListener) mq.addEventListener('change', onChange);
+      else if (mq.addListener) mq.addListener(onChange);
+    }
+  })();
+</script>
