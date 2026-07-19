@@ -42,6 +42,10 @@ static hisense_link_cb_t   s_link_cb          = NULL;  // fires on link lost/res
 static bool                s_link_down        = false; // link-health latch for the edge detector (#56)
 static hisense_features_cb_t s_features_cb    = NULL;  // fires on each 0x66/40 ProductType response
 static HisenseFeatures     s_features;                 // last-parsed feature flags
+static HisenseFaults       s_faults;                   // last-parsed f_e_* fault bits
+static uint8_t             s_last_status[HISENSE_RAW_SNAPSHOT_LEN];  // raw frame, bench console
+static size_t              s_last_status_len = 0;
+static bool                s_faults_valid   = false; // true once a long-enough status frame parsed
 static bool                s_features_valid   = false; // true once a 0x66/40 response has been parsed
 // #49: the outbound envelope [7]/[8] pair (stock `link_seq hi/lo`). NOT a per-session token:
 // the stock transaction primitive seeds these globals from the reply envelope [9]/[10], but
@@ -266,6 +270,82 @@ bool hisense_parse_features(const uint8_t *buf, size_t len, HisenseFeatures *out
     out->reply_len    = (uint8_t)(len > 255 ? 255 : len);         // diagnostic, see header
 
     out->valid = true;
+    return true;
+}
+
+/* Fault-bit decode. See the HisenseFaults comment in the header for the derivation
+ * (stock capability table + the extractor at 0x9b6f8ac8); the short version is that a
+ * fault's payload offset plus 13 gives the wire byte, and its bit index minus 8 gives
+ * the bit within that byte.
+ *
+ * Length gate: a frame must actually reach the byte before we read it. The outdoor and
+ * protection bytes live at 62/64, well past the indoor pair at 37/38, and short frames
+ * do occur, so each group is gated independently rather than failing the whole parse.
+ * A bit we cannot see reads false, and `valid` says whether anything was read at all. */
+bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out)
+{
+    if (buf == NULL || out == NULL) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    if (len <= HISENSE_FAULT_BYTE_INDOOR + 1) {
+        return false;                      // too short to carry even the first group
+    }
+
+    out->raw_indoor = buf[HISENSE_FAULT_BYTE_INDOOR];
+    out->in_temp      = (out->raw_indoor & 0x80) != 0;
+    out->in_coil_temp = (out->raw_indoor & 0x40) != 0;
+    out->in_humidity  = (out->raw_indoor & 0x20) != 0;
+    out->water_full   = (out->raw_indoor & 0x10) != 0;
+    out->in_fan_motor = (out->raw_indoor & 0x08) != 0;
+    out->grille       = (out->raw_indoor & 0x04) != 0;
+    out->in_vzero     = (out->raw_indoor & 0x02) != 0;
+    out->in_com       = (out->raw_indoor & 0x01) != 0;
+
+    if (len > HISENSE_FAULT_BYTE_MODULE + 1) {
+        out->raw_module = buf[HISENSE_FAULT_BYTE_MODULE];
+        out->in_display = (out->raw_module & 0x80) != 0;
+        out->in_keys    = (out->raw_module & 0x40) != 0;
+        out->in_wifi    = (out->raw_module & 0x20) != 0;
+        out->in_ele     = (out->raw_module & 0x10) != 0;
+        out->in_eeprom  = (out->raw_module & 0x08) != 0;
+    }
+    if (len > HISENSE_FAULT_BYTE_OUTDOOR + 1) {
+        out->raw_outdoor   = buf[HISENSE_FAULT_BYTE_OUTDOOR];
+        out->out_eeprom    = (out->raw_outdoor & 0x40) != 0;
+        out->out_coil_temp = (out->raw_outdoor & 0x20) != 0;
+        out->out_gas_temp  = (out->raw_outdoor & 0x10) != 0;
+        out->out_temp      = (out->raw_outdoor & 0x08) != 0;
+    }
+    if (len > HISENSE_FAULT_BYTE_PROTECT + 1) {
+        out->raw_protect = buf[HISENSE_FAULT_BYTE_PROTECT];
+        out->over_temp   = (out->raw_protect & 0x10) != 0;
+    }
+
+    // `any` deliberately ORs the RAW bytes, not the named bits: an undocumented bit in
+    // one of these bytes is still the A/C reporting something wrong, and reporting
+    // "healthy" because we lack a name for it would be the worst possible failure.
+    out->any = (out->raw_indoor | out->raw_module | out->raw_outdoor | out->raw_protect) != 0;
+    out->valid = true;
+    return true;
+}
+
+size_t hisense_get_last_status_frame(uint8_t *out, size_t cap)
+{
+    if (out == NULL || s_last_status_len == 0) {
+        return 0;
+    }
+    size_t n = s_last_status_len < cap ? s_last_status_len : cap;
+    memcpy(out, s_last_status, n);
+    return n;
+}
+
+bool hisense_get_faults(HisenseFaults *out)
+{
+    if (out == NULL || !s_faults_valid) {
+        return false;
+    }
+    *out = s_faults;
     return true;
 }
 
@@ -912,6 +992,19 @@ static void hisense_consume_status(size_t n)
                 }
             }
             return;
+        }
+        // Snapshot the raw frame for the bench console. The fault map (RE docs/10 7)
+        // is derived, not yet confirmed against a unit that actually reports a fault, so
+        // being able to see the bytes matters more than the decode does.
+        {
+            size_t cp = n > HISENSE_RAW_SNAPSHOT_LEN ? HISENSE_RAW_SNAPSHOT_LEN : n;
+            memcpy(s_last_status, s_msg_buf, cp);
+            s_last_status_len = cp;
+        }
+        HisenseFaults fl;
+        if (hisense_parse_faults(s_msg_buf, n, &fl)) {
+            s_faults = fl;
+            s_faults_valid = true;
         }
         HisenseState st;
         if (hisense_parse_status(s_msg_buf, n, &st) && s_status_cb != NULL) {

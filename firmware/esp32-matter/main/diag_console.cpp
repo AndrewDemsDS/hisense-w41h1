@@ -230,6 +230,75 @@ static int cmd_tx(int argc, char **argv)
     return 0;
 }
 
+// #38: decoded f_e_* fault bits. Mapping derived from the stock firmware capability table
+// plus the extractor at 0x9b6f8ac8 (RE docs/10 §7), NOT yet seen against a unit actually
+// reporting a fault, so the raw bytes are printed alongside the decode. A healthy unit
+// reads all-zero, which on its own confirms nothing.
+static int cmd_faults(int, char **)
+{
+    HisenseFaults f;
+    if (!hisense_get_faults(&f)) {
+        printf("no fault data yet (no status frame long enough parsed this boot)\r\n");
+        return 0;
+    }
+    printf("raw: [%d]=0x%02x [%d]=0x%02x [%d]=0x%02x [%d]=0x%02x  ->  %s\r\n",
+           HISENSE_FAULT_BYTE_INDOOR,  f.raw_indoor,
+           HISENSE_FAULT_BYTE_MODULE,  f.raw_module,
+           HISENSE_FAULT_BYTE_OUTDOOR, f.raw_outdoor,
+           HISENSE_FAULT_BYTE_PROTECT, f.raw_protect,
+           f.any ? "FAULT(S) PRESENT (map is PROVISIONAL -- cross-check `raw`)" : "all clear");
+    if (!f.any) {
+        printf("  (all-zero is expected on a healthy unit and does NOT validate the map)\r\n");
+        return 0;
+    }
+    struct { bool v; const char *n; } named[] = {
+        { f.in_temp,"indoor temp sensor" },      { f.in_coil_temp,"indoor coil sensor" },
+        { f.in_humidity,"indoor humidity" },     { f.water_full,"condensate tray full" },
+        { f.in_fan_motor,"indoor fan motor / up-machine" },
+        { f.grille,"grille / dw-machine" },      { f.in_vzero,"zero-cross detect" },
+        { f.in_com,"indoor<->outdoor comms" },   { f.in_display,"display board" },
+        { f.in_keys,"keypad" },                  { f.in_wifi,"wifi module" },
+        { f.in_ele,"indoor electrical" },        { f.in_eeprom,"indoor eeprom" },
+        { f.out_eeprom,"outdoor eeprom" },       { f.out_coil_temp,"outdoor coil sensor" },
+        { f.out_gas_temp,"outdoor gas sensor" }, { f.out_temp,"outdoor temp sensor" },
+        { f.over_temp,"over-temperature protection (hot or cold)" },
+    };
+    for (auto &x : named) if (x.v) printf("  FAULT: %s\r\n", x.n);
+    // A set bit with no name still matters: warn rather than imply we understood the byte.
+    uint8_t known[4] = { 0xFF, 0xF8, 0x78, 0x10 };
+    uint8_t rawb[4]  = { f.raw_indoor, f.raw_module, f.raw_outdoor, f.raw_protect };
+    int off[4] = { HISENSE_FAULT_BYTE_INDOOR, HISENSE_FAULT_BYTE_MODULE,
+                   HISENSE_FAULT_BYTE_OUTDOOR, HISENSE_FAULT_BYTE_PROTECT };
+    for (int i = 0; i < 4; i++) {
+        uint8_t unknown = (uint8_t)(rawb[i] & ~known[i]);
+        if (unknown) printf("  UNNAMED fault bits 0x%02x in byte %d\r\n", unknown, off[i]);
+    }
+    return 0;
+}
+
+// Hexdump the last status frame. The point of this is falsifiability: the fault map is
+// derived from firmware, so being able to read the actual bytes is what lets someone
+// prove it wrong. Also the general tool for mapping any still-unknown status field.
+static int cmd_raw(int, char **)
+{
+    uint8_t f[HISENSE_RAW_SNAPSHOT_LEN];
+    size_t n = hisense_get_last_status_frame(f, sizeof(f));
+    if (!n) { printf("no status frame captured yet\r\n"); return 0; }
+    printf("last status frame, %u bytes:\r\n", (unsigned) n);
+    for (size_t i = 0; i < n; i += 16) {
+        printf("  %3u:", (unsigned) i);
+        for (size_t k = i; k < i + 16 && k < n; k++) printf(" %02x", f[k]);
+        printf("\r\n");
+    }
+    printf("  fault bytes: [%d]=0x%02x [%d]=0x%02x [%d]=0x%02x [%d]=0x%02x\r\n",
+           HISENSE_FAULT_BYTE_INDOOR,  n > HISENSE_FAULT_BYTE_INDOOR  ? f[HISENSE_FAULT_BYTE_INDOOR]  : 0,
+           HISENSE_FAULT_BYTE_MODULE,  n > HISENSE_FAULT_BYTE_MODULE  ? f[HISENSE_FAULT_BYTE_MODULE]  : 0,
+           HISENSE_FAULT_BYTE_OUTDOOR, n > HISENSE_FAULT_BYTE_OUTDOOR ? f[HISENSE_FAULT_BYTE_OUTDOOR] : 0,
+           HISENSE_FAULT_BYTE_PROTECT, n > HISENSE_FAULT_BYTE_PROTECT ? f[HISENSE_FAULT_BYTE_PROTECT] : 0);
+    printf("  (base 15 is PROVISIONAL -- confirm by diffing this dump against a real fault)\r\n");
+    return 0;
+}
+
 // Compact codec self-check (subset of the host golden vectors).
 static int cmd_selftest(int, char **)
 {
@@ -344,6 +413,8 @@ extern "C" void diag_console_start(void)
             { "watch",    "stream decoded frames ~1Hz: watch [on|off]", NULL, cmd_watch, NULL, NULL },
             { "decode",   "offline-decode a pasted hex frame", NULL, cmd_decode, NULL, NULL },
             { "selftest", "compact on-target codec self-check", NULL, cmd_selftest, NULL, NULL },
+            { "faults",   "#38: decoded f_e_* fault bits + raw fault bytes", NULL, cmd_faults, NULL, NULL },
+            { "raw",      "hexdump the last status frame (falsifies the fault map)", NULL, cmd_raw, NULL, NULL },
             { "tx",       "#52 bench probe: tx <offset> <value> — current frame, one byte overridden",
                           NULL, cmd_tx, NULL, NULL },
         };
