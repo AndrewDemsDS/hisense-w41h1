@@ -45,28 +45,20 @@ jobs:
           bash firmware/scripts/ota-release.sh build
           bash firmware/scripts/ota-release.sh package
 
-      # #89: CI REBUILDS at tag time and neither target is byte-reproducible, so these bytes are
-      # NOT what any device booted. Rename them so nobody can mistake a rebuild for the deployed
-      # image (a delta base or recovery image built from one of these would be rejected/wrong).
-      # The authoritative artifacts are uploaded under the canonical names by `ota-release.sh
-      # publish`, run from the box that flashed and verified the device.
-      - name: Mark CI output as a rebuild, not the deployed image
-        run: |
-          V=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
-          cd firmware/built-images
-          for f in "flash_rac-integrated-v$V" "rac-v$V"; do
-            [ -f "$f.bin" ] && mv "$f.bin" "$f-CI-REBUILD.bin"
-            [ -f "$f.ota" ] && mv "$f.ota" "$f-CI-REBUILD.ota"
-            [ -f "$f.json" ] && mv "$f.json" "$f-CI-REBUILD.json"
-          done || true
-
+      # The build is reproducible as of v1.3.5, so CI output IS the deployed image, bit for bit,
+      # and ships under the canonical names. Getting there took three separate clock/RNG pins,
+      # all in ota-release.sh: SOURCE_DATE_EPOCH for __DATE__/__TIME__, the SDK's build_info
+      # `date` call, and an LD_PRELOAD around elf2bin's srand(time(NULL)). Before that, a tag
+      # rebuild differed from the flashed image in ~574 bytes purely from the wall clock, which
+      # is why this step used to rename everything to *-CI-REBUILD.
       - name: Collect this version's artifacts + checksums
         run: |
           # built-images/ accumulates versions on a reused runner: reference exact filenames, not globs.
           V=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
           echo "V=$V" >> "$GITHUB_ENV"
           cd firmware/built-images
-          sha256sum ./*-CI-REBUILD.* "flash_rac-integrated-v$V-debug.bin" "rac-v$V-debug.ota" \
+          sha256sum "flash_rac-integrated-v$V.bin" "rac-v$V.ota" "rac-v$V.json" \
+                    "flash_rac-integrated-v$V-debug.bin" "rac-v$V-debug.ota" \
                     "rac-v$V-debug.json" > "SHA256SUMS-v$V.txt"
 
       - name: Attach to the GitHub Release
@@ -74,9 +66,9 @@ jobs:
         with:
           generate_release_notes: true   # auto "What's Changed" from commits/PRs since the last tag
           files: |
-            firmware/built-images/flash_rac-integrated-v${{ env.V }}-CI-REBUILD.bin
-            firmware/built-images/rac-v${{ env.V }}-CI-REBUILD.ota
-            firmware/built-images/rac-v${{ env.V }}-CI-REBUILD.json
+            firmware/built-images/flash_rac-integrated-v${{ env.V }}.bin
+            firmware/built-images/rac-v${{ env.V }}.ota
+            firmware/built-images/rac-v${{ env.V }}.json
             firmware/built-images/flash_rac-integrated-v${{ env.V }}-debug.bin
             firmware/built-images/rac-v${{ env.V }}-debug.ota
             firmware/built-images/rac-v${{ env.V }}-debug.json

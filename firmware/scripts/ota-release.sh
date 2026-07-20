@@ -260,6 +260,55 @@ apply_mode_select_span_guard() {
     say "  applied ModeSelect null-span guard (orphaned endpoint type inflates the generated count)"
   fi
 }
+det_time_shim() {
+  # Realtek's elf2bin.linux seeds `srand(time(NULL))` and derives part of the image header from it,
+  # so packaging the SAME .axf twice yields two different images (~530 bytes of header churn --
+  # proven by running `make is_matter` twice back to back). No JSON knob controls it: cipherkey,
+  # cipheriv and privkey_hash were all tried and none of them is the source. The tool is a closed
+  # prebuilt binary, so the only lever is the clock it seeds from -- pin time() with an LD_PRELOAD
+  # shim reading SOURCE_DATE_EPOCH. Verified: with the shim, two runs over one .axf are identical.
+  # Scoped to the packaging make only, and it overrides time() alone (date(1) uses clock_gettime,
+  # so the build_info pin above is independent of this).
+  local so="${TMPDIR:-/tmp}/ota-det-time-$(id -u).so"
+  if [ ! -f "$so" ] || [ "$0" -nt "$so" ]; then
+    command -v gcc >/dev/null || die "host gcc needed to build the deterministic-clock shim"
+    gcc -shared -fPIC -O2 -x c -o "$so" - <<'CSHIM' || die "failed to build the deterministic-clock shim"
+#include <time.h>
+#include <stdlib.h>
+time_t time(time_t *t) {
+    const char *e = getenv("SOURCE_DATE_EPOCH");
+    time_t v = e ? (time_t) strtoll(e, 0, 10) : 0;
+    if (t) *t = v;
+    return v;
+}
+CSHIM
+  fi
+  printf '%s' "$so"
+}
+apply_build_info_determinism() {
+  # The SDK's `build_info` make target regenerates .ver on EVERY build by shelling out to `date`,
+  # so RTL8710CFW_COMPILE_TIME / UTS_VERSION carry the wall-clock second the build started. That
+  # single string is the whole reason two builds of one commit differ: it lands near 0x106900 and
+  # the image header hashes cover it, so a 5-byte stamp becomes a ~574-byte diff. `id -u -n` is
+  # baked in the same way, which additionally leaks the builder's username into a public image.
+  # Pin both: the clock comes from SOURCE_DATE_EPOCH (set in build()), the identity is a constant.
+  # Idempotent + self-healing across a full clean / SDK reinstall, same as the guards above.
+  local m hit=0
+  for m in "$SDK_ROOT/ameba-rtos-z2/project/realtek_amebaz2_v0_example/GCC-RELEASE/application.is.matter.mk" \
+           "$SDK_ROOT/ameba-rtos-z2/project/realtek_amebaz2_v0_example/GCC-RELEASE/application.is.mk"; do
+    [ -f "$m" ] || continue
+    grep -q 'SOURCE_DATE_EPOCH' "$m" && { hit=1; continue; }
+    perl -0777 -pi -e '
+      s/`date \+/`date -u -d \@\$\${SOURCE_DATE_EPOCH:-0} +/g;
+      s/`id -u -n`/builder/g;
+      s/`\$\(HOSTNAME_APP\)`//g;
+    ' "$m"
+    grep -q 'SOURCE_DATE_EPOCH' "$m" || die "failed to pin build_info timestamps in $m"
+    say "  pinned build_info clock+identity in $(basename "$m")"
+  done
+  [ "$hit" = 1 ] && say "  build_info determinism already applied"
+  return 0
+}
 build() {
   load_env
   # --debug selects the bench flavour (#22): adds the :2323 console. Release is the default, so
@@ -273,6 +322,16 @@ build() {
       --debug)             HISENSE_FLAVOUR=debug ;;
     esac
   done
+  # Reproducible-build clock scrub. The Realtek SDK bakes __DATE__/__TIME__ into the image (the
+  # "Build @ %s, %s" banner and the AT `COMPILE TIME` / `SW VERSION` strings around 0x106900).
+  # Two builds of the SAME commit at different wall-clock times therefore differ -- and because
+  # the image header carries hashes over that content, a 5-byte timestamp diff smears into ~574
+  # differing bytes, which is what made CI output look like a whole different build. GCC honours
+  # SOURCE_DATE_EPOCH for both macros (verified on this ASDK-10.3.1 toolchain), so pin it to the
+  # HEAD commit's own timestamp: deterministic per source revision, and identical on any machine
+  # that builds that revision. Override with SOURCE_DATE_EPOCH=... only to reproduce an old image.
+  export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$REPO" log -1 --format=%ct)}"
+  say "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH ($(date -u -d "@$SOURCE_DATE_EPOCH" '+%Y-%m-%d %H:%M:%S UTC')) -- __DATE__/__TIME__ pinned to HEAD"
   set_header_version   # SDK header (int + string) derives from the git-tracked semver in version.txt
   lint_zap
   sync_mirror
@@ -280,6 +339,7 @@ build() {
   apply_downlink_stack  # DownlinkTask stack: 4KB overflows our heavy handler (idempotent)
   apply_example_task_stack  # init task stack: 8KB dies mid-init -> no downlink queue (idempotent)
   apply_mode_select_span_guard  # orphaned endpoint type pads the ModeSelect table (idempotent)
+  apply_build_info_determinism  # .ver clock/username -> SOURCE_DATE_EPOCH + constant (idempotent)
   # Reproducible-build path scrub (public release): rewrite the absolute build path baked into
   # __FILE__ / debug info so the compiled image carries generic /build/... paths instead of the
   # developer's $HOME (e.g. .../connectedhomeip/src/app/server/Server.cpp leaked the full path).
@@ -312,11 +372,16 @@ build() {
     export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"; ccache -M "${CCACHE_MAXSIZE:-25G}" >/dev/null 2>&1 || true
     # ccache tuning (2026-07-14): base_dir rewrites absolute build paths to relative so the hash
     # is stable across clean rebuilds (was a big miss source); compiler_check=content survives
-    # toolchain mtime/atime noise; sloppiness lets TUs with __DATE__/__TIME__ + PCH cache instead
-    # of being skipped. Scoped via env -- no change to the user's global ccache.conf.
+    # toolchain mtime/atime noise. Scoped via env -- no change to the user's global ccache.conf.
+    # `time_macros` is deliberately NOT in the sloppiness list: it tells ccache to ignore
+    # __DATE__/__TIME__ when hashing, so a TU compiled under an earlier SOURCE_DATE_EPOCH gets
+    # replayed with its STALE baked-in timestamp. That is what made two builds of one commit
+    # sometimes match and sometimes not (a cache hit preserved the old stamp, a miss stamped
+    # fresh) -- nondeterminism disguised as reproducibility. Without it ccache simply declines to
+    # cache the two or three SDK TUs that use the macros; everything else still caches.
     export CCACHE_BASEDIR="$HOME"
     export CCACHE_COMPILERCHECK=content
-    export CCACHE_SLOPPINESS="time_macros,include_file_mtime,include_file_ctime,pch_defines,locale,system_headers"
+    export CCACHE_SLOPPINESS="include_file_mtime,include_file_ctime,pch_defines,locale,system_headers"
     ccache -z >/dev/null 2>&1 || true    # zero stats -> the post-build summary is per-build
     # Inject pw_command_launcher="ccache" into the GN args.gn generation. FIX (2026-07-14):
     # the build target `realtek_amebaz2_v0_example` reads the `amebaz2` (no "plus") variant of
@@ -348,6 +413,7 @@ build() {
     rm -rf "$EXAMPLE_DIR/build/chip"
   )
   local JOBS="${BUILD_JOBS:-$(nproc)}"
+  local DET_SHIM; DET_SHIM="$(det_time_shim)"; export DET_SHIM
   say "BUILD (genuine recompile; ameba make -j$JOBS -> ~110s; verify by ninja [N/353] + fresh libCHIP.a, NOT wall-clock)"
   ( cd "$GCC_RELEASE"
     activate_chip_env
@@ -362,7 +428,8 @@ import json,sys
 f,s=sys.argv[1],int(sys.argv[2]); d=json.load(open(f)); d['FWHS']['header']['serial']=s
 json.dump(d,open(f,'w'),indent=2); print(f"OTA FWHS serial set -> {s}")
 PYS
-    make is_matter -j"$JOBS" "${CCMK[@]}" 2>&1 | tee /tmp/ota-ismatter.log | tail -2
+    # LD_PRELOAD pins the clock elf2bin seeds its RNG from (see det_time_shim).
+    LD_PRELOAD="$DET_SHIM" make is_matter -j"$JOBS" "${CCMK[@]}" 2>&1 | tee /tmp/ota-ismatter.log | tail -2
   )
   # ccache effectiveness for THIS build (helps tell a cold build from a warm one).
   if command -v ccache >/dev/null; then

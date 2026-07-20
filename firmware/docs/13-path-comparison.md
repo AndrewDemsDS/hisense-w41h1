@@ -18,7 +18,7 @@ Every number below was measured on this project's own hardware and builds (2026-
 | **Cost** | ~€5 BOM (ESP32 board + 3.3 V RS-485 transceiver) | €0 if the module works, plus ~€5 for a CH341A clip you will need anyway |
 | **Sourcing** | Available everywhere | W41H1 is fragile (ESD) and hard to source in the EU |
 | **First flash** | USB, no disassembly of anything | CH341A SPI clip on the GD25Q32, or OTA conversion from stock (`docs/12`) |
-| **Reproducibility** | Not byte-reproducible | Not byte-reproducible |
+| **Reproducibility** | Not byte-reproducible | Byte-reproducible since 1.3.5 |
 | **MCU / toolchain** | ESP-IDF 5.5.4, open source, version-pinned in `dependencies.lock`, ~8.3 GB | Realtek AmebaZ2 SDK, proprietary, lives outside the repo, ~32 GB, not pinned |
 | **Transport** | Matter over Wi-Fi (2.4 GHz) | Matter over Wi-Fi (2.4 GHz) |
 | **OTA** | Delta, mandatory (a full image is rejected). 873 KB this release | Full image, 1.2 MB `.ota` |
@@ -45,23 +45,36 @@ and ESD, and are increasingly hard to buy in the EU. An ESP32 is a commodity.
 
 ### Reproducibility
 
-**Neither path is byte-reproducible.** This was measured directly, by rebuilding the exact commit
-and version that was already deployed and comparing hashes:
+**AmebaZ2 is byte-reproducible as of 1.3.5. ESP32 is not.** Both claims were measured by rebuilding
+a commit and comparing hashes against the image built from it earlier.
 
-| | rebuild | deployed |
-|---|---|---|
-| ESP32 1.0.10 | `c73d1de8…` | `3d003d66…` |
-| AmebaZ2 1.2.9 | `6763c8c5…` | `184da838…` |
+The AmebaZ2 result used to be the surprising one. Rebuilding 1.2.9 gave `6763c8c5…` against a
+deployed `184da838…`, and `-ffile-prefix-map` (which strips build paths) did not help, because paths
+were never the problem. The clock was, in three independent places:
 
-ESP-IDF's non-reproducibility is documented upstream. The AmebaZ2 result is the surprising one: the
-build differs across runs of the same commit even though `-ffile-prefix-map` strips build paths from
-the binary.
+1. `__DATE__` / `__TIME__` in the SDK's `app_start.c` boot banner. Fixed by exporting
+   `SOURCE_DATE_EPOCH`, pinned to the HEAD commit's own timestamp, which GCC honours for both
+   macros.
+2. The SDK's `build_info` make target, which regenerates `.ver` on every build by shelling out to
+   `date` (and to `id -u -n`, which also leaked the builder's username into a public image).
+   Patched in place to derive both from `SOURCE_DATE_EPOCH` and a constant.
+3. Realtek's `elf2bin.linux`, which seeds `srand(time(NULL))` and derives part of the image header
+   from it. Packaging one unchanged `.axf` twice produced two different images. It is a closed
+   prebuilt binary with no config knob for this (`cipherkey`, `cipheriv` and `privkey_hash` were
+   each tried and none is the source), so the release script pins `time()` under it with a small
+   `LD_PRELOAD` shim.
 
-The consequence is identical on both paths and it is operational, not theoretical: **you cannot
-regenerate a deployed image from git.** Archive the exact binary you shipped. On ESP32 this is
-load-bearing, because delta OTA embeds the base image's hash and the device verifies it against its
-running partition, so a patch built against a rebuilt base is rejected. This project lost a base
-binary once and stranded a node on USB-only flashing.
+Each of those is a handful of bytes, but the image header carries hashes over the payload, so a
+5-byte timestamp smeared into roughly 574 differing bytes and made a rebuild look like a completely
+different build. All three fixes live in `firmware/scripts/ota-release.sh`; two full clean builds at
+different wall-clock times now produce identical bytes, and the tag-time CI rebuild matches the
+image that was flashed.
+
+On ESP32 non-reproducibility is documented upstream and still applies, and there the consequence is
+operational rather than theoretical: **you cannot regenerate a deployed ESP32 image from git.**
+Archive the exact binary you shipped. Delta OTA embeds the base image's hash and the device verifies
+it against its running partition, so a patch built against a rebuilt base is rejected. This project
+lost a base binary once and stranded a node on USB-only flashing.
 
 Toolchain pinning differs sharply, and this is where ESP32 wins clearly. `dependencies.lock` records
 the exact IDF version, and the release script now refuses to build when the sourced IDF disagrees
