@@ -125,7 +125,8 @@ build() {
   # console + `tx` bench probe are gated on CONFIG_HISENSE_DEBUG_BUILD, which lives ONLY in
   # sdkconfig.debug. Building without that overlay silently ships an image with no console -- and
   # on a node whose Matter link is flaky, that console is the only way in. Default to debug here
-  # for exactly that reason; pass --release to opt out.
+  # for exactly that reason. Opt out with ESP32_FLAVOUR=release (an env var, NOT a --release
+  # flag -- this script does not parse one).
   local sdkdef="sdkconfig.defaults"
   if [ "${ESP32_FLAVOUR:-debug}" = "debug" ]; then
     sdkdef="sdkconfig.defaults;sdkconfig.debug"

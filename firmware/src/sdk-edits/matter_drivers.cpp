@@ -300,8 +300,8 @@ static bool               s_recommission_pending = false;
 /* Remote activity is ignored until this deadline after the window opens: the "77" entry gesture
  * ("Horizon Airflow x6") is itself a burst of remote presses. Without it the mode cancels itself
  * the instant it opens -- measured on the esp32 half, every single attempt. */
-static const uint32_t     kRecommissionGraceMs   = 6000;
-static uint32_t           s_recommission_grace_ms = 0;
+static const chip::System::Clock::Milliseconds32 kRecommissionGrace = chip::System::Clock::Milliseconds32(6000);
+static chip::System::Clock::Timestamp            s_recommission_grace_until = chip::System::Clock::kZero;
 static chip::FabricIndex  s_old_fabrics[16];
 static uint8_t            s_old_fabric_count     = 0;
 
@@ -321,13 +321,22 @@ public:
         }
         ChipLogProgress(DeviceLayer, "recommission: new fabric %u joined -> deleting %u old fabric(s)",
                         newIndex, s_old_fabric_count);
-        s_recommission_pending = false;
-        chip::DeviceLayer::SystemLayer().CancelTimer(recommission_timeout, nullptr);
-        for (uint8_t i = 0; i < s_old_fabric_count; i++) {
-            chip::Server::GetInstance().GetFabricTable().Delete(s_old_fabrics[i]);
-        }
-        s_old_fabric_count = 0;
+        /* Route the SUCCESS path through the same teardown as every other exit. It previously did
+         * its own partial cleanup -- flags + timer only -- which left the CHIP commissioning
+         * window OPEN and the BLE advert up after a successful re-pair, diverging from the
+         * expiry/user-cancel paths. That is exactly the inconsistency the unified teardown exists
+         * to remove. (Copilot review, PR #68.)
+         *
+         * Snapshot the doomed indices first: recommission_finish() clears the count, and
+         * Delete() can re-enter this delegate. */
+        chip::FabricIndex doomed[16];
+        uint8_t n = s_old_fabric_count;
+        for (uint8_t i = 0; i < n; i++) doomed[i] = s_old_fabrics[i];
         hisense_set_provisioning(false);   // paired on the new fabric -> clear "77"
+        recommission_finish(true, "new fabric committed");
+        for (uint8_t i = 0; i < n; i++) {
+            chip::Server::GetInstance().GetFabricTable().Delete(doomed[i]);
+        }
     }
 };
 static RecommissionFabricDelegate s_recommission_delegate;
@@ -375,8 +384,9 @@ static bool recommission_window_is_open(void)
 
 static bool recommission_grace_expired(void)
 {
-    return (uint32_t) chip::System::SystemClock().GetMonotonicTimestamp().count()
-           > s_recommission_grace_ms;
+    // Clock::Timestamp arithmetic, matching s_sync_hold_until above: comparing a truncated
+    // .count() would be unit-ambiguous and could wrap.
+    return chip::System::SystemClock().GetMonotonicTimestamp() > s_recommission_grace_until;
 }
 
 static void recommission_user_cancel(intptr_t)
@@ -433,8 +443,7 @@ static void recommission_open_window(intptr_t)
     s_recommission_pending = true;
     chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(kRecommissionWindowSec),
                                                 recommission_timeout, nullptr);
-    s_recommission_grace_ms = (uint32_t) chip::System::SystemClock().GetMonotonicTimestamp().count()
-                              + kRecommissionGraceMs;
+    s_recommission_grace_until = chip::System::SystemClock().GetMonotonicTimestamp() + kRecommissionGrace;
     hisense_set_provisioning(true);   // report prov=1 -> A/C lights "77" while the window is open
     ChipLogProgress(DeviceLayer, "recommission: window open %lus, snapshot %u old fabric(s)",
                     (unsigned long) kRecommissionWindowSec, s_old_fabric_count);
