@@ -957,11 +957,10 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
              * bench: sending Celsius 23 to a panel in F made the A/C target 23 F. */
             {
                 int8_t want_c = matter_clamp_setpoint_c(whole_c);
-                bool   unit_f = s_status.valid && s_status.temp_unit_f;
+                bool   unit_f = st.valid && st.temp_unit_f;
                 s_cmd.fahrenheit = unit_f;
                 s_cmd.setpoint   = unit_f ? hisense_c_to_f(want_c) : want_c;
             }
-            s_cmd.fahrenheit = false;
             hisense_flush_command();
         }
         break;
@@ -1083,6 +1082,51 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
         {
             if (st.valid && aEvent->value._u8 == (uint8_t)(st.sleep_raw / 2)) break;  // echo guard
             hisense_apply_sleep(aEvent->value._u8);
+        }
+        break;
+
+    case TuicCl::Id:
+        /* #5: panel display unit (C/F). Bench-confirmed 2026-07-20 on the esp32 node: command
+         * byte 23 = 0x01 selects Celsius, 0x03 selects Fahrenheit (status byte 26 bit 1 follows).
+         *
+         * This MUST be atomic with a setpoint rewrite. The A/C stores the setpoint as a raw byte
+         * in whatever unit the panel is showing and does NOT rescale it when the unit changes, so
+         * a bare unit switch reinterprets the same number: 22 (as C) became 22 F = -6 C and the
+         * unit drove toward it at full compressor. If instead the reinterpreted value lands out
+         * of range, the builder rejects the shadow and the A/C drops EVERY combined command --
+         * including the one that would switch back, which is unrecoverable from this path alone.
+         * Both failure modes were reproduced on the bench.
+         *
+         * hisense_build_command_override patches exactly one pre-checksum byte while carrying the
+         * rest of the shadow, so setting the shadow's unit+setpoint first and overriding byte 23
+         * emits ONE frame that changes both together and leaves no window in between. */
+        if (path.mAttributeId == TuicAttr::TemperatureDisplayMode::Id)
+        {
+            const bool want_f = (aEvent->value._u8 ==
+                                 (uint8_t) TuicCl::TemperatureDisplayModeEnum::kFahrenheit);
+            if (!st.valid) break;
+            if (st.temp_unit_f == want_f) break;   // echo guard: already in the requested unit
+
+            /* Re-encode the CURRENT setpoint into the target unit. st.setpoint_c is always
+             * Celsius (the decoder normalises it), so this is the only correct source. */
+            const int8_t keep_c = matter_clamp_setpoint_c(st.setpoint_c);
+            s_cmd.fahrenheit = want_f;
+            s_cmd.setpoint   = want_f ? hisense_c_to_f(keep_c) : keep_c;
+
+            uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
+            size_t  len = hisense_build_command_override(&s_cmd, frame, sizeof(frame),
+                                                         23, want_f ? 0x03 : 0x01);
+            if (len > 0 && hisense_send_frame(frame, len)) {
+                ChipLogProgress(DeviceLayer, "display unit -> %s (setpoint re-encoded %d C -> %d)",
+                                want_f ? "F" : "C", (int) keep_c, (int) s_cmd.setpoint);
+            } else {
+                /* Builder rejected the shadow or the queue was full. Put the shadow back so a
+                 * later flush cannot ship a setpoint encoded for a unit the A/C never adopted. */
+                s_cmd.fahrenheit = st.temp_unit_f;
+                s_cmd.setpoint   = st.temp_unit_f ? hisense_c_to_f(keep_c) : keep_c;
+                ChipLogError(DeviceLayer, "display unit change REJECTED (len=%u) -- shadow restored",
+                             (unsigned) len);
+            }
         }
         break;
 
@@ -1246,14 +1290,29 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // asserts in cold/defrost. Standard cluster => HA-readable (unlike the mfg attrs).
         BoolAttr::StateValue::Set(kHeatRelayEp, st.heat_relay_on);
 
-        // #38: aggregate fault flag -> BooleanState (Contact Sensor, ep10). HisenseFaults.any
-        // already ORs the raw fault bytes minus HISENSE_FAULT_NONFAULT_PROTECT (byte 66 bit 7
-        // reads 0x80 on a healthy unit -- it is a mode flag, not a fault). Do NOT re-derive this
-        // from the named bools.
+        /* #38: aggregate fault -> BooleanState (Contact Sensor, ep10), as a NORMALLY-CLOSED
+         * loop: StateValue true = contact closed = healthy, false = open = fault.
+         *
+         * Inverted deliberately, and it is not a display hack. Matter contact-sensor semantics
+         * are "true = closed", and Home Assistant inverts on read (binary_sensor.py:
+         * `device_to_ha=lambda x: not x`, commented "value is inverted on matter to what we
+         * expect"). Publishing fl.any directly therefore rendered a healthy unit as
+         * "Problem"/"Open" in HA. A normally-closed alarm loop is the standard convention for
+         * exactly this, so the raw value now reads correctly in HA AND in any other controller.
+         *
+         * No Matter device type maps to HA's PROBLEM device class from a plain BooleanState --
+         * every PROBLEM mapping is tied to an appliance-specific cluster (SmokeCoAlarm,
+         * DishwasherAlarm, RefrigeratorAlarm, Valve/Pump, WindowCovering), and OperationalState
+         * only yields buttons. Borrowing one of those would lie about what this device is, so
+         * the vocabulary stays contact-sensor and a HA template sensor can relabel it.
+         *
+         * HisenseFaults.any already ORs the raw fault bytes minus HISENSE_FAULT_NONFAULT_PROTECT
+         * (byte 66 bit 7 reads 0x80 on a healthy unit -- a mode flag, not a fault). Do NOT
+         * re-derive this from the named bools. */
         {
             HisenseFaults fl;
             if (hisense_get_faults(&fl)) {
-                BoolAttr::StateValue::Set(kFaultEp, fl.any);
+                BoolAttr::StateValue::Set(kFaultEp, !fl.any);
             }
         }
 
@@ -1335,11 +1394,17 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
 bool emberAfAttributeWriteAccessCallback(chip::EndpointId endpoint, chip::ClusterId clusterId,
                                          chip::AttributeId attributeId)
 {
+    /* TemperatureDisplayMode is now WRITABLE: byte 23 is bench-confirmed (0x01 = C, 0x03 = F) and
+     * the handler changes the unit and the setpoint in one frame. See the TUIC case in
+     * matter_driver_uplink_update_handler for why atomicity is mandatory.
+     *
+     * KeypadLockout stays rejected. The .zap enables it because it is mandatory for the cluster,
+     * but no bus command for it has been identified, so a write would silently do nothing -- the
+     * exact ep9-Display failure (#33) this guard exists to prevent. */
     if (endpoint == kAirconEp && clusterId == TuicCl::Id &&
-        attributeId == TuicAttr::TemperatureDisplayMode::Id) {
+        attributeId == TuicAttr::KeypadLockout::Id) {
         ChipLogProgress(DeviceLayer,
-                        "TUIC TemperatureDisplayMode write rejected: read-only until the "
-                        "byte-23 command is bench-verified (#5)");
+                        "TUIC KeypadLockout write rejected: no bus command identified (#5)");
         return false;
     }
     return true;
