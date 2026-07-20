@@ -240,6 +240,26 @@ apply_downlink_stack() {
     say "  raised DownlinkTask stack 1024 -> 4096 words (our downlink handler is far heavier than the stock examples')"
   fi
 }
+apply_mode_select_span_guard() {
+  # ZAP sizes supportedOptionsByEndpoints[] by MATTER_DM_MODE_SELECT_CLUSTER_SERVER_ENDPOINT_COUNT,
+  # which counts endpoint TYPES, not endpoints. Our .zap carries an ORPHANED endpoint type with
+  # ModeSelect server enabled and used by zero endpoints, so the macro is 2 while the SDK's .cpp
+  # initialises exactly one entry (ep6). Element [1] is therefore zero-filled: mEndpointId 0 and an
+  # empty Span whose data()/end() are both nullptr, and getModeOptionsProvider iterates the whole
+  # array. getModeOptionByMode does guard begin()==nullptr, so this is defence in depth rather than
+  # a proven crash -- skip the padding explicitly instead of relying on every caller to guard.
+  # Idempotent + self-healing across a full clean / SDK reinstall, same as apply_ota_hardening.
+  local f="$SDK_ROOT/ameba-rtos-z2/component/common/application/matter/drivers/matter_drivers/mode_select/ameba_mode_select_manager.cpp"
+  [ -f "$f" ] || die "ameba_mode_select_manager.cpp not found: $f"
+  if grep -q 'mSpan.data() == nullptr' "$f"; then
+    say "  ModeSelect span guard already applied"
+  else
+    sed -i 's|        if (endpointSpanPair.mEndpointId == endpointId)|        if (endpointSpanPair.mSpan.data() == nullptr) { continue; }  // orphaned endpoint type pads this array\n        if (endpointSpanPair.mEndpointId == endpointId)|' "$f"
+    grep -q 'mSpan.data() == nullptr' "$f" \
+      || die "failed to apply ModeSelect span guard in $f"
+    say "  applied ModeSelect null-span guard (orphaned endpoint type inflates the generated count)"
+  fi
+}
 build() {
   load_env
   # --debug selects the bench flavour (#22): adds the :2323 console. Release is the default, so
@@ -259,6 +279,7 @@ build() {
   apply_ota_hardening   # #76: MRP tuning into the Ameba CHIP platform config (idempotent)
   apply_downlink_stack  # DownlinkTask stack: 4KB overflows our heavy handler (idempotent)
   apply_example_task_stack  # init task stack: 8KB dies mid-init -> no downlink queue (idempotent)
+  apply_mode_select_span_guard  # orphaned endpoint type pads the ModeSelect table (idempotent)
   # Reproducible-build path scrub (public release): rewrite the absolute build path baked into
   # __FILE__ / debug info so the compiled image carries generic /build/... paths instead of the
   # developer's $HOME (e.g. .../connectedhomeip/src/app/server/Server.cpp leaked the full path).

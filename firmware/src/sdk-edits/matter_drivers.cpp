@@ -66,6 +66,8 @@ namespace ThermAttr    = chip::app::Clusters::Thermostat::Attributes;
 namespace FanAttr      = chip::app::Clusters::FanControl::Attributes;
 namespace TempMeasAttr = chip::app::Clusters::TemperatureMeasurement::Attributes;
 namespace BoolAttr     = chip::app::Clusters::BooleanState::Attributes;
+namespace TuicCl       = chip::app::Clusters::ThermostatUserInterfaceConfiguration;
+namespace TuicAttr     = chip::app::Clusters::ThermostatUserInterfaceConfiguration::Attributes;
 namespace HisenseCl    = chip::app::Clusters::HisenseAircon;
 namespace HisenseAttr  = chip::app::Clusters::HisenseAircon::Attributes;
 using chip::app::Clusters::Thermostat::SystemModeEnum;
@@ -416,6 +418,15 @@ static void set_ha_entity_label(chip::EndpointId ep, const char *name)
     }
 }
 
+/* Record how far init got, printed by the diag `sys` command. A single end-of-function flag only
+ * says init stalled, never where; two confident guesses at the location were both wrong before
+ * this counter found it in one flash. Keep the stage list here in sync with diag_cmd_sys. */
+#ifdef HISENSE_DEBUG_BUILD
+#define HISENSE_INIT_STAGE(n) do { s_diag_init_stage = (uint8_t)(n); } while (0)
+#else
+#define HISENSE_INIT_STAGE(n) do { } while (0)
+#endif
+
 CHIP_ERROR matter_driver_room_aircon_init(void)
 {
     CHIP_ERROR err = CHIP_NO_ERROR;
@@ -426,6 +437,7 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
         ChipLogError(DeviceLayer, "hisense_init failed!");
         return CHIP_ERROR_INTERNAL;
     }
+    HISENSE_INIT_STAGE(1);
     /* Create the downlink/uplink queues + tasks HERE, before anything below can block.
      *
      * The example entry point calls matter_interaction_start_downlink()/_uplink() only AFTER this
@@ -449,6 +461,7 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     if (matter_interaction_start_uplink() != CHIP_NO_ERROR) {
         ChipLogError(DeviceLayer, "early matter_interaction_start_uplink failed");
     }
+    HISENSE_INIT_STAGE(2);
 
     chip::Server::GetInstance().GetFabricTable().AddFabricDelegate(&s_recommission_delegate);  // F1: swap fabric on new pairing
     hisense_set_recommission_cb(matter_driver_on_recommission);   // F1: remote "77" -> open window
@@ -456,6 +469,7 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     hisense_set_features_cb(matter_driver_on_features);           // 0x66/40 feature flags -> device log
     hisense_diag_console_start();                                 // #23: :2323 console, DEBUG flavour only
     hisense_breakglass_start();                                   // #61: OTA trigger off the Matter path (BOTH flavours)
+    HISENSE_INIT_STAGE(3);
 
     // HA entity labels (UserLabel key "ha_entitylabel") so the same-type entities are
     // distinguishable in Home Assistant. Requires the UserLabel cluster (0x0041) enabled
@@ -469,38 +483,37 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     set_ha_entity_label(kHeatRelayEp,   "Aux Heat");
     set_ha_entity_label(kCoilTempEp,    "Coil");
     set_ha_entity_label(kDisplayEp,     "Display");
+    HISENSE_INIT_STAGE(4);
 
-    /* ep9 Display starts ON (#33). The panel is lit by default and the A/C reports no
-     * display state, so a switch that boots "off" is wrong from the first second and
-     * nothing can ever correct it. Worse, Matter skips both attribute-change callbacks
-     * when a write does not change the value (emAfWriteAttribute returns early on
-     * !valueChanging), so pressing "off" on an already-false attribute ran no handler and
-     * put NO frame on the bus: the user saw a lit panel, pressed off, and nothing happened.
-     * Seeding true makes that first press a real transition.
+    /* ep9 Display boots ON (#33) via the .zap OnOff defaultValue -- deliberately NOT an ember
+     * write here. The panel is lit by default and the A/C never reports display state, so a switch
+     * that boots "off" is wrong from the first second; worse, Matter skips the attribute-change
+     * callbacks when a write does not change the value, so pressing "off" on an already-false
+     * attribute put no frame on the bus at all.
      *
-     * Not a general fix: change the display from the IR remote and the attribute drifts
-     * again, with no read-back to recover. Set here rather than in the .zap so the data
-     * model does not need a GUI round-trip for a one-bit default. */
-    {
-        bool display_default = true;
-        emberAfWriteAttribute(kDisplayEp, chip::app::Clusters::OnOff::Id,
-                              chip::app::Clusters::OnOff::Attributes::OnOff::Id,
-                              (uint8_t *) &display_default, kHisenseTypeBool);
-    }
-
-    matter_power_meter_init(kAirconEp);
+     * This was an emberAfWriteAttribute until v1.2.36, and it never returned: init stopped dead
+     * here (stage 4), silently killing the ModeSelect registration and EPM init below. Do not
+     * reintroduce an init-time ember write to seed a default; use the data model. */
+    HISENSE_INIT_STAGE(5);
 
     // Register the Sleep-profile ModeSelect supported-modes (Off/General/Old/Young/Kids on ep6).
     static chip::app::Clusters::ModeSelect::AmebaSupportedModesManager s_sleep_modes_mgr;
     chip::app::Clusters::ModeSelect::setSupportedModesManager(&s_sleep_modes_mgr);
+    HISENSE_INIT_STAGE(6);
 
     ChipLogProgress(DeviceLayer, "Hisense RS-485 aircon driver initialized on ep%d", kAirconEp);
-    // Proves the init TASK survived to the end. If this is false at runtime the task died
-    // mid-init (stack), which also means matter_interaction_start_downlink() -- the statement
-    // right after this function returns -- never ran, leaving the downlink queue NULL.
 #ifdef HISENSE_DEBUG_BUILD
     s_diag_init_completed = true;
 #endif
+    HISENSE_INIT_STAGE(7);
+
+    /* EPM runs after the completion flag only because it was briefly suspected of stalling init
+     * and was moved here to contain it. It was NOT the cause (the ep9 ember write above was), so
+     * this position is now incidental; it is kept because v1.2.36 shipped and was verified this
+     * way. Note the flag above therefore does not imply EPM initialised -- stage 8 does. */
+    matter_power_meter_init(kAirconEp);
+    HISENSE_INIT_STAGE(8);
+
     return err;
 }
 
@@ -1231,6 +1244,15 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // asserts in cold/defrost. Standard cluster => HA-readable (unlike the mfg attrs).
         BoolAttr::StateValue::Set(kHeatRelayEp, st.heat_relay_on);
 
+        // #5: report the A/C panel's display unit via TUIC (ep1). READ SIDE ONLY -- the
+        // write path is rejected by the write-access override below until the byte-23
+        // command is bench-verified. Writing the wrong unit is not cosmetic: a setpoint
+        // sent in C to a panel in F is interpreted as F (23C -> 23F -> the unit drives
+        // toward -5C at full compressor), which is why this stays read-only for now.
+        TuicAttr::TemperatureDisplayMode::Set(
+            kAirconEp, st.temp_unit_f ? TuicCl::TemperatureDisplayModeEnum::kFahrenheit
+                                      : TuicCl::TemperatureDisplayModeEnum::kCelsius);
+
         // REVERTED (was: TUIC display-unit on ep1 + aggregate fault on ep10).
         // Both were added by a hand-edited .zap and, once booted, the device's Matter
         // SUBSCRIPTIONS failed persistently with CHIP Error 0x24 "Invalid TLV tag" while
@@ -1273,6 +1295,41 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
     }
 
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+}
+
+/* Make TemperatureDisplayMode genuinely READ-ONLY at the protocol layer (#5).
+ *
+ * Node-14 parity with the ESP32 half. HA renders this attribute as a writable select, but the
+ * WRITE path is unverified: RE docs/10 7.4b predicts command byte 23 (0x03 = F, 0x01 = C) and
+ * nobody has bench-tested it. Guessing wrong is not cosmetic -- sending the wrong unit already
+ * made a unit target 23 F and run at 74 Hz toward -5 C.
+ *
+ * A comment saying "do not wire this yet" is not a gate; this repo shipped that failure once
+ * already (the ep9 Display switch appeared in HA and silently did nothing, #33). So the
+ * rejection is enforced in code.
+ *
+ * emberAfAttributeWriteAccessCallback is a weak symbol (generic-callback-stubs.cpp) consulted by
+ * attribute-storage.cpp BEFORE the value reaches storage; returning false yields
+ * Status::UnsupportedAccess, so a HA write fails VISIBLY instead of appearing to succeed and
+ * reverting on the next status poll.
+ *
+ * NOTE: C++ linkage, NOT extern "C" -- the SDK declares this hook as a C++ symbol
+ * (generic-callbacks.h:50). An extern "C" definition would sit beside the weak stub without
+ * overriding it. Deliberately placed after the extern "C" block above.
+ *
+ * Lift this only once the bench check passes (tx 23 0x03 / tx 23 0x01, watch the panel, confirm
+ * byte 26 bit 1 follows): implement the builder, wire the uplink, then drop this guard. */
+bool emberAfAttributeWriteAccessCallback(chip::EndpointId endpoint, chip::ClusterId clusterId,
+                                         chip::AttributeId attributeId)
+{
+    if (endpoint == kAirconEp && clusterId == TuicCl::Id &&
+        attributeId == TuicAttr::TemperatureDisplayMode::Id) {
+        ChipLogProgress(DeviceLayer,
+                        "TUIC TemperatureDisplayMode write rejected: read-only until the "
+                        "byte-23 command is bench-verified (#5)");
+        return false;
+    }
+    return true;
 }
 
 /* The SDK build won't compile a newly-added SRC_CPP file (dep-tracking bug), so the

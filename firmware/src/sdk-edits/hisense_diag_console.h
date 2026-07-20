@@ -54,6 +54,10 @@ static uint32_t     s_diag_frames;
 static uint32_t     s_diag_downlink_posts;
 static uint32_t     s_diag_downlink_runs;   // handler ENTRIES (consumer side)
 static bool         s_diag_init_completed;  // driver init task reached its end
+// Last init milestone reached, so a stalled init says WHERE it stopped, not just that it did.
+// Bumped in order through matter_driver_room_aircon_init (keep the stage list in diag_cmd_sys
+// in sync). Stage N means N completed and N+1 did not.
+static uint8_t      s_diag_init_stage;
 
 static void hisense_diag_on_status(const HisenseState *st)
 {
@@ -205,8 +209,10 @@ static void diag_cmd_sys(int sock)
         "downlink posts: %u   handler runs: %u   (posts climbing + runs flat => dead consumer)\r\n"
         "free heap: %u bytes   min-ever free: %u bytes\r\n"
         "downlink queue: %s  depth: %u  task: %s  init_flag: %u\r\n"
-        "driver init completed: %s   (false => init task died mid-init, so start_downlink never ran)\r\n"
-        "  queue NULL => start_downlink never created it; depth pinned at 10 => consumer dead\r\n",
+        "driver init completed: %s   last init stage: %u\r\n"
+        "  stages: 1 hisense_init  2 queues+cbs  3 console+breakglass  4 UserLabels\r\n"
+        "          5 ep9 Display seed  6 ModeSelect  7 end of init  8 EPM returned\r\n"
+        "  stage N means N completed and N+1 did not -- that is where init stopped\r\n",
         (unsigned) s_diag_downlink_posts, (unsigned) s_diag_downlink_runs,
         (unsigned) xPortGetFreeHeapSize(),
         (unsigned) xPortGetMinimumEverFreeHeapSize(),
@@ -214,7 +220,8 @@ static void diag_cmd_sys(int sock)
         DownlinkEventQueue ? (unsigned) uxQueueMessagesWaiting(DownlinkEventQueue) : 0u,
         DownlinkTaskHandle ? "OK" : "NULL",
         (unsigned) downlink_init,
-        s_diag_init_completed ? "yes" : "NO");
+        s_diag_init_completed ? "yes" : "NO",
+        (unsigned) s_diag_init_stage);
     diag_say(sock, b);
 }
 
