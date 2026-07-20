@@ -20,6 +20,7 @@
 #include <esp_err.h>
 #include <esp_system.h>   // esp_reset_reason (#12 brownout diagnosis)
 #include <esp_log.h>
+#include <esp_timer.h>   // esp_timer_get_time() for the "77" settling grace
 #include <nvs_flash.h>
 #include <string.h>
 #include <esp_wifi.h>        // TX-power throttle during OTA (#12 brownout mitigation)
@@ -49,6 +50,7 @@
 #endif
 #include <ElectricalPowerMeasurementDelegate.h>     // reused from firmware/src/sdk-edits (CHIP EPM delegate)
 #include <app/clusters/temperature-measurement-server/TemperatureMeasurementCluster.h>  // registered-cluster SetMeasuredValue
+#include <app/clusters/boolean-state-server/BooleanStateCluster.h>                      // registered-cluster SetStateValue (same migration)
 #include <data_model_provider/esp_matter_data_model_provider.h>                           // provider registry
 #include <app/ConcreteClusterPath.h>
 
@@ -474,6 +476,37 @@ static void set_temp_measured(uint16_t ep, chip::app::DataModel::Nullable<int16_
     static_cast<Clusters::TemperatureMeasurementCluster *>(iface)->SetMeasuredValue(v);
 }
 
+/* BooleanState has the SAME migration problem as TemperatureMeasurement above, and getting it
+ * wrong took node 28 off the network for hours. attribute::update() returns
+ * ESP_ERR_NOT_SUPPORTED (262) for this cluster, and the driver republishes it once per status
+ * frame -- so the failure logged at ERROR level thousands of times a second, saturating the
+ * 115200 console (measured ~25 KB/s against an 11.5 KB/s ceiling). esp_log BLOCKS the calling
+ * task when the TX buffer fills, so the whole application starved: ICMP still answered while
+ * TCP :2323/:2324 was refused and every Matter CASE handshake failed. It looked exactly like a
+ * dead device and was in fact a logging deadlock.
+ *
+ * Route through the registered cluster object instead, which is the authoritative store and
+ * also emits the change report for HA. */
+static void set_bool_state(uint16_t ep, bool v)
+{
+    using namespace chip::app;
+    auto *iface = esp_matter::data_model::provider::get_instance().registry()
+                    .Get(ConcreteClusterPath(ep, Clusters::BooleanState::Id));
+    if (!iface) return;
+    static_cast<Clusters::BooleanStateCluster *>(iface)->SetStateValue(v);
+}
+
+/* Remote activity is ignored until this deadline after the window opens. The "77" entry gesture
+ * ("Horizon Airflow x6") is itself a burst of remote presses, so without a settling window the
+ * mode cancels itself the instant it opens -- measured, every attempt. */
+static const int64_t     kRecommissionGraceUs    = 6 * 1000 * 1000;   // 6 s
+static int64_t           s_recommission_grace_us = 0;
+
+// Forward decls: the "77" machinery is defined further down, but on_status (above it) needs to
+// know whether a window is open so remote activity can close it.
+static bool recommission_window_is_open(void);
+static void recommission_user_cancel(intptr_t);
+
 static void on_status(const HisenseState *st)
 {
     if (!st || !st->valid) return;
@@ -481,6 +514,35 @@ static void on_status(const HisenseState *st)
     // esp-matter's lock API is RAII: construct to take the CHIP stack lock, released at scope exit.
     lock::ScopedChipStackLock lk(portMAX_DELAY);
     s_from_bus = true;
+
+    /* Stock behaviour: ANY remote button exits "77", not just pressing the pattern again. We
+     * cannot see IR, but every such press lands on the bus as a change to a user-settable field,
+     * so treat that as the user having moved on and shut the window.
+     *
+     * Deliberately only the fields a HUMAN sets. Temperatures, compressor frequency, current and
+     * coil readings drift on their own every frame and would cancel the window instantly. Our own
+     * Matter-originated writes also land here, but during a "77" window nothing should be driving
+     * the unit from Matter -- and if something is, the user is plainly not mid-pairing. */
+    if (recommission_window_is_open() && s_status.valid &&
+        esp_timer_get_time() > s_recommission_grace_us) {
+        /* SWING IS EXCLUDED ON PURPOSE. The gesture that ENTERS "77" is "Horizon Airflow x6" --
+         * i.e. the swing button. Including vswing/hswing here made entering the mode instantly
+         * exit it: measured window-open at 95424 ms, killed at 95674 ms, every single attempt.
+         * The entry gesture can never be the exit signal.
+         *
+         * The grace period covers the same trap from the other side: the swing changes from the
+         * final presses keep arriving for a beat after the window opens, and any of the other
+         * fields could be mid-settle too. */
+        const bool user_touched =
+            st->power_on   != s_status.power_on   || st->mode      != s_status.mode      ||
+            st->setpoint_c != s_status.setpoint_c || st->fan_raw   != s_status.fan_raw   ||
+            st->eco_on     != s_status.eco_on     || st->turbo_on  != s_status.turbo_on  ||
+            st->mute_on    != s_status.mute_on    || st->sleep_raw != s_status.sleep_raw;
+        if (user_touched) {
+            ESP_LOGW(TAG, "A/C driven from the remote during the \"77\" window -> treating as EXIT");
+            chip::DeviceLayer::PlatformMgr().ScheduleWork(recommission_user_cancel, 0);
+        }
+    }
 
     // Snapshot for the uplink guards (read under this same lock in on_attribute_update).
     s_status = *st;
@@ -581,12 +643,12 @@ static void on_status(const HisenseState *st)
     {
         HisenseFaults fl;
         if (hisense_get_faults(&fl)) {
-            set_attr(s_ep_fault, BooleanState::Id, BooleanState::Attributes::StateValue::Id,
-                     esp_matter_bool(!fl.any));
+            set_bool_state(s_ep_fault, !fl.any);
         }
     }
-    set_attr(s_ep_aux, BooleanState::Id, BooleanState::Attributes::StateValue::Id,
-             esp_matter_bool(st->heat_relay_on));
+    // Inverted to match the fault endpoint and the ameba half: normally-closed, so HA (which
+    // flips BooleanState on read) shows "on"/detected exactly when the relay is engaged.
+    set_bool_state(s_ep_aux, !st->heat_relay_on);
 
     // ElectricalPowerMeasurement (ep1) -> HA-native Watts/Volts/Amps. Matter base units are
     // mW / mV / mA; power_estimate.h returns exactly those from the calibrated proxies. Fed
@@ -647,11 +709,17 @@ static void on_link(bool up)
 // defers via PlatformMgr().ScheduleWork.
 // ---------------------------------------------------------------------------
 static const uint32_t    kRecommissionWindowSec = 180;
+/* Held open while the device has NO fabric. Deliberately long: this is the only way back in
+ * after a failed or partial commissioning, and 180 s is not enough for a human to notice the
+ * device is unjoinable, find a controller and complete pairing. The window is harmless here --
+ * with zero fabrics there is nothing to protect, and it closes the moment one is added. */
+static const uint32_t    kUncommissionedWindowSec = 900;
 static bool              s_recommission_pending  = false;
 static chip::FabricIndex s_old_fabrics[16];
 static uint8_t           s_old_fabric_count      = 0;
 
 static void recommission_timeout(chip::System::Layer *, void *);
+static void recommission_finish(bool paired, const char *why);
 
 // A NEW fabric committing while our window is open means the re-pair succeeded ->
 // drop the old fabric(s) and stand down.
@@ -665,30 +733,84 @@ public:
             if (s_old_fabrics[i] == newIndex) return;   // not a newly-added fabric
         ESP_LOGI(TAG, "recommission: new fabric %u joined -> deleting %u old fabric(s)",
                  newIndex, s_old_fabric_count);
-        s_recommission_pending = false;
-        chip::DeviceLayer::SystemLayer().CancelTimer(recommission_timeout, nullptr);
-        for (uint8_t i = 0; i < s_old_fabric_count; i++)
-            chip::Server::GetInstance().GetFabricTable().Delete(s_old_fabrics[i]);
-        s_old_fabric_count = 0;
-        hisense_set_provisioning(false);   // paired on the new fabric -> clear "77"
+        // Copy the snapshot first: recommission_finish() clears the count, and deleting a
+        // fabric can re-enter this delegate.
+        chip::FabricIndex doomed[16];
+        uint8_t n = s_old_fabric_count;
+        for (uint8_t i = 0; i < n; i++) doomed[i] = s_old_fabrics[i];
+        hisense_set_provisioning(false);          // paired on the new fabric -> clear "77"
+        recommission_finish(true, "new fabric committed");
+        for (uint8_t i = 0; i < n; i++)
+            chip::Server::GetInstance().GetFabricTable().Delete(doomed[i]);
     }
 };
 static RecommissionFabricDelegate s_recommission_delegate;
 
-// Window expired with no new pairing -> keep the old fabric, tell the A/C to exit "77".
-static void recommission_timeout(chip::System::Layer *, void *)
+/* Single teardown for EVERY exit from "77", so the device can never be left half-in it.
+ *
+ * Three ways out, all landing here: the window expired, the user took the A/C out of "77" from
+ * the panel/remote, or the re-pair succeeded. In the first two the device must return EXACTLY to
+ * its previous state -- old fabric intact, commissioning window shut, BLE advert back off (it is
+ * suppressed on a commissioned node), and the A/C told to drop "77". Previously the timeout path
+ * only flipped flags and sent exit_77: it left the commissioning window OPEN and BLE advertising
+ * indefinitely, so a lapsed window stayed joinable long after the A/C had stopped showing "77".
+ *
+ * `paired` distinguishes success (new fabric committed; old ones already deleted by the delegate
+ * and the A/C cleared) from abort (revert). */
+static void recommission_finish(bool paired, const char *why)
 {
     if (!s_recommission_pending) return;
     s_recommission_pending = false;
     s_old_fabric_count     = 0;
-    ESP_LOGI(TAG, "recommission: window expired, no new pairing -> revert + signal A/C out of 77");
-    hisense_send_exit_77();
+    chip::DeviceLayer::SystemLayer().CancelTimer(recommission_timeout, nullptr);
+
+    // Close the window explicitly -- expiry of OUR timer does not itself shut the CHIP window.
+    auto &cwm = chip::Server::GetInstance().GetCommissioningWindowManager();
+    if (cwm.IsCommissioningWindowOpen()) cwm.CloseCommissioningWindow();
+
+    // Restore the BLE advert to what a commissioned node should be doing: nothing. If the
+    // re-pair FAILED we still hold a fabric, so this is the correct resting state either way.
+    CHIP_ERROR berr = chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false);
+    if (berr != CHIP_NO_ERROR)
+        ESP_LOGE(TAG, "recommission: SetBLEAdvertisingEnabled(false) failed: %" CHIP_ERROR_FORMAT, berr.Format());
+
+    if (!paired) hisense_send_exit_77();   // on success the delegate already cleared it
+    ESP_LOGI(TAG, "recommission: %s (%s) -> window closed, BLE advert off",
+             paired ? "paired" : "reverted", why);
+}
+
+// Window expired with no new pairing -> keep the old fabric, tell the A/C to exit "77".
+static void recommission_timeout(chip::System::Layer *, void *)
+{
+    recommission_finish(false, "window expired");
+}
+
+/* The user took the A/C out of "77" themselves (panel/remote): abandon the window immediately
+ * rather than leaving the device joinable for the rest of kRecommissionWindowSec. Called from
+ * Matter context via ScheduleWork. */
+static bool recommission_window_is_open(void)
+{
+    return s_recommission_pending;
+}
+
+static void recommission_user_cancel(intptr_t)
+{
+    recommission_finish(false, "A/C left 77");
 }
 
 // Matter-context entry (via ScheduleWork): snapshot fabrics + open the window + arm the timer.
 static void recommission_open_window(intptr_t)
 {
-    if (s_recommission_pending) return;   // a window is already open
+    /* TOGGLE, matching the stock dongle: pressing the sequence again while a window is open
+     * EXITS "77" rather than being ignored. The A/C pulses 0x20 for one frame per press, so an
+     * enter-press and an exit-press look identical on the wire -- the only thing distinguishing
+     * them is whether we already have a window open. Without this, the user's documented way out
+     * ("press the pattern again") did nothing and the device stayed joinable for the full 180 s. */
+    if (s_recommission_pending) {
+        ESP_LOGW(TAG, "\"77\" pressed again while the window is open -> treating as EXIT");
+        recommission_finish(false, "user pressed 77 again");
+        return;
+    }
     s_old_fabric_count = 0;
     for (auto it = chip::Server::GetInstance().GetFabricTable().begin();
          it != chip::Server::GetInstance().GetFabricTable().end(); ++it) {
@@ -702,21 +824,26 @@ static void recommission_open_window(intptr_t)
         s_old_fabric_count = 0;
         return;
     }
-    // Spec: a commissioned node re-pairs over IP (_matterc._udp), not BLE. Suppress the
-    // CHIPoBLE advert the window would restart -- BUT only when Wi-Fi is actually up. If
-    // Wi-Fi is down, BLE is the only transport left to push new creds, so keep it (audit
-    // fix #1: unconditional suppress = lockout).
-    if (chip::DeviceLayer::ConnectivityMgr().IsWiFiStationConnected()) {
-        err = chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false);
-        if (err != CHIP_NO_ERROR)
-            ESP_LOGE(TAG, "recommission: SetBLEAdvertisingEnabled(false) failed: %" CHIP_ERROR_FORMAT, err.Format());
-    } else {
-        ESP_LOGI(TAG, "recommission: Wi-Fi down -> keeping BLE up so creds can be pushed");
-    }
+    /* Advertise over BLE for the whole window, ALWAYS -- including when Wi-Fi is up.
+     *
+     * This previously suppressed BLE whenever Wi-Fi was connected, on the reasoning that a
+     * commissioned node re-pairs over IP (_matterc._udp). Spec-wise that is right; in practice
+     * it made "77" useless. Measured 2026-07-20: with the device sitting healthily on Wi-Fi,
+     * matter-server's discover_commissionable_nodes returned NOTHING, and commissioning over IP
+     * failed with "Discovery timed out" every time. So the window opened, the A/C lit "77", and
+     * no controller could see the device -- which is exactly the "77 does not work" symptom.
+     *
+     * BLE is also what phone commissioners actually use. Keeping it on costs a radio advert for
+     * at most kRecommissionWindowSec and makes the window reachable by BOTH transports, which is
+     * the entire point of a recovery path: it must work when the normal one does not. */
+    err = chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(true);
+    if (err != CHIP_NO_ERROR)
+        ESP_LOGE(TAG, "recommission: SetBLEAdvertisingEnabled(true) failed: %" CHIP_ERROR_FORMAT, err.Format());
     s_recommission_pending = true;
     chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(kRecommissionWindowSec),
                                                 recommission_timeout, nullptr);
     hisense_set_provisioning(true);   // report prov=1 -> A/C lights "77" while the window is open
+    s_recommission_grace_us = esp_timer_get_time() + kRecommissionGraceUs;
     ESP_LOGI(TAG, "recommission: window open %us, snapshot %u old fabric(s)",
              (unsigned) kRecommissionWindowSec, s_old_fabric_count);
 }
@@ -726,6 +853,32 @@ static void on_recommission(uint8_t reason)
 {
     ESP_LOGW(TAG, "A/C requested recommission (\"77\") payload[4]=0x%02x", reason);
     chip::DeviceLayer::PlatformMgr().ScheduleWork(recommission_open_window, 0);
+}
+
+/* Log EVERY 0x1E LINK reply to the serial console, with a sequence number and uptime.
+ *
+ * These replies are infrequent and irregular, so polling the console snapshot cannot catch the
+ * one that changes when the user presses the remote's recommission sequence -- seven presses
+ * produced no visible change that way, which was ambiguous between "the A/C never asks" and
+ * "we polled at the wrong moment". Pushing every reply to serial removes the ambiguity: the
+ * bench captures continuously and diffs offline. Cheap -- these arrive far too rarely to spam. */
+static void on_link_frame(const uint8_t *f, uint8_t n)
+{
+    static uint32_t seq = 0;
+    char hex[3 * 40 + 1];
+    int  o = 0;
+    for (uint8_t i = 0; i < n && o < (int) sizeof(hex) - 3; i++)
+        o += snprintf(hex + o, sizeof(hex) - o, "%02x ", f[i]);
+    ESP_LOGW(TAG, "LINK#%u len=%u b17=0x%02x | %s",
+             (unsigned) ++seq, (unsigned) n, n > 17 ? f[17] : 0, hex);
+}
+
+// The A/C dropped the "77" request: the user backed out from the panel/remote. Shut the window
+// we opened rather than leaving the device joinable with nothing on the panel to indicate it.
+static void on_recommission_cancel(void)
+{
+    ESP_LOGW(TAG, "A/C left \"77\" -> closing the commissioning window");
+    chip::DeviceLayer::PlatformMgr().ScheduleWork(recommission_user_cancel, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1133,6 +1286,20 @@ extern "C" void app_main()
     s_boot_reason = esp_reset_reason();
     ESP_LOGW(TAG, "boot reason: %s (%d)", reset_reason_str(s_boot_reason), (int) s_boot_reason);
 
+    /* Silence esp_matter's per-attribute INFO logging. It prints a banner line for EVERY
+     * attribute write, and this driver republishes ~19 attributes per status frame. Measured on
+     * node 28: 12.7 KB/s of UART output against a 11.5 KB/s ceiling at 115200 8N1 -- i.e. the
+     * console is saturated CONTINUOUSLY.
+     *
+     * That is not cosmetic. esp_log writes block the calling task once the TX buffer fills, so
+     * the whole application starves: the device answered ICMP (handled low in the stack) while
+     * REFUSING TCP on :2323/:2324 and failing every Matter CASE handshake, which reads exactly
+     * like a dead node from the network side. It looked like a crash and was not one.
+     *
+     * Targeted rather than lowering CONFIG_LOG_DEFAULT_LEVEL: everything else stays at INFO, so
+     * boot, Wi-Fi, OTA and our own hisense_ac logs are unaffected. */
+    esp_log_level_set("esp_matter_attribute", ESP_LOG_WARN);
+
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         nvs_flash_erase(); nvs_flash_init();
@@ -1275,8 +1442,43 @@ extern "C" void app_main()
     // F1: swap the fabric when a new controller pairs during a "77" window.
     chip::Server::GetInstance().GetFabricTable().AddFabricDelegate(&s_recommission_delegate);
 
+    /* An UNCOMMISSIONED device must stay joinable. Without this it is effectively unrecoverable
+     * without a serial cable, which cost most of a day.
+     *
+     * Default esp-matter behaviour: while no Wi-Fi credentials exist the device advertises
+     * commissionable over BLE, but the moment it associates it switches to "commissioning mode 0"
+     * and stops advertising entirely -- even with ZERO fabrics. Observed here: `sta ip:` at 3.2 s
+     * followed immediately by `Updating services using commissioning mode 0`. The BLE window is
+     * then only open for the ~3 s before association, which no human or controller can hit
+     * reliably, and over IP the device is never discoverable at all
+     * (`discover_commissionable_nodes` returned nothing while the device sat happily on Wi-Fi).
+     *
+     * That combination is the trap: credentials good enough to join Wi-Fi, no fabric, and no way
+     * back in. It bites hardest after a partial commissioning, which leaves exactly that state.
+     *
+     * So: if there are no fabrics, hold a commissioning window open. It advertises over BOTH BLE
+     * and IP, so a controller can reach it on the network without physical proximity. Re-armed
+     * from the fabric delegate is unnecessary -- once a fabric exists this is moot, and the "77"
+     * path handles deliberate re-pairing. */
+    if (chip::Server::GetInstance().GetFabricTable().FabricCount() == 0) {
+        chip::DeviceLayer::PlatformMgr().LockChipStack();
+        CHIP_ERROR werr = chip::Server::GetInstance().GetCommissioningWindowManager()
+                              .OpenBasicCommissioningWindow(
+                                  chip::System::Clock::Seconds32(kUncommissionedWindowSec));
+        chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+        if (werr == CHIP_NO_ERROR) {
+            ESP_LOGW(TAG, "no fabrics: commissioning window held open for %d s (BLE + IP)",
+                     (int) kUncommissionedWindowSec);
+        } else {
+            ESP_LOGE(TAG, "no fabrics but OpenBasicCommissioningWindow failed: %" CHIP_ERROR_FORMAT,
+                     werr.Format());
+        }
+    }
+
     // Start the (unchanged) RS-485 driver; wire status uplink + "77" / feature / link downlinks.
     hisense_set_recommission_cb(on_recommission);
+    hisense_set_recommission_cancel_cb(on_recommission_cancel);
+    hisense_set_link_frame_cb(on_link_frame);   // bench: every 0x1E reply -> serial
     hisense_set_features_cb(on_features);   // 0x66/40 ProductType flags -> log
     hisense_set_link_cb(on_link);           // #56: bus silence -> null liveness attrs
     if (hisense_init(on_status) != pdPASS) ESP_LOGE(TAG, "hisense_init failed");

@@ -171,15 +171,26 @@ int main() {
         uint8_t streak = 0; bool latched = false;
         const uint8_t HOLD = 3;
         const uint8_t REQ  = HISENSE_LINK_REQ_RECONFIG;   // 0x08 (bit3)
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"no fire on frame 1");
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"no fire on frame 2");
-        CHECK( hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"fire on frame 3 (hold reached)");
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"no re-fire while held");
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"no re-fire while held (2)");
-        CHECK(!hisense_recommission_debounce(0,  &streak,&latched,HOLD),"clear re-arms (no fire)");
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"re-arm: no fire frame 1");
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"re-arm: no fire frame 2");
-        CHECK( hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"re-arm: fire frame 3");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"no fire on frame 1");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"no fire on frame 2");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==1,"fire on frame 3 (hold reached)");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"no re-fire while held");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"no re-fire while held (2)");
+        // Falling edge of a FIRED assertion = the user left "77" -> -1 so the handler can shut
+        // the window it opened. Previously this returned "nothing happened" and the window was
+        // left open for its full duration with the panel no longer showing 77.
+        CHECK(hisense_recommission_debounce(0,  &streak,&latched,HOLD)==-1,"clear after fire reports CANCEL");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"re-arm: no fire frame 1");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"re-arm: no fire frame 2");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==1,"re-arm: fire frame 3");
+        CHECK(hisense_recommission_debounce(0,  &streak,&latched,HOLD)==-1,"re-arm: clear reports CANCEL");
+
+        // A glitch that never reached the hold must report NOTHING on clear: no window was
+        // opened, so cancelling one would be spurious (and on the ameba half would send a
+        // needless exit-77 frame).
+        uint8_t s2 = 0; bool l2 = false;
+        CHECK(hisense_recommission_debounce(REQ,&s2,&l2,HOLD)==0,"glitch: no fire");
+        CHECK(hisense_recommission_debounce(0,  &s2,&l2,HOLD)==0,"glitch clear reports NOTHING (never fired)");
     }
     {   // a lone 1-frame glitch/echo, repeated, must NEVER fire
         uint8_t streak = 0; bool latched = false; const uint8_t HOLD = 3;

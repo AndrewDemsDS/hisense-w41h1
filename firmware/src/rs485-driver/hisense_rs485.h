@@ -403,10 +403,19 @@ typedef void (*hisense_status_cb_t)(const HisenseState *state);
 #define HISENSE_RECOMMISSION_HOLD_FRAMES 3    // ~3s at ~1Hz: a held "77" press, not a glitch/echo
 typedef void (*hisense_recommission_cb_t)(uint8_t reason);
 
+/* Fires when a previously-reported "77" request is DE-asserted, i.e. the user took the A/C back
+ * out of recommission mode from the panel/remote. The handler should shut whatever commissioning
+ * window it opened: without this the window stays open for its full duration after the user has
+ * backed out, leaving the device joinable with nothing on the panel to show it. Only fires if the
+ * assertion actually fired first -- a glitch that never passed the debounce reports nothing. */
+typedef void (*hisense_recommission_cancel_cb_t)(void);
+
 // Pure debounce step for the "77" request (exposed for host tests). Advances the
 // streak/latch state for one 0x1E reply's masked request bits and returns true
 // exactly once, when the request has been asserted for >= hold_frames in a row.
-bool hisense_recommission_debounce(uint8_t req_bits, uint8_t *streak,
+// Returns +1 exactly once per sustained assertion, -1 on the falling edge of an assertion that
+// had fired (user left "77"), 0 otherwise. Mirrors hisense_link_health_edge's edge convention.
+int hisense_recommission_debounce(uint8_t req_bits, uint8_t *streak,
                                    bool *latched, uint8_t hold_frames);
 
 // Pure reply-class gate (exposed for host tests). A transaction accepts a parsed
@@ -462,6 +471,27 @@ int hisense_init(hisense_status_cb_t cb);
 // Registers the "77" recommission callback (optional; see the typedef above).
 // Safe to call before or after hisense_init.
 void hisense_set_recommission_cb(hisense_recommission_cb_t cb);
+
+// Optional: notified when the A/C drops the "77" request (see the typedef above).
+void hisense_set_recommission_cancel_cb(hisense_recommission_cancel_cb_t cb);
+
+/* Last masked "77" request bits seen in a 0x1E LINK reply (payload[4] & RECOMMISSION mask).
+ * Diagnostic: without this there is no way to tell "the A/C never asked" from "we missed it",
+ * which is exactly the ambiguity that made a non-functioning 77 impossible to debug. */
+uint8_t hisense_get_last_link_req(void);
+
+/* Copies the whole last 0x1E LINK reply into `out` (up to `cap`), returns the length. The
+ * documented "77" bit map is UNPROVEN on this unit -- seven remote presses never moved
+ * payload[4] -- so dump the frame and diff it across a press to find the byte that really
+ * changes, rather than trusting the RE map. */
+uint8_t hisense_get_last_link_frame(uint8_t *out, uint8_t cap);
+
+/* Fires on EVERY 0x1E LINK reply, with the raw frame. These replies are infrequent and
+ * irregular, so a polled snapshot cannot catch a change caused by a button press -- by the time
+ * you poll, either nothing new arrived or the interesting frame is long gone. A push callback
+ * lets a bench log every reply continuously and diff them offline. */
+typedef void (*hisense_link_frame_cb_t)(const uint8_t *frame, uint8_t len);
+void hisense_set_link_frame_cb(hisense_link_frame_cb_t cb);
 
 // Report provisioning state to the A/C: while true, the outbound 0x1E carries
 // prov_status=1 (payload[4] bit3), which lights "77" on the A/C panel (the module
