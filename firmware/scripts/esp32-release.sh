@@ -127,25 +127,33 @@ build() {
   # on a node whose Matter link is flaky, that console is the only way in. Default to debug here
   # for exactly that reason. Opt out with ESP32_FLAVOUR=release (an env var, NOT a --release
   # flag -- this script does not parse one).
-  # Recovery credentials. HISENSE_OTA_URL (the Identify=88 fetch target) and
-  # HISENSE_BREAKGLASS_TOKEN (the :2324 listener) are both baked at BUILD time and are the only
-  # two remote ways back into this node. Building without them silently ships an image whose
-  # break-glass listener never opens and whose OTA URL is a non-resolvable placeholder -- the
-  # device looks healthy and is quietly USB-only.
+  # Recovery credentials. The Identify=88 OTA fetch target and the :2324 break-glass listener are
+  # both baked at BUILD time and are the only two remote ways back into this node. Building without
+  # them silently ships an image whose listener never opens and whose OTA URL is a non-resolvable
+  # placeholder: the device looks healthy and is quietly USB-only.
   #
-  # That is not hypothetical: every esp32 build on 2026-07-20 used bare `idf.py build`, so node 35
-  # ended up with :2324 closed and a placeholder URL, and could not be updated over the air at all.
-  # Fail loudly instead. Set them in ota-release.env (gitignored) or the environment; override
-  # deliberately with ESP32_ALLOW_NO_RECOVERY=1 for a throwaway bench image.
+  # Not hypothetical -- every esp32 build on 2026-07-20 used bare `idf.py build`, so node 35 ended
+  # up with :2324 closed and a placeholder URL and could not be updated over the air at all.
+  #
+  # NAME NORMALISATION MATTERS HERE. ota-release.env defines BREAKGLASS_TOKEN / BREAKGLASS_PORT
+  # (what ota-release.sh reads for the ameba half), but esp32-matter/CMakeLists.txt consumes
+  # HISENSE_BREAKGLASS_TOKEN / HISENSE_BREAKGLASS_PORT. Checking one name and exporting neither is
+  # a guard that PASSES while still building a listener-less image -- the very failure it exists to
+  # catch. So: accept either spelling, then export the HISENSE_* names the build actually reads.
+  : "${HISENSE_BREAKGLASS_TOKEN:=${BREAKGLASS_TOKEN:-}}"
+  : "${HISENSE_BREAKGLASS_PORT:=${BREAKGLASS_PORT:-}}"
+  export HISENSE_OTA_URL HISENSE_BREAKGLASS_TOKEN HISENSE_BREAKGLASS_PORT
+
   if [ "${ESP32_ALLOW_NO_RECOVERY:-0}" != "1" ]; then
     [ -n "${HISENSE_OTA_URL:-}" ] \
       || die "HISENSE_OTA_URL is unset -- the Identify=88 OTA fetch would bake a placeholder URL and
      the image would be USB-only. Set it (ota-release.env or the environment), or pass
      ESP32_ALLOW_NO_RECOVERY=1 if you really want a bench image with no remote recovery."
-    [ -n "${BREAKGLASS_TOKEN:-}" ] \
-      || die "BREAKGLASS_TOKEN is unset -- the :2324 break-glass listener fails closed and never
-     opens, so the image would be USB-only. Set it, or pass ESP32_ALLOW_NO_RECOVERY=1."
-    say "recovery credentials present (OTA URL + break-glass token baked in)"
+    [ -n "${HISENSE_BREAKGLASS_TOKEN:-}" ] \
+      || die "no break-glass token (set BREAKGLASS_TOKEN or HISENSE_BREAKGLASS_TOKEN) -- the :2324
+     listener fails closed and never opens, so the image would be USB-only. Set it, or pass
+     ESP32_ALLOW_NO_RECOVERY=1."
+    say "recovery credentials present (OTA URL + break-glass token exported to the build)"
   else
     say "WARNING: ESP32_ALLOW_NO_RECOVERY=1 -- image will have NO remote recovery path (USB only)"
   fi
