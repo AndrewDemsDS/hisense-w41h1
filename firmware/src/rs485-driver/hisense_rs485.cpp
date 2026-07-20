@@ -34,6 +34,14 @@ static hisense_status_cb_t  s_status_cb        = NULL;
 static TaskHandle_t         s_bus_task_handle  = NULL;
 static bool                 s_initialized      = false;
 static hisense_recommission_cb_t s_recommission_cb = NULL;
+static hisense_recommission_cancel_cb_t s_recommission_cancel_cb = NULL;
+/* Whole last 0x1E LINK reply, so a bench can diff the frame across a "77" press instead of
+ * trusting the RE bit map. Seven presses left the documented bit (payload[4] 0x08/0x20) at
+ * zero, so the map is unproven on THIS unit and the raw frame is the only ground truth. */
+static uint8_t             s_last_link_frame[40];
+static uint8_t             s_last_link_frame_len = 0;
+static hisense_link_frame_cb_t s_link_frame_cb = NULL;
+static bool                s_recommission_momentary = false;  // latched by a 1-frame pulse
 static uint8_t              s_last_link_req    = 0;   // masked "77" request bits from the last 0x1E reply (diag)
 static uint8_t              s_link_req_streak  = 0;   // consecutive 0x1E replies with the request asserted (debounce)
 static bool                s_recommission_latched = false; // fired for the current sustained assertion (fire-once)
@@ -1047,8 +1055,8 @@ static void hisense_consume_status(size_t n)
 // so a single reflected/glitched frame must not trip a commissioning window. The
 // request stays asserted while the user holds "77", so a few frames of hold cleanly
 // separates a deliberate press from a 1-frame artefact. Not static: linked by tests.
-bool hisense_recommission_debounce(uint8_t req_bits, uint8_t *streak,
-                                   bool *latched, uint8_t hold_frames)
+int hisense_recommission_debounce(uint8_t req_bits, uint8_t *streak,
+                                  bool *latched, uint8_t hold_frames)
 {
     if (req_bits != 0) {
         if (*streak < 0xFF) {
@@ -1056,13 +1064,19 @@ bool hisense_recommission_debounce(uint8_t req_bits, uint8_t *streak,
         }
         if (*streak >= hold_frames && !*latched) {
             *latched = true;
-            return true;                 // fire once for this sustained assertion
+            return 1;                    // fire once for this sustained assertion
         }
-        return false;
+        return 0;
     }
-    *streak  = 0;                        // request cleared -> reset + re-arm
+    /* Request cleared. If we had LATCHED, the user has taken the A/C out of "77" -- report the
+     * falling edge so the handler can shut the commissioning window it opened. Without this the
+     * window stayed open for its full duration after the user backed out, leaving the device
+     * joinable with nothing on the panel to indicate it. A clear that arrives BEFORE the latch
+     * (a glitch that never fired) reports nothing, because no window was ever opened. */
+    bool was_latched = *latched;
+    *streak  = 0;                        // reset + re-arm
     *latched = false;
-    return false;
+    return was_latched ? -1 : 0;
 }
 
 // Link-health edge detector (pure -> host-testable, #56). `silent` = link currently
@@ -1092,6 +1106,12 @@ static void hisense_check_link_reply(size_t n)
     if (n <= 17 || s_msg_buf[13] != 0x1E) {
         return;
     }
+    {   // snapshot the whole reply for bench diffing (see s_last_link_frame)
+        size_t cp = (n < sizeof(s_last_link_frame)) ? n : sizeof(s_last_link_frame);
+        for (size_t i = 0; i < cp; i++) s_last_link_frame[i] = s_msg_buf[i];
+        s_last_link_frame_len = (uint8_t) cp;
+        if (s_link_frame_cb != NULL) s_link_frame_cb(s_last_link_frame, s_last_link_frame_len);
+    }
     uint8_t req = s_msg_buf[17] & HISENSE_LINK_REQ_RECOMMISSION;   // payload[4]
     // Re-arm if the request TYPE changes while still asserted (e.g. RECONFIG->SMARTCFG
     // with no intervening all-zero frame) so the second reason isn't swallowed by the latch.
@@ -1099,12 +1119,59 @@ static void hisense_check_link_reply(size_t n)
         s_link_req_streak = 0;
         s_recommission_latched = false;
     }
-    if (hisense_recommission_debounce(req, &s_link_req_streak, &s_recommission_latched,
-                                      HISENSE_RECOMMISSION_HOLD_FRAMES)
-        && s_recommission_cb != NULL) {
-        s_recommission_cb(s_msg_buf[17]);
+    /* Hold requirement depends on WHICH bit asserted, because only one of them can echo.
+     *
+     * bit3 (0x08, reconfig) doubles as our OUTBOUND prov_status, so a reflected or glitched
+     * frame could trip a commissioning window -- it needs the multi-frame hold.
+     *
+     * bit5 (0x20, smartcfg) is never transmitted by us: it is purely an A/C-originated request,
+     * so there is nothing to echo and nothing to debounce. Measured on the bench 2026-07-20:
+     * this unit asserts 0x20 for EXACTLY ONE ~1Hz frame per remote press (three presses ->
+     * LINK#93, #100, #114, never consecutive). Requiring 3 consecutive frames therefore made
+     * "77" impossible to trigger here -- the handler never once fired. Fire on the first frame.
+     *
+     * Mixed bits keep the conservative hold: if 0x08 is present the echo risk is present too. */
+    uint8_t hold = (req == HISENSE_LINK_REQ_SMARTCFG) ? 1 : HISENSE_RECOMMISSION_HOLD_FRAMES;
+    int edge = hisense_recommission_debounce(req, &s_link_req_streak, &s_recommission_latched,
+                                             hold);
+    if (edge > 0) {
+        /* Remember whether this was a MOMENTARY request. The A/C pulses 0x20 for one frame and
+         * drops it, so the very next reply is a falling edge -- which must NOT be read as "the
+         * user left 77", or the window would slam shut ~1s after opening. A sustained request
+         * (0x08 held for the hold period) genuinely does track the user's state, so its falling
+         * edge IS meaningful. */
+        s_recommission_momentary = (hold == 1);
+        if (s_recommission_cb != NULL) s_recommission_cb(s_msg_buf[17]);
+    } else if (edge < 0) {
+        bool momentary = s_recommission_momentary;
+        s_recommission_momentary = false;
+        if (!momentary && s_recommission_cancel_cb != NULL) {
+            s_recommission_cancel_cb();  // sustained request released -> user left "77"
+        }
     }
     s_last_link_req = req;   // retained for diagnostics + reason-change detection
+}
+
+void hisense_set_link_frame_cb(hisense_link_frame_cb_t cb)
+{
+    s_link_frame_cb = cb;
+}
+
+uint8_t hisense_get_last_link_frame(uint8_t *out, uint8_t cap)
+{
+    uint8_t n = s_last_link_frame_len < cap ? s_last_link_frame_len : cap;
+    for (uint8_t i = 0; i < n; i++) out[i] = s_last_link_frame[i];
+    return n;
+}
+
+uint8_t hisense_get_last_link_req(void)
+{
+    return s_last_link_req;
+}
+
+void hisense_set_recommission_cancel_cb(hisense_recommission_cancel_cb_t cb)
+{
+    s_recommission_cancel_cb = cb;
 }
 
 void hisense_set_recommission_cb(hisense_recommission_cb_t cb)

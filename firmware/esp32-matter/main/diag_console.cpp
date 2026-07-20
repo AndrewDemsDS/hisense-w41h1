@@ -48,13 +48,17 @@ static void print_state(FILE *out, const HisenseState *st)
     fprintf(out,
         " power=%d mode=%s set=%dC in=%dC out=%dC coil=%dC fan=0x%02x comp=%dHz\r\n"
         " eco=%d turbo=%d mute=%d sleep=%d(0x%02x) vswing=%d hswing=%d heatrelay=%d I=%u V=%u\r\n"
-        " unit=%s (#5, byte26 bit1; UNVERIFIED -- flip the remote to F and diff `raw`)\r\n",
+        " unit=%s (#5, byte26 bit1; UNVERIFIED -- flip the remote to F and diff `raw`)\r\n"
+        " link_req=0x%02x (\"77\" bits in the 0x1E reply: 0x08 reconfig / 0x20 smartcfg;\r\n"
+        "   0x00 = the A/C is NOT asking to recommission -- if it stays 0 while you press the\r\n"
+        "   remote sequence, the request never reaches us and the fault is upstream of Matter)\r\n",
         st->power_on, mode_name(st->mode), st->setpoint_c, st->indoor_temp_c,
         st->outdoor_temp_c, st->coil_temp_c, st->fan_raw, st->compressor_freq,
         st->eco_on, st->turbo_on, st->mute_on, st->sleep_on, st->sleep_raw,
         st->vswing_on, st->hswing_on, st->heat_relay_on,
         (unsigned)st->current_raw, (unsigned)st->voltage_raw,
-        st->temp_unit_f ? "F" : "C");
+        st->temp_unit_f ? "F" : "C",
+        (unsigned) hisense_get_last_link_req());
 }
 
 extern "C" void diag_on_status(const HisenseState *st)
@@ -284,6 +288,30 @@ static int cmd_faults(int, char **)
 // Hexdump the last status frame. The point of this is falsifiability: the fault map is
 // derived from firmware, so being able to read the actual bytes is what lets someone
 // prove it wrong. Also the general tool for mapping any still-unknown status field.
+/* Hexdump the last 0x1E LINK reply. This is the frame that is SUPPOSED to carry the "77"
+ * recommission request in payload[4] (byte 17). On this unit seven remote presses never moved
+ * that byte, so dump the whole frame, press the sequence, dump again, and diff: whichever byte
+ * actually changes is the real request. Beats trusting an RE bit map that has already been
+ * wrong elsewhere in this protocol. */
+static int cmd_link(int, char **)
+{
+    uint8_t f[40];
+    uint8_t n = hisense_get_last_link_frame(f, sizeof(f));
+    if (!n) { printf("no 0x1E LINK reply captured yet\r\n"); return 0; }
+    printf("last 0x1E LINK reply, %u bytes:\r\n", (unsigned) n);
+    // int counters on purpose: `k < i + 16` promotes the RHS to int, so a uint8_t k could not
+    // reach it once i+16 passed 255 and the loop would never terminate (CodeQL, PR #68).
+    for (int i = 0; i < (int) n; i += 16) {
+        printf("  %3d:", i);
+        for (int k = i; k < i + 16 && k < (int) n; k++) printf(" %02x", f[k]);
+        printf("\r\n");
+    }
+    printf("  payload[4] = byte[17] = 0x%02x   (documented \"77\" bits: 0x08 reconfig / 0x20 smartcfg)\r\n",
+           n > 17 ? f[17] : 0);
+    printf("  masked link_req = 0x%02x\r\n", (unsigned) hisense_get_last_link_req());
+    return 0;
+}
+
 static int cmd_raw(int, char **)
 {
     uint8_t f[HISENSE_RAW_SNAPSHOT_LEN];
@@ -442,6 +470,7 @@ extern "C" void diag_console_start(void)
             { "bootreason", "#12: why the module last rebooted (brownout / panic / OTA)",
                           NULL, cmd_bootreason, NULL, NULL },
             { "raw",      "hexdump the last status frame (falsifies the fault map)", NULL, cmd_raw, NULL, NULL },
+            { "link",     "hexdump the last 0x1E LINK reply (find the real \"77\" bit)", NULL, cmd_link, NULL, NULL },
             { "tx",       "#52 bench probe: tx <offset> <value> — current frame, one byte overridden",
                           NULL, cmd_tx, NULL, NULL },
         };

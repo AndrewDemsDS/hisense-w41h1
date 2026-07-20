@@ -171,15 +171,26 @@ int main() {
         uint8_t streak = 0; bool latched = false;
         const uint8_t HOLD = 3;
         const uint8_t REQ  = HISENSE_LINK_REQ_RECONFIG;   // 0x08 (bit3)
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"no fire on frame 1");
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"no fire on frame 2");
-        CHECK( hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"fire on frame 3 (hold reached)");
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"no re-fire while held");
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"no re-fire while held (2)");
-        CHECK(!hisense_recommission_debounce(0,  &streak,&latched,HOLD),"clear re-arms (no fire)");
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"re-arm: no fire frame 1");
-        CHECK(!hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"re-arm: no fire frame 2");
-        CHECK( hisense_recommission_debounce(REQ,&streak,&latched,HOLD),"re-arm: fire frame 3");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"no fire on frame 1");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"no fire on frame 2");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==1,"fire on frame 3 (hold reached)");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"no re-fire while held");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"no re-fire while held (2)");
+        // Falling edge of a FIRED assertion = the user left "77" -> -1 so the handler can shut
+        // the window it opened. Previously this returned "nothing happened" and the window was
+        // left open for its full duration with the panel no longer showing 77.
+        CHECK(hisense_recommission_debounce(0,  &streak,&latched,HOLD)==-1,"clear after fire reports CANCEL");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"re-arm: no fire frame 1");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==0,"re-arm: no fire frame 2");
+        CHECK(hisense_recommission_debounce(REQ,&streak,&latched,HOLD)==1,"re-arm: fire frame 3");
+        CHECK(hisense_recommission_debounce(0,  &streak,&latched,HOLD)==-1,"re-arm: clear reports CANCEL");
+
+        // A glitch that never reached the hold must report NOTHING on clear: no window was
+        // opened, so cancelling one would be spurious (and on the ameba half would send a
+        // needless exit-77 frame).
+        uint8_t s2 = 0; bool l2 = false;
+        CHECK(hisense_recommission_debounce(REQ,&s2,&l2,HOLD)==0,"glitch: no fire");
+        CHECK(hisense_recommission_debounce(0,  &s2,&l2,HOLD)==0,"glitch clear reports NOTHING (never fired)");
     }
     {   // a lone 1-frame glitch/echo, repeated, must NEVER fire
         uint8_t streak = 0; bool latched = false; const uint8_t HOLD = 3;
@@ -640,6 +651,48 @@ int main() {
               (int)HISENSE_CMD_HEADER_LEN,0xFF)>0, "accept first payload offset");
         CHECK(hisense_build_command_override(&c,ovr,sizeof(ovr),
               (int)HISENSE_CMD_CHK_OFFSET-1,0xFF)>0, "accept last payload offset");
+    }
+
+    // ---- display unit switch: byte 23, atomic with the setpoint (#5) ---------
+    // Bench-confirmed 2026-07-20 on the esp32 node: byte 23 = 0x01 -> Celsius,
+    // 0x03 -> Fahrenheit (status byte 26 bit 1 follows). The A/C does NOT rescale
+    // its stored setpoint on a unit change, so the unit byte and the re-encoded
+    // setpoint MUST ride in the same frame -- a bare switch reinterpreted 22 C as
+    // 22 F = -6 C and the unit drove toward it at full compressor.
+    {
+        printf("[display unit switch byte 23]\n");
+        // Shadow already re-encoded for the TARGET unit, exactly as the driver does.
+        HisenseCommand to_f = { HISENSE_MODE_COOL, 0, true, HISENSE_FAN_LOW,
+                                HISENSE_SWING_OFF, HISENSE_SWING_OFF, HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
+        to_f.setpoint = hisense_c_to_f(22);
+        CHECK(to_f.setpoint == 72, "22 C re-encodes to 72 F");
+        CHECK(hisense_setpoint_in_range(to_f.setpoint, true), "72 F is inside the F range");
+
+        uint8_t f[64];
+        size_t n = hisense_build_command_override(&to_f, f, sizeof(f), 23, 0x03);
+        CHECK(n > 0, "F switch frame builds");
+        CHECK(f[23] == 0x03, "byte 23 carries 0x03 for Fahrenheit");
+        CHECK(f[19] == (uint8_t)((72 << 1) | 1), "same frame carries the F setpoint (atomic)");
+
+        HisenseCommand to_c = { HISENSE_MODE_COOL, 22, false, HISENSE_FAN_LOW,
+                                HISENSE_SWING_OFF, HISENSE_SWING_OFF, HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
+        n = hisense_build_command_override(&to_c, f, sizeof(f), 23, 0x01);
+        CHECK(n > 0, "C switch frame builds");
+        CHECK(f[23] == 0x01, "byte 23 carries 0x01 for Celsius");
+        CHECK(f[19] == (uint8_t)((22 << 1) | 1), "same frame carries the C setpoint (atomic)");
+
+        // The regression that made this dangerous: a setpoint encoded in F while the
+        // builder is told the frame is Celsius fails the 16..32 check and the whole
+        // frame is dropped, which is what silently killed every combined command.
+        HisenseCommand bad = to_f;
+        bad.fahrenheit = false;                 // the matter_drivers.cpp:964 clobber
+        CHECK(!hisense_setpoint_in_range(bad.setpoint, false), "72 is out of the C range");
+        CHECK(hisense_build_command(&bad, f, sizeof(f)) == 0,
+              "F setpoint mislabelled as C is REJECTED, not silently sent");
+
+        // And the hazard itself: the raw byte is not rescaled by the A/C, so the same
+        // number means a wildly different temperature after a bare unit flip.
+        CHECK(hisense_f_to_c(22) == -6, "raw 22 read as F is -6 C (the bare-switch hazard)");
     }
 
     printf("== %d passed, %d failed ==\n", g_pass, g_fail);
