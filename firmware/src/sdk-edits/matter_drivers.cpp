@@ -175,6 +175,12 @@ static void hisense_send_power(bool on)
  * Downlink: A/C status -> Matter. hisense_on_status runs in the bus task, so
  * it only snapshots + posts an event; the handler does the CHIP Sets.
  * ------------------------------------------------------------------------ */
+// Forward decls: the "77" machinery lives further down, but hisense_on_status (above it) needs
+// to know whether a window is open so remote activity can close it.
+static bool recommission_window_is_open(void);
+static bool recommission_grace_expired(void);
+static void recommission_user_cancel(intptr_t);
+
 static void hisense_on_status(const HisenseState *state)
 {
     if (state == NULL || !state->valid) {
@@ -182,6 +188,24 @@ static void hisense_on_status(const HisenseState *state)
     }
     // Bus-task write vs the CHIP-task snapshot reads (uplink echo-guard / downlink):
     // guard the multi-word store so a reader can't observe a torn HisenseState (#57).
+    /* Stock behaviour: ANY remote button exits "77", not just pressing the pattern again. We
+     * cannot see IR, but every press lands on the bus as a change to a user-settable field.
+     *
+     * SWING IS EXCLUDED ON PURPOSE -- the gesture that ENTERS "77" is "Horizon Airflow x6", i.e.
+     * the swing button, so including vswing/hswing makes entering the mode instantly exit it
+     * (measured on the esp32 half: window open at 95424 ms, killed at 95674 ms, every attempt).
+     * Temperatures / compressor / current are excluded too: they drift every frame. */
+    if (recommission_window_is_open() && s_status.valid && recommission_grace_expired()) {
+        const bool user_touched =
+            state->power_on   != s_status.power_on   || state->mode      != s_status.mode      ||
+            state->setpoint_c != s_status.setpoint_c || state->fan_raw   != s_status.fan_raw   ||
+            state->eco_on     != s_status.eco_on     || state->turbo_on  != s_status.turbo_on  ||
+            state->mute_on    != s_status.mute_on    || state->sleep_raw != s_status.sleep_raw;
+        if (user_touched) {
+            ChipLogProgress(DeviceLayer, "A/C driven from the remote during \"77\" -> EXIT");
+            chip::DeviceLayer::PlatformMgr().ScheduleWork(recommission_user_cancel, 0);
+        }
+    }
     hisense_diag_on_status(state);   // #23: snapshot for the debug console (no-op in release)
     taskENTER_CRITICAL();
     s_status = *state;
@@ -269,10 +293,16 @@ static void matter_power_meter_update(const HisenseState &st)
  * ------------------------------------------------------------------------ */
 static const uint32_t     kRecommissionWindowSec = 180;
 static bool               s_recommission_pending = false;
+/* Remote activity is ignored until this deadline after the window opens: the "77" entry gesture
+ * ("Horizon Airflow x6") is itself a burst of remote presses. Without it the mode cancels itself
+ * the instant it opens -- measured on the esp32 half, every single attempt. */
+static const uint32_t     kRecommissionGraceMs   = 6000;
+static uint32_t           s_recommission_grace_ms = 0;
 static chip::FabricIndex  s_old_fabrics[16];
 static uint8_t            s_old_fabric_count     = 0;
 
 static void recommission_timeout(chip::System::Layer *, void *);
+static void recommission_finish(bool paired, const char *why);
 
 // FabricTable delegate: a NEW fabric committing while our window is open means the
 // re-pair succeeded -> drop the old fabric(s) and stand down.
@@ -298,20 +328,70 @@ public:
 };
 static RecommissionFabricDelegate s_recommission_delegate;
 
-// Window expired with no new pairing -> keep the old fabric, tell the A/C to exit "77".
-static void recommission_timeout(chip::System::Layer *, void *)
+/* Single teardown for EVERY exit from "77" so the device is never left half-in it. Three ways
+ * out -- expired, the user left "77" on the A/C, or the re-pair succeeded -- and the first two
+ * must restore the previous state exactly: old fabric intact, CHIP window shut, BLE advert back
+ * to the commissioned-node resting state, A/C told to drop "77".
+ *
+ * The expiry path previously only flipped flags and sent exit_77: it left the CHIP commissioning
+ * window OPEN and (when Wi-Fi was down) BLE advertising indefinitely, so a lapsed window stayed
+ * pairable long after the panel had stopped showing anything. */
+static void recommission_finish(bool paired, const char *why)
 {
     if (!s_recommission_pending) return;
     s_recommission_pending = false;
     s_old_fabric_count     = 0;
-    ChipLogProgress(DeviceLayer, "recommission: window expired, no new pairing -> revert + signal A/C out of 77");
-    hisense_send_exit_77();
+    chip::DeviceLayer::SystemLayer().CancelTimer(recommission_timeout, nullptr);
+
+    auto &cwm = chip::Server::GetInstance().GetCommissioningWindowManager();
+    if (cwm.IsCommissioningWindowOpen()) cwm.CloseCommissioningWindow();
+
+    CHIP_ERROR berr = chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false);
+    if (berr != CHIP_NO_ERROR) {
+        ChipLogError(DeviceLayer, "recommission: SetBLEAdvertisingEnabled(false) failed: %" CHIP_ERROR_FORMAT,
+                     berr.Format());
+    }
+    if (!paired) hisense_send_exit_77();   // on success the delegate already cleared it
+    ChipLogProgress(DeviceLayer, "recommission: %s (%s) -> window closed, BLE advert off",
+                    paired ? "paired" : "reverted", why);
+}
+
+// Window expired with no new pairing -> keep the old fabric, tell the A/C to exit "77".
+static void recommission_timeout(chip::System::Layer *, void *)
+{
+    recommission_finish(false, "window expired");
+}
+
+/* The user took the A/C out of "77" themselves (pressed the pattern again, or any other remote
+ * button). Runs in Matter context via ScheduleWork. */
+static bool recommission_window_is_open(void)
+{
+    return s_recommission_pending;
+}
+
+static bool recommission_grace_expired(void)
+{
+    return (uint32_t) chip::System::SystemClock().GetMonotonicTimestamp().count()
+           > s_recommission_grace_ms;
+}
+
+static void recommission_user_cancel(intptr_t)
+{
+    recommission_finish(false, "user left 77");
 }
 
 // Matter-context entry (via ScheduleWork): snapshot fabrics + open the window + arm the timer.
 static void recommission_open_window(intptr_t)
 {
-    if (s_recommission_pending) return;   // a window is already open
+    /* TOGGLE, matching the stock dongle: pressing the pattern again while a window is open EXITS
+     * "77". The A/C pulses the request for one frame per press, so enter and exit look identical
+     * on the wire -- the only difference is whether we already hold a window. Without this the
+     * documented way out did nothing and the device stayed joinable for the full window. */
+    if (s_recommission_pending) {
+        ChipLogProgress(DeviceLayer, "\"77\" pressed again while the window is open -> EXIT");
+        recommission_finish(false, "user pressed 77 again");
+        return;
+    }
     s_old_fabric_count = 0;
     for (auto it = chip::Server::GetInstance().GetFabricTable().begin();
          it != chip::Server::GetInstance().GetFabricTable().end(); ++it) {
@@ -349,9 +429,19 @@ static void recommission_open_window(intptr_t)
     s_recommission_pending = true;
     chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(kRecommissionWindowSec),
                                                 recommission_timeout, nullptr);
+    s_recommission_grace_ms = (uint32_t) chip::System::SystemClock().GetMonotonicTimestamp().count()
+                              + kRecommissionGraceMs;
     hisense_set_provisioning(true);   // report prov=1 -> A/C lights "77" while the window is open
     ChipLogProgress(DeviceLayer, "recommission: window open %lus, snapshot %u old fabric(s)",
                     (unsigned long) kRecommissionWindowSec, s_old_fabric_count);
+}
+
+/* The A/C dropped a SUSTAINED "77" request (user left the mode). Momentary pulses are filtered
+ * in the driver, so this only fires for a genuine release. */
+static void matter_driver_on_recommission_cancel(void)
+{
+    ChipLogProgress(DeviceLayer, "A/C left \"77\" -> closing the commissioning window");
+    chip::DeviceLayer::PlatformMgr().ScheduleWork(recommission_user_cancel, 0);
 }
 
 // Driver "77" callback (bus-task context) -> defer the real work to Matter context.
@@ -466,6 +556,7 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
 
     chip::Server::GetInstance().GetFabricTable().AddFabricDelegate(&s_recommission_delegate);  // F1: swap fabric on new pairing
     hisense_set_recommission_cb(matter_driver_on_recommission);   // F1: remote "77" -> open window
+    hisense_set_recommission_cancel_cb(matter_driver_on_recommission_cancel);  // user left "77"
     hisense_set_link_cb(matter_driver_on_link);                   // #56: bus silence -> mark unavailable
     hisense_set_features_cb(matter_driver_on_features);           // 0x66/40 feature flags -> device log
     hisense_diag_console_start();                                 // #23: :2323 console, DEBUG flavour only
