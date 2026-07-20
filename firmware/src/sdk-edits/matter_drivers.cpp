@@ -95,6 +95,7 @@ static const chip::EndpointId kSleepEp = 6;  // OnOff -> sleep profile (on=Gener
 static const chip::EndpointId kHeatRelayEp = 7;  // BooleanState (Contact Sensor) -> aux/PTC electric-heat relay (#51)
 static const chip::EndpointId kCoilTempEp  = 8;  // TemperatureMeasurement -> outdoor/condenser coil temp (#51)
 static const chip::EndpointId kDisplayEp   = 9;  // OnOff -> panel display (#19 parity; on=0xC0/off=0x40 @20)
+static const chip::EndpointId kFaultEp     = 10; // BooleanState (Contact Sensor) -> aggregate A/C fault (#38)
 
 /* --------------------------------------------------------------------------
  * Command shadow: incrementally updated by each Matter write, flushed as one
@@ -483,6 +484,7 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     set_ha_entity_label(kHeatRelayEp,   "Aux Heat");
     set_ha_entity_label(kCoilTempEp,    "Coil");
     set_ha_entity_label(kDisplayEp,     "Display");
+    set_ha_entity_label(kFaultEp,       "Fault");
     HISENSE_INIT_STAGE(4);
 
     /* ep9 Display boots ON (#33) via the .zap OnOff defaultValue -- deliberately NOT an ember
@@ -1243,6 +1245,17 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // standard binary_sensor (#51). Decoded from status offset-35 bit4; normally 0,
         // asserts in cold/defrost. Standard cluster => HA-readable (unlike the mfg attrs).
         BoolAttr::StateValue::Set(kHeatRelayEp, st.heat_relay_on);
+
+        // #38: aggregate fault flag -> BooleanState (Contact Sensor, ep10). HisenseFaults.any
+        // already ORs the raw fault bytes minus HISENSE_FAULT_NONFAULT_PROTECT (byte 66 bit 7
+        // reads 0x80 on a healthy unit -- it is a mode flag, not a fault). Do NOT re-derive this
+        // from the named bools.
+        {
+            HisenseFaults fl;
+            if (hisense_get_faults(&fl)) {
+                BoolAttr::StateValue::Set(kFaultEp, fl.any);
+            }
+        }
 
         // #5: report the A/C panel's display unit via TUIC (ep1). READ SIDE ONLY -- the
         // write path is rejected by the write-access override below until the byte-23
