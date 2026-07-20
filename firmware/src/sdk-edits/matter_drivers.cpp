@@ -1221,6 +1221,15 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
             size_t  len = hisense_build_command_override(&s_cmd, frame, sizeof(frame),
                                                          23, want_f ? 0x03 : 0x01);
             if (len > 0 && hisense_send_frame(frame, len)) {
+                /* Arm the resync hold, exactly as hisense_flush_command() does on a successful
+                 * send. This frame bypasses that helper (it needs the byte-23 override), so
+                 * without arming it here the next status snapshot could resync s_cmd back to the
+                 * OLD unit + setpoint before the A/C's status reflects the change -- putting the
+                 * shadow and the panel back out of step, which is the whole hazard the atomic
+                 * write exists to avoid. The esp32 half already calls arm_sync_hold() here.
+                 * (Copilot review, PR #68.) */
+                s_sync_hold_until = chip::System::SystemClock().GetMonotonicTimestamp()
+                                  + chip::System::Clock::Milliseconds32(HISENSE_SYNC_HOLD_MS);
                 ChipLogProgress(DeviceLayer, "display unit -> %s (setpoint re-encoded %d C -> %d)",
                                 want_f ? "F" : "C", (int) keep_c, (int) s_cmd.setpoint);
             } else {
