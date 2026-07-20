@@ -299,9 +299,11 @@ static int cmd_link(int, char **)
     uint8_t n = hisense_get_last_link_frame(f, sizeof(f));
     if (!n) { printf("no 0x1E LINK reply captured yet\r\n"); return 0; }
     printf("last 0x1E LINK reply, %u bytes:\r\n", (unsigned) n);
-    for (uint8_t i = 0; i < n; i += 16) {
-        printf("  %3u:", (unsigned) i);
-        for (uint8_t k = i; k < i + 16 && k < n; k++) printf(" %02x", f[k]);
+    // int counters on purpose: `k < i + 16` promotes the RHS to int, so a uint8_t k could not
+    // reach it once i+16 passed 255 and the loop would never terminate (CodeQL, PR #68).
+    for (int i = 0; i < (int) n; i += 16) {
+        printf("  %3d:", i);
+        for (int k = i; k < i + 16 && k < (int) n; k++) printf(" %02x", f[k]);
         printf("\r\n");
     }
     printf("  payload[4] = byte[17] = 0x%02x   (documented \"77\" bits: 0x08 reconfig / 0x20 smartcfg)\r\n",

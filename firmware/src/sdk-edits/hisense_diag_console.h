@@ -227,6 +227,35 @@ static void diag_cmd_sys(int sock)
 
 /* Hexdump the last status frame. This is what falsified the fault map's base on the esp32
  * side within a minute of flashing, so it matters more than the decode does. */
+/* Hexdump the last 0x1E LINK reply -- the frame that carries the "77" recommission request in
+ * payload[4] (byte 17). Ported from the esp32 console because this is what actually solved "77"
+ * there: the request is a ONE-FRAME pulse, so a polled snapshot cannot catch it and "the A/C
+ * never asks" is indistinguishable from "we looked at the wrong moment". The living-room unit
+ * asserts 0x20 (smartcfg); this unit is UNCONFIRMED and may differ. */
+static void diag_cmd_link(int sock)
+{
+    uint8_t f[40];
+    char    b[HISENSE_DIAG_BUF];
+    uint8_t n = hisense_get_last_link_frame(f, (uint8_t) sizeof(f));
+    int     o = 0;
+    if (!n) { diag_say(sock, "no 0x1E LINK reply captured yet\r\n"); return; }
+    o += snprintf(b + o, sizeof(b) - o, "last 0x1E LINK reply, %u bytes:\r\n", (unsigned) n);
+    /* int counters on purpose: `k < i + 16` promotes the RHS to int, so a uint8_t k could not
+     * reach it once i+16 passed 255 and the loop would never terminate (CodeQL, PR #68). */
+    for (int i = 0; i < (int) n && o < (int) sizeof(b) - 64; i += 16) {
+        o += snprintf(b + o, sizeof(b) - o, "  %3d:", i);
+        for (int k = i; k < i + 16 && k < (int) n; k++)
+            o += snprintf(b + o, sizeof(b) - o, " %02x", f[k]);
+        o += snprintf(b + o, sizeof(b) - o, "\r\n");
+    }
+    snprintf(b + o, sizeof(b) - o,
+             "  payload[4]=byte[17]=0x%02x  masked link_req=0x%02x\r\n"
+             "  (\"77\" bits: 0x08 reconfig / 0x20 smartcfg. 0x00 while pressing the remote\r\n"
+             "   sequence => the request never reaches us; the fault is upstream of Matter.)\r\n",
+             n > 17 ? f[17] : 0, (unsigned) hisense_get_last_link_req());
+    diag_say(sock, b);
+}
+
 static void diag_cmd_raw(int sock)
 {
     uint8_t f[HISENSE_RAW_SNAPSHOT_LEN];
@@ -258,6 +287,7 @@ static void diag_handle_line(int sock, char *line)
     if (!strcmp(line, "poll"))              { diag_cmd_poll(sock);     return; }
     if (!strcmp(line, "faults"))            { diag_cmd_faults(sock);   return; }
     if (!strcmp(line, "raw"))               { diag_cmd_raw(sock);      return; }
+    if (!strcmp(line, "link"))              { diag_cmd_link(sock);     return; }
     if (!strcmp(line, "sys"))               { diag_cmd_sys(sock);      return; }
     if (!strcmp(line, "version")) {
         char b[128];
@@ -268,7 +298,7 @@ static void diag_handle_line(int sock, char *line)
     }
     if (!strcmp(line, "help")) {
         diag_say(sock,
-            "commands: features | poll | faults | raw | sys | version | help | quit\r\n"
+            "commands: features | poll | faults | raw | link | sys | version | help | quit\r\n"
             "  features  cached 0x66/40 ProductType capability flags for THIS unit\r\n"
             "  poll      last decoded A/C status frame\r\n"
             "  faults    decoded f_e_* fault bits (#38; base PROVISIONAL)\r\n"
