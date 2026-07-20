@@ -40,6 +40,14 @@ static void hisense_breakglass_start(void);
 #include <protocols/interaction_model/StatusCode.h>
 #include <app/server/Server.h>                 // Server / fabric table / commissioning window (F1 "77")
 #include <app/server/CommissioningWindowManager.h>
+/* lwIP BSD sockets, UNCONDITIONALLY. The #61 break-glass listener below ships in BOTH flavours
+ * and needs socket()/bind()/listen()/accept()/setsockopt() plus SOL_SOCKET/SO_REUSEADDR, but the
+ * only include of this header used to sit inside hisense_diag_console.h's HISENSE_DEBUG_BUILD
+ * guard. Debug builds therefore compiled and RELEASE builds did not -- and since every local
+ * build this cycle was --debug, it only surfaced in CI, which builds release by default.
+ * (The extern "C" lwip_read/write/close decls further down predate this and stay: they are the
+ * Realtek OTA path's own helpers.) */
+#include <lwip/sockets.h>
 #include <platform/ConnectivityManager.h>      // SetBLEAdvertisingEnabled (spec-compliant on-network re-pair)
 #include <credentials/FabricTable.h>
 #include <platform/DeviceInfoProvider.h>       // UserLabel "ha_entitylabel" -> HA entity names
