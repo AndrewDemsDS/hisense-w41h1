@@ -191,16 +191,20 @@ static void hisense_on_status(const HisenseState *state)
     /* Stock behaviour: ANY remote button exits "77", not just pressing the pattern again. We
      * cannot see IR, but every press lands on the bus as a change to a user-settable field.
      *
-     * SWING IS EXCLUDED ON PURPOSE -- the gesture that ENTERS "77" is "Horizon Airflow x6", i.e.
-     * the swing button, so including vswing/hswing makes entering the mode instantly exit it
-     * (measured on the esp32 half: window open at 95424 ms, killed at 95674 ms, every attempt).
-     * Temperatures / compressor / current are excluded too: they drift every frame. */
+     * Swing IS included, and the grace period is what makes that safe. The entry gesture is
+     * "Horizon Airflow x6" -- the swing button -- so its changes arrive for a beat after the
+     * window opens and briefly self-cancelled it on the esp32 half (open 95424 ms, killed 95674
+     * ms). Excluding swing on top of the grace removed the exit route that was actually working:
+     * pressing the pattern again is a SWING press, and this A/C appears to emit its 0x20 pulse
+     * only on ENTRY, so the toggle never fires and nothing but expiry got out of "77".
+     * Temperatures / compressor / current stay excluded: they drift every frame. */
     if (recommission_window_is_open() && s_status.valid && recommission_grace_expired()) {
         const bool user_touched =
             state->power_on   != s_status.power_on   || state->mode      != s_status.mode      ||
             state->setpoint_c != s_status.setpoint_c || state->fan_raw   != s_status.fan_raw   ||
             state->eco_on     != s_status.eco_on     || state->turbo_on  != s_status.turbo_on  ||
-            state->mute_on    != s_status.mute_on    || state->sleep_raw != s_status.sleep_raw;
+            state->mute_on    != s_status.mute_on    || state->sleep_raw != s_status.sleep_raw ||
+            state->vswing_on  != s_status.vswing_on  || state->hswing_on != s_status.hswing_on;
         if (user_touched) {
             ChipLogProgress(DeviceLayer, "A/C driven from the remote during \"77\" -> EXIT");
             chip::DeviceLayer::PlatformMgr().ScheduleWork(recommission_user_cancel, 0);

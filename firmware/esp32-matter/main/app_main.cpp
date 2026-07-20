@@ -525,19 +525,22 @@ static void on_status(const HisenseState *st)
      * the unit from Matter -- and if something is, the user is plainly not mid-pairing. */
     if (recommission_window_is_open() && s_status.valid &&
         esp_timer_get_time() > s_recommission_grace_us) {
-        /* SWING IS EXCLUDED ON PURPOSE. The gesture that ENTERS "77" is "Horizon Airflow x6" --
-         * i.e. the swing button. Including vswing/hswing here made entering the mode instantly
-         * exit it: measured window-open at 95424 ms, killed at 95674 ms, every single attempt.
-         * The entry gesture can never be the exit signal.
+        /* Swing IS included, and the grace period above is what makes that safe.
          *
-         * The grace period covers the same trap from the other side: the swing changes from the
-         * final presses keep arriving for a beat after the window opens, and any of the other
-         * fields could be mid-settle too. */
+         * History worth keeping: the entry gesture is "Horizon Airflow x6" -- the swing button --
+         * so swing changes arrive for a beat after the window opens and briefly self-cancelled it
+         * (open 95424 ms, killed 95674 ms). The first fix excluded swing AND added the grace. The
+         * grace alone covers the settle; excluding swing on top of it removed the exit route that
+         * was actually working, because pressing the pattern again is a SWING press and this A/C
+         * appears to emit its 0x20 pulse only on ENTRY. Result: nothing exited "77" but expiry.
+         *
+         * So: keep swing, rely on the grace. Stock exits on any button, and swing is a button. */
         const bool user_touched =
             st->power_on   != s_status.power_on   || st->mode      != s_status.mode      ||
             st->setpoint_c != s_status.setpoint_c || st->fan_raw   != s_status.fan_raw   ||
             st->eco_on     != s_status.eco_on     || st->turbo_on  != s_status.turbo_on  ||
-            st->mute_on    != s_status.mute_on    || st->sleep_raw != s_status.sleep_raw;
+            st->mute_on    != s_status.mute_on    || st->sleep_raw != s_status.sleep_raw ||
+            st->vswing_on  != s_status.vswing_on  || st->hswing_on != s_status.hswing_on;
         if (user_touched) {
             ESP_LOGW(TAG, "A/C driven from the remote during the \"77\" window -> treating as EXIT");
             chip::DeviceLayer::PlatformMgr().ScheduleWork(recommission_user_cancel, 0);
