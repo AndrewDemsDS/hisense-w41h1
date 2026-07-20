@@ -48,6 +48,12 @@
 static HisenseState s_diag_status;
 static bool         s_diag_have_status;
 static uint32_t     s_diag_frames;
+// #: counts downlink hand-off attempts (see diag_cmd_sys). Incremented by hisense_on_status in
+// matter_drivers.cpp right where it posts, so a stalled consumer is distinguishable from a
+// producer that never runs.
+static uint32_t     s_diag_downlink_posts;
+static uint32_t     s_diag_downlink_runs;   // handler ENTRIES (consumer side)
+static bool         s_diag_init_completed;  // driver init task reached its end
 
 static void hisense_diag_on_status(const HisenseState *st)
 {
@@ -159,6 +165,59 @@ static void diag_cmd_faults(int sock)
     diag_say(sock, b);
 }
 
+/* Why the Matter attributes can be stale while THIS console shows live data.
+ *
+ * Symptom that motivated it: the bus decoded thousands of frames and `poll` showed correct
+ * values, while every status-derived Matter attribute sat at its .zap default (LocalTemperature
+ * 0, outdoor/coil 0) so HA rendered the sensors wrong/unavailable. Crucially none of them were
+ * NULL, which rules out the link-lost path (that calls SetNull) and points at the downlink event
+ * never reaching the handler at all.
+ *
+ * hisense_on_status() runs in the BUS task and hands off via PostDownlinkEvent() ->
+ * DownlinkEventQueue -> DownlinkTask -> matter_driver_downlink_update_handler(). That hand-off
+ * fails SILENTLY in two ways, neither of which surfaces anywhere: the queue is NULL (posted
+ * before matter_interaction_start_downlink() ran), or the queue fills because DownlinkTask was
+ * never created (its xTaskCreate can fail on a heap-starved device, and this firmware adds
+ * several tasks of its own).
+ *
+ * s_diag_downlink_posts counts hand-off attempts from our side. Compare it with the frame count
+ * from `poll` and with free heap:
+ *   posts climbing + attributes stale  -> the consumer side is the problem (task/queue)
+ *   posts NOT climbing                 -> hisense_on_status is not reaching the post
+ *   free heap very low                 -> task creation plausibly failed at boot
+ */
+/* The SDK's downlink plumbing, read directly. These are non-static globals in
+ * core/matter_interaction.cpp, so we can observe them rather than infer them. Three rounds of
+ * inference (heap exhaustion, task-create failure, stack overflow) were all refuted by
+ * measurement; this reports the queue itself.
+ *   queue NULL              -> matter_interaction_start_downlink() never created it
+ *   queue non-NULL, depth 0 -> posts are not landing (wrong context / send failing)
+ *   depth pinned at 10      -> queue full, consumer dead
+ */
+extern QueueHandle_t DownlinkEventQueue;
+extern TaskHandle_t  DownlinkTaskHandle;
+extern uint8_t       downlink_init;
+
+static void diag_cmd_sys(int sock)
+{
+    char b[HISENSE_DIAG_BUF];
+    snprintf(b, sizeof(b),
+        "downlink posts: %u   handler runs: %u   (posts climbing + runs flat => dead consumer)\r\n"
+        "free heap: %u bytes   min-ever free: %u bytes\r\n"
+        "downlink queue: %s  depth: %u  task: %s  init_flag: %u\r\n"
+        "driver init completed: %s   (false => init task died mid-init, so start_downlink never ran)\r\n"
+        "  queue NULL => start_downlink never created it; depth pinned at 10 => consumer dead\r\n",
+        (unsigned) s_diag_downlink_posts, (unsigned) s_diag_downlink_runs,
+        (unsigned) xPortGetFreeHeapSize(),
+        (unsigned) xPortGetMinimumEverFreeHeapSize(),
+        DownlinkEventQueue ? "OK" : "NULL",
+        DownlinkEventQueue ? (unsigned) uxQueueMessagesWaiting(DownlinkEventQueue) : 0u,
+        DownlinkTaskHandle ? "OK" : "NULL",
+        (unsigned) downlink_init,
+        s_diag_init_completed ? "yes" : "NO");
+    diag_say(sock, b);
+}
+
 /* Hexdump the last status frame. This is what falsified the fault map's base on the esp32
  * side within a minute of flashing, so it matters more than the decode does. */
 static void diag_cmd_raw(int sock)
@@ -192,6 +251,7 @@ static void diag_handle_line(int sock, char *line)
     if (!strcmp(line, "poll"))              { diag_cmd_poll(sock);     return; }
     if (!strcmp(line, "faults"))            { diag_cmd_faults(sock);   return; }
     if (!strcmp(line, "raw"))               { diag_cmd_raw(sock);      return; }
+    if (!strcmp(line, "sys"))               { diag_cmd_sys(sock);      return; }
     if (!strcmp(line, "version")) {
         char b[128];
         snprintf(b, sizeof(b), "AmebaZ2 Hisense A/C, softwareVersion %u (DEBUG flavour)\r\n",
@@ -201,11 +261,12 @@ static void diag_handle_line(int sock, char *line)
     }
     if (!strcmp(line, "help")) {
         diag_say(sock,
-            "commands: features | poll | faults | raw | version | help | quit\r\n"
+            "commands: features | poll | faults | raw | sys | version | help | quit\r\n"
             "  features  cached 0x66/40 ProductType capability flags for THIS unit\r\n"
             "  poll      last decoded A/C status frame\r\n"
             "  faults    decoded f_e_* fault bits (#38; base PROVISIONAL)\r\n"
-            "  raw       hexdump the last status frame (what falsifies the map)\r\n");
+            "  raw       hexdump the last status frame (what falsifies the map)\r\n"
+            "  sys       downlink hand-off counter + free heap (why Matter attrs go stale)\r\n");
         return;
     }
     diag_say(sock, "unknown command (try `help`)\r\n");

@@ -188,6 +188,12 @@ static void hisense_on_status(const HisenseState *state)
     AppEvent ev;
     ev.Type = AppEvent::kEventType_Downlink_Aircon_Status;
     ev.mHandler = matter_driver_downlink_update_handler;
+    // Count the hand-off ATTEMPT (see diag_cmd_sys). PostDownlinkEvent drops the event silently
+    // when the queue is NULL or full, so without this there is no way to tell a producer that
+    // never runs from a consumer that never drains. Debug flavour only; compiled out in release.
+#ifdef HISENSE_DEBUG_BUILD
+    s_diag_downlink_posts++;
+#endif
     PostDownlinkEvent(&ev);
 }
 
@@ -420,6 +426,30 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
         ChipLogError(DeviceLayer, "hisense_init failed!");
         return CHIP_ERROR_INTERNAL;
     }
+    /* Create the downlink/uplink queues + tasks HERE, before anything below can block.
+     *
+     * The example entry point calls matter_interaction_start_downlink()/_uplink() only AFTER this
+     * function returns. Measured on node 14: this function never returns (the init task blocks
+     * part-way through, after the UserLabels and around the EPM instance init), so BOTH were never
+     * created: queue NULL, task NULL, init_flag 0, and 0 handler runs against 58 posts. The
+     * consequences were silent and total -- every status-derived attribute frozen at its .zap
+     * default (LocalTemperature/outdoor/coil reading 0 while the bus decoded fine), and every HA
+     * command accepted by the CHIP stack yet never reaching the A/C, because PostDownlinkEvent and
+     * the uplink path both no-op on a NULL queue.
+     *
+     * Starting them early makes the transport independent of anything later in this function. Both
+     * are safe to call before the rest of init: they only allocate a queue and spawn a task, and
+     * the handlers they dispatch to snapshot state that is already valid by this point.
+     * If the example later calls them again the second call simply replaces the globals; with this
+     * function blocking it never gets that far anyway. (docs/10 §17)
+     */
+    if (matter_interaction_start_downlink() != CHIP_NO_ERROR) {
+        ChipLogError(DeviceLayer, "early matter_interaction_start_downlink failed");
+    }
+    if (matter_interaction_start_uplink() != CHIP_NO_ERROR) {
+        ChipLogError(DeviceLayer, "early matter_interaction_start_uplink failed");
+    }
+
     chip::Server::GetInstance().GetFabricTable().AddFabricDelegate(&s_recommission_delegate);  // F1: swap fabric on new pairing
     hisense_set_recommission_cb(matter_driver_on_recommission);   // F1: remote "77" -> open window
     hisense_set_link_cb(matter_driver_on_link);                   // #56: bus silence -> mark unavailable
@@ -465,6 +495,12 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     chip::app::Clusters::ModeSelect::setSupportedModesManager(&s_sleep_modes_mgr);
 
     ChipLogProgress(DeviceLayer, "Hisense RS-485 aircon driver initialized on ep%d", kAirconEp);
+    // Proves the init TASK survived to the end. If this is false at runtime the task died
+    // mid-init (stack), which also means matter_interaction_start_downlink() -- the statement
+    // right after this function returns -- never ran, leaving the downlink queue NULL.
+#ifdef HISENSE_DEBUG_BUILD
+    s_diag_init_completed = true;
+#endif
     return err;
 }
 
@@ -1060,6 +1096,13 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
  * ------------------------------------------------------------------------ */
 void matter_driver_downlink_update_handler(AppEvent *aEvent)
 {
+    // Counts handler ENTRIES. Paired with the post counter in diag_cmd_sys: posts climbing while
+    // this stays flat means the event never reached the consumer (dead DownlinkTask -> the 10-slot
+    // queue fills -> every later post is dropped silently), which is the failure that froze every
+    // status-derived attribute at its .zap default while the bus and console stayed healthy.
+#ifdef HISENSE_DEBUG_BUILD
+    s_diag_downlink_runs++;
+#endif
     chip::DeviceLayer::PlatformMgr().LockChipStack();
 
     switch (aEvent->Type)

@@ -195,6 +195,51 @@ apply_ota_hardening() {
     say "  injected MRP OTA-hardening into Ameba CHIPPlatformConfig.h (#76): RETRANS 4->8, active 300->500, idle 500->800ms"
   fi
 }
+
+apply_example_task_stack() {
+  # The example init task is created with 2048 WORDS (8 KB), copied from the stock light example
+  # whose init sets a couple of attributes. Ours does far more on that stack: nine UserLabel
+  # writes, an ember write, the ElectricalPowerMeasurement delegate + Instance init, and the
+  # ModeSelect manager. Overflowing it kills the task SILENTLY, part-way through, which is why
+  # the labels appear (they run early) while ElectricalPowerMeasurement reads return
+  # InteractionModelError Failure(0x1) and, fatally, the NEXT statement after the init call --
+  # matter_interaction_start_downlink() -- never runs. With no downlink queue, every
+  # PostDownlinkEvent from the bus task hits the `if (queue != NULL)` guard and is dropped, so
+  # every status-derived Matter attribute stays frozen at its .zap default forever while the A/C
+  # bus and the diag console look perfectly healthy. Measured on-device: queue NULL, task NULL,
+  # init_flag 0, 50 posts, 0 handler runs. (docs/10 §17)
+  # Idempotent + self-healing across a full clean / SDK reinstall.
+  local f="$EXAMPLE_DIR/example_matter_room_air_conditioner.cpp"
+  [ -f "$f" ] || die "example entry point not found: $f"
+  if grep -q 'example_matter_room_air_conditioner_task"), 8192' "$f"; then
+    say "  example init task stack already raised to 8192 words"
+  else
+    sed -i 's/example_matter_room_air_conditioner_task"), 2048/example_matter_room_air_conditioner_task"), 8192/' "$f"
+    grep -q 'example_matter_room_air_conditioner_task"), 8192' "$f"       || die "failed to raise example init task stack in $f"
+    say "  raised example init task stack 2048 -> 8192 words (our init is far heavier than the stock example's)"
+  fi
+}
+
+apply_downlink_stack() {
+  # The SDK creates DownlinkTask with a 1024-WORD (4 KB) stack, sized for the stock examples whose
+  # downlink handlers set one or two attributes. Ours writes dozens of ember attributes, drives the
+  # EPM delegate and logs, all on that stack. A stack overflow there kills the task silently:
+  # PostDownlinkEvent keeps "succeeding" until the 10-slot queue fills, then drops every event with
+  # no consumer left, so the A/C bus and the diag console stay perfectly healthy while every
+  # status-derived Matter attribute sits frozen at its .zap default. That is exactly the observed
+  # signature on node 14 (see docs/10 §17).
+  # Idempotent + self-healing across a full clean / SDK reinstall, same as apply_ota_hardening.
+  local f="$SDK_ROOT/ameba-rtos-z2/component/common/application/matter/core/matter_interaction.cpp"
+  [ -f "$f" ] || die "matter_interaction.cpp not found: $f"
+  if grep -q 'xTaskCreate(DownlinkTask, "Downlink", 4096' "$f"; then
+    say "  DownlinkTask stack already raised to 4096 words"
+  else
+    sed -i 's/xTaskCreate(DownlinkTask, "Downlink", 1024/xTaskCreate(DownlinkTask, "Downlink", 4096/' "$f"
+    grep -q 'xTaskCreate(DownlinkTask, "Downlink", 4096' "$f" \
+      || die "failed to raise DownlinkTask stack in $f"
+    say "  raised DownlinkTask stack 1024 -> 4096 words (our downlink handler is far heavier than the stock examples')"
+  fi
+}
 build() {
   load_env
   # --debug selects the bench flavour (#22): adds the :2323 console. Release is the default, so
@@ -212,6 +257,8 @@ build() {
   lint_zap
   sync_mirror
   apply_ota_hardening   # #76: MRP tuning into the Ameba CHIP platform config (idempotent)
+  apply_downlink_stack  # DownlinkTask stack: 4KB overflows our heavy handler (idempotent)
+  apply_example_task_stack  # init task stack: 8KB dies mid-init -> no downlink queue (idempotent)
   # Reproducible-build path scrub (public release): rewrite the absolute build path baked into
   # __FILE__ / debug info so the compiled image carries generic /build/... paths instead of the
   # developer's $HOME (e.g. .../connectedhomeip/src/app/server/Server.cpp leaked the full path).
