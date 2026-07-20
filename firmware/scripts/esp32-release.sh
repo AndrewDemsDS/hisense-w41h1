@@ -121,9 +121,29 @@ build() {
     say "#82: no prior release recorded -- first build, nothing to preserve"
   fi
 
+  # Flavour. node 28 runs the DEBUG flavour on purpose (it is the dev unit), and the :2323 diag
+  # console + `tx` bench probe are gated on CONFIG_HISENSE_DEBUG_BUILD, which lives ONLY in
+  # sdkconfig.debug. Building without that overlay silently ships an image with no console -- and
+  # on a node whose Matter link is flaky, that console is the only way in. Default to debug here
+  # for exactly that reason; pass --release to opt out.
+  local sdkdef="sdkconfig.defaults"
+  if [ "${ESP32_FLAVOUR:-debug}" = "debug" ]; then
+    sdkdef="sdkconfig.defaults;sdkconfig.debug"
+    say "flavour: DEBUG (:2323 console + tx probe)"
+  else
+    say "flavour: RELEASE (no console) -- node 28 normally wants debug"
+  fi
+
   say "idf.py build ($semver, int $int)"
-  ( cd "$ESP" && idf.py set-target esp32 && idf.py build )
+  ( cd "$ESP" && idf.py -DSDKCONFIG_DEFAULTS="$sdkdef" set-target esp32 \
+              && idf.py -DSDKCONFIG_DEFAULTS="$sdkdef" build )
   [ -f "$NEW_BIN" ] || die "build produced no $NEW_BIN"
+  # Fail loudly rather than shipping a consoleless image by accident.
+  if [ "${ESP32_FLAVOUR:-debug}" = "debug" ]; then
+    grep -q '^CONFIG_HISENSE_DEBUG_BUILD=y' "$ESP/sdkconfig" \
+      || die "debug flavour requested but CONFIG_HISENSE_DEBUG_BUILD is not set in the generated sdkconfig -- the :2323 console would be MISSING from this image"
+    say "verified: CONFIG_HISENSE_DEBUG_BUILD=y (console present)"
+  fi
 
   local archive="$IMG/esp32-hisense_ac_matter-v$semver.bin"
   mkdir -p "$IMG"; cp "$NEW_BIN" "$archive"

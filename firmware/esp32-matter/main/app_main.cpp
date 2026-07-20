@@ -382,6 +382,54 @@ static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t e
             flush_cmd();
         }
 
+    } else if (cluster_id == ThermostatUserInterfaceConfiguration::Id) {
+        /* #5: panel display unit (C/F). Bench-confirmed on THIS node 2026-07-20 with the `tx`
+         * probe: command byte 23 = 0x01 selects Celsius, 0x03 selects Fahrenheit, and status
+         * byte 26 bit 1 follows in the next frame. Both directions verified.
+         *
+         * The switch MUST be atomic with a setpoint rewrite. The A/C stores its setpoint as a
+         * raw byte in whatever unit the panel shows and does NOT rescale it on a unit change,
+         * so a bare switch reinterprets the same number. Both failure modes were reproduced on
+         * this unit: 22 (as C) became 22 F = -6 C and it drove toward that at full compressor;
+         * and when the reinterpreted value falls out of range instead, the builder rejects the
+         * shadow and the A/C drops EVERY combined command -- including the one that would undo
+         * it, which needed a Matter setpoint write to clear.
+         *
+         * hisense_build_command_override patches one pre-checksum byte while carrying the rest
+         * of the shadow, so setting the shadow for the TARGET unit and overriding byte 23 emits
+         * a single frame with no window in between. Same approach as the ameba half. */
+        if (attribute_id ==
+            ThermostatUserInterfaceConfiguration::Attributes::TemperatureDisplayMode::Id) {
+            // 0 = Celsius, 1 = Fahrenheit. Raw values rather than the enum type: esp-matter's
+            // CHIP revision does not expose the ::Enums:: namespace here, and the read path
+            // above already writes this attribute as esp_matter_enum8(temp_unit_f ? 1 : 0).
+            const bool want_f = (val->val.u8 == 1);
+            if (!st.valid) return ESP_OK;
+            if (st.temp_unit_f == want_f) return ESP_OK;    // echo guard
+
+            /* st.setpoint_c is always Celsius (the decoder normalises it) -- the only correct
+             * source for the re-encode. */
+            const int8_t keep_c = (int8_t) matter_clamp_setpoint_c(st.setpoint_c);
+            s_cmd.fahrenheit = want_f;
+            s_cmd.setpoint   = want_f ? hisense_c_to_f(keep_c) : keep_c;
+
+            uint8_t f[HISENSE_CMD_FRAME_LEN + 2];
+            size_t  n = hisense_build_command_override(&s_cmd, f, sizeof(f),
+                                                       23, want_f ? 0x03 : 0x01);
+            if (n > 0 && hisense_send_frame(f, n)) {
+                arm_sync_hold();
+                ESP_LOGI(TAG, "display unit -> %s (setpoint re-encoded %d C -> %d)",
+                         want_f ? "F" : "C", (int) keep_c, (int) s_cmd.setpoint);
+            } else {
+                /* Restore the shadow so a later flush cannot ship a setpoint encoded for a unit
+                 * the A/C never adopted. */
+                s_cmd.fahrenheit = st.temp_unit_f;
+                s_cmd.setpoint   = st.temp_unit_f ? hisense_c_to_f(keep_c) : keep_c;
+                ESP_LOGE(TAG, "display unit change REJECTED (n=%u) -- shadow restored",
+                         (unsigned) n);
+            }
+        }
+
     } else if (cluster_id == FanControl::Id) {
         // #4: no fan changes while the A/C is OFF (fan is meaningless with the unit off).
         if (st.valid && !st.power_on) return ESP_OK;
@@ -515,18 +563,26 @@ static void on_status(const HisenseState *st)
     set_attr(s_ep_sleep, ModeSelect::Id, ModeSelect::Attributes::CurrentMode::Id,
              esp_matter_uint8((uint8_t)(st->sleep_raw / 2)));
     // Aux/PTC electric-heat relay -> BooleanState contact sensor (ep7).
-    // #5: report the A/C's display unit. Read side only; writes are rejected (see the
-    // write-access override) until the byte-23 command is bench-verified.
+    // #5: report the A/C's display unit. Writes are now accepted too (see the TUIC handler in
+    // the attribute-update path); this is the read-back that keeps the attribute honest when
+    // the unit is changed from the IR remote or the panel.
     set_attr(s_ep_id, ThermostatUserInterfaceConfiguration::Id,
              ThermostatUserInterfaceConfiguration::Attributes::TemperatureDisplayMode::Id,
              esp_matter_enum8(st->temp_unit_f ? 1 : 0));
-    // #38: aggregate fault flag. HisenseFaults.any already ORs the raw fault bytes (minus
-    // the one bit proven to be a mode flag), so do not re-derive it from the named bools.
+    /* #38: aggregate fault -> BooleanState (ep10) as a NORMALLY-CLOSED loop: true = closed =
+     * healthy, false = open = fault. Inverted deliberately. Matter contact-sensor semantics are
+     * "true = closed" and Home Assistant inverts on read (binary_sensor.py
+     * `device_to_ha=lambda x: not x`), so publishing fl.any directly rendered a HEALTHY unit as
+     * "Problem" in HA. A normally-closed alarm loop is the standard convention for this, so the
+     * value now reads correctly in HA and in any other controller. Mirrors the ameba half.
+     *
+     * HisenseFaults.any already ORs the raw fault bytes (minus the one bit proven to be a mode
+     * flag), so do not re-derive it from the named bools. */
     {
         HisenseFaults fl;
         if (hisense_get_faults(&fl)) {
             set_attr(s_ep_fault, BooleanState::Id, BooleanState::Attributes::StateValue::Id,
-                     esp_matter_bool(fl.any));
+                     esp_matter_bool(!fl.any));
         }
     }
     set_attr(s_ep_aux, BooleanState::Id, BooleanState::Attributes::StateValue::Id,
@@ -1049,21 +1105,25 @@ extern "C" void diag_get_boot_reason(int *code, const char **text)
  * Status::UnsupportedAccess, so a HA write fails VISIBLY rather than appearing to succeed and
  * silently reverting on the next status poll.
  *
- * When the bench check passes (tx 23 0x03 / tx 23 0x01, watch the panel, confirm byte 26
- * bit 1 follows), implement the builder, wire the uplink, and define
- * HISENSE_TUIC_WRITE_VERIFIED to lift this. */
+ * TemperatureDisplayMode is now WRITABLE: the bench check passed on this node 2026-07-20
+ * (tx 23 0x01 -> Celsius, tx 23 0x03 -> Fahrenheit, status byte 26 bit 1 followed both times)
+ * and the TUIC handler above changes the unit and the setpoint in one frame.
+ *
+ * KeypadLockout stays rejected. It exists because the cluster requires it, but no bus command
+ * for it has been identified, so a write would silently do nothing -- exactly the ep9-Display
+ * failure (#33) this hook exists to prevent. */
 // NOTE: C++ linkage, NOT extern "C". The SDK declares this weak hook as a C++ symbol, so an
 // extern "C" definition here does not override it (and fails to compile against the decl).
 bool emberAfAttributeWriteAccessCallback(chip::EndpointId endpoint,
                                          chip::ClusterId clusterId,
                                          chip::AttributeId attributeId)
 {
-#ifndef HISENSE_TUIC_WRITE_VERIFIED
-    if (clusterId == ThermostatUserInterfaceConfiguration::Id) {
-        return false;   // read-only until the byte-23 command is proven on hardware
+    if (clusterId == ThermostatUserInterfaceConfiguration::Id &&
+        attributeId ==
+            ThermostatUserInterfaceConfiguration::Attributes::KeypadLockout::Id) {
+        return false;   // no bus command identified for keypad lock
     }
-#endif
-    (void) endpoint; (void) attributeId;
+    (void) endpoint;
     return true;
 }
 

@@ -1288,7 +1288,12 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // aux/PTC electric-heat relay -> BooleanState (Contact Sensor ep7) so HA gets a
         // standard binary_sensor (#51). Decoded from status offset-35 bit4; normally 0,
         // asserts in cold/defrost. Standard cluster => HA-readable (unlike the mfg attrs).
-        BoolAttr::StateValue::Set(kHeatRelayEp, st.heat_relay_on);
+        /* #51: aux/PTC electric-heat relay -> BooleanState (Contact Sensor, ep7), INVERTED for
+         * the same reason as the fault endpoint below: Home Assistant flips BooleanState on read
+         * (binary_sensor.py `device_to_ha=lambda x: not x`), so publishing heat_relay_on directly
+         * made HA show the relay as "off"/closed while it was actually engaged. Publishing the
+         * complement makes HA read "on"/detected exactly when the relay is engaged. */
+        BoolAttr::StateValue::Set(kHeatRelayEp, !st.heat_relay_on);
 
         /* #38: aggregate fault -> BooleanState (Contact Sensor, ep10), as a NORMALLY-CLOSED
          * loop: StateValue true = contact closed = healthy, false = open = fault.
