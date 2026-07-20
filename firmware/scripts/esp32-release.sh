@@ -101,6 +101,10 @@ load_env() {
 
 # ---- build (issue #82: archive-before-overwrite, then archive the fresh image) --------------
 build() {
+  # Load ota-release.env here too. build() used not to, so the recovery-credential guard below
+  # could not see BREAKGLASS_TOKEN from the env file and rejected an otherwise correct build --
+  # the guard was reading an environment the rest of the script populates later.
+  load_env
   command -v idf.py >/dev/null || die "idf.py not on PATH -- source the IDF + esp-matter env first"
   if [ "${ESP32_ALLOW_IDF_MISMATCH:-0}" = "1" ]; then
     say "WARNING: ESP32_ALLOW_IDF_MISMATCH=1 -- toolchain check skipped (lock v$(lock_idf_version) vs live v$(live_idf_version))"
