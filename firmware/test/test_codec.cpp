@@ -209,6 +209,39 @@ int main() {
               "smartcfg bit fires after hold");
     }
 
+    // ---- "77" re-entry lockout gate (#69) ----
+    // The press that closes the window (horizontal swing = remote-activity exit AND the "77"
+    // entry gesture) emits its own fresh 0x20 pulse a frame later; inside the lockout the gate
+    // must strip ONLY 0x20 so that pulse cannot re-open the window the app just closed.
+    printf("[recommission re-entry lockout #69]\n");
+    {
+        const uint32_t UNTIL = 100000;   // lockout deadline in ticks
+        // Inside the lockout: 0x20 stripped (pulse swallowed), 0x08 untouched, mixed -> 0x08.
+        CHECK(hisense_smartcfg_lockout_mask(HISENSE_LINK_REQ_SMARTCFG, 50000, UNTIL) == 0,
+              "lockout: lone 0x20 pulse gated to 0");
+        CHECK(hisense_smartcfg_lockout_mask(HISENSE_LINK_REQ_RECONFIG, 50000, UNTIL) ==
+              HISENSE_LINK_REQ_RECONFIG, "lockout: 0x08 passes through untouched");
+        CHECK(hisense_smartcfg_lockout_mask(HISENSE_LINK_REQ_RECOMMISSION, 50000, UNTIL) ==
+              HISENSE_LINK_REQ_RECONFIG, "lockout: mixed 0x28 -> 0x08 only");
+        // Deadline itself is expired (signed delta == 0 is not "in the future").
+        CHECK(hisense_smartcfg_lockout_mask(HISENSE_LINK_REQ_SMARTCFG, UNTIL, UNTIL) ==
+              HISENSE_LINK_REQ_SMARTCFG, "at the deadline the lockout has expired");
+        // After the lockout: the same pulse fires normally again (deliberate re-entry works).
+        CHECK(hisense_smartcfg_lockout_mask(HISENSE_LINK_REQ_SMARTCFG, 110000, UNTIL) ==
+              HISENSE_LINK_REQ_SMARTCFG, "after lockout: 0x20 passes through");
+        // No lockout armed (boot state): nothing is ever stripped.
+        CHECK(hisense_smartcfg_lockout_mask(HISENSE_LINK_REQ_SMARTCFG, 0, 0) ==
+              HISENSE_LINK_REQ_SMARTCFG, "until==0 (never armed) passes 0x20");
+        // Tick wrap: deadline just past the wrap is still in the future for a `now` near it.
+        CHECK(hisense_smartcfg_lockout_mask(HISENSE_LINK_REQ_SMARTCFG, 0xFFFFFFF0u, 50) == 0,
+              "lockout survives tick wrap");
+        // Gated-to-0 frame feeds the debounce a quiet frame: no fire, no spurious cancel.
+        uint8_t streak = 0; bool latched = false; const uint8_t HOLD = 1;
+        uint8_t g = hisense_smartcfg_lockout_mask(HISENSE_LINK_REQ_SMARTCFG, 50000, UNTIL);
+        CHECK(hisense_recommission_debounce(g,&streak,&latched,HOLD) == 0,
+              "gated pulse produces no debounce fire/cancel");
+    }
+
     // ---- reply-class correlation gate (#60) ----
     printf("[transact reply-class gate]\n");
     CHECK( hisense_reply_class_ok(0x66,0x66),"status reply matches expected 0x66");

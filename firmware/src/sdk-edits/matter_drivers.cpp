@@ -373,6 +373,10 @@ static void recommission_finish(bool paired, const char *why)
                      berr.Format());
     }
     if (!paired) hisense_send_exit_77();   // on success the delegate already cleared it
+    /* #69: the press that closed this window can carry its own fresh 0x20 pulse (horizontal
+     * swing is both the remote-activity exit and the "77" entry gesture). Arm the driver's
+     * re-entry lockout on EVERY close route so that pulse cannot re-open the window. */
+    hisense_recommission_window_closed();
     ChipLogProgress(DeviceLayer, "recommission: %s (%s) -> window closed, BLE advert off",
                     paired ? "paired" : "reverted", why);
 }
@@ -1453,24 +1457,21 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
             }
         }
 
-        // #5: report the A/C panel's display unit via TUIC (ep1). READ SIDE ONLY -- the
-        // write path is rejected by the write-access override below until the byte-23
-        // command is bench-verified. Writing the wrong unit is not cosmetic: a setpoint
-        // sent in C to a panel in F is interpreted as F (23C -> 23F -> the unit drives
-        // toward -5C at full compressor), which is why this stays read-only for now.
+        // #5: report + accept the A/C panel's display unit via TUIC (ep1). The write path
+        // is open: byte 23 is bench-confirmed (0x01 = C, 0x03 = F) and the command builder
+        // re-encodes the shadow setpoint in the same unit, so a unit switch never strands
+        // the panel (23C written as 23F would drive the unit toward -5C at full compressor).
         TuicAttr::TemperatureDisplayMode::Set(
             kAirconEp, st.temp_unit_f ? TuicCl::TemperatureDisplayModeEnum::kFahrenheit
                                       : TuicCl::TemperatureDisplayModeEnum::kCelsius);
 
-        // REVERTED (was: TUIC display-unit on ep1 + aggregate fault on ep10).
-        // Both were added by a hand-edited .zap and, once booted, the device's Matter
-        // SUBSCRIPTIONS failed persistently with CHIP Error 0x24 "Invalid TLV tag" while
-        // reads still worked -- so matter-server marked the node unavailable and HA lost the
-        // kitchen unit. The generated tables looked correct (ENUM8/size 1, min/max present,
-        // FIXED_ENDPOINT_COUNT 11), so the defect is subtler than a bad attribute type.
-        // Reverted here to restore service; re-land once the root cause is understood and a
-        // SUBSCRIPTION smoke-test exists (a clean build + contiguity lint did NOT catch this).
-        // The ESP32 half is unaffected and keeps both features.
+        // TUIC (ep1) + the aggregate-fault ep10 were re-landed in v1.2.36/1.2.37 after the
+        // 0x24 "Invalid TLV tag" subscription failure was root-caused: the data model was
+        // never at fault. Driver init stalled at the ep9 ember write, so EPM's Init() and
+        // the ModeSelect manager never registered, and a wildcard subscription's priming
+        // report hit EPM with no accessor (narrow reads never touch it -- hence the
+        // read-works/subscribe-fails asymmetry). See ec3aa08 + #63. Regression is now
+        // gated by the flash path's subscription smoke test (#64).
 
         // Manufacturer cluster read-back (no generated accessors for a custom
         // cluster -> raw ember writes). Types: boolean=0x10, int8u=0x20, int8s=0x28.

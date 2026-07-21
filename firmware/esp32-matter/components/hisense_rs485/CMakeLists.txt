@@ -6,7 +6,7 @@ set(RS485_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../src/rs485-driver")
 idf_component_register(
     SRCS "${RS485_DIR}/hisense_rs485.cpp"
     INCLUDE_DIRS "${RS485_DIR}"
-    REQUIRES hisense_hal
+    REQUIRES hisense_hal esp_system
 )
 
 # ESP-IDF xTaskCreate stack depth is in BYTES (not words like AmebaZ2). Give the bus

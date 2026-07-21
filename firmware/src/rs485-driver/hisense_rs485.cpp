@@ -25,6 +25,10 @@
 #include <queue.h>
 #include <string.h>
 
+#ifdef ESP_PLATFORM
+#include <esp_task_wdt.h>   // #12: bus-task watchdog subscription (ESP-IDF only)
+#endif
+
 /* ---------------------------------------------------------------------------
  * Module state
  * -------------------------------------------------------------------------*/
@@ -45,6 +49,7 @@ static bool                s_recommission_momentary = false;  // latched by a 1-
 static uint8_t              s_last_link_req    = 0;   // masked "77" request bits from the last 0x1E reply (diag)
 static uint8_t              s_link_req_streak  = 0;   // consecutive 0x1E replies with the request asserted (debounce)
 static bool                s_recommission_latched = false; // fired for the current sustained assertion (fire-once)
+static TickType_t          s_smartcfg_lockout_until = 0;   // #69: 0x20 pulses gated until this tick
 static bool                s_prov_active      = false; // report prov=1 in outbound 0x1E -> A/C shows "77"
 static hisense_link_cb_t   s_link_cb          = NULL;  // fires on link lost/restored edges (#56)
 static bool                s_link_down        = false; // link-health latch for the edge detector (#56)
@@ -1073,6 +1078,22 @@ int hisense_recommission_debounce(uint8_t req_bits, uint8_t *streak,
     return was_latched ? -1 : 0;
 }
 
+// Pure re-entry lockout gate (issue #69, see the header). Not static: linked by tests.
+uint8_t hisense_smartcfg_lockout_mask(uint8_t req_bits, uint32_t now_ticks,
+                                      uint32_t lockout_until_ticks)
+{
+    if (lockout_until_ticks != 0 && (int32_t)(lockout_until_ticks - now_ticks) > 0) {
+        req_bits &= (uint8_t) ~HISENSE_LINK_REQ_SMARTCFG;
+    }
+    return req_bits;
+}
+
+void hisense_recommission_window_closed(void)
+{
+    s_smartcfg_lockout_until = xTaskGetTickCount()
+                               + pdMS_TO_TICKS(HISENSE_SMARTCFG_REENTRY_LOCKOUT_MS);
+}
+
 // Link-health edge detector (pure -> host-testable, #56). `silent` = link currently
 // considered lost; `*was_down` latches the state across calls. Returns +1 exactly on
 // the transition into silence (lost edge), -1 on the transition back (restored edge),
@@ -1113,6 +1134,14 @@ static void hisense_check_link_reply(size_t n)
         s_link_req_streak = 0;
         s_recommission_latched = false;
     }
+    /* #69: gate 0x20 during the post-close re-entry lockout. The press that closed the
+     * window (horizontal swing = remote-activity exit AND the "77" entry gesture) emits its
+     * own fresh 0x20 pulse on the next ~1Hz reply; without the gate that pulse re-opened the
+     * window the app had just shut. Gating to 0 simply feeds the debounce a quiet frame -- no
+     * latch was held at close time, so the falling edge reports nothing. 0x08 passes through
+     * untouched (echo-safe multi-frame hold below still applies). */
+    uint8_t req_gated = hisense_smartcfg_lockout_mask(req, xTaskGetTickCount(),
+                                                      s_smartcfg_lockout_until);
     /* Hold requirement depends on WHICH bit asserted, because only one of them can echo.
      *
      * bit3 (0x08, reconfig) doubles as our OUTBOUND prov_status, so a reflected or glitched
@@ -1125,8 +1154,8 @@ static void hisense_check_link_reply(size_t n)
      * "77" impossible to trigger here -- the handler never once fired. Fire on the first frame.
      *
      * Mixed bits keep the conservative hold: if 0x08 is present the echo risk is present too. */
-    uint8_t hold = (req == HISENSE_LINK_REQ_SMARTCFG) ? 1 : HISENSE_RECOMMISSION_HOLD_FRAMES;
-    int edge = hisense_recommission_debounce(req, &s_link_req_streak, &s_recommission_latched,
+    uint8_t hold = (req_gated == HISENSE_LINK_REQ_SMARTCFG) ? 1 : HISENSE_RECOMMISSION_HOLD_FRAMES;
+    int edge = hisense_recommission_debounce(req_gated, &s_link_req_streak, &s_recommission_latched,
                                              hold);
     if (edge > 0) {
         /* Remember whether this was a MOMENTARY request. The A/C pulses 0x20 for one frame and
@@ -1242,6 +1271,15 @@ static void hisense_bus_task(void *pvParameters)
 {
     (void)pvParameters;
 
+#ifdef ESP_PLATFORM
+    /* #12: subscribe to the IDF task watchdog so a WEDGED bus task trips the WDT (timeout
+     * CONFIG_ESP_TASK_WDT_TIMEOUT_S) instead of hanging the bus silently. The task feeds it
+     * once per poll cycle below. NOTE: CONFIG_ESP_TASK_WDT_PANIC is unset in sdkconfig, so a
+     * trip LOGS rather than rebooting -- flipping that is a maintainer decision. AmebaZ2 has
+     * no esp_task_wdt; the host tests stub the whole RTOS, so both skip this. */
+    esp_task_wdt_add(NULL);
+#endif
+
     hisense_hw_bringup();   // DE GPIO + UART, in task context -- fixes the v4 boot fault
 
     // Boot handshake: DevType, wait for the A/C's 0x0A reply; retry a few times.
@@ -1260,6 +1298,10 @@ static void hisense_bus_task(void *pvParameters)
 
     for (;;) {
         TickType_t t0 = xTaskGetTickCount();
+
+#ifdef ESP_PLATFORM
+        esp_task_wdt_reset();   // #12: feed the task watchdog once per poll cycle
+#endif
 
         // 0) COOPERATIVE link recovery. If the A/C has gone silent for several
         // cycles (drop / reconfig / OTA-reboot), re-run ONE DevType handshake this

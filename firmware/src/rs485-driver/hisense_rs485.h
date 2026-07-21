@@ -401,6 +401,15 @@ typedef void (*hisense_status_cb_t)(const HisenseState *state);
 #define HISENSE_LINK_REQ_SMARTCFG      0x20   // payload[4] bit5: smart-config pairing
 #define HISENSE_LINK_REQ_RECOMMISSION  (HISENSE_LINK_REQ_RECONFIG | HISENSE_LINK_REQ_SMARTCFG)
 #define HISENSE_RECOMMISSION_HOLD_FRAMES 3    // ~3s at ~1Hz: a held "77" press, not a glitch/echo
+/* Re-entry lockout after the commissioning window closes (issue #69). The horizontal-swing
+ * button is BOTH a window-closing remote-activity field AND the "77" entry gesture, so the
+ * press that exits "77" also emits a fresh 0x20 pulse on the next ~1Hz LINK reply -- which
+ * re-opened the window immediately after the app closed it (panel flicked to the setpoint,
+ * then back to "77"). For this long after ANY window close, 0x20 pulses are ignored. Only
+ * 0x20 is gated: 0x08 keeps its multi-frame hold (it doubles as outbound prov_status and can
+ * echo) and is not touched by the lockout. 10 s dwarfs the 1-frame pulse yet is far shorter
+ * than a deliberate re-entry (the user re-presses the pattern after deciding to re-pair). */
+#define HISENSE_SMARTCFG_REENTRY_LOCKOUT_MS 10000
 typedef void (*hisense_recommission_cb_t)(uint8_t reason);
 
 /* Fires when a previously-reported "77" request is DE-asserted, i.e. the user took the A/C back
@@ -417,6 +426,21 @@ typedef void (*hisense_recommission_cancel_cb_t)(void);
 // had fired (user left "77"), 0 otherwise. Mirrors hisense_link_health_edge's edge convention.
 int hisense_recommission_debounce(uint8_t req_bits, uint8_t *streak,
                                    bool *latched, uint8_t hold_frames);
+
+/* Pure re-entry lockout gate (exposed for host tests, issue #69). Returns `req_bits` with the
+ * 0x20 SMARTCFG bit stripped while `now_ticks` is still before `lockout_until_ticks`
+ * (wrap-safe signed tick arithmetic, like the driver's other deadline checks); outside the
+ * lockout the bits pass through unchanged. 0x08 is NEVER stripped here -- see the lockout
+ * comment above. `lockout_until_ticks == 0` means "no lockout armed" (never in the future
+ * relative to any real uptime beyond one wrap). */
+uint8_t hisense_smartcfg_lockout_mask(uint8_t req_bits, uint32_t now_ticks,
+                                      uint32_t lockout_until_ticks);
+
+/* Arms the 0x20 re-entry lockout (issue #69). The Matter layer calls this when the
+ * commissioning window closes -- EVERY close route (user exit, remote-activity exit,
+ * expiry, successful re-pair) -- so the 0x20 pulse emitted by the very press that closed
+ * the window cannot immediately re-open it. Safe to call from any task context. */
+void hisense_recommission_window_closed(void);
 
 // Pure reply-class gate (exposed for host tests). A transaction accepts a parsed
 // frame only when its class (frame byte[13]) matches what the request expected;
