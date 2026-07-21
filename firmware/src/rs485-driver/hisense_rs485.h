@@ -657,12 +657,12 @@ static inline bool hisense_shadow_setpoint_from_status(int8_t setpoint_c, bool t
 typedef struct {
     bool    valid;        // a long-enough status frame was parsed
     bool    any;          // true if ANY fault bit is set (cheap "is it healthy")
-    uint8_t raw_indoor;   // frame[37] verbatim, for logging an unknown bit
-    uint8_t raw_module;   // frame[38]
-    uint8_t raw_outdoor;  // frame[62]
-    uint8_t raw_protect;  // frame[64]
+    uint8_t raw_indoor;   // frame[39] verbatim, for logging an unknown bit
+    uint8_t raw_module;   // frame[40]
+    uint8_t raw_outdoor;  // frame[64]
+    uint8_t raw_protect;  // frame[66]
 
-    // frame[37] (payload 0x18), bit 7 down to bit 0
+    // frame[39] (payload 0x18), bit 7 down to bit 0
     bool in_temp;         // f_e_intemp        indoor temp sensor
     bool in_coil_temp;    // f_e_incoiltemp    indoor coil sensor
     bool in_humidity;     // f_e_inhumidity    indoor humidity sensor
@@ -672,20 +672,20 @@ typedef struct {
     bool in_vzero;        // f_e_invzero       zero-cross detect
     bool in_com;          // f_e_incom         indoor<->outdoor comms
 
-    // frame[38] (payload 0x19)
+    // frame[40] (payload 0x19)
     bool in_display;      // f_e_indisplay
     bool in_keys;         // f_e_inkeys
     bool in_wifi;         // f_e_inwifi
     bool in_ele;          // f_e_inele
     bool in_eeprom;       // f_e_ineeprom
 
-    // frame[62] (payload 0x31)
+    // frame[64] (payload 0x31)
     bool out_eeprom;      // f_e_outeeprom
     bool out_coil_temp;   // f_e_outcoiltemp
     bool out_gas_temp;    // f_e_outgastemp
     bool out_temp;        // f_e_outtemp
 
-    // frame[64] (payload 0x33)
+    // frame[66] (payload 0x33)
     bool over_temp;       // f_e_over_hot / f_e_over_cold     (aliased bit)
 } HisenseFaults;
 

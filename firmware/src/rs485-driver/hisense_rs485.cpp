@@ -283,11 +283,11 @@ bool hisense_parse_features(const uint8_t *buf, size_t len, HisenseFeatures *out
 
 /* Fault-bit decode. See the HisenseFaults comment in the header for the derivation
  * (stock capability table + the extractor at 0x9b6f8ac8); the short version is that a
- * fault's payload offset plus 13 gives the wire byte, and its bit index minus 8 gives
+ * fault's payload offset plus 15 gives the wire byte, and its bit index minus 8 gives
  * the bit within that byte.
  *
  * Length gate: a frame must actually reach the byte before we read it. The outdoor and
- * protection bytes live at 62/64, well past the indoor pair at 37/38, and short frames
+ * protection bytes live at 64/66, well past the indoor pair at 39/40, and short frames
  * do occur, so each group is gated independently rather than failing the whole parse.
  * A bit we cannot see reads false, and `valid` says whether anything was read at all. */
 bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out)

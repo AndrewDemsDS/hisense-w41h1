@@ -499,8 +499,8 @@ int main() {
     }
 
     // ---- f_e_* fault bits (#38) ---------------------------------------------
-    // Mapping derived from the stock firmware: payload offset + 13 = wire byte, bit
-    // index - 8 = bit in that byte. Frame bytes 37/38/62/64.
+    // Mapping derived from the stock firmware: payload offset + 15 = wire byte, bit
+    // index - 8 = bit in that byte. Frame bytes 39/40/64/66.
     {
         printf("[fault bit decode]\n");
         uint8_t s[160];
