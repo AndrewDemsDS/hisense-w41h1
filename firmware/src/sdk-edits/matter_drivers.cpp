@@ -918,6 +918,44 @@ static void hisense_trigger_https_ota(void)
 #define HISENSE_BREAKGLASS_PORT 2324
 #endif
 
+extern "C" {
+    // #19 revert-to-stock: A/B slot inspection + boot select. Compiled in sys_api.c but NOT
+    // declared in the public sys_api.h (only sys_update_ota_prepare_addr is), so declare them
+    // here. uint32_t is 'unsigned long' on this target (same caveat as the matter_ota decls
+    // above). The bootloader boots the signature-valid image with the highest FWHS serial;
+    // sys_update_ota_set_boot_fw_idx() invalidates the RUNNING image's signature so the other
+    // slot wins the next reset.
+    uint32_t sys_update_ota_get_curr_fw_idx(void);   // 1 or 2
+    uint32_t sys_update_ota_get_fw1_sn(void);        // FWHS serial of slot 1
+    uint32_t sys_update_ota_get_fw2_sn(void);        // FWHS serial of slot 2
+    int32_t  sys_update_ota_set_boot_fw_idx(uint32_t boot_idx);
+    // Inactive-slot base for :backup (the OTA write address = the idle slot). This one IS in
+    // sys_api.h; declared here anyway so this TU stays include-light (note: it prints two
+    // UART lines per call).
+    uint32_t sys_update_ota_prepare_addr(void);
+    // The reset the HTTPS-OTA completion path ends in (ota_8710c.c; watchdog reset). Used
+    // directly rather than matter_ota_platform_reset(), which would also set the
+    // kOTACompleted pref -- wrong here, no OTA happened.
+    void     ota_platform_reset(void);
+    // :wipekv factory reset of the Matter DCT regions (matter_dcts.c; s32 = int32_t here).
+    // Declared locally like the SDK's own atcmd_matter.c does -- matter_api.cpp (which wraps
+    // this as matter_factory_reset()) is not linked in this example. Formats ONLY the two
+    // Matter DCT regions; wlan fast-reconnect data lives elsewhere, so the device rejoins
+    // Wi-Fi after the reboot. Needed for units converted from stock that carry orphaned
+    // stock-era fabric/cert KV entries: those wedge every commission attempt at
+    // AddTrustedRootCertificate (PersistentStorageOpCertStore rejects the already-occupied
+    // fabric index with INCORRECT_STATE -> IM 0x01), and no cluster command can reach certs
+    // whose index is not in the fabric table. Observed on the office unit, 2026-07-21.
+    int32_t  deinitPref(void);
+}
+
+// :backup flash access. Included rather than extern-declared because a stack flash_t needs
+// the complete type (device.h chain); both headers are C++-safe and flash_api.h is already
+// included from other C++ TUs in the Matter tree. device_lock.h gives the RT_DEV_LOCK_FLASH
+// mutex sys_api.c wraps its own flash_stream_read() calls in.
+#include <flash_api.h>
+#include <device_lock.h>
+
 // Length-checked, non-short-circuiting compare. The token is low-value and the attacker is
 // already on the LAN, but an early-return memcmp leaks the matched prefix over repeated tries
 // and costs nothing to avoid.
@@ -931,6 +969,42 @@ static bool hisense_token_ok(const char *got, size_t got_len)
     if (got_len != want_len) return false;
     for (i = 0; i < want_len; i++) diff |= (unsigned char) (got[i] ^ want[i]);
     return diff == 0;
+}
+
+/* #19 :backup -- stream the INACTIVE slot's raw image (stock firmware, saved right after the
+ * first conversion, before a second custom OTA overwrites it). Replies one header line
+ * ("ok: backup <addr_hex> <len_dec>") then exactly <len> raw bytes and closes. Length is the
+ * max slot size in both known flash layouts; the host trims the trailing 0xFF itself.
+ * The chunk buffer is static: the hisense_bg task stack is 1024 words and cannot hold 4KB
+ * (same reason matter_ota's sector buffer is a file-scope static). */
+#define HISENSE_BACKUP_LEN 0x1AC000u
+static void hisense_backup_stream(int cs)
+{
+    static uint8_t chunk[4096];
+    flash_t  flash;
+    uint32_t base = sys_update_ota_prepare_addr();
+    uint32_t off;
+    char hdr[64];
+    int m = snprintf(hdr, sizeof(hdr), "ok: backup 0x%08lx %lu\r\n",
+                     (unsigned long) base, (unsigned long) HISENSE_BACKUP_LEN);
+
+    if (lwip_write(cs, hdr, (size_t) m) != m) { lwip_close(cs); return; }
+    ChipLogProgress(DeviceLayer, "break-glass: backup streaming %lu bytes from 0x%08lx",
+                    (unsigned long) HISENSE_BACKUP_LEN, (unsigned long) base);
+
+    for (off = 0; off < HISENSE_BACKUP_LEN; off += sizeof(chunk)) {
+        int w;
+        device_mutex_lock(RT_DEV_LOCK_FLASH);
+        flash_stream_read(&flash, base + off, sizeof(chunk), chunk);
+        device_mutex_unlock(RT_DEV_LOCK_FLASH);
+        w = lwip_write(cs, chunk, sizeof(chunk));
+        if (w != (int) sizeof(chunk)) {      // backpressure / peer gone: abort, close
+            ChipLogError(DeviceLayer, "break-glass: backup aborted at %lu/%lu (write=%d)",
+                         (unsigned long) off, (unsigned long) HISENSE_BACKUP_LEN, w);
+            break;
+        }
+    }
+    lwip_close(cs);
 }
 
 static void hisense_breakglass_task(void *arg)
@@ -970,15 +1044,89 @@ static void hisense_breakglass_task(void *arg)
             buf[--len] = 0;
         }
 
-        if (hisense_token_ok(buf, len)) {
-            ChipLogProgress(DeviceLayer, "break-glass: token accepted, starting OTA fetch");
-            static const char kOk[] =
-                "ok: fetching; device reboots into the idle slot.\r\n"
-                "verify the RUNNING version afterwards -- a failed apply\r\n"
-                "looks like success until you check (docs/10).\r\n";
-            lwip_write(cs, kOk, sizeof(kOk) - 1);
-            lwip_close(cs);
-            hisense_trigger_https_ota();
+        // #19: optional ":command" suffix after the token. Plain TOKEN keeps its original
+        // meaning (HTTPS OTA); TOKEN:slots / TOKEN:revert inspect and roll back the A/B slots.
+        char *colon = (char *) memchr(buf, ':', len);
+        size_t tok_len = colon ? (size_t)(colon - buf) : len;
+
+        if (hisense_token_ok(buf, tok_len)) {
+            if (colon == NULL) {
+                ChipLogProgress(DeviceLayer, "break-glass: token accepted, starting OTA fetch");
+                static const char kOk[] =
+                    "ok: fetching; device reboots into the idle slot.\r\n"
+                    "verify the RUNNING version afterwards -- a failed apply\r\n"
+                    "looks like success until you check (docs/10).\r\n";
+                lwip_write(cs, kOk, sizeof(kOk) - 1);
+                lwip_close(cs);
+                hisense_trigger_https_ota();
+            } else if (strcmp(colon + 1, "slots") == 0) {
+                char reply[96];
+                int m = snprintf(reply, sizeof(reply), "ok: fw1_sn=%lu fw2_sn=%lu cur=%lu\r\n",
+                                 (unsigned long) sys_update_ota_get_fw1_sn(),
+                                 (unsigned long) sys_update_ota_get_fw2_sn(),
+                                 (unsigned long) sys_update_ota_get_curr_fw_idx());
+                lwip_write(cs, reply, (size_t) m);
+                lwip_close(cs);
+            } else if (strcmp(colon + 1, "revert") == 0) {
+                // Roll back to the inactive slot, but only if it is strictly OLDER (lower FWHS
+                // serial) -- rolling "back" to a newer image is what plain OTA is for.
+                uint32_t cur      = sys_update_ota_get_curr_fw_idx();
+                uint32_t other    = (cur == 1) ? 2 : 1;
+                uint32_t cur_sn   = (cur == 1)   ? sys_update_ota_get_fw1_sn() : sys_update_ota_get_fw2_sn();
+                uint32_t other_sn = (other == 1) ? sys_update_ota_get_fw1_sn() : sys_update_ota_get_fw2_sn();
+                char reply[96];
+                int m;
+                if (other_sn >= cur_sn) {
+                    m = snprintf(reply, sizeof(reply), "err: other slot not older (fw%lu_sn=%lu cur_sn=%lu)\r\n",
+                                 (unsigned long) other, (unsigned long) other_sn, (unsigned long) cur_sn);
+                    lwip_write(cs, reply, (size_t) m);
+                    lwip_close(cs);
+                } else {
+                    ChipLogProgress(DeviceLayer, "break-glass: reverting to fw%lu (sn=%lu)",
+                                    (unsigned long) other, (unsigned long) other_sn);
+                    m = snprintf(reply, sizeof(reply), "ok: reverting to fw%lu (sn=%lu)\r\n",
+                                 (unsigned long) other, (unsigned long) other_sn);
+                    lwip_write(cs, reply, (size_t) m);
+                    lwip_close(cs);
+                    sys_update_ota_set_boot_fw_idx(other);
+                    vTaskDelay(pdMS_TO_TICKS(200));   // let the reply flush before the reset
+                    ota_platform_reset();
+                }
+            } else if (strcmp(colon + 1, "backup") == 0) {
+                // #19: save the inactive slot (stock firmware) over the air. Same "other must
+                // be strictly older" guard as :revert -- nothing stock/old to save otherwise.
+                uint32_t cur      = sys_update_ota_get_curr_fw_idx();
+                uint32_t other    = (cur == 1) ? 2 : 1;
+                uint32_t cur_sn   = (cur == 1)   ? sys_update_ota_get_fw1_sn() : sys_update_ota_get_fw2_sn();
+                uint32_t other_sn = (other == 1) ? sys_update_ota_get_fw1_sn() : sys_update_ota_get_fw2_sn();
+                if (other_sn >= cur_sn) {
+                    char reply[96];
+                    int m = snprintf(reply, sizeof(reply), "err: other slot not older (fw%lu_sn=%lu cur_sn=%lu)\r\n",
+                                     (unsigned long) other, (unsigned long) other_sn, (unsigned long) cur_sn);
+                    lwip_write(cs, reply, (size_t) m);
+                    lwip_close(cs);
+                } else {
+                    hisense_backup_stream(cs);   // replies + streams + closes itself
+                }
+            } else if (strcmp(colon + 1, "wipekv") == 0) {
+                // Factory-reset the Matter KV (both DCT regions) and reboot. Wi-Fi
+                // fast-reconnect data is untouched -> the device rejoins the network and
+                // boots uncommissioned, advertising a fresh commissioning window. See the
+                // deinitPref() decl above for why this exists (orphaned stock-era KV
+                // entries wedge commissioning; no Matter-level fix exists).
+                static const char kWipeOk[] =
+                    "ok: wiping matter KV; device reboots uncommissioned.\r\n"
+                    "wifi fast-reconnect survives; press \"77\" if no window after boot.\r\n";
+                ChipLogProgress(DeviceLayer, "break-glass: wiping matter KV (factory reset)");
+                lwip_write(cs, kWipeOk, sizeof(kWipeOk) - 1);
+                lwip_close(cs);
+                deinitPref();
+                vTaskDelay(pdMS_TO_TICKS(200));   // let the reply flush before the reset
+                ota_platform_reset();
+            } else {
+                lwip_write(cs, "err: unknown command\r\n", 22);
+                lwip_close(cs);
+            }
         } else {
             // No detail on failure, and no hint whether the length or the bytes were wrong.
             ChipLogError(DeviceLayer, "break-glass: rejected (bad token)");

@@ -51,6 +51,7 @@ hardware/ pinouts, the Matter QR image
 - [x] Draft ESPHome ESP32-replacement config
 - [x] Verify the command bytes on the unit with a live capture (`tools/sniff.py`)
 - [x] Document the OTA mechanism + custom-firmware feasibility (`docs/07`)
+- [x] Map the stock firmware's features end-to-end (cloud/TLS, OTA, local surface, Matter, storage) (`docs/13`)
 
 ## Note on the firmware image
 
