@@ -638,7 +638,7 @@ publish() {
 
 case "$cmd" in
   lint)    lint ;;
-  build)   build "${1:-}" ;;
+  build)   build "$@" ;;   # forward EVERY flag: "${1:-}" silently dropped --debug after --bump
   package) package ;;
   stage)   stage ;;
   flash)   flash ;;
