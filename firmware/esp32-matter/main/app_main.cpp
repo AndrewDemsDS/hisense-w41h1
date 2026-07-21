@@ -10,7 +10,8 @@
 //   ep2 TemperatureMeasurement: outdoor temp        ep6 ModeSelect     : Sleep profile
 //   ep3 On/Off plug-in unit   : Eco                 ep7 Contact Sensor : aux/PTC heat relay
 //   ep4 On/Off plug-in unit   : Quiet/Mute          ep8 TemperatureMeasurement: coil temp
-//   ep5 On/Off plug-in unit   : Turbo
+//   ep5 On/Off plug-in unit   : Turbo               ep9 On/Off plug-in unit   : panel display
+//                            ep10 Contact Sensor    : aggregate fault flag (HisenseFaults.any)
 // Every endpoint carries a UserLabel "ha_entitylabel" (via an in-RAM DeviceInfoProvider) so HA
 // names the entities. 0x66/40 feature flags + bus-link-health (#56) wire to the driver callbacks.
 //
@@ -782,6 +783,10 @@ static void recommission_finish(bool paired, const char *why)
         ESP_LOGE(TAG, "recommission: SetBLEAdvertisingEnabled(false) failed: %" CHIP_ERROR_FORMAT, berr.Format());
 
     if (!paired) hisense_send_exit_77();   // on success the delegate already cleared it
+    /* #69: the press that closed this window can carry its own fresh 0x20 pulse (horizontal
+     * swing is both the remote-activity exit and the "77" entry gesture). Arm the driver's
+     * re-entry lockout on EVERY close route so that pulse cannot re-open the window. */
+    hisense_recommission_window_closed();
     ESP_LOGI(TAG, "recommission: %s (%s) -> window closed, BLE advert off",
              paired ? "paired" : "reverted", why);
 }

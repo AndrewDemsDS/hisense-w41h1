@@ -245,6 +245,27 @@ stage() {
 }
 
 # ---- flash (update_node retries + rollback detection; mirror of ota-release.sh flash) -------
+# #64: after the python gate confirms the new version AND a working subscription (fatal
+# re-interview + node-available poll -- the availability transition IS the assertion), confirm
+# the actual 'Subscription succeeded' line in the matter-server log when it is readable from
+# this box (same ssh pattern stage() uses). An unreadable log (PI_* unset) falls back to the
+# availability transition alone, loudly. Mirror of ota-release.sh check_subscription_log.
+check_subscription_log() {
+  local node="$1"
+  if [ -z "${PI_HOST:-}" ] || [ -z "${PI_SSH_KEY:-}" ]; then
+    say "  PI_HOST/PI_SSH_KEY unset -- cannot read the matter-server log; node availability stands as the subscription assertion (#64)"
+    return 0
+  fi
+  local line
+  if ! line="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -i "$PI_SSH_KEY" "$PI_HOST" \
+      "docker logs --since 15m matter-server 2>&1 | grep -m1 '<Node:$node> Subscription succeeded' || true" 2>/dev/null)"; then
+    say "  could not read the matter-server log on $PI_HOST -- node availability stands as the subscription assertion (#64)"
+    return 0
+  fi
+  [ -n "$line" ] \
+    || die "no 'Subscription succeeded' for node $node in the last 15m of the matter-server log -- subscription is broken (#64, docs/10 §16)"
+  say "  matter-server log confirms: ${line:0:120}"
+}
 flash() {
   load_env
   : "${OTAENV_PY:?}" "${MS_WS:?}" "${ESP32_NODE_ID:?set ESP32_NODE_ID in ota-release.env (the ESP32 node, e.g. 28)}"
@@ -287,9 +308,31 @@ async def main():
                     if v==VS:
                         good+=1; print(f"[flash] device reports {VS} ({good}/3)")
                         if good>=3:
-                            try: await call(ws,"interview_node",{"node_id":NODE},"iv",120); print("[flash] re-interviewed node for HA")
-                            except Exception as e: print("[flash] interview warn",repr(e)[:60])
-                            print(f"[flash] SUCCESS: device booted {VS}"); return
+                            # #64: a sustained version read is NOT enough -- the 2026-07-19
+                            # AmebaZ2 regression passed every read gate while wildcard
+                            # subscriptions failed with 'Invalid TLV tag'. The re-interview is
+                            # FATAL now, and the node must then come back available:
+                            # matter-server only marks a node available once its subscription
+                            # is up, so that transition is the subscription assertion.
+                            r=await call(ws,"interview_node",{"node_id":NODE},"iv",120)
+                            if not r or r.get("error_code") is not None:
+                                print(f"[flash] FAILED: re-interview rejected: {r.get('error_code') if r else 'no reply'} -- data-model/subscription break? (#64)")
+                                sys.exit(3)
+                            print("[flash] re-interviewed node for HA")
+                            ok=False
+                            for _ in range(25):   # ~75 s
+                                try:
+                                    g=await call(ws,"get_node",{"node_id":NODE},"gn",15)
+                                    n=g.get("result") if g else None
+                                    if isinstance(n,dict) and n.get("available") is True:
+                                        ok=True; break
+                                except Exception: pass
+                                await asyncio.sleep(3)
+                            if not ok:
+                                print("[flash] FAILED: node never became available after re-interview (~75 s) -- subscription broken (#64)")
+                                sys.exit(3)
+                            print(f"[flash] SUCCESS: device booted {VS} and is subscribable (available after re-interview)")
+                            return
                     else:
                         good=0; print(f"[flash] device reports {v} (want {VS}) ...")
         except Exception: pass
@@ -298,8 +341,8 @@ async def main():
     sys.exit(2)
 asyncio.run(main())
 PY
-  then echo "$int" > "$RELEASED_MARK"; say "recorded on-device version $int"
-  else die "flash did not confirm v$int on-device"; fi
+  then echo "$int" > "$RELEASED_MARK"; say "recorded on-device version $int"; check_subscription_log "$ESP32_NODE_ID"
+  else die "flash verification failed for v$int -- version string not sustained or the subscription gate failed (#64); see the [flash] lines above"; fi
 }
 
 # ---- tag -----------------------------------------------------------------------------------

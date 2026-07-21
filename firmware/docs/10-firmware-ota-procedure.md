@@ -446,8 +446,13 @@ stock example app. That fits the asymmetry seen here, since an interview issues 
 while a subscription does one wildcard expansion across every server cluster.
 
 **Before re-landing a data-model change:** confirm `Subscription succeeded` in the matter-server log
-and `avail=True` after a re-interview. Pinning the exact culprit needs verbose `CHIP:DMG` logging
-during a failing subscribe; the line before the error names the cluster and attribute.
+and `avail=True` after a re-interview. This gate is now **automated in the flash path** (issue #64):
+both `ota-release.sh flash` and `esp32-release.sh flash` treat the post-OTA re-interview as fatal,
+poll the node over the websocket until `available` (~75 s timeout), and, when the matter-server log
+is reachable from the release box, require `Subscription succeeded` in it. A build that cannot be
+subscribed to now fails the flash step loudly instead of shipping. Pinning the exact culprit needs
+verbose `CHIP:DMG` logging during a failing subscribe; the line before the error names the cluster
+and attribute.
 
 ### Editing the `.zap` without the GUI
 

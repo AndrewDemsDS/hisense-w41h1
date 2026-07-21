@@ -462,6 +462,7 @@ package() {
   local sfx=""; [ "${HISENSE_FLAVOUR:-release}" = "debug" ] && sfx="-debug"
   local fw="$GCC_RELEASE/application_is/Debug/bin/firmware_is.bin"
   local flash="$GCC_RELEASE/application_is/Debug/bin/flash_is.bin"
+  local fwarch="$REPO/firmware/built-images/firmware_is-v$v$sfx.bin"
   local clip="$REPO/firmware/built-images/flash_rac-integrated-v$v$sfx.bin"
   local ota="$REPO/firmware/built-images/rac-v$v$sfx.ota"
   [ -f "$fw" ] || die "no firmware_is.bin -- build first"
@@ -489,14 +490,19 @@ package() {
   # can live in the release and only the small .json need be staged on the Pi.
   local otaurl="file:///rac-v$v$sfx.ota"
   [ -n "${OTA_RELEASE_BASE:-}" ] && otaurl="${OTA_RELEASE_BASE%/}/amebaz2-v$semver/rac-v$v$sfx.ota"
-  say "package v$semver (softwareVersion $v, ${HISENSE_FLAVOUR:-release} flavour): clip image + .ota + manifest"
+  say "package v$semver (softwareVersion $v, ${HISENSE_FLAVOUR:-release} flavour): raw image + clip image + .ota + manifest"
   python3 -c "d=open('$flash','rb').read(); open('$clip','wb').write(d + b'\xff'*(4194304-len(d)))"
   python3 "$OTA_TOOL" create -v "$VID" -p "$PID" -vn "$v" -vs "$semver" -da sha256 -mi 1 -ma "$((v-1))" "$fw" "$ota" >/dev/null
+  # #2 loose end: archive the RAW firmware_is.bin too. publish() uploads firmware_is-v$v*.bin as
+  # the byte-exact deployed payload (it is what the break-glass HTTP OTA streams), but nothing
+  # ever created that filename, so publish silently depended on a manual copy.
+  cp "$fw" "$fwarch"
   python3 - "$ota" "$v" "$semver" "$otaurl" > "$REPO/firmware/built-images/rac-v$v$sfx.json" <<'PY'
 import sys,hashlib,base64,json
 ota,v,semver,otaurl=sys.argv[1],int(sys.argv[2]),sys.argv[3],sys.argv[4]; d=open(ota,'rb').read()
 print(json.dumps({"modelVersion":{"vid":0xFFF1,"pid":0x8001,"softwareVersion":v,"softwareVersionString":semver,"cdVersionNumber":1,"firmwareInformation":"","softwareVersionValid":True,"otaUrl":otaurl,"otaFileSize":len(d),"otaChecksum":base64.b64encode(hashlib.sha256(d).digest()).decode(),"otaChecksumType":1,"minApplicableSoftwareVersion":1,"maxApplicableSoftwareVersion":v-1,"releaseNotesUrl":""}}))
 PY
+  say "  raw:      $fwarch  (byte-exact deployed payload -- what publish() uploads, #2)"
   say "  clip:     $clip"
   say "  ota:      $ota  (+ .json manifest, otaUrl=$otaurl)"
 }
@@ -535,6 +541,29 @@ stage() {
 }
 
 # ---- flash (update_node with retries + rollback detection) -----------------
+# #64: after the python gate confirms the new version AND a working subscription (fatal
+# re-interview + node-available poll -- the availability transition IS the assertion), confirm
+# the actual 'Subscription succeeded' line in the matter-server log when it is readable from
+# this box (same ssh pattern stage() uses). That line is exactly what was missing in the
+# 2026-07-19 'Invalid TLV tag' regression. The line is matched per-node (<Node:N> ...) -- a
+# bare grep once 'confirmed' node 14's flash with node 35's earlier line. An unreadable log
+# (PI_* unset) falls back to the availability transition alone, loudly.
+check_subscription_log() {
+  local node="$1"
+  if [ -z "${PI_HOST:-}" ] || [ -z "${PI_SSH_KEY:-}" ]; then
+    say "  PI_HOST/PI_SSH_KEY unset -- cannot read the matter-server log; node availability stands as the subscription assertion (#64)"
+    return 0
+  fi
+  local line
+  if ! line="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -i "$PI_SSH_KEY" "$PI_HOST" \
+      "docker logs --since 15m matter-server 2>&1 | grep -m1 '<Node:$node> Subscription succeeded' || true" 2>/dev/null)"; then
+    say "  could not read the matter-server log on $PI_HOST -- node availability stands as the subscription assertion (#64)"
+    return 0
+  fi
+  [ -n "$line" ] \
+    || die "no 'Subscription succeeded' for node $node in the last 15m of the matter-server log -- subscription is broken (#64, docs/10 §16)"
+  say "  matter-server log confirms: ${line:0:120}"
+}
 flash() {
   load_env
   : "${OTAENV_PY:?}" "${MS_WS:?}" "${NODE_ID:?}"
@@ -579,9 +608,31 @@ async def main():
                     if v==V:
                         good+=1; print(f"[flash] device reports v{V} ({good}/3)")
                         if good>=3:
-                            try: await call(ws,"interview_node",{"node_id":NODE},"iv",120); print("[flash] re-interviewed node for HA (docs/10 §9)")
-                            except Exception as e: print("[flash] interview warn",repr(e)[:60])
-                            print(f"[flash] SUCCESS: device booted v{V}"); return
+                            # #64: a sustained version read is NOT enough -- the 2026-07-19
+                            # regression passed every read gate while wildcard subscriptions
+                            # failed with 'Invalid TLV tag'. The re-interview is FATAL now, and
+                            # the node must then come back available: matter-server only marks a
+                            # node available once its subscription is up, so that transition is
+                            # the subscription assertion (docs/10 §16).
+                            r=await call(ws,"interview_node",{"node_id":NODE},"iv",120)
+                            if not r or r.get("error_code") is not None:
+                                print(f"[flash] FAILED: re-interview rejected: {r.get('error_code') if r else 'no reply'} -- data-model/subscription break? (#64, docs/10 §16)")
+                                sys.exit(3)
+                            print("[flash] re-interviewed node for HA (docs/10 §9)")
+                            ok=False
+                            for _ in range(25):   # ~75 s
+                                try:
+                                    g=await call(ws,"get_node",{"node_id":NODE},"gn",15)
+                                    n=g.get("result") if g else None
+                                    if isinstance(n,dict) and n.get("available") is True:
+                                        ok=True; break
+                                except Exception: pass
+                                await asyncio.sleep(3)
+                            if not ok:
+                                print(f"[flash] FAILED: node never became available after re-interview (~75 s) -- subscription broken (#64, docs/10 §16)")
+                                sys.exit(3)
+                            print(f"[flash] SUCCESS: device booted v{V} and is subscribable (available after re-interview)")
+                            return
                     else:
                         good=0; print(f"[flash] device reports v{v} (want {V}) ...")
         except Exception: pass
@@ -590,8 +641,8 @@ async def main():
     sys.exit(2)
 asyncio.run(main())
 PY
-  then echo "$v" > "$RELEASED_MARK"; say "recorded on-device version $v"
-  else die "flash did not confirm v$v on-device -- boot crash + A/B rollback? (docs/10 §7)"; fi
+  then echo "$v" > "$RELEASED_MARK"; say "recorded on-device version $v"; check_subscription_log "$NODE_ID"
+  else die "flash verification failed for v$v -- version not sustained (rollback/boot crash, docs/10 §7,§11) or the subscription gate failed (#64, docs/10 §16); see the [flash] lines above"; fi
 }
 
 # ---- tag (issue #77) -------------------------------------------------------
