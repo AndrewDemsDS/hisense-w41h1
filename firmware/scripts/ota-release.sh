@@ -269,11 +269,14 @@ det_time_shim() {
   # shim reading SOURCE_DATE_EPOCH. Verified: with the shim, two runs over one .axf are identical.
   # Scoped to the packaging make only, and it overrides time() alone (date(1) uses clock_gettime,
   # so the build_info pin above is independent of this).
-  local so
-  so="${TMPDIR:-/tmp}/ota-det-time-$(id -u).so"
-  if [ ! -f "$so" ] || [ "$0" -nt "$so" ]; then
-    command -v gcc >/dev/null || die "host gcc needed to build the deterministic-clock shim"
-    gcc -shared -fPIC -O2 -x c -o "$so" - <<'CSHIM' || die "failed to build the deterministic-clock shim"
+  local so dir
+  # Build FRESH into a private dir every run: it is a ~100 ms gcc call, and reusing the
+  # predictable /tmp/ota-det-time-<uid>.so would LD_PRELOAD whatever happens to sit at
+  # that known path into the packaging make (and the -nt check could keep a stale shim).
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/ota-det-time.XXXXXX")" || die "mktemp failed"
+  so="$dir/shim.so"
+  command -v gcc >/dev/null || die "host gcc needed to build the deterministic-clock shim"
+  gcc -shared -fPIC -O2 -x c -o "$so" - <<'CSHIM' || die "failed to build the deterministic-clock shim"
 #include <time.h>
 #include <stdlib.h>
 time_t time(time_t *t) {
@@ -283,7 +286,6 @@ time_t time(time_t *t) {
     return v;
 }
 CSHIM
-  fi
   printf '%s' "$so"
 }
 apply_build_info_determinism() {
@@ -432,6 +434,7 @@ PYS
     # LD_PRELOAD pins the clock elf2bin seeds its RNG from (see det_time_shim).
     LD_PRELOAD="$DET_SHIM" make is_matter -j"$JOBS" "${CCMK[@]}" 2>&1 | tee /tmp/ota-ismatter.log | tail -2
   )
+  rm -rf "$(dirname "$DET_SHIM")"   # the shim's private mktemp dir (no-op if already gone)
   # ccache effectiveness for THIS build (helps tell a cold build from a warm one).
   if command -v ccache >/dev/null; then
     say "ccache: $(ccache -s 2>/dev/null | awk -F'[()]' '/Hits:/{h=$2} /Misses:/{m=$2} END{printf "%s hits / %s misses", h, m}')"
