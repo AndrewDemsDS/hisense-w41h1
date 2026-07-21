@@ -65,7 +65,7 @@ static ElectricalPowerMeasurementDelegate s_epm_delegate;
 
 static const char *TAG = "hisense_ac";
 
-// Endpoint ids (assigned by esp-matter in creation order -> 1..8, matching the AmebaZ2 .zap).
+// Endpoint ids (assigned by esp-matter in creation order -> 1..10, matching the AmebaZ2 .zap).
 static uint16_t s_ep_id      = 0;  // ep1 Room A/C
 static uint16_t s_ep_outdoor = 0;  // ep2 TemperatureMeasurement outdoor
 static uint16_t s_ep_eco     = 0;  // ep3 OnOff Eco
