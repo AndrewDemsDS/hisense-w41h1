@@ -504,8 +504,6 @@ void hisense_set_provisioning(bool on);
 // the next ~1Hz heartbeat.
 void hisense_send_exit_77(void);
 
-void hisense_deinit(void);
-
 // Builds a combined command frame (see HisenseCommand note above).
 // Writes into `out` (must be >= HISENSE_CMD_FRAME_LEN + 2 bytes = 52; the +2 covers a
 // possible byte-stuffed 0xF4 checksum) and returns the
@@ -730,9 +728,6 @@ size_t hisense_build_command_override(const HisenseCommand *cmd, uint8_t *out, s
 // messages.h `on[]`/`off[]` (NOT synthesized -- these carry several bytes
 // whose individual semantics are unconfirmed, see hisense_rs485.cpp).
 size_t hisense_build_power_frame(bool power_on, uint8_t *out, size_t out_cap);
-
-// Builds the status-request poll frame (verbatim HISENSE_STATUS_REQUEST).
-size_t hisense_build_status_request(uint8_t *out, size_t out_cap);
 
 // Builds the 0x66/40 "ProductType" feature-flag poll -- the status request with
 // subtype 0x40 and a recomputed checksum (stock body `66 40 00 00`, RE'd from the

@@ -220,15 +220,6 @@ size_t hisense_stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8
 /* ---------------------------------------------------------------------------
  * Frame builders
  * -------------------------------------------------------------------------*/
-size_t hisense_build_status_request(uint8_t *out, size_t out_cap)
-{
-    if (out == NULL || out_cap < HISENSE_STATUS_REQUEST_LEN) {
-        return 0;
-    }
-    memcpy(out, HISENSE_STATUS_REQUEST, HISENSE_STATUS_REQUEST_LEN);
-    return HISENSE_STATUS_REQUEST_LEN;
-}
-
 // 0x66/40 ProductType feature-flag poll: the status request with subtype 0x40 and
 // a recomputed 2-byte checksum. The stock builds body `66 40 00 00` (RE'd from the
 // dongle, FUN_9b6f2b0c); our status request already carries `66 00 ...`, so flip
@@ -1389,21 +1380,4 @@ int hisense_init(hisense_status_cb_t cb)
         return pdFAIL;
     }
     return pdPASS;
-}
-
-void hisense_deinit(void)
-{
-    if (s_bus_task_handle != NULL) {
-        vTaskDelete(s_bus_task_handle);
-        s_bus_task_handle = NULL;
-    }
-    if (s_initialized) {
-        serial_irq_set(&s_uart, RxIrq, 0);
-        serial_free(&s_uart);
-    }
-    if (s_tx_queue != NULL) {
-        vQueueDelete(s_tx_queue);
-        s_tx_queue = NULL;
-    }
-    s_initialized = false;
 }
