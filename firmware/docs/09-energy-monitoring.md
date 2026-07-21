@@ -49,46 +49,32 @@ P_watts = a·comp_freq(@42) + b·fan_level + P_standby
 Fit `a, b, P_standby` from the same points. Doesn't depend on trusting the current bytes;
 this is what most community inverter-A/C energy integrations use.
 
-**Plan:** implement both, calibrate both against the meter, ship whichever tracks better
-(likely A, with B as a sanity clamp / fallback when current reads implausibly).
+**Shipped:** Path A only (`power_estimate.h`, §4a). Path B was never implemented; there is no
+frequency-based sanity clamp on the current reading.
 
-## 3. Matter exposure (all SDK-supported, HA-native)
+## 3. Matter exposure: shipped
 
-The SDK ships `ElectricalPowerMeasurement (0x0090)`, `ElectricalEnergyMeasurement (0x0091)`,
-and the **Electrical Sensor** device type (`0x0510`). HA's Matter integration turns these into
-a **power sensor (W)** and an **energy sensor (kWh)** that feed the Energy Dashboard directly,
-no mfg attrs, no HA template math.
+`ElectricalPowerMeasurement (0x0090)` ships on **ep1** (both AmebaZ2 and ESP32). The "hang it on
+ep1" fallback considered below is what got built, because a new device-type endpoint carries the
+same endpoint-add build risk already navigated for ep4-7. Feature set is `kAlternatingCurrent`
+only (single-phase); optional attributes are `Ranges`, `Voltage`, `ActiveCurrent`.
+`ActivePower`/`Voltage`/`ActiveCurrent` are fed from `power_estimate.h` each status poll, in the
+cluster's native mW/mV/mA units, and read 0 while the unit is off (not used as a liveness signal).
+kWh comes from HA Riemann-summing the power sensor (§5), the acceptable alternative this doc
+already flagged. `ElectricalEnergyMeasurement` (0x0091, `CumulativeEnergyImported`) was never
+added.
 
-Add a **new endpoint (ep8) = Electrical Sensor (0x0510)** carrying:
-- `ElectricalPowerMeasurement`:
-  - `ActivePower` (0x0008, `power_mw`) ← computed P × 1000
-  - `Voltage` (0x0004, `voltage_mv`) ← @50 × 1000  (transparency)
-  - `ActiveCurrent` (0x0005, `amperage_ma`) ← calibrated I × 1000
-  - `Frequency` (0x000E) ← optional, compressor Hz for visibility
-- `ElectricalEnergyMeasurement` (features CUME+IMPE):
-  - `CumulativeEnergyImported` (0x0001, mWh) ← running integral of P·dt
+**Delegate/Instance mechanics (found 2026-07-07, still true):** `ElectricalPowerMeasurement` is a
+**Delegate/Instance-based** cluster, not plain ember-RAM: the server reads `Accuracy`,
+`NumberOfMeasurementTypes`, and the values through a C++ `Delegate`, so exposure is not the
+`.zap`-attr + `emberAfWriteAttribute` pattern used for ep3-7. The shipped delegate lives at
+`firmware/src/sdk-edits/ElectricalPowerMeasurementDelegate.{h,cpp}` (adapted from CHIP's
+energy-management-app reference) and is shared as-is by the ESP32 build
+(`#include <ElectricalPowerMeasurementDelegate.h>` in `app_main.cpp`).
 
-(Alternative to a new endpoint: hang both clusters on **ep1**. A new endpoint is the correct
-device-type semantics but carries the endpoint-add build risk we already navigated for ep4–7;
-if codegen fights it, fall back to ep1.)
-
-**⚠️ Integration reality (found 2026-07-07):** `ElectricalPowerMeasurement` (0x0090) and
-`ElectricalEnergyMeasurement` (0x0091) are **Delegate/Instance-based** clusters, NOT plain
-ember-RAM. The server reads `Accuracy`, `NumberOfMeasurementTypes`, and the values through a
-C++ `Delegate` (cf. `connectedhomeip/.../electrical-power-measurement-server.cpp` +
-`examples/energy-management-app/.../ElectricalPowerMeasurementDelegate.{h,cpp}`). So exposure is
-**not** the `.zap`-attr + `emberAfWriteAttribute` pattern used for ep4–7, it needs:
-1. A minimal `Delegate` (return ActivePower/Voltage/ActiveCurrent from the driver; one-entry
-   `Accuracy`; `NumberOfMeasurementTypes=1`), ~120–180 LOC adapted from the reference.
-2. Instantiate `ElectricalPowerMeasurement::Instance` (+ `ElectricalEnergyMeasurement::Instance`)
-   on the endpoint in the app init (near `matter_drivers` init), fed each status poll.
-3. The `.zap` endpoint (Electrical Sensor 0x0510) to attach them.
-This is the meatiest step in the whole feature, a focused C++ integration, own build + flash to
-validate (HA power sensor cross-checked vs the panel meter). The **computation is already done +
-host-tested** (`power_estimate.h`); this is purely the Matter surface.
-
-Compressor Hz and outdoor-coil temp have **no standard cluster**: keep them as the existing
-mfg attrs (local diagnostics) or add a `TemperatureMeasurement` endpoint for the coil if wanted.
+Outdoor and coil temp now have a standard cluster too: `TemperatureMeasurement` on ep2 (outdoor)
+and ep8 (coil), see `docs/01`/`docs/07`. Compressor Hz remains without a standard cluster and stays
+gapped (the mfg-cluster attr for it is unreachable from HA, see `docs/01`).
 
 ## 4. Calibration procedure: **clamp meter**
 
@@ -140,35 +126,26 @@ reads ~6 % low, minor, since current dominates).
 
 ## 4b. Compute location: **firmware**
 
-The driver computes P and the running energy integral and publishes them via the standard
-`ElectricalPowerMeasurement` / `ElectricalEnergyMeasurement` clusters (§3). HA reads them as-is,
-single source of truth, Energy-Dashboard-native. The calc lives in a **pure, host-testable**
-`power_estimate.h` (mirrors `matter_aircon_map.h`) so the model is unit-tested without hardware;
-only the calibration constants wait on §4.
+The driver computes P and publishes it via the standard `ElectricalPowerMeasurement` cluster (§3).
+HA reads it as-is, Energy-Dashboard-native. The calc lives in a **pure, host-testable**
+`power_estimate.h` (mirrors `matter_aircon_map.h`) so the model is unit-tested without hardware.
 
-## 5. Energy accumulation (kWh)
+## 5. Energy accumulation (kWh): HA Riemann sum, not firmware
 
-Integrate in firmware on each status poll (~1 Hz): `energy_mWh += P_watts · dt_hours · 1000`,
-publish to `CumulativeEnergyImported`. Persist periodically (NVS) so a reboot doesn't zero it,
-or accept reset-on-reboot for v1 and let HA's long-term stats hold history. (HA can also derive
-kWh from the power sensor via a Riemann-sum helper, so firmware energy is optional but cleaner.)
+kWh is derived in HA from the power sensor via a Riemann-sum helper; HA's long-term stats hold the
+history. No firmware integrator is wired up. `power_estimate.h` carries a pure, host-tested
+energy-integrator pair (`hisense_energy_add`/`hisense_energy_mwh`, `test/test_matter_map.cpp:
+166-167`), but nothing calls it: there's no `ElectricalEnergyMeasurement` cluster to publish
+`CumulativeEnergyImported` to (§3), and a live version would still need NVS persistence to survive
+a reboot.
 
 ## 6. Implementation phases
 
-- **P1: Calibrate.** Meter + 4-point capture → `fit_power.py` → coefficients. *(gates accuracy;
-  do first)*
-- **P2: Firmware compute.** Add `power_estimate.h` (pure, host-testable): `P(v,i,freq,fan)` +
-  energy integrator. Unit-test like `matter_aircon_map.h`.
-- **P3: Matter wire.** ep8 Electrical Sensor in the `.zap`; glue feeds ActivePower/Voltage/
-  Current + CumulativeEnergyImported each downlink. `clean_matter_libs`-class rebuild.
-- **P4: HA.** Confirm the power + energy sensors appear; add to Energy Dashboard.
-- **P5: Validate.** Compare our W vs the cloud app across states; tune if needed.
-
-## 7. Open questions
-
-- **Reference meter available?** Determines whether we calibrate (accurate) or ship an
-  uncalibrated first-guess. This is the gating input.
-- **Which current byte** (@55 vs @56 vs @60) is the true input current, and its scale, resolved
-  by P1.
-- **New endpoint vs ep1** for the electrical clusters: decide at P3 based on codegen behaviour.
-- Persist energy across reboot (NVS) now, or defer to HA long-term stats.
+- **P1: Calibrate.** Done, §4a: meter + 4-point capture, quadratic fit `P ≈ 4.15·@55²`.
+- **P2: Firmware compute.** Done: `power_estimate.h`, pure and host-tested like
+  `matter_aircon_map.h`.
+- **P3: Matter wire.** Done, on ep1 rather than a new endpoint (§3): `ElectricalPowerMeasurement`
+  only, fed each downlink. No `ElectricalEnergyMeasurement` (§5).
+- **P4: HA.** Power sensor confirmed live; Energy Dashboard wiring is a per-installation HA step,
+  not tracked here.
+- **P5: Validate.** Open: no recorded comparison against the cloud app's numbers.

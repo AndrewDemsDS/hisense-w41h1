@@ -4,10 +4,9 @@
 > self-signed VID/PID certs before commissioning will work, is **contradicted** by
 > [`10-firmware-ota-procedure.md`](10-firmware-ota-procedure.md)'s stock-recovery-image note: the **stock built-in
 > test DAC/PAI/CD (VID `0xFFF1`)** commissioned fine on stock Home Assistant with no cert
-> surgery, just an "uncertified device" warning. The cert-generation recipe below is only
-> relevant if you actually need a **real VID/PID** (production/retail cert chain) or are
-> commissioning against a controller that enforces non-test-net DCL policy, not for normal
-> HIL/dev use. Kept for reference; don't treat it as a required step.
+> surgery, just an "uncertified device" warning. The recipe below only matters for a **real
+> VID/PID** (production/retail cert chain) or a controller enforcing non-test-net DCL policy,
+> not normal HIL/dev use. Kept for reference, not a required step.
 
 Stock firmware ships test certs whose **Certification Declaration VID/PID doesn't cross-
 reference** the DAC/PAI/Basic-Information → commissioners fail with

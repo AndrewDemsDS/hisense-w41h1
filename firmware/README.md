@@ -42,13 +42,13 @@ flips `ENABLE_MATTER=1`. Build target for this device: **`make room_air_conditio
 
 ## Status
 
-**Matter firmware implemented and shipping**: Phases 1-3 of the original plan below are
-done: core control, fan+swing+setpoints, and the manufacturer cluster (eco/turbo/mute/sleep).
-**v23 is running on two units**, including a unit converted straight from stock **over the air**
-(no CH341A) via the stock Matter OTA Requestor (F2). The remote-triggered **"77" recommission**
-flow (F1) is bench-validated: it reopens the commissioning window and swaps fabrics without
-wiping the device. Live status, the open-issues tracker, and the fleet-OTA plan for the
-remaining units live in the **GitHub issue tracker**.
+**Matter firmware implemented and shipping**: all three original phases are done, core control,
+fan+swing+setpoints, and the manufacturer cluster (eco/turbo/mute/sleep). **v23 is running on two
+units**, including one converted straight from stock **over the air** (no CH341A) via the stock
+Matter OTA Requestor. The remote-triggered **"77" recommission** flow is bench-validated: it
+reopens the commissioning window and swaps fabrics without wiping the device. The original
+six-step phased plan (all done) is preserved in git history; live status, open issues, and the
+fleet-OTA plan for the remaining units live in the **GitHub issue tracker**.
 
 ## Flashing a unit: two ways
 
@@ -71,11 +71,6 @@ via SPI clip:
 
 Once on our firmware, version-to-version updates are ordinary **Matter OTA**
 ([docs/10](docs/10-firmware-ota-procedure.md)), no physical access at all.
-
-## Original plan (historical)
-
-Original phased plan (all six steps done): see git history. Ongoing work, open issues and the
-fleet-OTA of the remaining units, lives in the GitHub issue tracker.
 
 ## Setup
 

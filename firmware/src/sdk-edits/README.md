@@ -1,11 +1,10 @@
 # SDK edits: the Matter integration (Phases 1–3)
 
-The firmware is the Realtek AmebaZ2 `room_air_conditioner` Matter example with the
-Hisense RS-485 driver wired in. The integration lives in the SDK tree
-(`~/ameba-dev`), not the app repo, this directory captures the changed files +
-documents the in-place edits so the whole thing is reproducible after a fresh
-`setup.sh`. Base build: `make room_air_conditioner_port && make is_matter` in
-`ameba-rtos-z2/project/realtek_amebaz2_v0_example/GCC-RELEASE`.
+The firmware is the Realtek AmebaZ2 `room_air_conditioner` Matter example with the Hisense
+RS-485 driver wired in. The integration lives in the SDK tree (`~/ameba-dev`), not the app repo:
+this directory captures the changed files and documents the in-place edits so the whole thing is
+reproducible after a fresh `setup.sh`. Base build: `make room_air_conditioner_port && make
+is_matter` in `ameba-rtos-z2/project/realtek_amebaz2_v0_example/GCC-RELEASE`.
 
 ## Files here (copies of modified SDK files)
 
@@ -47,13 +46,12 @@ The three callback **definitions** (no-op) are in `matter_drivers.cpp`.
 
 ## Manufacturer cluster notes (`0xFFF1FC00`)
 
-A truly-custom cluster (not one CHIP ships) needs its Id + callback decls in the
-SDK's pre-baked `zzz_generated` tables. The clean way is `zap_regen_all.py` (heavy,
-regenerates the whole SDK); the targeted edits above are the minimal equivalent and
-build cleanly. Attributes are ember-RAM stored; writes reach the uplink handler via
-the global attribute-change callback (raw cluster/attr ids `0xFFF1FC00` / `0x0000-3`,
-`0x0010-11`), read-back via `emberAfWriteAttribute(...)` since a custom cluster has no
-generated `::Set` accessors.
+A truly-custom cluster (not one CHIP ships) needs its Id + callback decls in the SDK's
+pre-baked `zzz_generated` tables. The clean way is `zap_regen_all.py` (heavy, regenerates the
+whole SDK); the targeted edits above are the minimal equivalent and build cleanly. Attributes
+are ember-RAM stored; writes reach the uplink handler via the global attribute-change callback
+(raw cluster/attr ids `0xFFF1FC00` / `0x0000-3`, `0x0010-11`), read-back via
+`emberAfWriteAttribute(...)` since a custom cluster has no generated `::Set` accessors.
 
 ## To rebuild from a fresh SDK
 

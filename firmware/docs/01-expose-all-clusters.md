@@ -57,9 +57,11 @@ Cluster id `(VID << 16) | 0xFC00` (VID from the attestation certs):
    RockSetting→v/h swing. Gate: 6 speeds + swing from HA.
 3. **Exotics:** add the 0xFC00 manufacturer cluster above; wire uplink→HisenseCommand,
    downlink←status flags.
-4. **Optional:** outdoor temp as a 2nd TemperatureMeasurement endpoint; compressor Hz attr;
-   drop the humidity endpoint (W41H1 status humidity isn't mapped).
-5. **Ship:** rebuild, flash via clip, commission, verify every control end-to-end.
+4. **Optional (done except CompressorHz):** outdoor temp now has its own TemperatureMeasurement
+   endpoint (ep2); the humidity endpoint was dropped rather than fed (W41H1 status humidity isn't
+   mapped). CompressorHz attr remains gapped, see above.
+5. **Ship:** rebuild, flash via clip, commission, verify every control end-to-end. Done: multiple
+   fielded builds since (`docs/13`).
 
 ## Manufacturer-cluster attach mechanics + telemetry gap
 
@@ -68,14 +70,15 @@ Eco/Turbo/Mute bool + SleepProfile enum. The uplink handler maps attr `0x0000-0x
 `HisenseFeature`/`hisense_build_mute_frame`/`_sleep_frame`; downlink mirrors those status flags
 back via raw `emberAfWriteAttribute`. SDK edits captured in `firmware/src/sdk-edits/`.
 
-> ⚠️ **Telemetry gap** (found by inspecting the compiled model). CompressorHz
-> (`0x0010`) and OutdoorTemp (`0x0011`) are declared in `hisense-aircon-cluster.xml` but are
-> **not enabled** in the GUI-authored `.zap`, so they're absent from the compiled attribute table
->, the downlink writes at `matter_drivers.cpp:313-314` return `UNSUPPORTED_ATTRIBUTE` and are
-> silently dropped. Likewise ep2 (Humidity) and ep3 (Temperature) endpoints enumerate but are
-> never fed → they report NULL. **Fix (chip-independent):** tick both attrs
-> on ep1 in the ZAP tool, and redirect the outdoor-temp write to ep3 `TempMeasurement/MeasuredValue`
-> (cleaner than the mfg attr). None of this blocks the four working toggles.
+> ⚠️ **Telemetry gap, partially closed.** CompressorHz (`0x0010`) and OutdoorTemp (`0x0011`) are
+> declared in `hisense-aircon-cluster.xml` but were never enabled in the GUI-authored `.zap`, so
+> they're absent from the compiled attribute table: the mfg-cluster writes at
+> `matter_drivers.cpp:1472-1473` return `UNSUPPORTED_ATTRIBUTE` and are silently dropped.
+> **OutdoorTemp shipped anyway**, redirected to a standard `TemperatureMeasurement` endpoint
+> (ep2, HA-readable) instead of the mfg attr, exactly as this section originally proposed; see
+> `docs/07`'s parity matrix. The unfed Humidity endpoint was dropped rather than fixed, so ep2 no
+> longer enumerates Humidity at all. **CompressorHz remains gapped**: the ZAP tick is the
+> remaining fix, or drop it too since the mfg attr is unreadable via matter-server either way.
 
 Attaching the cluster takes more than the GUI tick: a *new* manufacturer cluster only attaches from a
 tool-authored `.zap` (hand-edits are recognized but not endpoint-counted), AND, because

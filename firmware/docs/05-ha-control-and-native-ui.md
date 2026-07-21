@@ -12,7 +12,7 @@ our RS-485 driver, stock-FW/link RE docs 09/10, HA native-card docs) + adversari
 > YAML (§3) remain the load-bearing spec.
 
 Three design facts this doc is built on, load-bearing for the tables below:
-- **The firmware auto-powers-on on mode-select**: `matter_drivers.cpp:177-180`: a non-off
+- **The firmware auto-powers-on on mode-select**: `matter_drivers.cpp:1035-1044`: a non-off
   `SystemMode` write calls `hisense_send_power(true)` **then** `hisense_flush_command()` (mode
   frame), so `climate.set_hvac_mode: cool` already emits power-on-then-mode. HA does *not* own
   auto-power-on. The empirical "wrote SystemMode, unit stayed off" is a **link-readiness** issue (or
@@ -23,9 +23,9 @@ Three design facts this doc is built on, load-bearing for the tables below:
 - **Specials (Eco/Turbo/Mute/Sleep) are not controllable from HA via the mfg cluster.** matter-server
   `write_attribute` resolves `ALL_ATTRIBUTES[cluster_id]` (the CHIP registry); cluster `0xFFF1FC00`
   is absent → the write returns `null`/KeyError, not a real write. Its custom-cluster mechanism
-  (`custom_clusters.py`) is **read/poll only**. The native path is to re-expose these via **standard
-  Matter** in firmware (Thermostat **Presets** → HA `preset_mode` for Sleep/Eco; a fan speed for
-  Quiet; a boost/preset for Turbo).
+  (`custom_clusters.py`) is **read/poll only**. This doc's proposed fix was to re-expose specials via
+  standard Matter Presets; what actually shipped is simpler, plain per-endpoint OnOff switches
+  (ep3-6, see `docs/07`), which sidesteps the mfg-cluster write gap without touching Presets at all.
 
 There is no atomic SystemMode+setpoint write in matter-server, no decoded power bit to read back, and
 `SpeedCurrent`/`PercentCurrent`/`LocalTemperature` are real Matter readbacks that update on their own
@@ -141,18 +141,26 @@ cards:
 Thermostat **Presets**, add a `climate-preset-modes` feature to the thermostat card (native); Quiet is
 already a fan speed; Turbo becomes a preset or a boost.
 
-Do **not** place ep2 Humidity / ep3 Temperature tiles (report NULL).
+The Humidity endpoint was dropped (never fed, W41H1 status humidity isn't mapped); ep2 is now
+outdoor temperature and ep8 is coil temperature, both fed and HA-readable, so tiles for those two
+are fine to add.
 
 ---
 
 ## 4. Phased plan
+
+> **P3(a) partially overtaken:** the current `.zap` already ships Thermostat `FeatureMap 35`
+> (Heat+Cool+Auto), so the fielded firmware doesn't match this table's "TODO" framing there. P3(b)
+> went a different way too: specials shipped as plain per-endpoint OnOff switches (ep3-6, see
+> `docs/07`'s parity matrix) rather than Presets, simpler and needing no HA-side
+> `SINGLE_SETPOINT_DEVICES`/deadband handling. Table kept below for the reasoning, not as a live TODO.
 
 | Phase | Deliverable | HW-on needed? |
 |---|---|---|
 | **P0** | Rename device → "Living Room AC" (HA device registry; NodeLabel write doesn't persist). Remove the JS `climate-cluster-card` dashboard + resource (pivot to native). | no |
 | **P1** | Native `vertical-stack` dashboard (§3): thermostat + fan tile + power tile. `binary_sensor.ac_link` template. | no (renders + fires) |
 | **P2** | Reactive automations: G5 reconnect-resync (last mode/setpoint mirrors via `input_*`); optional G4 link-gate + notification; optional fan-slider debounce. | authoring no; validating yes |
-| **P3 (firmware/OTA)** | (a) Thermostat **Auto** FeatureMap `3 → 35` (`0x23` = kHeating\|kCooling\|**kAutoMode**); HA lists us in `SINGLE_SETPOINT_DEVICES` (via `matter_ac_unlock`) so Auto renders as a single-setpoint mode, consider the `MinSetpointDeadBand` (thermostat `0x19`) companion if CHIP/device complains → `auto` renders. (b) Re-expose specials via **standard Matter**: Sleep/Eco as Thermostat **Presets** (kPresets + populate `Presets`/`PresetTypes`), Turbo as a preset/boost, retire the mfg-cluster control surface for HA. (c) Wire explicit eco-off (`HISENSE_FEATURE_ECO_OFF`, byte33 `0x10`, via `hisense_apply_eco()`)/turbo-off/display-off frames. Rebuild + serial-bump + OTA (proven pipeline). | reflash + verify |
+| **P3 (firmware/OTA)** | (a) Thermostat **Auto** FeatureMap `3 → 35` (`0x23` = kHeating\|kCooling\|**kAutoMode**, shipped): HA lists us in `SINGLE_SETPOINT_DEVICES` (via `matter_ac_unlock`) so Auto renders as a single-setpoint mode, consider the `MinSetpointDeadBand` (thermostat `0x19`) companion if CHIP/device complains → `auto` renders. (b) Re-expose specials via **standard Matter**: Sleep/Eco as Thermostat **Presets** (kPresets + populate `Presets`/`PresetTypes`), Turbo as a preset/boost, retire the mfg-cluster control surface for HA (**not taken**, see note above). (c) Wire explicit eco-off (`HISENSE_FEATURE_ECO_OFF`, byte33 `0x10`, via `hisense_apply_eco()`)/turbo-off/display-off frames. Rebuild + serial-bump + OTA (proven pipeline). | reflash + verify |
 | **P4 (HIL)** | With the A/C **on + linked**: confirm mode-select really powers on from cold-off (the empirical failure), setpoint (no 0x86), fan slider bucket count (4 vs 6), swing, and (once P3 lands) presets. Confirm the `LocalTemperature`-live link proxy tracks the real handshake. | **yes** |
 
 ---
@@ -167,10 +175,9 @@ Do **not** place ep2 Humidity / ep3 Temperature tiles (report NULL).
    entity is in dry/fan, or stay dialable? (Matter advertises setpoints unconditionally.)
 4. **OnOff vs SystemMode display:** with `OnOff=0` while `SystemMode=Cool`, does the climate entity
    show OFF or "cool"? (HA shows off when the OnOff switch is off, confirm.)
-5. **Presets feasibility:** can the AmebaZ2 Thermostat cluster advertise kPresets + serve `Presets`
-   for Sleep/Eco cleanly? (the clean native path for specials).
+5. ~~**Presets feasibility.**~~ Moot: specials shipped as plain OnOff switches.
 6. **Do specials auto-clear** on mode-change/power-off, and are Turbo/Mute truly exclusive (they use
-   different frames, so their forced fan states fight)? Needed before presets encode the interlocks.
+   different frames, so their forced fan states fight)?
 7. **Sleep enum cardinality + wire type** (on/off vs 5-value) and **eco-off/turbo-off** actually
    clearing on HW (only the `0x04` baseline is wired today).
 

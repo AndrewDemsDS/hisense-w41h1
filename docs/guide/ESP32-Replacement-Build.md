@@ -124,8 +124,9 @@ new).
    the driver decodes unchanged. This proves the **read** direction.
 3. **Full integration**: power from the connector's 5 V, close it up.
 
-The read direction is **hardware-proven** (the mainboard accepts a non-Hisense module and the
-hardcoded token holds). Write/control is the next thing to prove.
+Both directions are **hardware-proven**: the mainboard accepts a non-Hisense module and the
+hardcoded token holds (read), and a live ESP32 node drives real Matter commands to the A/C in
+production (write/control).
 
 ## Build
 
@@ -138,13 +139,9 @@ idf.py set-target esp32 && idf.py build flash monitor
 
 ## Status & remaining work
 
-The scaffold works: the HAL port is validated on silicon (codec 17/17 on-target, external-pin
-loopback, a live A/C bus read decoding real status frames unchanged) and the esp-matter Room
-A/C node (OnOff + Thermostat + FanControl, wired through `matter_aircon_map.h`) **builds
-end-to-end**. Remaining work is tracked in the project's issue tracker (`esp32-path` label):
-
-- **#63**: prove write/control direction (only read is proven so far)
-- **#64**: compile-tune `app_main.cpp` against your esp-matter version (enum/helper drift)
-- **#65**: implement `on_recommission()` (esp-matter `CommissioningWindowManager` + BLE gate)
-- **#66**: commission into Home Assistant (matter-server) → stage-3 full integration
-- **#15 / #17 / #18**: Eco/Turbo/Mute/Sleep + outdoor-temp/compressor telemetry (AmebaZ2 gaps)
+This is no longer just a bench scaffold: the ESP32 esp-matter node (OnOff + Thermostat +
+FanControl, wired through `matter_aircon_map.h`) runs a live unit commissioned into Home
+Assistant the same way as the AmebaZ2 module, and takes firmware updates over Matter OTA (delta
+patches; see [OTA Updates](OTA-Updates#esp32-delta-ota)). Remaining gaps, including
+Eco/Turbo/Mute/Sleep and outdoor-temp/compressor telemetry parity with the AmebaZ2 track, are
+tracked in the project's issue tracker (`esp32-path` label).

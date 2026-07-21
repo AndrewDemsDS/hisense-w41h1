@@ -47,11 +47,14 @@ Keep endpoints `{0,1,2,…}` with no gaps and **renumber** to close a hole rathe
 was one of three confounded factors in a boot-crash/rollback, never isolated, so contiguity is
 treated as a **zero-cost precaution**, and `lint` blocks a non-contiguous `.zap`. (`firmware/docs/10-firmware-ota-procedure.md` §3)
 
-## My build finished in ~90 seconds. Good?
+## My build finished in ~90-110 seconds. Good?
 
-**No. Stop.** A genuine build is ~20–30 min. A sub-2-min build didn't recompile and links a stale,
-suspect image (it flashes and OTAs fine, then fails to boot). `ota-release.sh build` does the
-mandatory full clean. (`firmware/docs/10-firmware-ota-procedure.md` §4)
+Yes, if it compiled the core. Since the build runs `-j$(nproc)`, a genuine full build is now
+**~110 s** (it used to be ~20-30 min serial), so fast alone no longer means stale. Judge it by
+**activity, not wall-clock**: a genuine build shows ninja compiling the core (hundreds of
+`[N/353] c++ …` lines) and rebuilds `libCHIP.a` fresh. A build that finishes fast with only
+~900 ninja/ar lines and no fresh `libCHIP.a` is the stale one. `ota-release.sh build` does the
+mandatory full clean either way. (`firmware/docs/10-firmware-ota-procedure.md` §4)
 
 ## What is "77"?
 
