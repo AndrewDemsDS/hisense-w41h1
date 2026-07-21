@@ -13,6 +13,9 @@ strings*.txt
 
 # The entire dumps/ dir is local-only (raw dumps + captures). Track only its README.
 /dumps/*
+
+# Raw RE analysis workspace (carved images, agent notes) — docs/13 is the deliverable
+/reverse-engineering/analysis/
 !/dumps/README.md
 
 # Live captures
