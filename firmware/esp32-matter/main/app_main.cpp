@@ -1402,28 +1402,30 @@ extern "C" void app_main()
     cluster::user_label::create(ep_aux, NULL, CLUSTER_FLAG_SERVER);
     s_ep_aux = endpoint::get_id(ep_aux);
 
-    // ep10: aggregate A/C fault -> Contact Sensor (BooleanState), a structural clone of
-    // ep7 above. ONE aggregate rather than 18 per-fault endpoints: only f_e_incom has a
-    // confirmed trigger/clear cycle on real hardware, and 17 entities reading false forever
-    // is clutter, not diagnostics. Promote an individual fault to its own endpoint later if
-    // one earns it. Must stay contiguous after ep9 (a gap hard-faults AmebaZ2 on boot).
-    endpoint::contact_sensor::config_t fault_cfg;
-    endpoint_t *ep_fault = endpoint::contact_sensor::create(node, &fault_cfg, ENDPOINT_FLAG_NONE, NULL);
-    cluster::user_label::create(ep_fault, NULL, CLUSTER_FLAG_SERVER);
-    s_ep_fault = endpoint::get_id(ep_fault);
-
     // ep8: coil temperature.
     endpoint::temperature_sensor::config_t coil_cfg;
     endpoint_t *ep_coil = endpoint::temperature_sensor::create(node, &coil_cfg, ENDPOINT_FLAG_NONE, NULL);
     cluster::user_label::create(ep_coil, NULL, CLUSTER_FLAG_SERVER);
     s_ep_coil = endpoint::get_id(ep_coil);
 
-    // ep9: panel display -> OnOff switch (#19 cheap win). Created LAST so ep1..8 keep their IDs
-    // (renumbering would break the HA entity map + AmebaZ2 .zap parity; endpoints stay contiguous).
+    // ep9: panel display -> OnOff switch (#19 cheap win). Created after coil so ep1..8
+    // keep their IDs (renumbering would break the HA entity map + AmebaZ2 .zap parity;
+    // endpoints stay contiguous).
     s_ep_display = make_display_switch(node);   // #33: starts TRUE, panel is lit by default
 
-    ESP_LOGI(TAG, "endpoints: aircon=%u outdoor=%u eco=%u mute=%u turbo=%u sleep=%u aux=%u coil=%u display=%u",
-             s_ep_id, s_ep_outdoor, s_ep_eco, s_ep_mute, s_ep_turbo, s_ep_sleep, s_ep_aux, s_ep_coil, s_ep_display);
+    // ep10: aggregate A/C fault -> Contact Sensor (BooleanState), a structural clone of
+    // ep7 above. ONE aggregate rather than 18 per-fault endpoints: only f_e_incom has a
+    // confirmed trigger/clear cycle on real hardware, and 17 entities reading false forever
+    // is clutter, not diagnostics. Promote an individual fault to its own endpoint later if
+    // one earns it. Created LAST: esp-matter assigns IDs in creation order, and the docs +
+    // the AmebaZ2 .zap number this endpoint 10 (a gap hard-faults AmebaZ2 on boot).
+    endpoint::contact_sensor::config_t fault_cfg;
+    endpoint_t *ep_fault = endpoint::contact_sensor::create(node, &fault_cfg, ENDPOINT_FLAG_NONE, NULL);
+    cluster::user_label::create(ep_fault, NULL, CLUSTER_FLAG_SERVER);
+    s_ep_fault = endpoint::get_id(ep_fault);
+
+    ESP_LOGI(TAG, "endpoints: aircon=%u outdoor=%u eco=%u mute=%u turbo=%u sleep=%u aux=%u coil=%u display=%u fault=%u",
+             s_ep_id, s_ep_outdoor, s_ep_eco, s_ep_mute, s_ep_turbo, s_ep_sleep, s_ep_aux, s_ep_coil, s_ep_display, s_ep_fault);
 
     // Install the in-RAM DeviceInfoProvider BEFORE start() so the UserLabel cluster init
     // (during Server::Init) sees a non-null provider (else it VerifyOrDie's).
