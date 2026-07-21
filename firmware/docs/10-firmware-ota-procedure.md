@@ -463,3 +463,112 @@ subscriptions, so treat GUI-free editing as **build-verified, not runtime-verifi
 clusters still require the GUI plus the `zzz_generated` edits. Cheap insurance either way: open the
 `.zap` in the GUI once and plain-Save before building, which forces ZAP to re-derive all metadata in
 one canonical pass.
+
+## 17. Reverting to stock without opening the case (issue #19)
+
+Two OTA-only paths back to the stock ConnectLife firmware. Path 1 was **proven on hardware
+2026-07-21** (office unit, stock sw 2): stock → OTA-convert to 1.3.8 → `revert --flip` →
+stock boots and rejoins ConnectLife by itself → re-convert to 1.3.8 (full round trip).
+Feature-map evidence: `reverse-engineering/docs/13`.
+
+### Path 1: slot-flip (no payload, preferred when it applies)
+
+A stock→custom OTA conversion writes only the inactive slot, so the stock image stays intact
+and signature-valid in the other slot until a **second** custom OTA overwrites it. Custom
+firmware ≥ 1.3.8 has two break-glass commands (same listener as §13, token + colon suffix):
+
+- `<token>:slots` → `ok: fw1_sn=<u> fw2_sn=<u> cur=<idx>` (FWHS serials of both slots)
+- `<token>:revert` → invalidates the **running** image's signature
+  (`sys_update_ota_set_boot_fw_idx`) and resets; the bootloader falls back to the other slot
+
+```
+ota-release.sh revert --flip <unit-ip> [--force]
+```
+
+The script queries `:slots` first and refuses unless the other slot's serial is below
+`SERIAL_BASE` (stock carries serial 100; custom serials are `SERIAL_BASE + versionInt`), so a
+flip onto an older **custom** image needs `--force`. Guard inside the firmware too: revert
+refuses when the other slot is not older. Returning to custom afterwards = re-run the docs/12
+conversion (stock's dormant OTA Requestor).
+
+**Why it is safe for the cloud binding:** the regions stock needs stay byte-intact under the
+custom firmware (constant-scanned against the deployed image): Wi-Fi profile `0x2FF000`,
+cloud config + dkey `0x3DB000`, device identity `0x3DD000`. A reverted unit rejoins
+ConnectLife as itself, no re-provisioning. The Matter DCT areas (`0x3E0000`/`0x3ED000`) are
+the clobbered ones, and those only cost the (anyway replaced) stock commissioning.
+
+**Caveat, virgin units:** slot 2 in the factory dump is not S2292 but an Aug-2023 MP-test
+build (`S1798.MP_TEST_VERSION_SE`, no Matter). The running stock slot (S2292) is what a
+conversion preserves, so a first-generation convert flips back to S2292 as intended; just do
+not treat "the other slot" as interchangeable before checking `:slots`.
+
+### Path 2: repackage the stock app as a Matter OTA (⚠️ BLOCKED: re-signed image fails to boot, 2026-07-21)
+
+**Status: host checks all pass, but the re-signed image does NOT boot.** On the office unit a
+repackaged payload (stock backup + serial patch + re-HMAC + re-sum, every check green, written
+byte-perfect to flash, verified by a post-mortem clip dump) left the unit dark: the boot
+attempt visibly ran and crashed (the GD25Q32 QE bit was found CLEARED afterwards, and was
+cleared again after a manual re-set + power cycle, i.e. the boot flow touches SR2 and never
+gets far enough to re-enable quad). The SAME stock bytes with the factory signature (serial
+100) boot fine on the same unit. So the bootloader/ROM acceptance is stricter than the
+decoded HMAC+bytesum recipe (docs/13) in some way the host-side verification does not
+capture: possibly a second key (OTP/eFuse vs the flash partition hash_key) or an extra
+manifest check. Until the prebuilt `bootloader.axf` is RE'd on this point, treat
+`--repackage`/`--apply` as a brick risk: the only recovery is the CH341A clip.
+
+Recovery recipe that worked (clip): write the unit's own dump (per-unit data preserved) with
+fw1 replaced by the ORIGINAL stock slot bytes (from a `revert --backup` capture, factory
+signature) and fw2 erased to 0xFF; `ch341flash-full.py` re-sets QE at the end. Boots stock,
+ConnectLife rejoins.
+
+What still holds from the host work:
+
+For units whose stock slot is already overwritten. Needs a stock dump of any W41H1 (per-unit
+data is **not** required: OTA writes only the app slot, and the `0x0` system data, Wi-Fi
+profile, dkey and identity live outside it). The stock image's acceptance criteria as decoded
+so far (docs/13): bytes `0:32` = `HMAC-SHA256(partition hash_key @ flash 0x140,
+image[0xE0:0x140])`, plus a 4-byte byte-sum trailer at EOF. No app-level cryptographic
+signature. So:
+
+```
+ota-release.sh revert --repackage <stock-dump.bin>   # carve fw1 @0x10000, patch serial @+0xF4,
+                                                     # re-HMAC, re-sum, wrap as rac-stock-v<N>.ota
+ota-release.sh revert --apply                        # stage on the Pi + update_node, verify sw 4
+```
+
+`--repackage` first re-verifies the recipe byte-exact against every archived
+`firmware_is-v*.bin` and the dump's unpatched fw1, and dies loudly on any mismatch. The
+revert int is `max(version.txt, .released-version) + 1` and the patched serial follows the
+§11 rule (`SERIAL_BASE + int`), so the bootloader accepts the "older" stock payload. `--apply`
+verification is stock-aware: success = the unit reports softwareVersion **4** (vendor 5004)
+sustained, or drops off the fabric; `.released-version` is left alone so the next custom OTA
+still has to beat the last custom int.
+
+**Recommended journey.** Right after the FIRST OTA conversion (docs/12), while the stock
+image still sits intact in the inactive slot, fetch a copy of it once and keep the file:
+
+```
+ota-release.sh revert --backup <unit-ip>    # needs custom firmware >= 1.3.9 (:backup command)
+```
+
+`--backup` streams the inactive slot over the break-glass listener and saves it only after
+three checks pass (serial < `SERIAL_BASE`, HMAC, bytesum trailer). After that, any number of
+custom OTAs is safe: even once a second custom OTA overwrites the stock slot,
+`ota-release.sh revert --repackage <backup>` + `ota-release.sh revert --apply` restores
+stock over the air. Mind the **version-consumption rule**: each repackaged revert image
+carries serial `SERIAL_BASE + max(version.txt, .released-version) + 1`, burning one fleet
+version number, so `--repackage` bumps `version.txt` past the int it just used (commit the
+bump). A later custom OTA at or below that int would tie the bootloader and boot stock.
+
+### What does not work (investigated, dead ends)
+
+- **Downloading a public stock image.** The only firmware URL compiled into stock
+  (`download.hismarttv.com/Content/WifiDeviceVersionFile/<id>.bin`) serves an older
+  module generation (zero 4 KB blocks in common with the W41H1 dump). The device never polls
+  for versions; file IDs only exist in the cloud API, harvestable by MITM-ing the phone app.
+- **Spoofing the cloud to push HOTA.** Gateway TLS is pinned-CA `VERIFY_REQUIRED` (the
+  VERIFY_NONE path is unreachable dead code), and jcmd v5 is AES-256-CBC + HMAC-SHA256 keyed
+  by the per-device dkey. 
+- **Remote stock-dump capture.** Before 1.3.9 no flash readback path existed in either
+  firmware; the CH341A clip dump was the only capture route. 1.3.9 adds the `:backup`
+  break-glass command (Path 2 journey above), which reads back the inactive slot over the air.

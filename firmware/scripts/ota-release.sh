@@ -12,6 +12,10 @@
 #   ota-release.sh stage                    # scp .ota+manifest to the Pi, restart matter-server
 #   ota-release.sh flash                    # update_node with retries, verify the reported version changed
 #   ota-release.sh release [--bump] [--flash]   # build + package + stage (+ flash)
+#   ota-release.sh revert --backup <unit-ip> [out.bin] # fetch+validate the inactive-slot stock image (#19)
+#   ota-release.sh revert --flip <unit-ip> [--force]   # break-glass slot-flip back to stock (#19)
+#   ota-release.sh revert --repackage <stock-dump.bin> # carve+resign stock app as a Matter .ota (#19)
+#   ota-release.sh revert --apply                      # stage the stock .ota + push it via update_node
 #
 # Environment-specific paths/hosts come from ota-release.env (gitignored; copy .env.example).
 set -euo pipefail
@@ -645,6 +649,334 @@ PY
   else die "flash verification failed for v$v -- version not sustained (rollback/boot crash, docs/10 §7,§11) or the subscription gate failed (#64, docs/10 §16); see the [flash] lines above"; fi
 }
 
+# ---- revert to stock (issue #19) -------------------------------------------
+# Two ways back to the stock ConnectLife firmware without opening the case:
+#   --flip <unit-ip>: 1.3.8+ carries a break-glass TCP listener on BREAKGLASS_PORT.
+#     `<token>:slots` reports both slots' FWHS serials; `<token>:revert` invalidates the
+#     running image's signature and resets. The bootloader boots the signature-valid slot
+#     with the HIGHEST serial, so invalidating the custom slot (serial SERIAL_BASE+v) lets
+#     the stock slot (serial 100) win. Plain `<token>` with no colon still triggers the
+#     HTTPS OTA, so only the colon commands are used here.
+#   --repackage <dump>: carve the stock app out of a stock flash dump and re-sign it
+#     (serial patch + HMAC-SHA256 + bytesum trailer; recipe proven byte-exact against
+#     firmware_is-v10307.bin and the dump's fw1), then wrap it as a Matter .ota so the
+#     normal update_node channel pushes stock back onto the unit.
+#   --apply: stage the repackaged image on the Pi + drive update_node for $NODE_ID.
+#   --backup <unit-ip>: 1.3.9+ answers `<token>:backup` with a header line
+#     `ok: backup <addr_hex> <len_dec>\r\n` + exactly <len> raw bytes of the INACTIVE slot
+#     (0x1AC000 max, trailing 0xFF padding). Fetch it once right after the first conversion
+#     and the unit keeps a way back to stock even after later OTAs overwrite the stock slot.
+revert_version() {  # int the revert image must carry: strictly above BOTH version markers
+  local c r; c="$(cur_version)"; r="$(released_version)"
+  echo $(( c > r ? c + 1 : r + 1 ))
+}
+revert_backup() {
+  load_env
+  : "${BREAKGLASS_TOKEN:?}" "${BREAKGLASS_PORT:?}"
+  local ip="" out="" a
+  for a in "$@"; do
+    case "$a" in
+      -*) die "unknown flag for revert --backup: $a" ;;
+      *) if [ -z "$ip" ]; then ip="$a"
+         elif [ -z "$out" ]; then out="$a"
+         else die "unexpected argument for revert --backup: $a"; fi ;;
+    esac
+  done
+  [ -n "$ip" ] || die "usage: ota-release.sh revert --backup <unit-ip> [out.bin]"
+  say "revert --backup $ip:$BREAKGLASS_PORT (fetch + validate the inactive-slot stock image)"
+  python3 - "$ip" "$BREAKGLASS_TOKEN" "$BREAKGLASS_PORT" "$out" \
+    "$REPO/firmware/built-images" "${SERIAL_BASE:-1100}" <<'PY'
+import socket,sys,re,struct,hmac,hashlib,os
+ip,token,port,out,bi,base=sys.argv[1],sys.argv[2],int(sys.argv[3]),sys.argv[4],sys.argv[5],int(sys.argv[6])
+KEY=bytes.fromhex('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e5f')
+def fail(msg):  # die loudly, save nothing
+    print(f"[revert] FAILED: {msg}"); sys.exit(1)
+try:
+    s=socket.create_connection((ip,port),timeout=15)   # handles IPv6 link-local (fe80::..%if)
+except OSError as e:
+    fail(f"cannot reach {ip}:{port}: {e} -- if the unit is otherwise up, it likely runs pre-1.3.9 firmware with no :backup support")
+s.settimeout(60)
+try:
+    s.sendall(f"{token}:backup".encode())
+    buf=b""
+    while b"\r\n" not in buf:
+        b=s.recv(256)
+        if not b: fail("connection closed before the backup header")
+        buf+=b
+        if len(buf)>4096: fail("no backup header in the first 4 KB")
+    hdr,buf=buf.split(b"\r\n",1)
+    hdr=hdr.decode(errors="replace").strip()
+    if hdr.startswith("err:"):
+        fail(f"unit refused: {hdr}")
+    m=re.fullmatch(r"ok:\s*backup\s+(\S+)\s+(\d+)",hdr)
+    if not m:
+        fail(f"unexpected :backup reply: {hdr!r} -- pre-1.3.9 firmware has no :backup support")
+    addr,length=m.group(1),int(m.group(2))
+    if not 0<length<=0x1AC000:
+        fail(f"implausible backup length {length:#x} (slot is 0x1AC000 max)")
+    while len(buf)<length:
+        b=s.recv(min(65536,length-len(buf)))
+        if not b: fail(f"connection closed at {len(buf):#x} of {length:#x} bytes")
+        buf+=b
+    buf=buf[:length]
+finally:
+    s.close()
+print(f"[revert] backup received: addr={addr} len={length:#x}")
+# Process like the repackage carve: image end = first 4096-byte 0xFF run, then a 4-byte trailer.
+i=buf.find(b'\xff'*4096)
+if i<0: fail("no 4096-byte 0xFF run in the backup -- slot empty or not a stock image?")
+imglen=i-4
+if not 0x100000<=imglen<=0x180000: fail(f"carved length {imglen:#x} outside [0x100000,0x180000]")
+image,trailer=buf[:imglen],buf[imglen:imglen+4]
+serial=struct.unpack_from('<I',image,0xF4)[0]
+if serial>=base:
+    fail(f"serial@0xF4={serial} >= {base} -- the inactive slot holds a CUSTOM image, not stock (nothing to back up; a second custom OTA already overwrote it)")
+if hmac.new(KEY,image[0xE0:0x140],hashlib.sha256).digest()!=image[0:32]:
+    fail("HMAC mismatch -- the backup is corrupt or not a stock image")
+if struct.pack('<I',sum(image)&0xffffffff)!=trailer:
+    fail("bytesum trailer mismatch -- the backup is corrupt")
+if not out:
+    tag=ip.split('%')[0]                          # drop an IPv6 zone id for the filename
+    if re.fullmatch(r"(\d{1,3}\.){3}\d{1,3}",tag): tag=tag.rsplit('.',1)[1]
+    else: tag=re.sub(r"[^0-9A-Za-z]+","-",tag).strip('-')
+    out=os.path.join(bi,f"stock-backup-{tag}-sn{serial}.bin")
+open(out,'wb').write(buf)                         # raw slot bytes: image + trailer + 0xFF pad
+print(f"[revert] saved {out} ({len(buf):#x} bytes, stock serial {serial})")
+print(f"[revert] all checks passed: serial {serial} < {base}, HMAC OK, bytesum OK")
+print(f"[revert] next (when needed): ota-release.sh revert --repackage {out}")
+PY
+}
+revert_flip() {
+  load_env
+  : "${BREAKGLASS_TOKEN:?}" "${BREAKGLASS_PORT:?}"
+  local ip="" force=0 a
+  for a in "$@"; do
+    case "$a" in
+      --force) force=1 ;;
+      -*) die "unknown flag for revert --flip: $a" ;;
+      *) [ -z "$ip" ] && ip="$a" || die "unexpected argument for revert --flip: $a" ;;
+    esac
+  done
+  [ -n "$ip" ] || die "usage: ota-release.sh revert --flip <unit-ip> [--force]"
+  say "revert --flip $ip:$BREAKGLASS_PORT (query slots, then invalidate the running slot)"
+  python3 - "$ip" "$BREAKGLASS_TOKEN" "$BREAKGLASS_PORT" "$force" "${SERIAL_BASE:-1100}" <<'PY'
+import socket,sys,re
+ip,token,port=sys.argv[1],sys.argv[2],int(sys.argv[3])
+force=sys.argv[4]=="1"; base=int(sys.argv[5])
+def query(msg,timeout=10):
+    with socket.create_connection((ip,port),timeout=timeout) as s:
+        s.sendall(msg.encode()); s.settimeout(timeout); data=b""
+        try:
+            while b"\n" not in data and len(data)<512:
+                b=s.recv(256)
+                if not b: break
+                data+=b
+        except socket.timeout: pass
+        return data.decode(errors="replace").strip()
+try:
+    r=query(f"{token}:slots")
+except OSError as e:
+    print(f"[revert] cannot reach {ip}:{port}: {e}")
+    print("[revert] if the unit is otherwise up, it likely runs pre-1.3.8 firmware with NO break-glass listener -- use 'revert --repackage' + 'revert --apply' instead")
+    sys.exit(2)
+m=re.match(r"ok:\s*fw1_sn=(\d+)\s+fw2_sn=(\d+)\s+cur=(\d+)",r)
+if not m:
+    print(f"[revert] unexpected :slots reply: {r!r}")
+    print("[revert] pre-1.3.8 firmware has no :slots support (there a bare <token> with no colon triggers HTTPS OTA) -- use 'revert --repackage' + 'revert --apply' instead")
+    sys.exit(2)
+fw1,fw2,cur=int(m.group(1)),int(m.group(2)),int(m.group(3))
+other=fw2 if cur==1 else fw1
+print(f"[revert] slots: fw1_sn={fw1} fw2_sn={fw2} cur=fw{cur} -> other slot serial {other}")
+if other>=base and not force:
+    print(f"[revert] REFUSED: other slot serial {other} >= {base} is a custom image, not stock (stock serial is 100)")
+    print("[revert] re-run with --force to flip to that older custom image anyway")
+    sys.exit(3)
+r=query(f"{token}:revert")
+print(f"[revert] revert reply: {r!r}")
+print("[revert] running image invalidated + reset issued; the bootloader now boots the other slot. Give the unit ~30 s.")
+PY
+}
+revert_repackage() {
+  load_env
+  local dump="${1:-}"
+  [ -n "$dump" ] || die "usage: ota-release.sh revert --repackage <stock-dump.bin>"
+  [ -f "$dump" ] || die "stock dump not found: $dump"
+  local v semver; v="$(revert_version)"; semver="$(int_to_semver "$v")-stock"
+  local bi="$REPO/firmware/built-images"
+  local payload="$bi/rac-stock-v$v-payload.bin"
+  local ota="$bi/rac-stock-v$v.ota"
+  # Self-check the recipe against known-good bytes BEFORE trusting the carve: every archived
+  # custom firmware_is-v*.bin and the dump's unpatched fw1 must HMAC/bytesum-verify. A dump
+  # from a different build or a wrong key fails loudly here instead of on the device.
+  say "revert --repackage v$v (serial $(( ${SERIAL_BASE:-1100} + v ))): verify the signing recipe first"
+  python3 - "$dump" "$bi" "$payload" "$(( ${SERIAL_BASE:-1100} + v ))" <<'PY'
+import glob,struct,hmac,hashlib,sys,os
+dump,bi,out,newser=sys.argv[1],sys.argv[2],sys.argv[3],int(sys.argv[4])
+KEY=bytes.fromhex('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e5f')
+def verify(payload,trailer,name):
+    mac_ok=hmac.new(KEY,payload[0xE0:0x140],hashlib.sha256).digest()==payload[0:32]
+    sum_ok=struct.pack('<I',sum(payload)&0xffffffff)==trailer
+    serial=struct.unpack_from('<I',payload,0xF4)[0]
+    print(f"  {name}: len={len(payload):#x} serial@0xF4={serial} hmac={'OK' if mac_ok else 'MISMATCH'} bytesum={'OK' if sum_ok else 'MISMATCH'}")
+    return mac_ok and sum_ok
+refs=sorted(glob.glob(os.path.join(bi,'firmware_is-v*.bin')))
+if not refs:
+    print("  no firmware_is-v*.bin in built-images/ -- cannot self-check the recipe"); sys.exit(1)
+ok=True
+for f in refs:
+    d=open(f,'rb').read()
+    ok &= verify(d[:-4],d[-4:],os.path.basename(f))
+d=open(dump,'rb').read()
+# Two accepted inputs: a full flash dump (stock fw1 app at 0x10000) or a raw slot image from
+# revert --backup (app at 0x0). Carve at the first offset yielding an HMAC-valid image.
+img=None; imglen=0; off=0
+for off in (0x10000,0):
+    c=d[off:]
+    i=c.find(b'\xff'*4096)                       # end of image = first 4 KB run of erased flash
+    if i<0: continue
+    l=i-4                                        # minus the 4-byte bytesum trailer
+    if not 0x100000<=l<=0x180000: continue
+    if hmac.new(KEY,c[0xE0:0x140],hashlib.sha256).digest()!=c[0:32]: continue
+    img=c; imglen=l; break
+if img is None:
+    print("  no HMAC-valid stock image at 0x10000 (dump) or 0x0 (backup) -- refusing"); sys.exit(1)
+ok &= verify(img[:imglen],img[imglen:imglen+4],f"input image @0x{off:x} (unpatched)")
+if not ok:
+    print("recipe self-check FAILED -- not building a revert image from unverified bytes"); sys.exit(1)
+payload=bytearray(img[:imglen])
+struct.pack_into('<I',payload,0xF4,newser)       # serial so the bootloader prefers this slot
+payload[0:32]=hmac.new(KEY,bytes(payload[0xE0:0x140]),hashlib.sha256).digest()
+payload+=struct.pack('<I',sum(payload)&0xffffffff)
+open(out,'wb').write(payload)
+print(f"  signed payload: {out} ({len(payload):#x} bytes, serial {newser})")
+PY
+  python3 "$OTA_TOOL" create -v "$VID" -p "$PID" -vn "$v" -vs "$semver" -da sha256 -mi 1 -ma "$((v-1))" "$payload" "$ota" >/dev/null
+  # Same manifest shape as package(), plus payloadName so the carved stock payload behind
+  # the .ota stays identifiable. otaUrl is the staged file:// name (revert_apply uploads
+  # both files under these exact names).
+  python3 - "$ota" "$v" "$semver" "$(basename "$payload")" > "$bi/rac-stock-v$v.json" <<'PY'
+import sys,hashlib,base64,json
+ota,v,semver,pname=sys.argv[1],int(sys.argv[2]),sys.argv[3],sys.argv[4]; d=open(ota,'rb').read()
+print(json.dumps({"modelVersion":{"vid":0xFFF1,"pid":0x8001,"softwareVersion":v,"softwareVersionString":semver,"cdVersionNumber":1,"firmwareInformation":"","softwareVersionValid":True,"otaUrl":f"file:///rac-stock-v{v}.ota","otaFileSize":len(d),"otaChecksum":base64.b64encode(hashlib.sha256(d).digest()).decode(),"otaChecksumType":1,"minApplicableSoftwareVersion":1,"maxApplicableSoftwareVersion":v-1,"releaseNotesUrl":"","payloadName":pname}}))
+PY
+  say "  ota:      $ota  (+ .json manifest, payloadName=$(basename "$payload"))"
+  say "  not staged. next: ota-release.sh revert --apply"
+  say "  WARNING: re-signed stock payloads failed to BOOT on hardware 2026-07-21 (see docs/10 §17"
+  say "  'Path 2: BLOCKED'). Applying this can brick the unit to a CH341A-clip recovery. Host-side"
+  say "  checks pass, but the bootloader rejects the re-signed image in a way they do not capture."
+  # Version-consumption guard: the revert image carries serial SERIAL_BASE+v, so once it is
+  # applied the next custom OTA must EXCEED v or the bootloader ties and the stock slot wins.
+  # Keep version.txt ahead of every revert int ever handed out here.
+  if [ "$(cur_version)" -le "$v" ]; then
+    local nv; nv="$(int_to_semver "$((v+1))")"
+    echo "$nv" > "$VERSION_FILE"
+    set_header_version
+    say "WARNING: the revert consumed fleet version $v -- version.txt bumped to $nv (int $((v+1)))"
+    say "         so the next custom build beats serial $(( ${SERIAL_BASE:-1100} + v )). COMMIT firmware/src/version.txt."
+  fi
+}
+revert_apply() {
+  load_env
+  : "${OTAENV_PY:?}" "${MS_WS:?}" "${NODE_ID:?}" "${PI_HOST:?}" "${PI_OTA_DIR:?}" "${PI_SSH_KEY:?}"
+  local v; v="$(revert_version)"
+  local src_ota="$REPO/firmware/built-images/rac-stock-v$v.ota"
+  local src_json="$REPO/firmware/built-images/rac-stock-v$v.json"
+  [ -f "$src_ota" ] && [ -f "$src_json" ] \
+    || die "no rac-stock-v$v.{ota,json} -- run 'revert --repackage <stock-dump.bin>' first"
+  # stage() is keyed to the cur_version rac-v* names, so this duplicates its scp + junk
+  # prune + matter-server restart for the rac-stock-* pair instead of refactoring it.
+  say "stage rac-stock-v$v on $PI_HOST:$PI_OTA_DIR + restart matter-server"
+  scp -o BatchMode=yes -i "$PI_SSH_KEY" "$src_ota" "$src_json" \
+    "$PI_HOST:$PI_OTA_DIR/" >/dev/null
+  ssh -o BatchMode=yes -i "$PI_SSH_KEY" "$PI_HOST" \
+    "rm -f $PI_OTA_DIR/chip_kvs_ota_provider_* $PI_OTA_DIR/ota_provider_*.log 2>/dev/null; \
+     docker restart matter-server >/dev/null 2>&1"   # restart => reload manifests (loaded once at init)
+  say "  staged + provider junk pruned + matter-server restarted (manifest cache reloaded)"
+  say "apply rac-stock-v$v to node $NODE_ID (update_node with retries; stock-verify afterwards)"
+  if "$OTAENV_PY" - "$MS_WS" "$NODE_ID" "$v" <<'PY'
+import asyncio,json,sys,aiohttp
+URL,NODE,V=sys.argv[1],int(sys.argv[2]),int(sys.argv[3])
+async def call(ws,c,a,m,t=600):
+    await ws.send_json({"message_id":m,"command":c,"args":a})
+    while True:
+        d=json.loads((await ws.receive(timeout=t)).data)
+        if d.get("message_id")==m: return d
+async def node_unavailable():
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(URL,heartbeat=30) as ws:
+                await ws.receive(timeout=8)
+                g=await call(ws,"get_node",{"node_id":NODE},"gn",15)
+                n=g.get("result") if g else None
+                return isinstance(n,dict) and n.get("available") is False
+    except Exception:
+        return False
+async def main():
+    for n in range(1,8):
+        print(f"[revert] update_node attempt {n} -> v{V}",flush=True)
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.ws_connect(URL,heartbeat=30) as ws:
+                    await ws.receive(timeout=10)
+                    r=await call(ws,"update_node",{"node_id":NODE,"software_version":V},str(n),600)
+                    if r.get("error_code") is None: print("[revert] provider reports finished"); break
+                    print("[revert] declined:",r.get("error_code"),r.get("details",""))
+        except Exception as e: print("[revert] exc",repr(e)[:120])
+        await asyncio.sleep(15)
+    # Verify the STOCK outcome, NOT the revert int: after the reboot the unit runs stock
+    # firmware, which reports softwareVersion 4 / vendor 5004 (0xFFF1 is the custom line) --
+    # or it drops off the fabric entirely. flash()'s sustained-new-version gate would wait
+    # forever here, so this polls fresh read_attribute 0/40/9 for v4 instead.
+    good=0
+    for _ in range(30):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.ws_connect(URL,heartbeat=30) as ws:
+                    await ws.receive(timeout=8)
+                    r=await call(ws,"read_attribute",{"node_id":NODE,"attribute_path":"0/40/9"},"g",30)
+                    res=r.get("result")
+                    v=res.get("0/40/9") if isinstance(res,dict) else res
+                    rv=await call(ws,"read_attribute",{"node_id":NODE,"attribute_path":"0/40/1"},"gv",30)
+                    rres=rv.get("result")
+                    vend=rres.get("0/40/1") if isinstance(rres,dict) else rres
+                    if v==4:
+                        good+=1; print(f"[revert] unit reports stock softwareVersion 4 (vendor {vend}) ({good}/3)")
+                        if good>=3:
+                            print("[revert] SUCCESS: unit is on stock firmware (softwareVersion 4 sustained)")
+                            return
+                    else:
+                        good=0; print(f"[revert] unit reports softwareVersion {v} (vendor {vend}), waiting for stock ...")
+        except Exception:
+            # A failed read right after the reboot can also mean stock left the fabric.
+            if await node_unavailable():
+                print("[revert] SUCCESS (with warning): node unavailable -- stock firmware dropped off the fabric")
+                return
+            print("[revert] read failed (unit rebooting?) ...")
+        await asyncio.sleep(12)
+    print("[revert] FAILED: unit never sustained stock softwareVersion 4 and never left the fabric")
+    sys.exit(2)
+asyncio.run(main())
+PY
+  then
+    say "revert applied: the unit runs STOCK firmware now (it will NOT report v$v -- expected)."
+    say "next steps: the unit speaks ConnectLife again. To put it back on custom firmware,"
+    say "re-convert from scratch: firmware/docs/12-ota-convert-stock-unit.md (firmware/scripts/ota_convert_stock.sh)."
+    # Deliberately NOT writing .released-version: it tracks the CUSTOM line, and a later
+    # custom OTA must still be strictly greater than the version that was rolled back.
+  else
+    die "revert verification failed -- unit neither sustained stock softwareVersion 4 nor left the fabric; see the [revert] lines above"
+  fi
+}
+revert() {
+  case "${1:-}" in
+    --backup)    shift; revert_backup "$@" ;;
+    --flip)      shift; revert_flip "$@" ;;
+    --repackage) shift; revert_repackage "$@" ;;
+    --apply)     revert_apply ;;
+    *) die "usage: ota-release.sh revert {--backup <unit-ip> [out.bin]|--flip <unit-ip> [--force]|--repackage <stock-dump.bin>|--apply}" ;;
+  esac
+}
+
 # ---- tag (issue #77) -------------------------------------------------------
 tag_release() {  # create the path-prefixed semver tag amebaz2-vX.Y.Z locally (never pushed here)
   local semver t; semver="$(cur_semver)"; t="amebaz2-v$semver"
@@ -718,5 +1050,6 @@ case "$cmd" in
     [ "$FLASH" = 1 ] && flash || say "staged, not flashed. run: ota-release.sh flash"
     ;;
   publish) publish ;;
-  *) die "usage: ota-release.sh {lint|build [--bump[-minor|-major]] [--debug]|package|stage|flash|tag|publish|verint [semver]|release [--bump[-minor|-major]] [--tag] [--flash] [--debug]}" ;;
+  revert)  revert "$@" ;;
+  *) die "usage: ota-release.sh {lint|build [--bump[-minor|-major]] [--debug]|package|stage|flash|tag|publish|verint [semver]|release [--bump[-minor|-major]] [--tag] [--flash] [--debug]|revert {--backup <unit-ip> [out.bin]|--flip <unit-ip> [--force]|--repackage <stock-dump.bin>|--apply}}" ;;
 esac
