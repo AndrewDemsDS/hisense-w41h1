@@ -220,15 +220,6 @@ size_t hisense_stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8
 /* ---------------------------------------------------------------------------
  * Frame builders
  * -------------------------------------------------------------------------*/
-size_t hisense_build_status_request(uint8_t *out, size_t out_cap)
-{
-    if (out == NULL || out_cap < HISENSE_STATUS_REQUEST_LEN) {
-        return 0;
-    }
-    memcpy(out, HISENSE_STATUS_REQUEST, HISENSE_STATUS_REQUEST_LEN);
-    return HISENSE_STATUS_REQUEST_LEN;
-}
-
 // 0x66/40 ProductType feature-flag poll: the status request with subtype 0x40 and
 // a recomputed 2-byte checksum. The stock builds body `66 40 00 00` (RE'd from the
 // dongle, FUN_9b6f2b0c); our status request already carries `66 00 ...`, so flip
@@ -283,11 +274,11 @@ bool hisense_parse_features(const uint8_t *buf, size_t len, HisenseFeatures *out
 
 /* Fault-bit decode. See the HisenseFaults comment in the header for the derivation
  * (stock capability table + the extractor at 0x9b6f8ac8); the short version is that a
- * fault's payload offset plus 13 gives the wire byte, and its bit index minus 8 gives
+ * fault's payload offset plus 15 gives the wire byte, and its bit index minus 8 gives
  * the bit within that byte.
  *
  * Length gate: a frame must actually reach the byte before we read it. The outdoor and
- * protection bytes live at 62/64, well past the indoor pair at 37/38, and short frames
+ * protection bytes live at 64/66, well past the indoor pair at 39/40, and short frames
  * do occur, so each group is gated independently rather than failing the whole parse.
  * A bit we cannot see reads false, and `valid` says whether anything was read at all. */
 bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out)
@@ -296,7 +287,10 @@ bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out)
         return false;
     }
     memset(out, 0, sizeof(*out));
-    if (len <= HISENSE_FAULT_BYTE_INDOOR + 1) {
+    // Reading buf[B] only needs len > B; the gates below were one byte stricter, so a
+    // frame of EXACTLY B+1 silently lost that group's coverage (never an over-read,
+    // just a quiet blind spot).
+    if (len <= HISENSE_FAULT_BYTE_INDOOR) {
         return false;                      // too short to carry even the first group
     }
 
@@ -310,7 +304,7 @@ bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out)
     out->in_vzero     = (out->raw_indoor & 0x02) != 0;
     out->in_com       = (out->raw_indoor & 0x01) != 0;
 
-    if (len > HISENSE_FAULT_BYTE_MODULE + 1) {
+    if (len > HISENSE_FAULT_BYTE_MODULE) {
         out->raw_module = buf[HISENSE_FAULT_BYTE_MODULE];
         out->in_display = (out->raw_module & 0x80) != 0;
         out->in_keys    = (out->raw_module & 0x40) != 0;
@@ -318,14 +312,14 @@ bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out)
         out->in_ele     = (out->raw_module & 0x10) != 0;
         out->in_eeprom  = (out->raw_module & 0x08) != 0;
     }
-    if (len > HISENSE_FAULT_BYTE_OUTDOOR + 1) {
+    if (len > HISENSE_FAULT_BYTE_OUTDOOR) {
         out->raw_outdoor   = buf[HISENSE_FAULT_BYTE_OUTDOOR];
         out->out_eeprom    = (out->raw_outdoor & 0x40) != 0;
         out->out_coil_temp = (out->raw_outdoor & 0x20) != 0;
         out->out_gas_temp  = (out->raw_outdoor & 0x10) != 0;
         out->out_temp      = (out->raw_outdoor & 0x08) != 0;
     }
-    if (len > HISENSE_FAULT_BYTE_PROTECT + 1) {
+    if (len > HISENSE_FAULT_BYTE_PROTECT) {
         out->raw_protect = buf[HISENSE_FAULT_BYTE_PROTECT];
         out->over_temp   = (out->raw_protect & 0x10) != 0;
     }
@@ -1386,21 +1380,4 @@ int hisense_init(hisense_status_cb_t cb)
         return pdFAIL;
     }
     return pdPASS;
-}
-
-void hisense_deinit(void)
-{
-    if (s_bus_task_handle != NULL) {
-        vTaskDelete(s_bus_task_handle);
-        s_bus_task_handle = NULL;
-    }
-    if (s_initialized) {
-        serial_irq_set(&s_uart, RxIrq, 0);
-        serial_free(&s_uart);
-    }
-    if (s_tx_queue != NULL) {
-        vQueueDelete(s_tx_queue);
-        s_tx_queue = NULL;
-    }
-    s_initialized = false;
 }

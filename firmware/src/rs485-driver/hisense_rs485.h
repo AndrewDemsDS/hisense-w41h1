@@ -504,8 +504,6 @@ void hisense_set_provisioning(bool on);
 // the next ~1Hz heartbeat.
 void hisense_send_exit_77(void);
 
-void hisense_deinit(void);
-
 // Builds a combined command frame (see HisenseCommand note above).
 // Writes into `out` (must be >= HISENSE_CMD_FRAME_LEN + 2 bytes = 52; the +2 covers a
 // possible byte-stuffed 0xF4 checksum) and returns the
@@ -566,6 +564,29 @@ static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit)
     return fahrenheit
         ? (setpoint >= HISENSE_SETPOINT_MIN_F && setpoint <= HISENSE_SETPOINT_MAX_F)
         : (setpoint >= HISENSE_SETPOINT_MIN_C && setpoint <= HISENSE_SETPOINT_MAX_C);
+}
+
+/* Validate + convert an A/C-reported setpoint for the command shadow. The status parser
+ * always reports Celsius, but the shadow (and the wire) carries the DISPLAY unit, so the
+ * range check must run on the wire-unit value against the wire unit's range -- never on
+ * the Celsius number against the shadow's previous unit. That mismatch wedged the sync:
+ * once the shadow held Fahrenheit, no Celsius value ever passed the 61..90 F window, so
+ * every poll failed the check, the shadow froze at its first F value, and each later
+ * command silently re-imposed that stale setpoint (plus an error log every poll).
+ *
+ * Returns false (out untouched) when the A/C reports a setpoint the command builder
+ * would reject (e.g. 5 C frost-guard): the caller keeps its last good shadow instead
+ * of poisoning every later hisense_build_command() call. */
+static inline bool hisense_shadow_setpoint_from_status(int8_t setpoint_c, bool temp_unit_f, int8_t *out)
+{
+    int8_t wire = temp_unit_f ? hisense_c_to_f((int) setpoint_c) : setpoint_c;
+    if (!hisense_setpoint_in_range(wire, temp_unit_f)) {
+        return false;
+    }
+    if (out != NULL) {
+        *out = wire;
+    }
+    return true;
 }
 
 /* ---------------------------------------------------------------------------
@@ -634,12 +655,12 @@ static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit)
 typedef struct {
     bool    valid;        // a long-enough status frame was parsed
     bool    any;          // true if ANY fault bit is set (cheap "is it healthy")
-    uint8_t raw_indoor;   // frame[37] verbatim, for logging an unknown bit
-    uint8_t raw_module;   // frame[38]
-    uint8_t raw_outdoor;  // frame[62]
-    uint8_t raw_protect;  // frame[64]
+    uint8_t raw_indoor;   // frame[39] verbatim, for logging an unknown bit
+    uint8_t raw_module;   // frame[40]
+    uint8_t raw_outdoor;  // frame[64]
+    uint8_t raw_protect;  // frame[66]
 
-    // frame[37] (payload 0x18), bit 7 down to bit 0
+    // frame[39] (payload 0x18), bit 7 down to bit 0
     bool in_temp;         // f_e_intemp        indoor temp sensor
     bool in_coil_temp;    // f_e_incoiltemp    indoor coil sensor
     bool in_humidity;     // f_e_inhumidity    indoor humidity sensor
@@ -649,20 +670,20 @@ typedef struct {
     bool in_vzero;        // f_e_invzero       zero-cross detect
     bool in_com;          // f_e_incom         indoor<->outdoor comms
 
-    // frame[38] (payload 0x19)
+    // frame[40] (payload 0x19)
     bool in_display;      // f_e_indisplay
     bool in_keys;         // f_e_inkeys
     bool in_wifi;         // f_e_inwifi
     bool in_ele;          // f_e_inele
     bool in_eeprom;       // f_e_ineeprom
 
-    // frame[62] (payload 0x31)
+    // frame[64] (payload 0x31)
     bool out_eeprom;      // f_e_outeeprom
     bool out_coil_temp;   // f_e_outcoiltemp
     bool out_gas_temp;    // f_e_outgastemp
     bool out_temp;        // f_e_outtemp
 
-    // frame[64] (payload 0x33)
+    // frame[66] (payload 0x33)
     bool over_temp;       // f_e_over_hot / f_e_over_cold     (aliased bit)
 } HisenseFaults;
 
@@ -707,9 +728,6 @@ size_t hisense_build_command_override(const HisenseCommand *cmd, uint8_t *out, s
 // messages.h `on[]`/`off[]` (NOT synthesized -- these carry several bytes
 // whose individual semantics are unconfirmed, see hisense_rs485.cpp).
 size_t hisense_build_power_frame(bool power_on, uint8_t *out, size_t out_cap);
-
-// Builds the status-request poll frame (verbatim HISENSE_STATUS_REQUEST).
-size_t hisense_build_status_request(uint8_t *out, size_t out_cap);
 
 // Builds the 0x66/40 "ProductType" feature-flag poll -- the status request with
 // subtype 0x40 and a recomputed checksum (stock body `66 40 00 00`, RE'd from the

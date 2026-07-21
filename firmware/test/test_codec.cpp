@@ -459,9 +459,48 @@ int main() {
         }
     }
 
+    // ---- shadow setpoint sync validates in the WIRE unit -----------------------
+    // The downlink shadow re-sync must range-check the value in the unit that goes on the
+    // wire (the panel's display unit), not the Celsius parse against the shadow's old unit.
+    // That mismatch wedged the sync: once the shadow held F, no Celsius value ever passed
+    // the 61..90 F window, so the shadow froze at its first F value and every later
+    // command silently re-imposed it.
+    {
+        printf("[shadow setpoint unit sync]\n");
+        int8_t sp = 0;
+        // C panel: passes through unconverted, C range applies.
+        CHECK(hisense_shadow_setpoint_from_status(22, false, &sp) && sp == 22,
+              "C panel: 22 C -> shadow 22 (got %d)", sp);
+        // F panel sequence: first sync stores F (22 C -> 72 F)...
+        CHECK(hisense_shadow_setpoint_from_status(22, true, &sp) && sp == 72,
+              "F panel: 22 C -> shadow 72 F (got %d)", sp);
+        // ...and a FOLLOW-UP F report must still validate. 24 C (=75 F) against the F
+        // range is exactly the case the old formula (in_range(24, fahrenheit=true))
+        // rejected, freezing the shadow after its first F sync.
+        CHECK(hisense_shadow_setpoint_from_status(24, true, &sp) && sp == 75,
+              "F panel follow-up: 24 C -> shadow 75 F, sync not wedged (got %d)", sp);
+        // Whole reachable C range maps inside the F range and round-trips.
+        for (int c = HISENSE_SETPOINT_MIN_C; c <= HISENSE_SETPOINT_MAX_C; c++) {
+            CHECK(hisense_shadow_setpoint_from_status((int8_t)c, true, &sp) && sp == hisense_c_to_f(c),
+                  "F panel: %d C -> %d F accepted", c, hisense_c_to_f(c));
+            CHECK(hisense_shadow_setpoint_from_status((int8_t)c, false, &sp) && sp == c,
+                  "C panel: %d C accepted", c);
+        }
+        // Out-of-range reports are refused in BOTH units, leaving the caller's shadow
+        // untouched (out is not written on failure): 5 C frost-guard, and its F-panel
+        // equivalent 41 F.
+        sp = -7;
+        CHECK(!hisense_shadow_setpoint_from_status(5, false, &sp) && sp == -7,
+              "5 C report refused, shadow untouched");
+        CHECK(!hisense_shadow_setpoint_from_status(5, true, &sp) && sp == -7,
+              "5 C (41 F) report on an F panel refused, shadow untouched");
+        CHECK(!hisense_shadow_setpoint_from_status(40, false, &sp) && sp == -7,
+              "40 C report refused");
+    }
+
     // ---- f_e_* fault bits (#38) ---------------------------------------------
-    // Mapping derived from the stock firmware: payload offset + 13 = wire byte, bit
-    // index - 8 = bit in that byte. Frame bytes 37/38/62/64.
+    // Mapping derived from the stock firmware: payload offset + 15 = wire byte, bit
+    // index - 8 = bit in that byte. Frame bytes 39/40/64/66.
     {
         printf("[fault bit decode]\n");
         uint8_t s[160];
@@ -541,6 +580,22 @@ int main() {
         CHECK(hisense_parse_faults(s, HISENSE_FAULT_BYTE_INDOOR + 2, &fl) && fl.in_temp,
               "indoor group readable on a frame that just reaches it");
         CHECK(fl.raw_outdoor == 0 && !fl.out_temp, "unreachable groups stay clear");
+
+        // Exact boundaries: reading buf[B] only needs len == B+1. A frame one byte past
+        // a group's byte must decode that group; exactly at the byte must not.
+        make_status(s, true, HISENSE_MODE_COOL, 22, 25, 0x01, 0x00, 0x00, 0x00, 40, 30);
+        s[HISENSE_FAULT_BYTE_MODULE] = 0x20;
+        CHECK(hisense_parse_faults(s, HISENSE_FAULT_BYTE_MODULE + 1, &fl) && fl.in_wifi,
+              "module group decodes at exactly len == byte+1");
+        CHECK(fl.raw_outdoor == 0, "outdoor group still out of reach at len == module+1");
+        s[HISENSE_FAULT_BYTE_OUTDOOR] = 0x08;
+        CHECK(hisense_parse_faults(s, HISENSE_FAULT_BYTE_OUTDOOR + 1, &fl) && fl.out_temp,
+              "outdoor group decodes at exactly len == byte+1");
+        s[HISENSE_FAULT_BYTE_PROTECT] = 0x10;
+        CHECK(hisense_parse_faults(s, HISENSE_FAULT_BYTE_PROTECT + 1, &fl) && fl.over_temp,
+              "protect group decodes at exactly len == byte+1");
+        CHECK(hisense_parse_faults(s, HISENSE_FAULT_BYTE_PROTECT, &fl) && !fl.over_temp,
+              "protect group NOT decoded when the frame ends ON its byte");
 
         CHECK(!hisense_parse_faults(nullptr, 160, &fl), "null buf rejected");
         CHECK(!hisense_parse_faults(s, 160, nullptr), "null out rejected");

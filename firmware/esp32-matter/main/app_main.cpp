@@ -65,7 +65,7 @@ static ElectricalPowerMeasurementDelegate s_epm_delegate;
 
 static const char *TAG = "hisense_ac";
 
-// Endpoint ids (assigned by esp-matter in creation order -> 1..8, matching the AmebaZ2 .zap).
+// Endpoint ids (assigned by esp-matter in creation order -> 1..10, matching the AmebaZ2 .zap).
 static uint16_t s_ep_id      = 0;  // ep1 Room A/C
 static uint16_t s_ep_outdoor = 0;  // ep2 TemperatureMeasurement outdoor
 static uint16_t s_ep_eco     = 0;  // ep3 OnOff Eco
@@ -269,7 +269,6 @@ static void trigger_https_ota(void);           // fwd decl (manual HTTPS-OTA bac
 #ifndef HISENSE_OTA_URL
 #define HISENSE_OTA_URL "http://[fd00::1]:8070/esp32-ota.bin"   // placeholder, override at build time
 #endif
-#define HTTPS_OTA_URL HISENSE_OTA_URL
 
 static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t endpoint_id,
                                      uint32_t cluster_id, uint32_t attribute_id,
@@ -569,15 +568,20 @@ static void on_status(const HisenseState *st)
         // than a dead control path.
         /* Track the A/C's display unit, and hold the shadow setpoint in THAT unit, because
          * that is what goes on the wire. st->setpoint_c is always Celsius (the parser
-         * converts), so convert back when the panel is in F. */
-        s_cmd.fahrenheit = st->temp_unit_f;
-        int8_t shadow_sp = st->temp_unit_f ? hisense_c_to_f(st->setpoint_c) : st->setpoint_c;
-        if (hisense_setpoint_in_range(shadow_sp, s_cmd.fahrenheit)) {
-            s_cmd.setpoint = shadow_sp;
+         * converts), so the helper converts back and validates against the WIRE unit's
+         * range -- validating the Celsius number against the shadow's old unit is what
+         * wedged the AmebaZ2 sync in F mode. On an out-of-range report BOTH fields keep
+         * their last good values: flipping only the unit would reinterpret the stale
+         * Celsius number as Fahrenheit on the next command. */
+        int8_t shadow_sp;
+        if (hisense_shadow_setpoint_from_status(st->setpoint_c, st->temp_unit_f, &shadow_sp)) {
+            s_cmd.fahrenheit = st->temp_unit_f;
+            s_cmd.setpoint   = shadow_sp;
         } else {
-            ESP_LOGW(TAG, "status setpoint %d out of range -- keeping shadow at %d "
+            ESP_LOGW(TAG, "status setpoint %d C (%s) out of range -- keeping shadow at %d "
                           "(copying it would drop every later command)",
-                     (int) shadow_sp, (int) s_cmd.setpoint);
+                     (int) st->setpoint_c, st->temp_unit_f ? "F panel" : "C panel",
+                     (int) s_cmd.setpoint);
         }
         HisenseFanSpeed sf = hisense_fan_raw_to_cmd(st->fan_raw);
         if (sf != HISENSE_FAN_NOCHANGE) s_cmd.fan = sf;    // keep previous fan on an unknown raw (#59)
@@ -915,7 +919,7 @@ static void on_recommission_cancel(void)
 
 static void https_ota_task(void *arg)
 {
-    ESP_LOGW(TAG, "HTTPS-OTA: fetching %s", HTTPS_OTA_URL);
+    ESP_LOGW(TAG, "HTTPS-OTA: fetching %s", HISENSE_OTA_URL);
 
     int8_t saved_tx = 0;
     bool   tx_saved = (esp_wifi_get_max_tx_power(&saved_tx) == ESP_OK);
@@ -926,7 +930,7 @@ static void https_ota_task(void *arg)
     }
 
     esp_http_client_config_t http_cfg = {};
-    http_cfg.url               = HTTPS_OTA_URL;
+    http_cfg.url               = HISENSE_OTA_URL;
     http_cfg.timeout_ms        = 30000;
     http_cfg.keep_alive_enable = true;
     esp_https_ota_config_t ota_cfg = {};
@@ -1397,28 +1401,30 @@ extern "C" void app_main()
     cluster::user_label::create(ep_aux, NULL, CLUSTER_FLAG_SERVER);
     s_ep_aux = endpoint::get_id(ep_aux);
 
-    // ep10: aggregate A/C fault -> Contact Sensor (BooleanState), a structural clone of
-    // ep7 above. ONE aggregate rather than 18 per-fault endpoints: only f_e_incom has a
-    // confirmed trigger/clear cycle on real hardware, and 17 entities reading false forever
-    // is clutter, not diagnostics. Promote an individual fault to its own endpoint later if
-    // one earns it. Must stay contiguous after ep9 (a gap hard-faults AmebaZ2 on boot).
-    endpoint::contact_sensor::config_t fault_cfg;
-    endpoint_t *ep_fault = endpoint::contact_sensor::create(node, &fault_cfg, ENDPOINT_FLAG_NONE, NULL);
-    cluster::user_label::create(ep_fault, NULL, CLUSTER_FLAG_SERVER);
-    s_ep_fault = endpoint::get_id(ep_fault);
-
     // ep8: coil temperature.
     endpoint::temperature_sensor::config_t coil_cfg;
     endpoint_t *ep_coil = endpoint::temperature_sensor::create(node, &coil_cfg, ENDPOINT_FLAG_NONE, NULL);
     cluster::user_label::create(ep_coil, NULL, CLUSTER_FLAG_SERVER);
     s_ep_coil = endpoint::get_id(ep_coil);
 
-    // ep9: panel display -> OnOff switch (#19 cheap win). Created LAST so ep1..8 keep their IDs
-    // (renumbering would break the HA entity map + AmebaZ2 .zap parity; endpoints stay contiguous).
+    // ep9: panel display -> OnOff switch (#19 cheap win). Created after coil so ep1..8
+    // keep their IDs (renumbering would break the HA entity map + AmebaZ2 .zap parity;
+    // endpoints stay contiguous).
     s_ep_display = make_display_switch(node);   // #33: starts TRUE, panel is lit by default
 
-    ESP_LOGI(TAG, "endpoints: aircon=%u outdoor=%u eco=%u mute=%u turbo=%u sleep=%u aux=%u coil=%u display=%u",
-             s_ep_id, s_ep_outdoor, s_ep_eco, s_ep_mute, s_ep_turbo, s_ep_sleep, s_ep_aux, s_ep_coil, s_ep_display);
+    // ep10: aggregate A/C fault -> Contact Sensor (BooleanState), a structural clone of
+    // ep7 above. ONE aggregate rather than 18 per-fault endpoints: only f_e_incom has a
+    // confirmed trigger/clear cycle on real hardware, and 17 entities reading false forever
+    // is clutter, not diagnostics. Promote an individual fault to its own endpoint later if
+    // one earns it. Created LAST: esp-matter assigns IDs in creation order, and the docs +
+    // the AmebaZ2 .zap number this endpoint 10 (a gap hard-faults AmebaZ2 on boot).
+    endpoint::contact_sensor::config_t fault_cfg;
+    endpoint_t *ep_fault = endpoint::contact_sensor::create(node, &fault_cfg, ENDPOINT_FLAG_NONE, NULL);
+    cluster::user_label::create(ep_fault, NULL, CLUSTER_FLAG_SERVER);
+    s_ep_fault = endpoint::get_id(ep_fault);
+
+    ESP_LOGI(TAG, "endpoints: aircon=%u outdoor=%u eco=%u mute=%u turbo=%u sleep=%u aux=%u coil=%u display=%u fault=%u",
+             s_ep_id, s_ep_outdoor, s_ep_eco, s_ep_mute, s_ep_turbo, s_ep_sleep, s_ep_aux, s_ep_coil, s_ep_display, s_ep_fault);
 
     // Install the in-RAM DeviceInfoProvider BEFORE start() so the UserLabel cluster init
     // (during Server::Init) sees a non-null provider (else it VerifyOrDie's).
@@ -1488,6 +1494,9 @@ extern "C" void app_main()
 
 #ifdef CONFIG_HISENSE_DEBUG_BUILD
     diag_console_start();   // :2323 telnet diagnostics (token/poll/watch/decode/selftest)
-    breakglass_start();     // #61: OTA trigger off the Matter path (compiled into BOTH flavours)
 #endif
+    // #61: OTA trigger off the Matter path. Deliberately OUTSIDE the debug gate: the
+    // function is compiled unconditionally with a fail-closed stub, and a recovery
+    // listener is needed most on release images, which have no diag console.
+    breakglass_start();
 }
