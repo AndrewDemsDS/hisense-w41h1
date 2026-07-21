@@ -1493,6 +1493,9 @@ extern "C" void app_main()
 
 #ifdef CONFIG_HISENSE_DEBUG_BUILD
     diag_console_start();   // :2323 telnet diagnostics (token/poll/watch/decode/selftest)
-    breakglass_start();     // #61: OTA trigger off the Matter path (compiled into BOTH flavours)
 #endif
+    // #61: OTA trigger off the Matter path. Deliberately OUTSIDE the debug gate: the
+    // function is compiled unconditionally with a fail-closed stub, and a recovery
+    // listener is needed most on release images, which have no diag console.
+    breakglass_start();
 }
