@@ -86,9 +86,57 @@ Everything below is automated in
    certs), so no bypass here. Press "77", then in HA: Matter → Add device → `3497-011-2332`.
    (Or `commission_with_code(code, network_only=True)` via the matter-server, which is dual-homed
    on the IoT VLAN, see [`../../reverse-engineering/docs/02`](../../reverse-engineering/docs/02-matter-local-control.md).)
+9. **Back up the stock slot (do this once, right now)**: the stock image still sits intact in the
+   inactive slot until a second custom OTA overwrites it. On custom firmware ≥ 1.3.9:
+   ```
+   ota-release.sh revert --backup <unit-ip>    # saves built-images/stock-backup-*.bin, validated
+   ```
+   Keep that file. It is the unit's way back to ConnectLife (`revert --repackage` +
+   `revert --apply`, docs/10 §17 Path 2) even after later OTAs overwrite the stock slot.
 
 ## Verified result (kitchen unit → node 14)
 
 `VendorID 5004→0xFFF1 · ProductID 13825→0x8001 · SoftwareVersion 4→23`, `available=True`,
 climate attributes readable. Identical to a CH341A-flashed unit, but converted with zero
 physical access.
+
+## SendTrustedRootCert wedge: previously cloud-paired units (office unit, 2026-07-21)
+
+A stock unit that was ever paired to a cloud/app fabric carries that fabric's KV entries
+**through** the conversion (the Matter DCT regions survive an OTA by design). On the office
+unit (stock `SoftwareVersion 2`, older than the kitchen's 4, and once paired to Google Home,
+VendorID `0x6006`) that stock-era data left an **orphaned root-cert blob** the new firmware
+half-reads: certificate present in the cert store, no matching fabric-table entry.
+
+**Symptom:** every commission attempt fails at commissioning step `SendTrustedRootCert` with
+`IM Error 0x00000501: General error: 0x01 (FAILURE)`. Deterministic: every controller
+(python-matter-server and chip-tool), every transport, survives reboot. Do not confuse it
+with trap #3 above (same IM error, but at `CommissioningComplete`, and transient).
+
+**Why it is unfixable at the Matter level:** fabric indices allocate monotonically, so the
+next index permanently points at the orphaned slot; `PersistentStorageOpCertStore` then
+rejects `AddTrustedRootCertificate` with `INCORRECT_STATE` because a cert already exists at
+that index. No cluster command reaches certs whose index is not in the fabric table
+(`remove-fabric` of the *visible* stale fabric is necessary hygiene but not sufficient; the
+office unit still wedged with `CommissionedFabrics: 0`). Diagnosis without UART: PASE into
+the open window grants admin, so `chip-tool interactive` + `pairing code-paseonly` +
+`operationalcredentials read fabrics ... --fabric-filtered 0` shows the stale fabric table.
+
+**Fix (firmware >= 1.3.16):** the `:wipekv` break-glass command
+([docs/10 §13](10-firmware-ota-procedure.md)) formats both Matter DCT regions and reboots.
+Recovery loop used on the office unit, no physical access beyond "77" presses:
+
+1. `<token>:revert` boots the intact stock slot. Expect stock to come back **without Wi-Fi**:
+   its Matter-provisioned credentials lived in the (custom-fw-clobbered) DCT, and the old
+   `0x2FF000` profile points at the ConnectLife-era network.
+2. "77" + step 3 of the procedure above re-commissions stock over BLE (re-provisions Wi-Fi).
+3. Step 5-6 OTA a `:wipekv`-capable image (repackaged `5004/13825`, version > the wedged one).
+4. `<token>:wipekv`, then re-commission on the fresh KV. After the wipe the device is in BLE
+   commissioning mode with Wi-Fi down, so commission from a laptop in BLE range
+   (`chip-tool pairing code-wifi ...`), open a commissioning window, and hand off to
+   the matter-server (`commission_with_code`, `network_only=True`); `pairing unpair` the
+   temporary chip-tool fabric once HA is in.
+
+Result: office unit = node 62, exactly one fabric (HA), `softwareVersion 10316` verified by
+live `read_attribute`. If converting more units with a cloud history, ship a `:wipekv`-capable
+image in step 5 the first time and run `:wipekv` right after step 7, before commissioning.

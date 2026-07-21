@@ -376,6 +376,20 @@ It is deliberately **not** a `:2323` diag-console command. That console is debug
 unauthenticated by design, so a trigger living there would be absent from precisely the images most
 likely to need it.
 
+**Command inventory** (token + colon suffix; plain token = the `#78` HTTPS fetch above). All ship
+in BOTH flavours, gated only by the token being set at build time:
+
+- `<token>:slots` (>= 1.3.8): report both slots' FWHS serials + the running index (§17)
+- `<token>:revert` (>= 1.3.8): boot the other slot if it is strictly older (§17 Path 1)
+- `<token>:backup` (>= 1.3.9): stream the inactive (stock) slot's raw image (§17)
+- `<token>:wipekv` (>= 1.3.16): factory-reset the Matter KV (formats both Matter DCT regions,
+  `0x3E0000`/`0x3ED000`) and reboot. The cure for the "previously cloud-paired stock unit"
+  commissioning wedge: see [docs/12 §"SendTrustedRootCert wedge"](12-ota-convert-stock-unit.md).
+  Wlan fast-reconnect data is untouched, but the fresh KV has no CHIP network config, so the
+  device comes back **uncommissioned in BLE commissioning mode with Wi-Fi down**: plan to
+  re-commission over BLE (`chip-tool pairing code-wifi ... --bypass-attestation-verifier 1`
+  from a laptop in range), then hand off to HA via `open-commissioning-window`.
+
 **Fails closed.** No `BREAKGLASS_TOKEN` in `ota-release.env` means the socket is never opened, and
 the boot log says so instead of staying silent. There is deliberately no default token: a default in
 a public repo is equivalent to no authentication. Set it in `ota-release.env` (gitignored); the
