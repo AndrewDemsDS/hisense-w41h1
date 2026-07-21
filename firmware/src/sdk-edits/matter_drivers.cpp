@@ -1295,6 +1295,13 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // poll repopulates everything below. LocalTemperature is HA's documented link-
         // health signal; MeasuredValue + EPM extend it to the outdoor-temp/power sensors.
         if (s_link_lost) {
+            // Drop any still-unconsumed pre-loss frame: the link-restored event takes the
+            // normal path below, and a lingering fresh flag would apply the STALE pre-loss
+            // status for a beat until the next poll repopulates. Attributes stay null from
+            // the nulling below until fresh data actually arrives.
+            taskENTER_CRITICAL();
+            s_status_fresh = false;
+            taskEXIT_CRITICAL();
             ThermAttr::LocalTemperature::SetNull(kAirconEp);
             TempMeasAttr::MeasuredValue::SetNull(kOutdoorTempEp);
             TempMeasAttr::MeasuredValue::SetNull(kCoilTempEp);
