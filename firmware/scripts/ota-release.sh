@@ -269,7 +269,8 @@ det_time_shim() {
   # shim reading SOURCE_DATE_EPOCH. Verified: with the shim, two runs over one .axf are identical.
   # Scoped to the packaging make only, and it overrides time() alone (date(1) uses clock_gettime,
   # so the build_info pin above is independent of this).
-  local so="${TMPDIR:-/tmp}/ota-det-time-$(id -u).so"
+  local so
+  so="${TMPDIR:-/tmp}/ota-det-time-$(id -u).so"
   if [ ! -f "$so" ] || [ "$0" -nt "$so" ]; then
     command -v gcc >/dev/null || die "host gcc needed to build the deterministic-clock shim"
     gcc -shared -fPIC -O2 -x c -o "$so" - <<'CSHIM' || die "failed to build the deterministic-clock shim"
