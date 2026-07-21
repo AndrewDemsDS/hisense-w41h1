@@ -21,7 +21,12 @@ SITE = "_site_src"
 # just-the-docs nests a page under a section in the sidebar.
 SOURCES = [
     ("firmware/docs", "firmware", "firmware docs", "Firmware"),
-    ("reverse-engineering/docs", "internals", "reverse engineering", "Reverse engineering"),
+    (
+        "reverse-engineering/docs",
+        "internals",
+        "reverse engineering",
+        "Reverse engineering",
+    ),
     ("docs/guide", "guide", "guide", "Guide"),
 ]
 
@@ -52,7 +57,7 @@ BADGE = re.compile(r"^\s*[!\[]")
 def first_heading_and_para(lines):
     """Return (title, description) taken from the document itself."""
     title, desc, in_fence = None, None, False
-    for raw in lines:
+    for i, raw in enumerate(lines):
         line = raw.rstrip("\n")
         if FENCE.match(line):
             in_fence = not in_fence
@@ -75,7 +80,10 @@ def first_heading_and_para(lines):
             if stripped[0] in "|>-*+" or BADGE.match(stripped):
                 continue
             para = [stripped]
-            for nxt in lines[lines.index(raw) + 1:]:
+            # Continue from THIS line's position. lines.index(raw) would find the FIRST
+            # occurrence of an identical line, so a duplicated paragraph opener used to
+            # build the description from the wrong place (and made the loop O(n^2)).
+            for nxt in lines[i + 1 :]:
                 n = nxt.strip()
                 if not n or FENCE.match(n) or n[0] in "|>-*+#" or HEADING.match(n):
                     break
@@ -111,6 +119,7 @@ def rewrite_wiki_links(text, pages):
         if target in pages:
             return f"[{label}]({target}.html{anchor})"
         return m.group(0)
+
     # The (#anchor) group matters: "[x](OTA-Updates#delta)" is common in these pages and would
     # otherwise be left alone and 404.
     return re.sub(r"\[([^\]]*)\]\(([A-Za-z][A-Za-z0-9._-]*)(#[^)]*)?\)", sub, text)
@@ -162,14 +171,23 @@ def main():
         out_dir = os.path.join(SITE, sub)
         os.makedirs(out_dir, exist_ok=True)
         # Page-name set for the link rewrite above (wiki only; repo docs link by filename).
-        pages = {os.path.splitext(f)[0] for f in os.listdir(src_dir) if f.endswith(".md")} \
-            if src_dir == "docs/guide" else None
+        pages = (
+            {os.path.splitext(f)[0] for f in os.listdir(src_dir) if f.endswith(".md")}
+            if src_dir == "docs/guide"
+            else None
+        )
+
         # Sidebar order: guide pages follow the reading order above; the numbered docs sort by
         # their own filename prefix, which is already meaningful.
         def sort_key(fn):
             stem = os.path.splitext(fn)[0]
             if sub == "guide":
-                return (GUIDE_ORDER.index(stem) if stem in GUIDE_ORDER else len(GUIDE_ORDER), stem)
+                return (
+                    GUIDE_ORDER.index(stem)
+                    if stem in GUIDE_ORDER
+                    else len(GUIDE_ORDER),
+                    stem,
+                )
             return (0, stem)
 
         n = 0
@@ -177,8 +195,13 @@ def main():
             # Leading underscore = nav fragment or repo-facing note, never site content.
             if name in SKIP or name.startswith("_") or not name.endswith(".md"):
                 continue
-            convert(os.path.join(src_dir, name), os.path.join(out_dir, name), pages,
-                    parent=parent, order=n + 1)
+            convert(
+                os.path.join(src_dir, name),
+                os.path.join(out_dir, name),
+                pages,
+                parent=parent,
+                order=n + 1,
+            )
             n += 1
         # Copy assets too. Pages reference them RELATIVELY (![](images/foo.png)), so they have to
         # land beside the markdown that points at them or every image 404s -- which is exactly
@@ -194,7 +217,10 @@ def main():
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 shutil.copyfile(os.path.join(root, fn), dest)
                 assets += 1
-        print(f"  {label}: {n} page(s) -> /{sub}/" + (f", {assets} asset(s)" if assets else ""))
+        print(
+            f"  {label}: {n} page(s) -> /{sub}/"
+            + (f", {assets} asset(s)" if assets else "")
+        )
         total += n
 
     # Explicit robots.txt. jekyll-sitemap writes /sitemap.xml; pointing at it is what makes a
