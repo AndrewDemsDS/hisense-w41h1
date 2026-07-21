@@ -1,10 +1,10 @@
 # QA & testing strategy (W41H1 Matter firmware)
 
-How this firmware is validated **without depending on the physical A/C or the
-chip being in hand**, and where hardware is still required. It follows the
-standard embedded/IoT test pyramid, mock the hardware, test each layer at the
-cheapest meaningful level, keep real hardware as a thin top gate, adapted to a
-**reverse-engineered** protocol where our own sniffed frames are the ground truth.
+How this firmware is validated **without depending on the physical A/C or the chip being in
+hand**, and where hardware is still required. Standard embedded/IoT test pyramid: mock the
+hardware, test each layer at the cheapest meaningful level, keep real hardware as a thin top
+gate. Adapted for a **reverse-engineered** protocol, where our own sniffed frames are ground
+truth.
 
 ## The layers
 
@@ -27,7 +27,7 @@ runs on a PC. `hal_stub.h` mocks the Ameba `serial_*` + FreeRTOS API; the *real*
 byte and every parsed status field against the **hardware-confirmed golden
 values** (AUTO→`0x90`, fan `0x0B..0x13`, eco `0x30`, turbo `0x0C`, direct-°C
 temps, the flag bits, checksum, F4-stuffing, and rejection of malformed frames).
-36 assertions, milliseconds, no A/C. This is the regression gate for every codec
+330 assertions, milliseconds, no A/C. This is the regression gate for every codec
 change.
 
 ## Layer 2: device simulation + golden-frame record/replay
@@ -62,7 +62,7 @@ that `matter_drivers.cpp` *actually uses*, and `test/test_matter_map.cpp` assert
 the whole table **end-to-end to the wire**: a Matter attribute value → mapping →
 `hisense_build_command` → the hardware-confirmed byte (Auto→`0x90`, SpeedSetting
 6→`0x13`, RockSetting up-down→byte32 `0xC0`, setpoint 2200→byte19 `0x2D`, …), plus
-the reverse (status→SpeedCurrent/PercentCurrent/SystemMode). 39 assertions, host,
+the reverse (status→SpeedCurrent/PercentCurrent/SystemMode). 119 assertions, host,
 no chip, the offline equivalent of a chip-tool write. In `run_tests.sh`.
 
 **4b, chip-tool / CSA Test Harness (needs a device).** Matter's official QA/cert
@@ -138,11 +138,9 @@ as GitHub issues.)
 
 ## Why we're well-positioned
 
-The reverse-engineering already produced the two assets that are usually the
-hardest part of RE-driver QA: a **validated codec** and a **golden corpus of real
-frames**. That's what lets Layers 1–3 run entirely without the A/C or the chip,
-so development and regression continue while hardware is unavailable, hardware
-is needed only for the final HIL gate.
+The reverse-engineering already produced the two assets that are usually the hardest part of
+RE-driver QA: a **validated codec** and a **golden corpus of real frames**. That's what lets
+Layers 1-3 run entirely without the A/C or the chip.
 
 ## References
 

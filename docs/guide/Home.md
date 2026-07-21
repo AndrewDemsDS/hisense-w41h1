@@ -20,7 +20,8 @@ every byte offset are hardware-confirmed against a real unit.
   hardware. You convert a module by clip-flashing or over the air (no disassembly). Updates ship
   over Matter OTA.
 - **ESP32 + RS-485 (replacement track):** when the original module dies, an ESP32 board replaces the
-  dongle on the same 4-pin bus. The esp-matter node builds end-to-end and sits in bench bring-up.
+  dongle on the same 4-pin bus. The esp-matter node runs a live unit in Home Assistant, commissioned
+  and updated over Matter OTA the same as the AmebaZ2 track.
 
 ## How it works
 

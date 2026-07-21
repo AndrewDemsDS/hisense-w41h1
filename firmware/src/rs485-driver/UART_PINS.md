@@ -21,7 +21,7 @@ Reverse-engineered from the stock Hisense firmware dump
 | Frame format | **8N1** (8 data, no parity, 1 stop) | – | High |
 | Baud (boot default) | **115200** | `0x1C200` | High |
 | Baud (A/C-mode select) | **9600** (used when link mode == 9) | `0x2580` | High |
-| DE/RE direction GPIO | **None**: auto-direction transceiver | – | Med-High |
+| DE/RE direction GPIO | ~~None~~ **WRONG, it's PA_17** (see correction banner above) | – | superseded |
 
 `serial_init(&obj, PA_14 /*tx*/, PA_13 /*rx*/)` is the call to reproduce. The UART
 *index* (UART0) is derived automatically by the ROM HAL from the pin pair, so the driver
@@ -37,11 +37,10 @@ PORT_B=1. So **PA_x = x** (0..23), **PB_x = 32+x**. Therefore raw `0x0E`→PA_14
 
 The A/C bus UART is configured inside **`uart_ctl_process_main`** (the "uart server" /
 `uart_thread` task that drives `BC_cmd_task`, the `F4 F5 … F4 FB` frame parser, and
-`dev_ota_uart_process_cmd` / `matter_uart_process`). The setup code is **not** in the
-XIP image the RE notes use (base `0x9b6d0000`); it is in a **second XIP image** (base
-≈ `0x9b000000`, where the mbed `serial_api` lives, the SDK build maps `serial_init` at
-`0x9b013dc8`). Relative/PC-relative addressing is preserved in file space, so the region
-disassembles cleanly at raw file offsets.
+`dev_ota_uart_process_cmd` / `matter_uart_process`). The setup code sits in a **second XIP image**
+(base ≈ `0x9b000000`, where the mbed `serial_api` lives, the SDK build maps `serial_init` at
+`0x9b013dc8`), not the XIP image the RE notes use (base `0x9b6d0000`). Relative/PC-relative
+addressing is preserved in file space, so the region disassembles cleanly at raw file offsets.
 
 Disassembly (file offsets; the serial obj is the SRAM global `0x1000e87c`):
 
@@ -60,13 +59,12 @@ f0x1a20ae  bl    0x1c55d4            ; serial_irq_handler(obj, handler, id=0)
 f0x1a20b8  bl    0x1c561c            ; serial_irq_set(obj, RxIrq, enable=1)
 ```
 
-Function identification is unambiguous:
-- The call fan-out `serial_init / serial_baud / serial_format / serial_irq_handler /
-  serial_irq_set` matches the argument arities in
-  `component/common/mbed/hal/serial_api.h` exactly.
-- The offset delta **serial_baud − serial_init = 0x7c** (`0x1c55b8 − 0x1c553c`) matches
-  the SDK build's `serial_baud(0x9b013e44) − serial_init(0x9b013dc8) = 0x7c` byte-for-byte,
-  confirming `0x1c553c = serial_init`, `0x1c55b8 = serial_baud`.
+Function identification is unambiguous: the call fan-out `serial_init / serial_baud /
+serial_format / serial_irq_handler / serial_irq_set` matches the argument arities in
+`component/common/mbed/hal/serial_api.h` exactly, and the offset delta **serial_baud −
+serial_init = 0x7c** (`0x1c55b8 − 0x1c553c`) matches the SDK build's `serial_baud(0x9b013e44) −
+serial_init(0x9b013dc8) = 0x7c` byte-for-byte, confirming `0x1c553c = serial_init`, `0x1c55b8 =
+serial_baud`.
 
 ### Baud cross-reference (9600 confirmed)
 
@@ -85,19 +83,16 @@ f0x1a1f16  bl    0x1c55b8             ; serial_baud(obj, baud)
 So the A/C UART physically runs **9600 8N1** in the mode that matches the RE-notes protocol,
 and 115200 otherwise. Same pins (PA_14/PA_13) in both cases.
 
-## DE/RE direction GPIO: none found
+## DE/RE direction GPIO: none found (WRONG, see correction banner at top)
 
 **No `gpio_init` / `gpio_dir` / `gpio_write` appears in the UART bring-up path** (the two
 helpers called immediately before `serial_init`, at `0x1a1b74` and `0x1c5a04`, are
 link-state/reset bookkeeping, not GPIO). A scan of the whole A/C-UART code window
-(`0x1a1000–0x1a6000`) found only the six `serial_*` HAL calls above and no bracketing
-GPIO toggle around transmit.
-
-Conclusion: **no software DE/RE control.** The UM3352E is almost certainly wired for
-**auto-direction** (DE driven by the TX line via a transistor, or DE tied high / RE tied
-low for a permanently-enabled driver, typical for these 4-pin Hisense/Aircon dongles).
-Confidence Med-High: absence-of-evidence, but the evidence window (init + TX region) is the
-place such a pin would have to be set up, and it is clean.
+(`0x1a1000–0x1a6000`) found only the six `serial_*` HAL calls above and no bracketing GPIO
+toggle around transmit, leading to the (wrong) conclusion of auto-direction, no software DE/RE
+control. The actual DE GPIO (PA_17) is set up and toggled elsewhere in the firmware, outside
+this evidence window; see the correction banner and
+[`reverse-engineering/docs/10`](../../../reverse-engineering/docs/10-stock-fw-init-and-comms.md).
 
 ## Which UART / not the log console
 
@@ -115,6 +110,10 @@ to index 0 (UART0) and `hal_uart_init` then does `hal_pinmux_register(pin, PID_U
 
 ## Suggested driver defines
 
+> ⚠️ The last line below is the same wrong DE/RE conclusion the top banner corrects. The actual
+> driver (`hisense_rs485.h`) defines `HISENSE_UART_DE_PIN = PA_17` and drives it HIGH=TX/LOW=RX;
+> use that, not this snippet, for the direction line.
+
 ```c
 // RTL8710C / AmebaZ2 — Hisense A/C RS-485 bus (UM3352E transceiver)
 #define AC_UART_TX     PA_14   // raw 0x0E ; UART0 TX
@@ -125,9 +124,8 @@ to index 0 (UART0) and `hal_uart_init` then does `hal_pinmux_register(pin, PID_U
 
 ## What remains uncertain
 
-- **DE/RE**: "none" is inferred from a clean init + TX window, not from a schematic. If the
-  board turns out to need it, the pin would be a GPIO configured near the UART bring-up,
-  none is there. Verify on the wire / PCB if a driver-enable line matters (Med-High).
+- **DE/RE**: resolved, see the correction banner at top (PA_17, hardware-confirmed). The
+  reasoning below is kept only as the historical record of the static-RE miss.
 - **Second-image base**: taken as `0x9b000000` because the mbed `serial_api` offsets line up
   with the SDK map. Pin *values* (movs immediates) are base-independent, so the PA_14/PA_13
   result does not depend on this assumption (High).

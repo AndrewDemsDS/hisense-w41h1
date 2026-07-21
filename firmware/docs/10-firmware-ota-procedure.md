@@ -148,9 +148,8 @@ alongside `dumps/w41h1_dump1.bin`. Verify a fresh flash by commissioning into st
 - matter-server runs on the **Pi** (`your-ha-host.local`), **not** localhost. Point your scripts
   at the Pi's `MS_WS` and your device's Matter `NODE_ID` (from `ota-release.env`); matter-server
   serves from `--ota-provider-dir /data/ota` (host `…/matter-server/ota`).
-- **Caching:** matter-server loads the `.json` manifests at start. After staging a new
-  `.ota`+`.json`, **restart the container** so it picks them up.
 - Trigger: `check_node_update` → `update_node(node, software_version=N)`.
+- Caching (manifest load-once, node-attribute cache, HA entity cache): see §9.
 
 ## 7. OTA is flaky by design: retry; and it can roll back
 
