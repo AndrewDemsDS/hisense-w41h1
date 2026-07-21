@@ -568,6 +568,29 @@ static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit)
         : (setpoint >= HISENSE_SETPOINT_MIN_C && setpoint <= HISENSE_SETPOINT_MAX_C);
 }
 
+/* Validate + convert an A/C-reported setpoint for the command shadow. The status parser
+ * always reports Celsius, but the shadow (and the wire) carries the DISPLAY unit, so the
+ * range check must run on the wire-unit value against the wire unit's range -- never on
+ * the Celsius number against the shadow's previous unit. That mismatch wedged the sync:
+ * once the shadow held Fahrenheit, no Celsius value ever passed the 61..90 F window, so
+ * every poll failed the check, the shadow froze at its first F value, and each later
+ * command silently re-imposed that stale setpoint (plus an error log every poll).
+ *
+ * Returns false (out untouched) when the A/C reports a setpoint the command builder
+ * would reject (e.g. 5 C frost-guard): the caller keeps its last good shadow instead
+ * of poisoning every later hisense_build_command() call. */
+static inline bool hisense_shadow_setpoint_from_status(int8_t setpoint_c, bool temp_unit_f, int8_t *out)
+{
+    int8_t wire = temp_unit_f ? hisense_c_to_f((int) setpoint_c) : setpoint_c;
+    if (!hisense_setpoint_in_range(wire, temp_unit_f)) {
+        return false;
+    }
+    if (out != NULL) {
+        *out = wire;
+    }
+    return true;
+}
+
 /* ---------------------------------------------------------------------------
  * Fault / error flags (the `f_e_*` cloud attributes behind the vendor app's
  * "Self diagnostics" screen). Decoded from the SAME 0x66 status reply we already

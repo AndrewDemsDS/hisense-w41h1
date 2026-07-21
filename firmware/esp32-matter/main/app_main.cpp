@@ -569,15 +569,20 @@ static void on_status(const HisenseState *st)
         // than a dead control path.
         /* Track the A/C's display unit, and hold the shadow setpoint in THAT unit, because
          * that is what goes on the wire. st->setpoint_c is always Celsius (the parser
-         * converts), so convert back when the panel is in F. */
-        s_cmd.fahrenheit = st->temp_unit_f;
-        int8_t shadow_sp = st->temp_unit_f ? hisense_c_to_f(st->setpoint_c) : st->setpoint_c;
-        if (hisense_setpoint_in_range(shadow_sp, s_cmd.fahrenheit)) {
-            s_cmd.setpoint = shadow_sp;
+         * converts), so the helper converts back and validates against the WIRE unit's
+         * range -- validating the Celsius number against the shadow's old unit is what
+         * wedged the AmebaZ2 sync in F mode. On an out-of-range report BOTH fields keep
+         * their last good values: flipping only the unit would reinterpret the stale
+         * Celsius number as Fahrenheit on the next command. */
+        int8_t shadow_sp;
+        if (hisense_shadow_setpoint_from_status(st->setpoint_c, st->temp_unit_f, &shadow_sp)) {
+            s_cmd.fahrenheit = st->temp_unit_f;
+            s_cmd.setpoint   = shadow_sp;
         } else {
-            ESP_LOGW(TAG, "status setpoint %d out of range -- keeping shadow at %d "
+            ESP_LOGW(TAG, "status setpoint %d C (%s) out of range -- keeping shadow at %d "
                           "(copying it would drop every later command)",
-                     (int) shadow_sp, (int) s_cmd.setpoint);
+                     (int) st->setpoint_c, st->temp_unit_f ? "F panel" : "C panel",
+                     (int) s_cmd.setpoint);
         }
         HisenseFanSpeed sf = hisense_fan_raw_to_cmd(st->fan_raw);
         if (sf != HISENSE_FAN_NOCHANGE) s_cmd.fan = sf;    // keep previous fan on an unknown raw (#59)

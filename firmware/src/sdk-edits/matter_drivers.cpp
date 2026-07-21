@@ -1334,12 +1334,16 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
             // for EVERY later command -- mode, fan and swing included -- silently killing
             // all combined-frame control until a reboot. Keeping the last good value
             // degrades gracefully: the shadow is only a base for the next command.
-            if (hisense_setpoint_in_range(st.setpoint_c, s_cmd.fahrenheit)) {
+            // The check runs in the WIRE unit (st.temp_unit_f): validating the Celsius
+            // st.setpoint_c against the shadow's old unit wedged the sync the first time
+            // a panel entered Fahrenheit (no C value passes the 61..90 F window, so the
+            // shadow froze and every later command re-imposed the stale setpoint).
+            int8_t shadow_sp;
+            if (hisense_shadow_setpoint_from_status(st.setpoint_c, st.temp_unit_f, &shadow_sp)) {
                 // Hold the shadow setpoint in the A/C's DISPLAY unit: that is what goes on
                 // the wire. st.setpoint_c is always Celsius (the parser converts).
                 s_cmd.fahrenheit = st.temp_unit_f;
-                s_cmd.setpoint   = st.temp_unit_f ? hisense_c_to_f(st.setpoint_c)
-                                                  : st.setpoint_c;
+                s_cmd.setpoint   = shadow_sp;
             } else {
                 ChipLogError(DeviceLayer,
                              "status setpoint %d out of range -- keeping shadow at %d "
