@@ -269,7 +269,6 @@ static void trigger_https_ota(void);           // fwd decl (manual HTTPS-OTA bac
 #ifndef HISENSE_OTA_URL
 #define HISENSE_OTA_URL "http://[fd00::1]:8070/esp32-ota.bin"   // placeholder, override at build time
 #endif
-#define HTTPS_OTA_URL HISENSE_OTA_URL
 
 static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t endpoint_id,
                                      uint32_t cluster_id, uint32_t attribute_id,
@@ -920,7 +919,7 @@ static void on_recommission_cancel(void)
 
 static void https_ota_task(void *arg)
 {
-    ESP_LOGW(TAG, "HTTPS-OTA: fetching %s", HTTPS_OTA_URL);
+    ESP_LOGW(TAG, "HTTPS-OTA: fetching %s", HISENSE_OTA_URL);
 
     int8_t saved_tx = 0;
     bool   tx_saved = (esp_wifi_get_max_tx_power(&saved_tx) == ESP_OK);
@@ -931,7 +930,7 @@ static void https_ota_task(void *arg)
     }
 
     esp_http_client_config_t http_cfg = {};
-    http_cfg.url               = HTTPS_OTA_URL;
+    http_cfg.url               = HISENSE_OTA_URL;
     http_cfg.timeout_ms        = 30000;
     http_cfg.keep_alive_enable = true;
     esp_https_ota_config_t ota_cfg = {};
