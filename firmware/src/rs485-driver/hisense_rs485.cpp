@@ -296,7 +296,10 @@ bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out)
         return false;
     }
     memset(out, 0, sizeof(*out));
-    if (len <= HISENSE_FAULT_BYTE_INDOOR + 1) {
+    // Reading buf[B] only needs len > B; the gates below were one byte stricter, so a
+    // frame of EXACTLY B+1 silently lost that group's coverage (never an over-read,
+    // just a quiet blind spot).
+    if (len <= HISENSE_FAULT_BYTE_INDOOR) {
         return false;                      // too short to carry even the first group
     }
 
@@ -310,7 +313,7 @@ bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out)
     out->in_vzero     = (out->raw_indoor & 0x02) != 0;
     out->in_com       = (out->raw_indoor & 0x01) != 0;
 
-    if (len > HISENSE_FAULT_BYTE_MODULE + 1) {
+    if (len > HISENSE_FAULT_BYTE_MODULE) {
         out->raw_module = buf[HISENSE_FAULT_BYTE_MODULE];
         out->in_display = (out->raw_module & 0x80) != 0;
         out->in_keys    = (out->raw_module & 0x40) != 0;
@@ -318,14 +321,14 @@ bool hisense_parse_faults(const uint8_t *buf, size_t len, HisenseFaults *out)
         out->in_ele     = (out->raw_module & 0x10) != 0;
         out->in_eeprom  = (out->raw_module & 0x08) != 0;
     }
-    if (len > HISENSE_FAULT_BYTE_OUTDOOR + 1) {
+    if (len > HISENSE_FAULT_BYTE_OUTDOOR) {
         out->raw_outdoor   = buf[HISENSE_FAULT_BYTE_OUTDOOR];
         out->out_eeprom    = (out->raw_outdoor & 0x40) != 0;
         out->out_coil_temp = (out->raw_outdoor & 0x20) != 0;
         out->out_gas_temp  = (out->raw_outdoor & 0x10) != 0;
         out->out_temp      = (out->raw_outdoor & 0x08) != 0;
     }
-    if (len > HISENSE_FAULT_BYTE_PROTECT + 1) {
+    if (len > HISENSE_FAULT_BYTE_PROTECT) {
         out->raw_protect = buf[HISENSE_FAULT_BYTE_PROTECT];
         out->over_temp   = (out->raw_protect & 0x10) != 0;
     }

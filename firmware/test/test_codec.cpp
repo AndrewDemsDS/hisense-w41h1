@@ -581,6 +581,22 @@ int main() {
               "indoor group readable on a frame that just reaches it");
         CHECK(fl.raw_outdoor == 0 && !fl.out_temp, "unreachable groups stay clear");
 
+        // Exact boundaries: reading buf[B] only needs len == B+1. A frame one byte past
+        // a group's byte must decode that group; exactly at the byte must not.
+        make_status(s, true, HISENSE_MODE_COOL, 22, 25, 0x01, 0x00, 0x00, 0x00, 40, 30);
+        s[HISENSE_FAULT_BYTE_MODULE] = 0x20;
+        CHECK(hisense_parse_faults(s, HISENSE_FAULT_BYTE_MODULE + 1, &fl) && fl.in_wifi,
+              "module group decodes at exactly len == byte+1");
+        CHECK(fl.raw_outdoor == 0, "outdoor group still out of reach at len == module+1");
+        s[HISENSE_FAULT_BYTE_OUTDOOR] = 0x08;
+        CHECK(hisense_parse_faults(s, HISENSE_FAULT_BYTE_OUTDOOR + 1, &fl) && fl.out_temp,
+              "outdoor group decodes at exactly len == byte+1");
+        s[HISENSE_FAULT_BYTE_PROTECT] = 0x10;
+        CHECK(hisense_parse_faults(s, HISENSE_FAULT_BYTE_PROTECT + 1, &fl) && fl.over_temp,
+              "protect group decodes at exactly len == byte+1");
+        CHECK(hisense_parse_faults(s, HISENSE_FAULT_BYTE_PROTECT, &fl) && !fl.over_temp,
+              "protect group NOT decoded when the frame ends ON its byte");
+
         CHECK(!hisense_parse_faults(nullptr, 160, &fl), "null buf rejected");
         CHECK(!hisense_parse_faults(s, 160, nullptr), "null out rejected");
     }
