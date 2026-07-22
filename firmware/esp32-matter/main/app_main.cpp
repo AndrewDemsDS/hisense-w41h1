@@ -30,6 +30,7 @@
 
 #include <esp_matter.h>
 #include <esp_matter_endpoint.h>
+#include <esp_matter_ota.h>                             // BDX-OTA TX-power throttle (#12): custom OTA requestor driver
 
 #include <app/server/Server.h>                      // Server / FabricTable / commissioning window (F1 "77")
 #include <app/server/CommissioningWindowManager.h>
@@ -932,6 +933,44 @@ static void on_recommission_cancel(void)
 #define HISENSE_OTA_TX_POWER_QDBM  40   /* 10 dBm, quarter-dBm units. Plenty for a LAN hop. */
 #define HISENSE_OTA_CHUNK_YIELD_MS 8    /* breathing room between flash writes */
 
+/* #12 brownout mitigation, Matter (BDX) OTA path. The stock esp-matter OTA requestor runs the
+ * whole download+apply at the full 20 dBm TX ceiling, so on this marginal A/C rail the concurrent
+ * flash-write (300-500 mA) + Wi-Fi TX peak is exactly the combination that hung a node mid-OTA.
+ * The HTTP break-glass path (https_ota_task, below) already drops TX for its duration; this brings
+ * the SAME throttle to the PRIMARY Matter path by swapping in a driver that lowers TX on idle-exit
+ * (an update is starting) and restores it on idle-enter (back to idle on ANY path: done / abort /
+ * timeout). Capture-once + restore-on-every-idle-enter mirrors the save/restore-on-every-branch
+ * discipline of the HTTP path, so the node is never left stuck at 10 dBm. Not a substitute for the
+ * bulk cap; it only lowers the probability of a brownout during the OTA window. */
+class HisenseOTARequestorDriver : public chip::DeviceLayer::ExtendedOTARequestorDriver {
+public:
+    void HandleIdleStateExit() override
+    {
+        if (!m_tx_saved) {   // capture the live ceiling ONCE, on the first exit-from-idle
+            m_tx_saved = (esp_wifi_get_max_tx_power(&m_saved_tx) == ESP_OK);
+            if (m_tx_saved) {
+                esp_wifi_set_max_tx_power(HISENSE_OTA_TX_POWER_QDBM);
+                ESP_LOGW(TAG, "Matter OTA: Wi-Fi TX power %d -> %d (quarter-dBm) to cut the current peak",
+                         (int) m_saved_tx, HISENSE_OTA_TX_POWER_QDBM);
+            }
+        }
+        chip::DeviceLayer::ExtendedOTARequestorDriver::HandleIdleStateExit();
+    }
+    void HandleIdleStateEnter(chip::IdleStateReason reason) override
+    {
+        chip::DeviceLayer::ExtendedOTARequestorDriver::HandleIdleStateEnter(reason);
+        if (m_tx_saved) {   // restore on ANY return to idle (success / abort / timeout)
+            esp_wifi_set_max_tx_power(m_saved_tx);
+            ESP_LOGW(TAG, "Matter OTA: Wi-Fi TX power restored to %d (quarter-dBm)", (int) m_saved_tx);
+            m_tx_saved = false;
+        }
+    }
+private:
+    int8_t m_saved_tx = 0;
+    bool   m_tx_saved = false;
+};
+static HisenseOTARequestorDriver s_hisense_ota_driver;
+
 static void https_ota_task(void *arg)
 {
     ESP_LOGW(TAG, "HTTPS-OTA: fetching %s", HISENSE_OTA_URL);
@@ -1451,6 +1490,19 @@ extern "C" void app_main()
     esp_matter::set_custom_device_info_provider(&AppDeviceInfoProvider::Instance());
 
     esp_matter::start(NULL);   // brings up Wi-Fi/Matter + commissioning
+
+    // #12 brownout mitigation: swap in the TX-throttling OTA requestor driver for the Matter (BDX)
+    // path. Must run AFTER esp_matter::start() (esp_matter_ota_requestor_init() has executed) and
+    // BEFORE the async kDnssdInitialized event fires esp_matter_ota_requestor_start(), which is what
+    // consumes this driver. Timeout fields left 0 -> set_config keeps the esp-matter defaults (it
+    // guards each with `if`). Only the driver pointer is captured, so the config structs are locals.
+    {
+        esp_matter_ota_requestor_impl_t ota_impl = {};
+        ota_impl.driver = &s_hisense_ota_driver;
+        esp_matter_ota_config_t ota_cfg = {};
+        ota_cfg.impl = &ota_impl;
+        esp_matter_ota_requestor_set_config(ota_cfg);
+    }
 
     // HA entity labels (UserLabel key "ha_entitylabel") -> distinguishable same-type entities.
     // start() has returned (Server::Init done, endpoints exist); take the stack lock since we
