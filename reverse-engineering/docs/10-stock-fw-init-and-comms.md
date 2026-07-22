@@ -694,11 +694,24 @@ CONFIRMED by two independent lines of disassembly (control-flow + offset math, a
 fault-name strings). What remains unproven is purely *semantic*: whether a genuinely faulted unit
 asserts these bits on the wire. That is the one gate left, and it needs hardware. See §7.6.
 
-### 7.6 Remaining gate: hardware fault-injection runbook
+### 7.6 Hardware validation [CONFIRMED 2026-07-22] and the fault-injection runbook
 
-Static RE cannot go further: a healthy unit reads all-clear, so "no faults" proves nothing about
-whether a real fault sets its predicted bit. Confirm one bit end-to-end on a debug-flavour unit
-(so the `:2323` console is reachable), cheapest step first:
+**Validated on real hardware, 2026-07-22** (office AmebaZ2, v1.3.19). Two faults were induced; each
+set exactly its predicted bit, named it correctly, stayed isolated to the affected unit, and cleared
+on undo:
+
+| fault | induced by | observed |
+|---|---|---|
+| `f_e_incom` | cut the indoor-to-outdoor comms line | byte 39 -> `0x01` (bit 0), `com=1`; back to `0x00` on reconnect |
+| `f_e_intemp` | unplug the indoor temp thermistor | byte 39 -> `0x80` (bit 7), `temp=1`; back to `0x00` on reconnect |
+
+The kitchen unit read all-clear the whole time (no false positive). Bit 0 and bit 7 are the two ends
+of byte 39, so both the byte offset and the within-byte bit decode are confirmed against live faults.
+That closes #38. Bytes 40/64/66 rest on the same extractor + compiled-name-string evidence (§7.5) but
+have not each been seen firing; the runbook below drives that if wanted.
+
+Confirm a bit end-to-end on a debug-flavour unit (so the `:2323` console is reachable), cheapest step
+first:
 
 1. **Baseline (captured live 2026-07-22).** `nc <unit> 2323`, then `faults` (expect `no faults`)
    and `raw` (hexdump). On a normal healthy unit bytes 39/40/64/66 read `00 00 00 00` (confirmed on
