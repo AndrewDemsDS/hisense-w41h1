@@ -127,6 +127,28 @@ static uint16_t hisense_checksum_range(const uint8_t *frame, size_t start, size_
     return (uint16_t)(sum & 0xFFFF);
 }
 
+/* #12: running-sum checksum verify for a RECEIVED, un-stuffed A/C frame (in s_msg_buf).
+ * Status / ProductType replies are CTRL 0x40 -> a 2-byte big-endian sum over [2, n-4);
+ * bytes [n-4][n-3] hold it and [n-2][n-1] are the F4 FB end tag. This is the SAME range
+ * and width the TX finaliser writes (hisense_checksum_range + finalize_frame) and matches
+ * the stock parser (see the checksum note above). Pure -> host-testable. A well-framed but
+ * corrupt frame fails this; callers currently only COUNT that (log-only, issue #12) so real
+ * traffic can be confirmed clean on the :2323 console before it is ever used to reject. */
+bool hisense_status_checksum_ok(const uint8_t *f, size_t n)
+{
+    if (n < 6) return false;                                           // F4 F5 + chk_hi chk_lo + F4 FB minimum
+    if (f[n - 2] != HISENSE_ETX1 || f[n - 1] != HISENSE_ETX2) return false;   // end tag (defensive)
+    size_t chk_off = n - 4;                                            // 2-byte checksum precedes F4 FB
+    uint16_t chk = hisense_checksum_range(f, 2, chk_off);
+    return f[chk_off] == (uint8_t)(chk >> 8) && f[chk_off + 1] == (uint8_t)(chk & 0xFF);
+}
+
+/* #12: count of received 0x66 frames that passed framing but FAILED the checksum above.
+ * Observation only for now: exposed on the diag console so a real-traffic run can prove the
+ * verify never false-rejects a genuine frame before we let it gate parsing / link-miss. */
+static uint32_t s_chk_mismatch = 0;
+uint32_t hisense_checksum_mismatch_count(void) { return s_chk_mismatch; }
+
 /* ---------------------------------------------------------------------------
  * Finalize a fully-populated frame in place: compute the 2-byte big-endian
  * checksum over [2, chk_offset), store it (hi,lo) at chk_offset, then write the
@@ -1015,6 +1037,10 @@ static int hisense_transact(const uint8_t *frame, size_t len, int timeout_ms, ui
 static void hisense_consume_status(size_t n)
 {
     if (n >= HISENSE_STATUS_HEADER_LEN && s_msg_buf[13] == 0x66) {
+        // #12 (observe-only): tally, but do NOT yet act on, a checksum mismatch. When a real-
+        // traffic run on the :2323 console confirms this stays 0, the reject can be enabled
+        // (skip the parse below + count the poll as a link-miss). Parsing is unchanged for now.
+        if (!hisense_status_checksum_ok(s_msg_buf, n)) s_chk_mismatch++;
         if (s_msg_buf[14] == 0x40) {   // ProductType feature-flag response, not status
             HisenseFeatures ft;
             if (hisense_parse_features(s_msg_buf, n, &ft)) {
@@ -1287,9 +1313,19 @@ static void hisense_bus_task(void *pvParameters)
         if (hisense_transact(HISENSE_LINK_INIT_0A, HISENSE_LINK_INIT_0A_LEN, 500, 0x0A) > 0) {
             break;
         }
+#ifdef ESP_PLATFORM
+        // #12: feed the WDT through the PRE-link handshake too. With CONFIG_ESP_TASK_WDT_PANIC=y
+        // and a 5 s timeout, the up-to-~10 s of silent retries here (A/C off / slow / disconnected
+        // after a power cut -- exactly the case #12 targets) would otherwise panic and reboot-loop
+        // before the steady-state loop's feed is ever reached. ~1 s per iteration keeps us fed.
+        esp_task_wdt_reset();
+#endif
         vTaskDelay(pdMS_TO_TICKS(500));
     }
     hisense_transact(HISENSE_LINK_INIT_07, HISENSE_LINK_INIT_07_LEN, 500, 0x00);  // reply ignored
+#ifdef ESP_PLATFORM
+    esp_task_wdt_reset();   // #12: and once more before dropping into the steady-state loop
+#endif
 
     bool    heard_ac  = false;
     int     link_miss = 0;   // consecutive silent status polls -> link lost

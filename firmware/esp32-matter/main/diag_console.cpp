@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_console.h"
 #include "esp_netif.h"
+#include "esp_system.h"   // #12: esp_get_free_heap_size / esp_get_minimum_free_heap_size
 #include "lwip/sockets.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -153,6 +154,13 @@ static int cmd_features(int, char **)
 static int cmd_poll(int, char **)
 {
     LOCK(); HisenseState s = s_snap; bool h = s_have; uint32_t f = s_frames; UNLOCK();
+    // #12 (log-only): checksum-mismatch tally must stay 0 on real traffic before the RX checksum
+    // verify is allowed to gate parsing / the link-miss counter. Also surface heap here. The
+    // counter lives in the driver TU with no lock of its own; a word-sized read is atomic on
+    // Xtensa, so reading it outside s_mtx is safe (at worst one cycle stale) for a diagnostic.
+    printf("checksum mismatches: %u  |  heap free=%u min_free=%u\r\n",
+           (unsigned) hisense_checksum_mismatch_count(),
+           (unsigned) esp_get_free_heap_size(), (unsigned) esp_get_minimum_free_heap_size());
     if (!h) { printf("no status decoded yet (is the A/C bus connected + powered?)\r\n"); return 0; }
     printf("last of %u frames:\r\n", (unsigned)f);
     print_state(stdout, &s);

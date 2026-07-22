@@ -1341,6 +1341,22 @@ bool emberAfAttributeWriteAccessCallback(chip::EndpointId endpoint,
     return true;
 }
 
+// #12: periodic heap-watermark log. A slow leak over long uptime is invisible until it bites
+// (an allocation fails -> crash/reboot), and this node runs unattended for weeks. Logging the
+// lifetime MINIMUM free heap (esp_get_minimum_free_heap_size) makes a downward trend observable
+// on the serial / :2323 console long before it becomes a fault. Low priority, 60 s cadence, runs
+// even while the A/C link is down (when a stuck retry loop would leak) -> negligible cost.
+static void heap_watchdog_task(void *arg)
+{
+    (void) arg;
+    for (;;) {
+        ESP_LOGI(TAG, "heap: free=%u min_free=%u (bytes)",
+                 (unsigned) esp_get_free_heap_size(),
+                 (unsigned) esp_get_minimum_free_heap_size());
+        vTaskDelay(pdMS_TO_TICKS(60000));
+    }
+}
+
 // ---------------------------------------------------------------------------
 extern "C" void app_main()
 {
@@ -1563,6 +1579,11 @@ extern "C" void app_main()
     hisense_set_features_cb(on_features);   // 0x66/40 ProductType flags -> log
     hisense_set_link_cb(on_link);           // #56: bus silence -> null liveness attrs
     if (hisense_init(on_status) != pdPASS) ESP_LOGE(TAG, "hisense_init failed");
+
+    // #12: heap-leak visibility over long unattended uptime. 4096-byte stack matches this repo's
+    // convention for ESP_LOG-ing tasks (diag_watch/breakglass=4096); a smaller stack has a
+    // documented history of printf overflowing it on this platform (see the bus-task stack note).
+    xTaskCreate(heap_watchdog_task, "heap_wd", 4096, NULL, 1, NULL);
 
 #ifdef CONFIG_HISENSE_DEBUG_BUILD
     diag_console_start();   // :2323 telnet diagnostics (token/poll/watch/decode/selftest)

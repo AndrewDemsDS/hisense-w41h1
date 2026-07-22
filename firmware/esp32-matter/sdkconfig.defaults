@@ -46,8 +46,8 @@ CONFIG_CUSTOM_DEVICE_INFO_PROVIDER=y
 # so it (and the fallback NUMBER) MUST stay equal to PROJECT_VER or the device reports a stale
 # softwareVersionString. Edit PROJECT_VER in CMakeLists.txt, then update both lines below.
 # esp32-lint.sh enforces this equality (fails the commit/CI if they drift).
-CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10105
-CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.1.5"
+CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10106
+CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.1.6"
 # --- OTA hardening (faster + reliable on marginal Wi-Fi) ---
 # Delta OTA: ship a diff (tens of KB) instead of the full ~1.5MB image over BDX.
 CONFIG_ENABLE_DELTA_OTA=y
@@ -74,3 +74,19 @@ CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
 CONFIG_ESP_BROWNOUT_DET=y
 CONFIG_ESP_BROWNOUT_DET_LVL_SEL_0=y
 CONFIG_ESP_BROWNOUT_DET_LVL=0
+
+# Task watchdog PANIC (#12): turn a hung task into a reboot (which re-runs the Wi-Fi/Matter/RS-485
+# bring-up) instead of a warning + a wedged node (Matter + A/C both dark) until a power cycle --
+# exactly the "recover without a reflash" case #12 is about. The RS-485 bus task explicitly
+# subscribes (esp_task_wdt_add) and feeds the WDT every cycle AND through its boot handshake, so a
+# genuinely stuck bus task reboots.
+#
+# BUT scope PANIC to explicitly-subscribed tasks only: DISABLE the default idle-task checks. A long
+# CPU-monopolising op that starves a pinned idle task past 5 s is NOT a hang to reboot -- e.g.
+# software SPAKE2+/PASE crypto during commissioning (classic ESP32 has no HW P-256 accel) or a BDX
+# OTA flash erase/write. Rebooting mid-flash-write would corrupt the image (the very hung-mid-OTA
+# failure #12 / the brownout note warn about). So idle-task starvation must NOT panic; only the
+# tasks we own and feed do.
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n

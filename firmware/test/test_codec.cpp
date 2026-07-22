@@ -163,6 +163,20 @@ int main() {
     uint16_t ck=besum(s,156); s[156]=ck>>8; s[157]=ck&0xFF; // re-checksum so only length-formula check fails
     CHECK(!hisense_parse_status(s,160,&st),"reject LEN(byte4) != frame length");
 
+    // ---- #12: RX checksum verify helper (log-only gate for features/faults/link-miss) ----
+    printf("[#12 status checksum verify]\n");
+    make_status(s,true,HISENSE_MODE_COOL,22,21,0x01,0,0,0,0,32);
+    CHECK(hisense_status_checksum_ok(s,160),"checksum_ok accepts a valid 160B status frame");
+    // matches the SAME formula parse_status already enforces (proven on real hardware)
+    { uint16_t ck=besum(s,156); CHECK(((s[156]<<8)|s[157])==ck,"golden frame checksum is self-consistent"); }
+    { uint8_t c[160]; memcpy(c,s,160); c[100]^=0xFF;              // corrupt a body byte, do NOT re-checksum
+      CHECK(!hisense_status_checksum_ok(c,160),"checksum_ok rejects a corrupted body byte"); }
+    { uint8_t c[160]; memcpy(c,s,160); c[156]^=0xFF;             // corrupt the stored checksum hi byte
+      CHECK(!hisense_status_checksum_ok(c,160),"checksum_ok rejects a corrupted checksum byte"); }
+    { uint8_t c[160]; memcpy(c,s,160); c[158]=0x00;              // clobber the F4 FB end tag
+      CHECK(!hisense_status_checksum_ok(c,160),"checksum_ok rejects a missing end tag"); }
+    CHECK(!hisense_status_checksum_ok(s,4),"checksum_ok rejects a too-short frame");
+
     // ---- "77" recommission debounce: fire ONCE, only after a sustained assertion ----
     // Guards the coex bug: a single reflected/glitched request frame must not open a
     // commissioning (BLE) window. Only a request held >= HOLD consecutive replies fires.
