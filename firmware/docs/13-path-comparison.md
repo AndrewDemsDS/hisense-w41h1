@@ -9,7 +9,9 @@ have a working module and would rather not add hardware, take the **AmebaZ2** pa
 dead end: the RS-485 driver is shared source, so switching later costs a rebuild, not a rewrite.
 
 Every number below was measured on this project's own hardware and builds (2026-07-18, AmebaZ2
-`1.2.9` / ESP32 `1.0.10`), not taken from datasheets.
+`1.2.9` / ESP32 `1.0.10`), not taken from datasheets. Both paths have shipped several releases since
+(AmebaZ2 `1.3.22`, ESP32 `1.1.6` as of 2026-07-22); treat the figures below as a snapshot from that
+build, not a live measurement.
 
 ## At a glance
 

@@ -9,10 +9,10 @@ detail) in Home Assistant, zero cloud. This supersedes the open-ended notes in `
 
 | diagnostic | decoded at | exposed today | count |
 |---|---|---|---|
-| compressor Hz | `hisense_rs485.cpp:714` (`buf[42]`) | only coarsely via `ThermostatRunningState` -> `hvac_action`; raw Hz nowhere | 1 scalar |
-| capability flags | `hisense_rs485.cpp:246` (`HisenseFeatures`) | `:2323` console only | **15** fields |
-| per-fault detail | `HisenseFaults` (bytes 39/40/64/66) | aggregate `BooleanState` on ep10 + `:2323` | **18** named bits |
-| link health (#56) | `on_link()` liveness nulling | standard liveness attrs go `unavailable` in HA | 1 bool |
+| compressor Hz | `hisense_rs485.cpp:714` (`buf[42]`) | `sensor.*_compressor_frequency` (HACS, #39), plus the coarse `ThermostatRunningState` -> `hvac_action` | 1 scalar |
+| capability flags | `hisense_rs485.cpp:246` (`HisenseFeatures`) | `sensor.*_capabilities` (HACS, #39), plus the `:2323` console | **15** fields |
+| per-fault detail | `HisenseFaults` (bytes 39/40/64/66) | `binary_sensor.*_faults` (HACS, #39, one PROBLEM sensor with per-bit attrs), plus the aggregate `BooleanState` on ep10 and `:2323` | **18** named bits |
+| link health (#56) | `on_link()` liveness nulling | standard liveness attrs go `unavailable` in HA, mirrored by `binary_sensor.*_bus_link` (connectivity, HACS) | 1 bool |
 
 Note the corrected counts: **18** fault bits (not 19) and **15** capability fields (not 14), per a
 direct read of `hisense_rs485.h`. Size any packed bitmap off these.
@@ -46,9 +46,9 @@ matter-server stores **any** device-reported attribute keyed by a plain numeric 
 `"<endpoint>/<cluster_id_dec>/<attr_id>"`, with **no** cluster registration required. Verified
 live: nodes 14/35/62 already carry the Hisense cluster's Eco/Turbo/Mute/SleepProfile at
 `"<ep>/4294048768/{0,1,2,3}"` (`0xFFF1FC00` = `4294048768`) in the matter-server node store,
-despite that cluster never being registered anywhere. `CompressorHz` (16) / `OutdoorTemp` (17) are
-confirmed **absent** from every node's `attributeList` (declared in the XML, not compiled into the
-`.zap`).
+despite that cluster never being registered anywhere. `CompressorHz` (16) is now compiled in and
+read live (v1.1.4, #38/#82); `OutdoorTemp` (17) stays **absent** from every node's `attributeList`
+(declared in the XML, not compiled into the `.zap`).
 
 So the answer: **compile the attributes into the existing cluster, then read them raw from
 matter-server's WebSocket API in our own HACS integration.** This bypasses both the Pi-side and
@@ -67,7 +67,7 @@ already ship via standard clusters. Keep as-is.
   `cool_heat` in `matter_drivers.cpp`. The FeatureMap is already `included`/RAM-backed in the
   `.zap` (no GUI change), and it is a genuine native `hvac_modes` improvement.
 
-**Phase 2 (firmware + ZAP GUI, one rebuild/flash pass, NO new endpoint):** on the **existing** ep1
+**Phase 2 (done, v1.1.4, #38/#82):** on the **existing** ep1
 `HisenseAircon` cluster (`0xFFF1FC00`, already attached):
 - tick `included` on the already-declared `CompressorHz` (`0x0010`);
 - add two new `bitmap32` attributes: `Features1` (`0x0012`, the 15 capability fields) and
@@ -79,17 +79,18 @@ already ship via standard clusters. Keep as-is.
   ESP32) still applies. Verify the raw values land in the matter-server node store before writing
   any HA-facing code.
 
-**Phase 3 (HACS integration, parallelizable once Phase 2's `.zap` lands):** in
+**Phase 3 (done, #39, shipped in `hisense-unified-ac` PR #85):** in
 `integrations/hisense-unified-ac`:
 - add `matter-python-client` as a `manifest.json` requirement (the same client HA already runs
   against this matter-server, so it is proven interoperable);
 - new `config_flow` fields (`matter_ws_url`, `node_id` per device);
 - a coordinator: `read_attribute()` once + `subscribe_events(ATTRIBUTE_UPDATED)` thereafter for the
   raw paths (no polling needed, firmware reports on change via the existing wildcard subscription);
-- `sensor.py` (compressor Hz, unit Hz, `state_class=measurement`) and `binary_sensor.py` (18
-  fault-bit entities `device_class=problem`, plus optional capability entities), decoding `Faults1`
-  / `Features1` client-side. Keep the bit map in `const.py` in lockstep with `hisense_rs485.h`, with
-  a host-side test asserting agreement (precedent: the HisenseFeatures naming-bug guard).
+- `sensor.py` (Compressor frequency, unit Hz, `state_class=measurement`; Capabilities, a count with
+  per-bit attributes) and `binary_sensor.py` (one Faults sensor, `device_class=problem`, per-bit
+  detail in attributes; Bus link, `device_class=connectivity`), decoding `Faults1` / `Features1`
+  client-side. The bit map in `const.py` stays in lockstep with `hisense_rs485.h`, and a host-side
+  test asserts agreement (`firmware/test/test_diag_contract.py`, wired into `run_tests.sh`).
 
 **Phase 4 (optional, only if native `matter`-integration entities are specifically wanted):** file
 a `matter-python-client` cluster-class PR + a matching `home-assistant/core` `MatterDiscoverySchema`

@@ -73,8 +73,9 @@ energy-management-app reference) and is shared as-is by the ESP32 build
 (`#include <ElectricalPowerMeasurementDelegate.h>` in `app_main.cpp`).
 
 Outdoor and coil temp now have a standard cluster too: `TemperatureMeasurement` on ep2 (outdoor)
-and ep8 (coil), see `docs/01`/`docs/07`. Compressor Hz remains without a standard cluster and stays
-gapped (the mfg-cluster attr for it is unreachable from HA, see `docs/01`).
+and ep8 (coil), see `docs/01`/`docs/07`. Compressor Hz remains without a standard cluster. It reads
+live today through the mfg-cluster raw attribute path, and the `hisense-unified-ac` HACS integration
+renders it as `sensor.*_compressor_frequency` (see `docs/01`/`docs/14`).
 
 ## 4. Calibration procedure: **clamp meter**
 
