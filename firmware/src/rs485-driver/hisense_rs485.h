@@ -518,6 +518,15 @@ void hisense_set_link_cb(hisense_link_cb_t cb);
 // lost edge, -1 on the restored edge, 0 otherwise (fires each edge exactly once).
 int hisense_link_health_edge(bool silent, bool *was_down);
 
+// #12: verify the 2-byte running-sum checksum of a received, un-stuffed 0x66 frame (status /
+// ProductType). Pure -> host-testable against the make_status golden vectors. True = the stored
+// checksum matches a running sum over [2, len-4). See the .cpp note; used log-only for now.
+bool hisense_status_checksum_ok(const uint8_t *frame, size_t len);
+// #12: running count of received 0x66 frames that passed framing but failed the checksum above
+// (observation only). Read it on the diag console to confirm real traffic is clean before the
+// verify is allowed to gate parsing / the link-miss counter.
+uint32_t hisense_checksum_mismatch_count(void);
+
 /* ---------------------------------------------------------------------------
  * Public API
  *
