@@ -574,7 +574,7 @@ check_subscription_log() {
   local line=""
   for _ in 1 2 3 4 5 6; do
     if ! line="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -i "$PI_SSH_KEY" "$PI_HOST" \
-        "docker logs --since 15m matter-server 2>&1 | grep -E '<Node:$node> (Re-)?Subscription succeeded' | tail -1 || true" 2>/dev/null)"; then
+        "docker logs --since 15m matter-server 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E '<Node:$node> (Re-)?Subscription succeeded' | tail -1 || true" 2>/dev/null)"; then
       say "  could not read the matter-server log on $PI_HOST -- node availability stands as the subscription assertion (#64)"
       return 0
     fi
