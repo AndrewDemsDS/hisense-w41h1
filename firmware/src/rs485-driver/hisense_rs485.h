@@ -633,12 +633,16 @@ static inline bool hisense_shadow_setpoint_from_status(int8_t setpoint_c, bool t
  * under one combined name rather than inventing a distinction the wire does not
  * make.
  * -------------------------------------------------------------------------*/
-/* PAYLOAD BASE: 15, NOT 13. [CONFIRMED]
+/* PAYLOAD BASE: 15, NOT 13. [CONFIRMED by disassembly, 2026-07-22]
  *
- * The disassembly says the extractor is handed the frame's class byte (wire 13), and RE
- * docs/10 5a's two ac_* entries agree with 13. Base 13 is nevertheless WRONG here: it puts
- * the indoor fault byte at wire 37, which reads 0x80 on a healthy unit, so the decode
- * claimed a permanent "indoor temp sensor" fault while that sensor read a correct 25 C.
+ * The extractor (0x9b6f8ac8) is handed a payload pointer whose index 0 is the frame's class
+ * byte (wire 13), then reads payload[group + 2] -- so the effective wire byte is 15 + group,
+ * not 13 + group. That +2 is the whole story: base 15 is not a fudge applied over the
+ * disassembly, it IS the disassembly (RE docs/10 7.5, opens #1 and #4 now RESOLVED: the
+ * extractor reads the same 66/00 status frame, and the 5a getter 0x9b6f0ee6 numbers bytes
+ * identically). Base 13 would put the indoor fault byte at wire 37, which reads 0x80 on a
+ * healthy unit, so the decode would have claimed a permanent "indoor temp sensor" fault while
+ * that sensor read a correct 25 C.
  *
  * Base 15 is CONFIRMED, not merely "the value that reads zero". Mapping the stock
  * capability table through base 15 reproduces five bits this driver already had confirmed
@@ -722,10 +726,12 @@ bool hisense_get_faults(HisenseFaults *out);
 // Raw copy of the most recent status frame, for bench inspection. Copies up to `cap`
 // bytes and returns how many. 0 if nothing has been received yet.
 //
-// This exists because the fault map above is DERIVED from the stock firmware and has not
-// yet been seen against a unit actually reporting a fault. A healthy unit reads all-zero,
-// which confirms nothing on its own, so being able to read the bytes directly is what
-// makes the mapping falsifiable.
+// This exists because the fault map's byte/bit positions are CONFIRMED by disassembly (docs/10
+// 7.5: the extractor reads the same 66/00 status frame, and the firmware's own compiled-in
+// fault names map 1:1 onto bytes 39/40/64/66), but no bit has yet been seen SET against a unit
+// actually reporting a fault. A healthy unit reads all-zero, which confirms nothing on its own,
+// so being able to read the bytes directly is what makes the last (semantic) step falsifiable.
+// The fault-injection runbook is docs/10 7.6.
 #define HISENSE_RAW_SNAPSHOT_LEN 160
 size_t hisense_get_last_status_frame(uint8_t *out, size_t cap);
 
