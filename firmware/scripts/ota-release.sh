@@ -558,14 +558,25 @@ check_subscription_log() {
     say "  PI_HOST/PI_SSH_KEY unset -- cannot read the matter-server log; node availability stands as the subscription assertion (#64)"
     return 0
   fi
-  local line
-  if ! line="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -i "$PI_SSH_KEY" "$PI_HOST" \
-      "docker logs --since 15m matter-server 2>&1 | grep -m1 '<Node:$node> Subscription succeeded' || true" 2>/dev/null)"; then
-    say "  could not read the matter-server log on $PI_HOST -- node availability stands as the subscription assertion (#64)"
-    return 0
-  fi
+  # After an OTA the device REBOOTS, so the healthy post-flash signal is usually a
+  # '<Node:N> Re-Subscription succeeded' logged a few seconds after the re-interview, NOT the
+  # plain 'Subscription succeeded' (that one is the PRE-reboot subscription and is often already
+  # >15m old, i.e. out of the window, by the time we check). So: match BOTH forms; take the most
+  # RECENT with 'tail -1' (grep -m1 took the oldest); and poll briefly, because the resubscribe
+  # can land a few seconds after we start looking. The old single-shot 'Subscription succeeded'
+  # grep false-alarmed two genuinely-healthy flashes on 2026-07-22 (nodes 14 and 62).
+  local line=""
+  for _ in 1 2 3 4 5 6; do
+    if ! line="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -i "$PI_SSH_KEY" "$PI_HOST" \
+        "docker logs --since 15m matter-server 2>&1 | grep -E '<Node:$node> (Re-)?Subscription succeeded' | tail -1 || true" 2>/dev/null)"; then
+      say "  could not read the matter-server log on $PI_HOST -- node availability stands as the subscription assertion (#64)"
+      return 0
+    fi
+    [ -n "$line" ] && break
+    sleep 10
+  done
   [ -n "$line" ] \
-    || die "no 'Subscription succeeded' for node $node in the last 15m of the matter-server log -- subscription is broken (#64, docs/10 §16)"
+    || die "no '(Re-)Subscription succeeded' for node $node in the last 15m of the matter-server log -- subscription is broken (#64, docs/10 §16)"
   say "  matter-server log confirms: ${line:0:120}"
 }
 flash() {
