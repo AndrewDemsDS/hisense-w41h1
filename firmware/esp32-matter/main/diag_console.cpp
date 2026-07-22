@@ -236,10 +236,10 @@ static int cmd_tx(int argc, char **argv)
     return 0;
 }
 
-// #38: decoded f_e_* fault bits. Mapping derived from the stock firmware capability table
-// plus the extractor at 0x9b6f8ac8 (RE docs/10 §7), NOT yet seen against a unit actually
-// reporting a fault, so the raw bytes are printed alongside the decode. A healthy unit
-// reads all-zero, which on its own confirms nothing.
+// #38: decoded f_e_* fault bits. The byte/bit map is CONFIRMED by disassembly: the extractor
+// at 0x9b6f8ac8 reads the same 66/00 status frame and numbers bytes as wire 15+group (RE
+// docs/10 §7.5). NOT yet seen against a unit actually reporting a fault, so the raw bytes are
+// printed alongside the decode. A healthy unit reads all-zero, which on its own confirms nothing.
 static int cmd_faults(int, char **)
 {
     HisenseFaults f;
@@ -252,7 +252,7 @@ static int cmd_faults(int, char **)
            HISENSE_FAULT_BYTE_MODULE,  f.raw_module,
            HISENSE_FAULT_BYTE_OUTDOOR, f.raw_outdoor,
            HISENSE_FAULT_BYTE_PROTECT, f.raw_protect,
-           f.any ? "FAULT(S) PRESENT (map is PROVISIONAL -- cross-check `raw`)" : "all clear");
+           f.any ? "FAULT(S) PRESENT (decode confirmed; unseen vs a real fault -- cross-check `raw`)" : "all clear");
     if (!f.any) {
         printf("  (all-zero is expected on a healthy unit and does NOT validate the map)\r\n");
         return 0;
@@ -328,7 +328,7 @@ static int cmd_raw(int, char **)
            HISENSE_FAULT_BYTE_MODULE,  n > HISENSE_FAULT_BYTE_MODULE  ? f[HISENSE_FAULT_BYTE_MODULE]  : 0,
            HISENSE_FAULT_BYTE_OUTDOOR, n > HISENSE_FAULT_BYTE_OUTDOOR ? f[HISENSE_FAULT_BYTE_OUTDOOR] : 0,
            HISENSE_FAULT_BYTE_PROTECT, n > HISENSE_FAULT_BYTE_PROTECT ? f[HISENSE_FAULT_BYTE_PROTECT] : 0);
-    printf("  (base 15 is PROVISIONAL -- confirm by diffing this dump against a real fault)\r\n");
+    printf("  (base 15 CONFIRMED by disasm; the BITS are unvalidated -- diff this dump vs a real fault)\r\n");
     return 0;
 }
 

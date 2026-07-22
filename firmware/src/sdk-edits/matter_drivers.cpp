@@ -1623,14 +1623,23 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
 
         // Manufacturer cluster read-back (no generated accessors for a custom
         // cluster -> raw ember writes). Types: boolean=0x10, int8u=0x20, int8s=0x28.
+        //
+        // ONLY the four attrs actually enabled on this endpoint in the .zap
+        // (0x0000-0x0003) are written. CompressorHz (0x0010) and OutdoorTemp (0x0011)
+        // are declared in hisense-aircon-cluster.xml but NOT ticked into the compiled
+        // .zap, so the prior writes to them returned UNSUPPORTED_ATTRIBUTE and did
+        // nothing -- and even enabled they would be invisible in HA, since matter-server
+        // cannot read a self-assigned custom cluster (0xFFF1FC00). Outdoor temp already
+        // reaches HA through the standard TemperatureMeasurement ep2 write above; raw
+        // compressor Hz exposure is deferred (#39 -- needs a standard-cluster home plus a
+        // device to verify boot + HA render). Today Hz reaches HA only coarsely, folded
+        // into ThermostatRunningState -> hvac_action, and in full on the :2323 console.
         {
             uint8_t b;
             b = st.eco_on   ? 1 : 0; emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::Eco::Id,          &b, kHisenseTypeBool);
             b = st.turbo_on ? 1 : 0; emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::Turbo::Id,        &b, kHisenseTypeBool);
             b = st.mute_on  ? 1 : 0; emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::Mute::Id,         &b, kHisenseTypeBool);
             b = (uint8_t)(st.sleep_raw / 2);      emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::SleepProfile::Id, &b, kHisenseTypeInt8u);
-            b = st.compressor_freq;               emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::CompressorHz::Id, &b, kHisenseTypeInt8u);
-            b = (uint8_t)st.outdoor_temp_c;       emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::OutdoorTemp::Id,  &b, kHisenseTypeInt8s);
         }
 
         // Special-mode switch endpoints (ep3-6) -> HA-controllable OnOff mirror of the

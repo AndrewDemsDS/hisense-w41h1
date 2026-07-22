@@ -133,10 +133,12 @@ static void diag_cmd_poll(int sock)
     diag_say(sock, b);
 }
 
-/* #38: decoded f_e_* fault bits. The payload base is PROVISIONAL (15, chosen because it
- * is the only nearby base that reads all-zero on a healthy unit; the disassembly-derived
- * 13 was falsified on hardware), so the raw bytes are always printed alongside. All-zero
- * on a healthy unit validates nothing. */
+/* #38: decoded f_e_* fault bits. The payload base (15) is CONFIRMED by disassembly: the stock
+ * extractor at 0x9b6f8ac8 reads payload[group+2] = wire 15+group from the same 66/00 status
+ * frame, and the firmware's own compiled-in fault names map 1:1 onto bytes 39/40/64/66 (RE
+ * docs/10 §7.5). Still unvalidated is the BITS: no fault has been seen SET on a real faulted
+ * unit, so the raw bytes are printed alongside. All-zero on a healthy unit validates nothing
+ * (docs/10 §7.6 runbook). */
 static void diag_cmd_faults(int sock)
 {
     char b[HISENSE_DIAG_BUF];
@@ -152,7 +154,7 @@ static void diag_cmd_faults(int sock)
         HISENSE_FAULT_BYTE_MODULE,  f.raw_module,
         HISENSE_FAULT_BYTE_OUTDOOR, f.raw_outdoor,
         HISENSE_FAULT_BYTE_PROTECT, f.raw_protect,
-        f.any ? "FAULT(S) PRESENT (map PROVISIONAL -- cross-check `raw`)" : "all clear");
+        f.any ? "FAULT(S) PRESENT (decode confirmed; unseen vs a real fault -- cross-check `raw`)" : "all clear");
     diag_say(sock, b);
     if (!f.any) {
         diag_say(sock, "  (all-zero is expected on a healthy unit and does NOT validate the map)\r\n");
@@ -301,7 +303,7 @@ static void diag_handle_line(int sock, char *line)
             "commands: features | poll | faults | raw | link | sys | version | help | quit\r\n"
             "  features  cached 0x66/40 ProductType capability flags for THIS unit\r\n"
             "  poll      last decoded A/C status frame\r\n"
-            "  faults    decoded f_e_* fault bits (#38; base PROVISIONAL)\r\n"
+            "  faults    decoded f_e_* fault bits (#38; decode confirmed, unseen vs a real fault)\r\n"
             "  raw       hexdump the last status frame (what falsifies the map)\r\n"
             "  sys       downlink hand-off counter + free heap (why Matter attrs go stale)\r\n");
         return;

@@ -648,33 +648,71 @@ assign, exactly as a bit-packed frame implies.
 These are testable from the debug console with no firmware change:
 `tx 37 0x03` should engage 8 C heat, `tx 37 0x01` should clear it.
 
-### 7.5 The extractor, and what is still unproven
+### 7.5 The extractor, and what static RE has now settled
 
 A status-bit extractor lives at **`0x9b6f8ac8`** (file `0x28ac8`). It loads a RAM struct pointer
-from `0x1000b8a8`, reads struct bytes `+0xa` and `+0xb`, and indexes the width table at
-`0x137e0c` to build its mask. Its only call site, **`0x9b6f9b26`** (file `0x29b26`), first
-checks frame byte 0 == `0x66` and byte 1 == 0.
+from `0x1000b8a8`, reads struct bytes `+0xa` (group) and `+0xb` (bit index), and indexes the
+width table at `0x137e0c` to build its mask. Its only call site, **`0x9b6f9b26`** (file
+`0x29b26`), first checks frame byte 0 == `0x66` and byte 1 == 0.
 
-Open questions, none of which should be guessed at:
+Open questions 1 and 4 below are now **RESOLVED by disassembly** (2026-07-22, two independent
+passes, adversarially cross-checked). 2 and 3 remain open but do not touch the four fault bytes.
 
-1. **Which frame the groups index.** The call site gates on a `0x66`-class reply, which may not
-   be the 160-byte periodic status frame parsed in `firmware/src/rs485-driver/hisense_rs485.cpp`.
-   Until that is settled, treat `0x18`/`0x19`/`0x31`/`0x33` as **group ids, not confirmed wire
-   byte offsets**.
+1. **Which frame the groups index. [RESOLVED: the 66/00 periodic status frame]** The call site
+   at `0x9b6f9b26` gates on byte0 == `0x66` **and byte1 == 0**, then passes that same buffer
+   (the `[sp,#68]` slot, provably unwritten between the gate and the call) straight into the
+   extractor. `byte1 == 0` selects subtype `00` = status-poll, the exact 160-byte frame
+   `hisense_parse_faults()` reads, and *rejects* `40` = ProductType. So `0x18`/`0x19`/`0x31`/`0x33`
+   are confirmed wire-byte groups on the periodic status frame, not merely group ids.
 2. **Record-count discrepancy.** The extractor's loop bound is `base + 0x33c` (69 records) while
-   TEMPLATE_A is 67 records (`0x324`). Either the RAM copy is padded to a fixed capacity with
-   zeroed slots the extractor skips, or the walk spills two records into TEMPLATE_B. Settle it
-   by reading the allocation size that fills `0x1000b8a8`, or by dumping that RAM on a live
-   device.
+   TEMPLATE_A is 67 records (`0x324`). Unchanged, and shown non-blocking: all four fault groups
+   live among the real records, and the two tail slots (indices 67-68) reuse the
+   `t_work_mode`/`t_power` strings with different group/bit, nowhere near the fault records.
+   Settle fully by reading the allocation that fills `0x1000b8a8`, or by dumping that RAM live.
 3. **`desc` semantics for ranged/settable records** (`t_temp`, `t_fan_speed`, the
    `t_heat_control_logic` cluster). Undecoded. Note the setpoint range (16/32 C) does **not**
    appear in `t_temp`'s `desc` in any byte position, so the naive (min, max, step, type) reading
    is already refuted.
-4. **Whether `0x9b6f8ac8` and the §5a getter `0x9b6f0ee6` number the same wire bytes.** They are
-   distinct code paths and have not been compared.
+4. **Whether `0x9b6f8ac8` and the §5a getter `0x9b6f0ee6` number the same wire bytes. [RESOLVED:
+   yes]** Both anchor index 0 at the class byte (wire 13). The §5a getter reads
+   `wire = 13 + payload_offset` (e.g. `ac_8heat` payload `0x0D` gives byte 26). The extractor
+   reads `payload[group + 2]`, i.e. `wire = 13 + (group + 2) = 15 + group`; its "group" field is
+   simply `payload_offset - 2`. So group `0x18` gives wire `15 + 24 = 39`, exactly
+   `HISENSE_FAULT_BYTE_INDOOR`. Same numbering, verified by disassembling both getters.
 
-### 7.6 Next step
+**Independent corroboration (the strongest single line of evidence).** Walking the TEMPLATE_A
+array at `0x137e20` and dereferencing each record's embedded name pointer prints the firmware's
+own compiled-in fault labels against their group/bit: `f_e_intemp` (`0x18` bit 7), `f_e_incom`
+(`0x18` bit 0), `f_e_outtemp` (`0x31` bit `0x0b`), `f_e_over_cold`/`f_e_over_hot` (both `0x33`
+bit `0x0c`). This maps 1:1 onto `HISENSE_FAULT_BYTE_INDOOR/MODULE/OUTDOOR/PROTECT` (39/40/64/66)
+in `hisense_rs485.h:661-664`, and confirms byte 39 is a multi-bit byte (intemp, incom,
+incoiltemp, inhumidity, ... together), matching `raw_indoor`. The `over_cold`/`over_hot` alias
+sharing one bit is baked into the vendor template, not an RE transcription error.
 
-Disassemble `0x9b6f9b26`'s caller to identify exactly which reply frame feeds the extractor,
-then map one fault bit end to end and confirm it against a unit reporting that fault. A healthy
-unit reads all-clear, so a decode that returns "no faults" proves nothing.
+**Net for the live ep10 fault sensor:** the *decode* (which frame, which byte, which bit) is now
+CONFIRMED by two independent lines of disassembly (control-flow + offset math, and the compiled-in
+fault-name strings). What remains unproven is purely *semantic*: whether a genuinely faulted unit
+asserts these bits on the wire. That is the one gate left, and it needs hardware. See §7.6.
+
+### 7.6 Remaining gate: hardware fault-injection runbook
+
+Static RE cannot go further: a healthy unit reads all-clear, so "no faults" proves nothing about
+whether a real fault sets its predicted bit. Confirm one bit end-to-end on a debug-flavour unit
+(so the `:2323` console is reachable), cheapest step first:
+
+1. **Baseline.** `nc <unit> 2323`, then `faults` (expect `no faults`) and `raw` (hexdump). Record
+   bytes 39/40/64/66 healthy: expect `00 00 00 80`. The `0x80` at byte 66 is the frost-guard mode
+   flag, masked out of the `any` aggregate by `HISENSE_FAULT_NONFAULT_PROTECT`.
+2. **Induce the most reversible fault first**, always disturbing the indoor/outdoor side, never
+   the module's own RS-485 bus (that kills our poll):
+   - `f_e_incom` (byte 39, mask `0x01`): interrupt the indoor-to-outdoor comms link. Cleanest
+     end-to-end test, because the ConnectLife app should log a Communications fault at the same
+     moment our decode flips.
+   - `f_e_waterfull` (byte 39, mask `0x10`): trip the condensate-tray float switch.
+3. **Observe.** With the fault active, `faults` must name the predicted bit and the matching
+   `raw_*` byte must show it set. Save the `raw` hexdump healthy vs faulted; the diff is the proof.
+4. **Cross-check, no bench fault needed.** The still-cloud "Master Bedroom AC" can run "Self
+   diagnostics" in the app; compare its reported categories against our decode of that unit's
+   status frame.
+5. **On success**, promote the fault-map language in `hisense_rs485.h` and the `:2323` `faults`
+   help text from "decode confirmed, bits hardware-unvalidated" to fully validated, and close #38.
