@@ -26,13 +26,16 @@ to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` fl
 | Power (V/I/W) | ✅ | – | ✅ | ElectricalPowerMeasurement (see #16, `power_estimate.h`) |
 | Vertical swing on/off | ✅ | ✅ | ✅ | FanControl **RockSetting** on ep1, both builds. Shipped under #19. |
 | Display / panel on/off | cap only | ✅ | ✅ | OnOff switch on ep9 (write-only, the A/C reports no display state back). Shipped under #19/#33. (Dimmer *level* = `ac_power_display`, still needs new RE.) |
-| 8 °C frost-guard heat | ✅ cap | ❌ | ❌ | Capability bit `ac_8heat` (byte26 0x80) read as `heat_8c`; `ac_enable_8heat` (byte39 0x04) read as `enable_8heat` when `ext_valid`. No control frame RE'd. `docs/05:79` marks it likely absent on this unit. |
-| Purify / ionizer | ✅ cap | ❌ | ❌ | `ac_purify` (byte23 0x08) read as `purify`; live `purify_on` (b36 0x20) "bit always 0, feature absent on this unit". No builder. |
-| AI / smart | ✅ cap | ❌ | ❌ (logged) | `ai` (byte28 0x40). Capability only, no control frame. |
-| Demand-response | ✅ cap | ❌ | ❌ | `demand_resp` 2-bit (byte35). Capability only. |
-| Infinite / stepless fan | ✅ cap | ⚠️ | ⚠️ | `infinite_fan` (byte25 0x08); we drive 6 discrete speeds only, not stepless. |
-| 8-position louvre aim | ✅ cap | ⚠️ | ❌ | `swing_dir_8`/`swing_follow` capability + on/off swing decoded, but no per-position index command. |
+| 8 °C frost-guard heat | ✅ cap | ❌ | ✅ ro | Capability bit `ac_8heat` (byte26 0x80) read as `heat_8c`; `ac_enable_8heat` (byte39 0x04) read as `enable_8heat` when `ext_valid`. No control frame RE'd. `docs/05:79` marks it likely absent on this unit. |
+| Purify / ionizer | ✅ cap | ❌ | ✅ ro | `ac_purify` (byte23 0x08) read as `purify`; live `purify_on` (b36 0x20) "bit always 0, feature absent on this unit". No builder. |
+| AI / smart | ✅ cap | ❌ | ✅ ro | `ai` (byte28 0x40). Capability only, no control frame. |
+| Demand-response | ✅ cap | ❌ | ✅ ro | `demand_resp` 2-bit (byte35). Capability only. |
+| Infinite / stepless fan | ✅ cap | ⚠️ | ✅ ro | `infinite_fan` (byte25 0x08); we drive 6 discrete speeds only, not stepless. |
+| 8-position louvre aim | ✅ cap | ⚠️ | ✅ ro | `swing_dir_8`/`swing_follow` capability + on/off swing decoded, but no per-position index command. |
 | Fresh-air / dew | – | – | – | **No `ac_*` flag exists**: not in the stock feature set, nothing to mirror. |
+
+> `✅ ro` in EXP = the capability flag reads read-only in HA through the Capabilities sensor
+> (`Features1`, #82/#39). No control frame is RE'd for any of these, so none is drivable yet.
 
 ## Cheap wins: shipped
 
@@ -40,17 +43,17 @@ The two formerly-flagged app-layer gaps (vertical swing → FanControl `RockSett
 on/off → an OnOff switch on ep9) both shipped under #19, on both AmebaZ2 and ESP32.
 
 Everything else (8 °C heat, purify, dimmer level, AI, demand-response, stepless fan, 8-pos louvre) is
-**capability-decoded only**: each needs its *control frame* reverse-engineered before it can be
-exposed, and several are argued physically-absent on this unit (`docs/05:79-80`). Not cheap; defer /
-track under #52.
+now **read-only exposed** through the `Features1` capability bitmap (#82, #39): each still needs its
+*control frame* reverse-engineered before it can be **driven**, and several are argued
+physically-absent on this unit (`docs/05:79-80`). Not cheap; defer / track under #52.
 
 ## Reading capabilities live
 
-The `HisenseFeatures` set is polled (`hisense_build_producttype_request`) and cached
-(`hisense_get_features`) but **only logged** (`on_features`, `app_main.cpp:681`), it is **not** written
-to any Matter attribute, so it can't be read via matter-server. The only remote read today is the
-telnet diag console `:2323` `decode` path. To make it HA-readable, map `hisense_get_features()` into
-extra `0xFFF1FC00` attributes (or a features console command), see recommendation in #19.
+The `HisenseFeatures` set (`hisense_get_features`) is written to the ep1 mfg cluster `0xFFF1FC00` as
+attribute `0x0012` (`Features1`, packed bitmap), alongside `CompressorHz` (`0x0010`) and `Faults1`
+(`0x0013`). matter-server reads all three live, and the `hisense-unified-ac` HACS integration decodes
+them into the Compressor frequency, Capabilities, and Faults entities on nodes 14/35/62 (#82, #39,
+closed). The telnet `:2323` `decode` path still works as a secondary read.
 
 ## Data-quality bugs found during this review (→ issue #83): RESOLVED
 
