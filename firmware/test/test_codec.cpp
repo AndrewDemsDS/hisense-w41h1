@@ -634,6 +634,87 @@ int main() {
         CHECK(!hisense_parse_faults(s, 160, nullptr), "null out rejected");
     }
 
+    // ---- Features1 / Faults1 packed bitmaps (#39 / docs/14) ------------------
+    // The 32-bit packing is the wire contract to the HACS integration; its const.py
+    // bit map must match these positions exactly (an HA-side mirror test enforces the
+    // other half). Layout is defined in hisense_rs485.h.
+    {
+        printf("[diagnostics bitmap packing]\n");
+
+        // Faults1: nothing valid yet -> 0; null -> 0.
+        HisenseFaults fz = {};
+        CHECK(hisense_faults_to_bitmap32(&fz) == 0, "faults invalid -> 0");
+        CHECK(hisense_faults_to_bitmap32(nullptr) == 0, "faults null -> 0");
+        // healthy: valid, any=false, no named bit -> only the VALID bit.
+        HisenseFaults fh = {}; fh.valid = true;
+        CHECK(hisense_faults_to_bitmap32(&fh) == (1u << HISENSE_FAULT1_VALID),
+              "healthy faults -> only VALID bit");
+        // every named bit lands on its contract position (+ any + valid).
+        struct { bool HisenseFaults::*field; int bit; const char *name; } fcases[] = {
+            { &HisenseFaults::in_temp,       HISENSE_FAULT1_IN_TEMP,       "in_temp" },
+            { &HisenseFaults::in_coil_temp,  HISENSE_FAULT1_IN_COIL_TEMP,  "in_coil_temp" },
+            { &HisenseFaults::in_humidity,   HISENSE_FAULT1_IN_HUMIDITY,   "in_humidity" },
+            { &HisenseFaults::water_full,    HISENSE_FAULT1_WATER_FULL,    "water_full" },
+            { &HisenseFaults::in_fan_motor,  HISENSE_FAULT1_IN_FAN_MOTOR,  "in_fan_motor" },
+            { &HisenseFaults::grille,        HISENSE_FAULT1_GRILLE,        "grille" },
+            { &HisenseFaults::in_vzero,      HISENSE_FAULT1_IN_VZERO,      "in_vzero" },
+            { &HisenseFaults::in_com,        HISENSE_FAULT1_IN_COM,        "in_com" },
+            { &HisenseFaults::in_display,    HISENSE_FAULT1_IN_DISPLAY,    "in_display" },
+            { &HisenseFaults::in_keys,       HISENSE_FAULT1_IN_KEYS,       "in_keys" },
+            { &HisenseFaults::in_wifi,       HISENSE_FAULT1_IN_WIFI,       "in_wifi" },
+            { &HisenseFaults::in_ele,        HISENSE_FAULT1_IN_ELE,        "in_ele" },
+            { &HisenseFaults::in_eeprom,     HISENSE_FAULT1_IN_EEPROM,     "in_eeprom" },
+            { &HisenseFaults::out_eeprom,    HISENSE_FAULT1_OUT_EEPROM,    "out_eeprom" },
+            { &HisenseFaults::out_coil_temp, HISENSE_FAULT1_OUT_COIL_TEMP, "out_coil_temp" },
+            { &HisenseFaults::out_gas_temp,  HISENSE_FAULT1_OUT_GAS_TEMP,  "out_gas_temp" },
+            { &HisenseFaults::out_temp,      HISENSE_FAULT1_OUT_TEMP,      "out_temp" },
+            { &HisenseFaults::over_temp,     HISENSE_FAULT1_OVER_TEMP,     "over_temp" },
+        };
+        CHECK((sizeof fcases / sizeof fcases[0]) == 18, "all 18 fault bits covered");
+        for (auto &c : fcases) {
+            HisenseFaults f = {}; f.valid = true; f.any = true; f.*(c.field) = true;
+            uint32_t want = (1u << c.bit) | (1u << HISENSE_FAULT1_ANY) | (1u << HISENSE_FAULT1_VALID);
+            CHECK(hisense_faults_to_bitmap32(&f) == want, "faults bit %d == %s", c.bit, c.name);
+        }
+
+        // Features1: nothing valid -> 0; null -> 0.
+        HisenseFeatures ez = {};
+        CHECK(hisense_features_to_bitmap32(&ez) == 0, "features invalid -> 0");
+        CHECK(hisense_features_to_bitmap32(nullptr) == 0, "features null -> 0");
+        // base-tier bool fields -> their bit (+ valid).
+        struct { bool HisenseFeatures::*field; int bit; const char *name; } ecases[] = {
+            { &HisenseFeatures::cool_heat,    HISENSE_FEAT1_COOL_HEAT,    "cool_heat" },
+            { &HisenseFeatures::ai,           HISENSE_FEAT1_AI,           "ai" },
+            { &HisenseFeatures::infinite_fan, HISENSE_FEAT1_INFINITE_FAN, "infinite_fan" },
+            { &HisenseFeatures::power_save,   HISENSE_FEAT1_POWER_SAVE,   "power_save" },
+            { &HisenseFeatures::fan_mute,     HISENSE_FEAT1_FAN_MUTE,     "fan_mute" },
+            { &HisenseFeatures::swing_dir_8,  HISENSE_FEAT1_SWING_DIR_8,  "swing_dir_8" },
+            { &HisenseFeatures::swing_follow, HISENSE_FEAT1_SWING_FOLLOW, "swing_follow" },
+            { &HisenseFeatures::humidity,     HISENSE_FEAT1_HUMIDITY,     "humidity" },
+            { &HisenseFeatures::heat_8c,      HISENSE_FEAT1_HEAT_8C,      "heat_8c" },
+            { &HisenseFeatures::purify,       HISENSE_FEAT1_PURIFY,       "purify" },
+        };
+        for (auto &c : ecases) {
+            HisenseFeatures e = {}; e.valid = true; e.*(c.field) = true;
+            uint32_t want = (1u << c.bit) | (1u << HISENSE_FEAT1_VALID);
+            CHECK(hisense_features_to_bitmap32(&e) == want, "feat bit %d == %s", c.bit, c.name);
+        }
+        // 2-bit fields pack into aligned slots.
+        HisenseFeatures ed = {}; ed.valid = true; ed.power_display = 3; ed.demand_resp = 2;
+        uint32_t wantd = (1u << HISENSE_FEAT1_VALID)
+                       | (3u << HISENSE_FEAT1_POWER_DISPLAY_SHIFT)
+                       | (2u << HISENSE_FEAT1_DEMAND_RESP_SHIFT);
+        CHECK(hisense_features_to_bitmap32(&ed) == wantd, "2-bit power_display/demand_resp pack");
+        // ext-tier fields are DROPPED unless ext_valid (0 there means UNKNOWN, not absent).
+        HisenseFeatures ex = {}; ex.valid = true; ex.q_display = true; ex.enable_8heat = true;
+        CHECK(hisense_features_to_bitmap32(&ex) == (1u << HISENSE_FEAT1_VALID),
+              "ext fields dropped when ext_valid=false");
+        ex.ext_valid = true;
+        uint32_t wantx = (1u << HISENSE_FEAT1_VALID) | (1u << HISENSE_FEAT1_EXT_VALID)
+                       | (1u << HISENSE_FEAT1_Q_DISPLAY) | (1u << HISENSE_FEAT1_ENABLE_8HEAT);
+        CHECK(hisense_features_to_bitmap32(&ex) == wantx, "ext fields appear when ext_valid=true");
+    }
+
     // ---- setpoint range helper: the shadow-poisoning guard -------------------
     // Regression guard for a bug found on hardware: the A/C reported setpoint 8 (it
     // answers ac_8heat=1 and will hold setpoints well below 16), the app layer copied

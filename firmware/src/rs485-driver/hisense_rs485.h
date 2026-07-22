@@ -373,6 +373,57 @@ typedef struct {
                                // parser bug. No consumer should gate behaviour on it.
 } HisenseFeatures;
 
+/* ---- Features1 packed bitmap (mfg cluster attr 0xFFF1FC00/0x0012) ----------
+ * Stable 32-bit packing of HisenseFeatures for transport to Home Assistant via the
+ * HACS integration (docs/14). LSB-first; these bit numbers are the CONTRACT the
+ * integration's const.py mirrors and firmware/test enforces. The two 2-bit fields
+ * (power_display, demand_resp) take aligned 2-bit slots. bit 31 = valid (whole word
+ * meaningful); bit 30 = ext_valid (q_display/enable_8heat/trans_102_64 are only set
+ * when ext_valid, else 0 == UNKNOWN, not "absent"). */
+#define HISENSE_FEAT1_COOL_HEAT            0
+#define HISENSE_FEAT1_AI                   1
+#define HISENSE_FEAT1_INFINITE_FAN         2
+#define HISENSE_FEAT1_POWER_SAVE           3
+#define HISENSE_FEAT1_FAN_MUTE             4
+#define HISENSE_FEAT1_SWING_DIR_8          5
+#define HISENSE_FEAT1_SWING_FOLLOW         6
+#define HISENSE_FEAT1_HUMIDITY             7
+#define HISENSE_FEAT1_HEAT_8C              8
+#define HISENSE_FEAT1_PURIFY               9
+#define HISENSE_FEAT1_Q_DISPLAY            10   /* ext-tier */
+#define HISENSE_FEAT1_ENABLE_8HEAT         11   /* ext-tier */
+#define HISENSE_FEAT1_TRANS_102_64         12   /* ext-tier */
+#define HISENSE_FEAT1_POWER_DISPLAY_SHIFT  16   /* 2-bit (0..3) */
+#define HISENSE_FEAT1_DEMAND_RESP_SHIFT    18   /* 2-bit (0..3) */
+#define HISENSE_FEAT1_EXT_VALID            30
+#define HISENSE_FEAT1_VALID                31
+
+static inline uint32_t hisense_features_to_bitmap32(const HisenseFeatures *f)
+{
+    uint32_t b = 0;
+    if (f == NULL) return 0;
+    if (f->cool_heat)    b |= 1u << HISENSE_FEAT1_COOL_HEAT;
+    if (f->ai)           b |= 1u << HISENSE_FEAT1_AI;
+    if (f->infinite_fan) b |= 1u << HISENSE_FEAT1_INFINITE_FAN;
+    if (f->power_save)   b |= 1u << HISENSE_FEAT1_POWER_SAVE;
+    if (f->fan_mute)     b |= 1u << HISENSE_FEAT1_FAN_MUTE;
+    if (f->swing_dir_8)  b |= 1u << HISENSE_FEAT1_SWING_DIR_8;
+    if (f->swing_follow) b |= 1u << HISENSE_FEAT1_SWING_FOLLOW;
+    if (f->humidity)     b |= 1u << HISENSE_FEAT1_HUMIDITY;
+    if (f->heat_8c)      b |= 1u << HISENSE_FEAT1_HEAT_8C;
+    if (f->purify)       b |= 1u << HISENSE_FEAT1_PURIFY;
+    b |= (uint32_t)(f->power_display & 0x3u) << HISENSE_FEAT1_POWER_DISPLAY_SHIFT;
+    b |= (uint32_t)(f->demand_resp   & 0x3u) << HISENSE_FEAT1_DEMAND_RESP_SHIFT;
+    if (f->ext_valid) {
+        b |= 1u << HISENSE_FEAT1_EXT_VALID;
+        if (f->q_display)    b |= 1u << HISENSE_FEAT1_Q_DISPLAY;
+        if (f->enable_8heat) b |= 1u << HISENSE_FEAT1_ENABLE_8HEAT;
+        if (f->trans_102_64) b |= 1u << HISENSE_FEAT1_TRANS_102_64;
+    }
+    if (f->valid) b |= 1u << HISENSE_FEAT1_VALID;
+    return b;
+}
+
 /* Feature-flags callback: invoked (bus-task context) each time a 0x66/40
  * ProductType response is parsed. Optional. */
 typedef void (*hisense_features_cb_t)(const HisenseFeatures *features);
@@ -714,6 +765,59 @@ typedef struct {
     // frame[66] (payload 0x33)
     bool over_temp;       // f_e_over_hot / f_e_over_cold     (aliased bit)
 } HisenseFaults;
+
+/* ---- Faults1 packed bitmap (mfg cluster attr 0xFFF1FC00/0x0013) -----------
+ * Stable 32-bit packing of the 18 named f_e_* fault bits, struct order, LSB-first.
+ * The CONTRACT the HACS integration's const.py mirrors and firmware/test enforces.
+ * bit 31 = valid (a long-enough frame was parsed); bit 30 = any (aggregate, the same
+ * value ep10's BooleanState publishes, i.e. minus the frost-guard mode-flag). */
+#define HISENSE_FAULT1_IN_TEMP        0
+#define HISENSE_FAULT1_IN_COIL_TEMP   1
+#define HISENSE_FAULT1_IN_HUMIDITY    2
+#define HISENSE_FAULT1_WATER_FULL     3
+#define HISENSE_FAULT1_IN_FAN_MOTOR   4
+#define HISENSE_FAULT1_GRILLE         5
+#define HISENSE_FAULT1_IN_VZERO       6
+#define HISENSE_FAULT1_IN_COM         7
+#define HISENSE_FAULT1_IN_DISPLAY     8
+#define HISENSE_FAULT1_IN_KEYS        9
+#define HISENSE_FAULT1_IN_WIFI        10
+#define HISENSE_FAULT1_IN_ELE         11
+#define HISENSE_FAULT1_IN_EEPROM      12
+#define HISENSE_FAULT1_OUT_EEPROM     13
+#define HISENSE_FAULT1_OUT_COIL_TEMP  14
+#define HISENSE_FAULT1_OUT_GAS_TEMP   15
+#define HISENSE_FAULT1_OUT_TEMP       16
+#define HISENSE_FAULT1_OVER_TEMP      17
+#define HISENSE_FAULT1_ANY            30
+#define HISENSE_FAULT1_VALID          31
+
+static inline uint32_t hisense_faults_to_bitmap32(const HisenseFaults *f)
+{
+    uint32_t b = 0;
+    if (f == NULL) return 0;
+    if (f->in_temp)       b |= 1u << HISENSE_FAULT1_IN_TEMP;
+    if (f->in_coil_temp)  b |= 1u << HISENSE_FAULT1_IN_COIL_TEMP;
+    if (f->in_humidity)   b |= 1u << HISENSE_FAULT1_IN_HUMIDITY;
+    if (f->water_full)    b |= 1u << HISENSE_FAULT1_WATER_FULL;
+    if (f->in_fan_motor)  b |= 1u << HISENSE_FAULT1_IN_FAN_MOTOR;
+    if (f->grille)        b |= 1u << HISENSE_FAULT1_GRILLE;
+    if (f->in_vzero)      b |= 1u << HISENSE_FAULT1_IN_VZERO;
+    if (f->in_com)        b |= 1u << HISENSE_FAULT1_IN_COM;
+    if (f->in_display)    b |= 1u << HISENSE_FAULT1_IN_DISPLAY;
+    if (f->in_keys)       b |= 1u << HISENSE_FAULT1_IN_KEYS;
+    if (f->in_wifi)       b |= 1u << HISENSE_FAULT1_IN_WIFI;
+    if (f->in_ele)        b |= 1u << HISENSE_FAULT1_IN_ELE;
+    if (f->in_eeprom)     b |= 1u << HISENSE_FAULT1_IN_EEPROM;
+    if (f->out_eeprom)    b |= 1u << HISENSE_FAULT1_OUT_EEPROM;
+    if (f->out_coil_temp) b |= 1u << HISENSE_FAULT1_OUT_COIL_TEMP;
+    if (f->out_gas_temp)  b |= 1u << HISENSE_FAULT1_OUT_GAS_TEMP;
+    if (f->out_temp)      b |= 1u << HISENSE_FAULT1_OUT_TEMP;
+    if (f->over_temp)     b |= 1u << HISENSE_FAULT1_OVER_TEMP;
+    if (f->any)           b |= 1u << HISENSE_FAULT1_ANY;
+    if (f->valid)         b |= 1u << HISENSE_FAULT1_VALID;
+    return b;
+}
 
 // Parse fault bits out of a 0x66 status frame. Returns false (and leaves
 // out->valid == false) if the frame is too short to carry them. Pure, so the host

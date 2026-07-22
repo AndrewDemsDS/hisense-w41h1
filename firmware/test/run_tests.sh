@@ -49,4 +49,8 @@ sys.exit(0 if ok else 1)
 PY
 
 echo
+echo "== Layer 3: diagnostics bitmap contract (firmware <-> HACS integration) =="
+python3 "$(dirname "$0")/test_diag_contract.py"
+
+echo
 echo "ALL QA LAYERS PASSED"

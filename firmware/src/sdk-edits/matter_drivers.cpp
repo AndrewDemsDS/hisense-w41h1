@@ -82,9 +82,10 @@ using chip::app::Clusters::Thermostat::SystemModeEnum;
 
 // Ember attribute types for the raw manufacturer-cluster read-back writes (custom
 // cluster -> no generated accessors). ZCL: boolean=0x10, int8u=0x20, int8s=0x28.
-static constexpr EmberAfAttributeType kHisenseTypeBool  = (EmberAfAttributeType)0x10;
-static constexpr EmberAfAttributeType kHisenseTypeInt8u = (EmberAfAttributeType)0x20;
-static constexpr EmberAfAttributeType kHisenseTypeInt8s = (EmberAfAttributeType)0x28;
+static constexpr EmberAfAttributeType kHisenseTypeBool   = (EmberAfAttributeType)0x10;
+static constexpr EmberAfAttributeType kHisenseTypeInt8u  = (EmberAfAttributeType)0x20;
+static constexpr EmberAfAttributeType kHisenseTypeInt8s  = (EmberAfAttributeType)0x28;
+static constexpr EmberAfAttributeType kHisenseTypeInt32u = (EmberAfAttributeType)0x23;
 
 MatterRoomAirCon aircon;
 
@@ -1621,25 +1622,33 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // read-works/subscribe-fails asymmetry). See ec3aa08 + #63. Regression is now
         // gated by the flash path's subscription smoke test (#64).
 
-        // Manufacturer cluster read-back (no generated accessors for a custom
-        // cluster -> raw ember writes). Types: boolean=0x10, int8u=0x20, int8s=0x28.
+        // Manufacturer cluster read-back (no generated accessors for a custom cluster -> raw
+        // ember writes). Types: boolean=0x10, int8u=0x20, int8s=0x28, int32u=0x23.
         //
-        // ONLY the four attrs actually enabled on this endpoint in the .zap
-        // (0x0000-0x0003) are written. CompressorHz (0x0010) and OutdoorTemp (0x0011)
-        // are declared in hisense-aircon-cluster.xml but NOT ticked into the compiled
-        // .zap, so the prior writes to them returned UNSUPPORTED_ATTRIBUTE and did
-        // nothing -- and even enabled they would be invisible in HA, since matter-server
-        // cannot read a self-assigned custom cluster (0xFFF1FC00). Outdoor temp already
-        // reaches HA through the standard TemperatureMeasurement ep2 write above; raw
-        // compressor Hz exposure is deferred (#39 -- needs a standard-cluster home plus a
-        // device to verify boot + HA render). Today Hz reaches HA only coarsely, folded
-        // into ThermostatRunningState -> hvac_action, and in full on the :2323 console.
+        // These attrs are read RAW from matter-server by our HACS integration (docs/14): HA's
+        // native Matter integration does not render a custom cluster, but matter-server stores every
+        // device-reported attribute at path "<ep>/<cluster>/<attr>", so the integration reads them
+        // there and builds its own entities. OutdoorTemp (0x0011) is intentionally NOT written here
+        // -- it already reaches HA via the standard TemperatureMeasurement ep2 write above.
+        // CompressorHz (0x0010), Features1 (0x0012, packed HisenseFeatures) and Faults1 (0x0013,
+        // packed HisenseFaults) must be ticked `included` in the .zap via the ZAP GUI (docs/14
+        // Phase 2) for these writes to land; until then they return UNSUPPORTED_ATTRIBUTE and no-op,
+        // harmlessly. The bit layouts are the HISENSE_FEAT1_*/HISENSE_FAULT1_* contract enforced by
+        // firmware/test and mirrored in the integration's const.py.
         {
             uint8_t b;
             b = st.eco_on   ? 1 : 0; emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::Eco::Id,          &b, kHisenseTypeBool);
             b = st.turbo_on ? 1 : 0; emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::Turbo::Id,        &b, kHisenseTypeBool);
             b = st.mute_on  ? 1 : 0; emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::Mute::Id,         &b, kHisenseTypeBool);
             b = (uint8_t)(st.sleep_raw / 2);      emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::SleepProfile::Id, &b, kHisenseTypeInt8u);
+            b = st.compressor_freq;               emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::CompressorHz::Id, &b, kHisenseTypeInt8u);
+
+            // Packed diagnostics. Both packers return 0 until a valid frame/reply has been seen.
+            HisenseFeatures ft; HisenseFaults fld; uint32_t w;
+            w = hisense_get_features(&ft) ? hisense_features_to_bitmap32(&ft) : 0u;
+            emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::Features1::Id, (uint8_t *)&w, kHisenseTypeInt32u);
+            w = hisense_get_faults(&fld) ? hisense_faults_to_bitmap32(&fld) : 0u;
+            emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::Faults1::Id, (uint8_t *)&w, kHisenseTypeInt32u);
         }
 
         // Special-mode switch endpoints (ep3-6) -> HA-controllable OnOff mirror of the

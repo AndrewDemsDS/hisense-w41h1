@@ -180,6 +180,12 @@ sync_mirror() {
   local CID="$SDK_ROOT/connectedhomeip/zzz_generated/app-common/clusters/HisenseAircon"
   mkdir -p "$CID"
   cp "$REPO/firmware/src/sdk-edits/HisenseAircon-ClusterId.h" "$CID/ClusterId.h"
+  # The mfg-cluster ZCL definition (its <attribute> list) lives in the zcl data-model tree and is
+  # what the ZAP GUI reads for the cluster's available attributes. Sync it too, or a newly-declared
+  # attribute (e.g. Features1/Faults1, docs/14) never shows up to be enabled in the GUI, and a fresh
+  # SDK loses the definition entirely.
+  local ZCLDIR="$SDK_ROOT/connectedhomeip/src/app/zap-templates/zcl/data-model/chip"
+  [ -d "$ZCLDIR" ] && cp "$REPO/firmware/src/sdk-edits/hisense-aircon-cluster.xml" "$ZCLDIR/hisense-aircon-cluster.xml"
 }
 apply_ota_hardening() {
   # #76: port the ESP32 OTA MRP tuning to AmebaZ2. The chip core+main already build -Os here, so

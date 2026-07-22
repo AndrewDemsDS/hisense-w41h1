@@ -671,11 +671,21 @@ static void on_status(const HisenseState *st)
         s_epm_delegate.SetActiveCurrent(chip::app::DataModel::MakeNullable(i_ma));
     }
 
-    // Hisense manufacturer cluster (0xFFF1FC00) read-back on ep1 (HA has no schema; parity only).
+    // Hisense manufacturer cluster (0xFFF1FC00) read-back on ep1. The HACS integration reads these
+    // raw from matter-server (docs/14). Telemetry (CompressorHz + packed Features1/Faults1) alongside
+    // the eco/turbo/mute/sleep toggles; the packers return 0 until a valid frame/reply has arrived.
     set_attr(s_ep_id, kMfgClusterId, 0x0000, esp_matter_bool(st->eco_on));
     set_attr(s_ep_id, kMfgClusterId, 0x0001, esp_matter_bool(st->turbo_on));
     set_attr(s_ep_id, kMfgClusterId, 0x0002, esp_matter_bool(st->mute_on));
     set_attr(s_ep_id, kMfgClusterId, 0x0003, esp_matter_uint8((uint8_t)(st->sleep_raw / 2)));
+    set_attr(s_ep_id, kMfgClusterId, 0x0010, esp_matter_uint8(st->compressor_freq));
+    {
+        HisenseFeatures ft; HisenseFaults fld;
+        uint32_t feats  = hisense_get_features(&ft) ? hisense_features_to_bitmap32(&ft) : 0u;
+        uint32_t faults = hisense_get_faults(&fld)  ? hisense_faults_to_bitmap32(&fld) : 0u;
+        set_attr(s_ep_id, kMfgClusterId, 0x0012, esp_matter_uint32(feats));
+        set_attr(s_ep_id, kMfgClusterId, 0x0013, esp_matter_uint32(faults));
+    }
 
     s_from_bus = false;
     // lk (ScopedChipStackLock) releases the CHIP stack lock here at scope exit.
@@ -1371,12 +1381,17 @@ extern "C" void app_main()
     cluster::thermostat_user_interface_configuration::config_t tuic_cfg;
     cluster::thermostat_user_interface_configuration::create(ep, &tuic_cfg, CLUSTER_FLAG_SERVER);
 
-    // Hisense manufacturer cluster 0xFFF1FC00 (4 attrs, non-volatile read-back).
+    // Hisense manufacturer cluster 0xFFF1FC00 on ep1. The 4 toggle attrs are non-volatile; the
+    // telemetry attrs (CompressorHz + the packed Features1/Faults1, docs/14) are volatile RAM since
+    // they change every poll (no flash wear). Read raw from matter-server by the HACS integration.
     cluster_t *mfg = cluster::create(ep, kMfgClusterId, CLUSTER_FLAG_SERVER);
     attribute::create(mfg, 0x0000, ATTRIBUTE_FLAG_NONVOLATILE, esp_matter_bool(false));
     attribute::create(mfg, 0x0001, ATTRIBUTE_FLAG_NONVOLATILE, esp_matter_bool(false));
     attribute::create(mfg, 0x0002, ATTRIBUTE_FLAG_NONVOLATILE, esp_matter_bool(false));
     attribute::create(mfg, 0x0003, ATTRIBUTE_FLAG_NONVOLATILE, esp_matter_uint8(0));
+    attribute::create(mfg, 0x0010, ATTRIBUTE_FLAG_NONE, esp_matter_uint8(0));    // CompressorHz
+    attribute::create(mfg, 0x0012, ATTRIBUTE_FLAG_NONE, esp_matter_uint32(0));   // Features1 (packed)
+    attribute::create(mfg, 0x0013, ATTRIBUTE_FLAG_NONE, esp_matter_uint32(0));   // Faults1 (packed)
 
     cluster::user_label::create(ep, NULL, CLUSTER_FLAG_SERVER);
 
