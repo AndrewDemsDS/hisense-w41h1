@@ -1034,13 +1034,14 @@ static int hisense_transact(const uint8_t *frame, size_t len, int timeout_ms, ui
 
 // If the reply in s_msg_buf (length n) is a 0x66 status frame, parse + push it
 // to the Matter side via the status callback.
-static void hisense_consume_status(size_t n)
+static bool hisense_consume_status(size_t n)
 {
     if (n >= HISENSE_STATUS_HEADER_LEN && s_msg_buf[13] == 0x66) {
-        // #12 (observe-only): tally, but do NOT yet act on, a checksum mismatch. When a real-
-        // traffic run on the :2323 console confirms this stays 0, the reject can be enabled
-        // (skip the parse below + count the poll as a link-miss). Parsing is unchanged for now.
-        if (!hisense_status_checksum_ok(s_msg_buf, n)) s_chk_mismatch++;
+        // #12: reject a checksum mismatch. A well-framed but corrupt 0x66 frame is NOT parsed
+        // (no garbage capabilities/faults into Matter) and returns false, so the status poll
+        // counts it as a link-miss instead of falsely holding the link up. Enabled after the
+        // observe-only counter held 0 across a real-traffic soak on both nodes (esp32 + AmebaZ2).
+        if (!hisense_status_checksum_ok(s_msg_buf, n)) { s_chk_mismatch++; return false; }
         if (s_msg_buf[14] == 0x40) {   // ProductType feature-flag response, not status
             HisenseFeatures ft;
             if (hisense_parse_features(s_msg_buf, n, &ft)) {
@@ -1050,7 +1051,7 @@ static void hisense_consume_status(size_t n)
                     s_features_cb(&ft);
                 }
             }
-            return;
+            return true;   // a checksum-valid 0x66/0x40 ProductType reply was consumed
         }
         // Snapshot the raw frame for the bench console. The fault map (RE docs/10 7)
         // is derived, not yet confirmed against a unit that actually reports a fault, so
@@ -1069,7 +1070,9 @@ static void hisense_consume_status(size_t n)
         if (hisense_parse_status(s_msg_buf, n, &st) && s_status_cb != NULL) {
             s_status_cb(&st);
         }
+        return true;   // a checksum-valid 0x66 status frame was consumed
     }
+    return false;      // not a 0x66 frame -> nothing consumed
 }
 
 // Debounce decision for the "77" recommission request (pure -> host-testable).
@@ -1375,11 +1378,10 @@ static void hisense_bus_task(void *pvParameters)
         // 3) Status poll -- the primary link-liveness signal. Correlate on 0x66 so a
         // late 0x1E can't falsely reset link_miss while consume_status silently no-ops.
         n = hisense_transact(HISENSE_STATUS_REQUEST, HISENSE_STATUS_REQUEST_LEN, 500, 0x66);
-        if (n > 0) {
-            hisense_consume_status((size_t)n);
-            link_miss = 0;
+        if (n > 0 && hisense_consume_status((size_t)n)) {
+            link_miss = 0;                     // #12: only a checksum-VALID 0x66 frame is link-alive
         } else {
-            link_miss++;
+            link_miss++;                       // no reply, or a corrupt/unparseable one
         }
 
         // Link-health edge -> fire the callback once on lost/restored (#56).
