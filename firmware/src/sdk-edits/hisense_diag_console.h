@@ -154,7 +154,7 @@ static void diag_cmd_faults(int sock)
         HISENSE_FAULT_BYTE_MODULE,  f.raw_module,
         HISENSE_FAULT_BYTE_OUTDOOR, f.raw_outdoor,
         HISENSE_FAULT_BYTE_PROTECT, f.raw_protect,
-        f.any ? "FAULT(S) PRESENT (decode confirmed; unseen vs a real fault -- cross-check `raw`)" : "all clear");
+        f.any ? "FAULT(S) PRESENT (decode confirmed vs real faults 2026-07-22 -- cross-check `raw`)" : "all clear");
     diag_say(sock, b);
     if (!f.any) {
         diag_say(sock, "  (all-zero is expected on a healthy unit and does NOT validate the map)\r\n");
@@ -303,7 +303,7 @@ static void diag_handle_line(int sock, char *line)
             "commands: features | poll | faults | raw | link | sys | version | help | quit\r\n"
             "  features  cached 0x66/40 ProductType capability flags for THIS unit\r\n"
             "  poll      last decoded A/C status frame\r\n"
-            "  faults    decoded f_e_* fault bits (#38; decode confirmed, unseen vs a real fault)\r\n"
+            "  faults    decoded f_e_* fault bits (#38; decode confirmed vs real faults)\r\n"
             "  raw       hexdump the last status frame (what falsifies the map)\r\n"
             "  sys       downlink hand-off counter + free heap (why Matter attrs go stale)\r\n");
         return;

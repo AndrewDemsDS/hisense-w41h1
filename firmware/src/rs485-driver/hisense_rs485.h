@@ -831,11 +831,10 @@ bool hisense_get_faults(HisenseFaults *out);
 // bytes and returns how many. 0 if nothing has been received yet.
 //
 // This exists because the fault map's byte/bit positions are CONFIRMED by disassembly (docs/10
-// 7.5: the extractor reads the same 66/00 status frame, and the firmware's own compiled-in
-// fault names map 1:1 onto bytes 39/40/64/66), but no bit has yet been seen SET against a unit
-// actually reporting a fault. A healthy unit reads all-zero, which confirms nothing on its own,
-// so being able to read the bytes directly is what makes the last (semantic) step falsifiable.
-// The fault-injection runbook is docs/10 7.6.
+// 7.5) AND validated against real faults (2026-07-22, docs/10 7.6): f_e_incom (byte 39 bit 0) and
+// f_e_intemp (byte 39 bit 7) each fired on their induced fault, named correctly, and cleared on
+// undo, with the other unit staying all-clear. The raw snapshot stays for bench inspection and to
+// map the remaining bytes (40/64/66) the same way if wanted.
 #define HISENSE_RAW_SNAPSHOT_LEN 160
 size_t hisense_get_last_status_frame(uint8_t *out, size_t cap);
 

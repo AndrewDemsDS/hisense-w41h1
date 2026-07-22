@@ -252,7 +252,7 @@ static int cmd_faults(int, char **)
            HISENSE_FAULT_BYTE_MODULE,  f.raw_module,
            HISENSE_FAULT_BYTE_OUTDOOR, f.raw_outdoor,
            HISENSE_FAULT_BYTE_PROTECT, f.raw_protect,
-           f.any ? "FAULT(S) PRESENT (decode confirmed; unseen vs a real fault -- cross-check `raw`)" : "all clear");
+           f.any ? "FAULT(S) PRESENT (decode confirmed vs real faults 2026-07-22 -- cross-check `raw`)" : "all clear");
     if (!f.any) {
         printf("  (all-zero is expected on a healthy unit and does NOT validate the map)\r\n");
         return 0;
