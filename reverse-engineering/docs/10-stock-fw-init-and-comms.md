@@ -700,17 +700,27 @@ Static RE cannot go further: a healthy unit reads all-clear, so "no faults" prov
 whether a real fault sets its predicted bit. Confirm one bit end-to-end on a debug-flavour unit
 (so the `:2323` console is reachable), cheapest step first:
 
-1. **Baseline.** `nc <unit> 2323`, then `faults` (expect `no faults`) and `raw` (hexdump). Record
-   bytes 39/40/64/66 healthy: expect `00 00 00 80`. The `0x80` at byte 66 is the frost-guard mode
-   flag, masked out of the `any` aggregate by `HISENSE_FAULT_NONFAULT_PROTECT`.
-2. **Induce the most reversible fault first**, always disturbing the indoor/outdoor side, never
-   the module's own RS-485 bus (that kills our poll):
-   - `f_e_incom` (byte 39, mask `0x01`): interrupt the indoor-to-outdoor comms link. Cleanest
-     end-to-end test, because the ConnectLife app should log a Communications fault at the same
-     moment our decode flips.
+1. **Baseline (captured live 2026-07-22).** `nc <unit> 2323`, then `faults` (expect `no faults`)
+   and `raw` (hexdump). On a normal healthy unit bytes 39/40/64/66 read `00 00 00 00` (confirmed on
+   the two debug-flavour AmebaZ2 nodes at v1.3.18). Byte 66 reads `0x80` ONLY while 8C frost-guard
+   is engaged: that is the `HISENSE_FAULT_NONFAULT_PROTECT` mode-flag bit, masked out of the `any`
+   aggregate, not a fault.
+2. **Induce two faults, ideally on two DIFFERENT fault bytes** (validates two byte offsets, not just
+   two bits of one byte). Always disturb the indoor/outdoor side, never the module's own RS-485 bus
+   (that kills our poll). Any predicted bit firing where and only where its fault is induced is the
+   proof; two independent hits make it conclusive. Reversible, most accessible first:
+   - `f_e_incom` (byte 39, mask `0x01`): interrupt the indoor-to-outdoor comms link. Cleanest, and
+     the ConnectLife app should log a Communications fault at the same moment our decode flips.
    - `f_e_waterfull` (byte 39, mask `0x10`): trip the condensate-tray float switch.
-3. **Observe.** With the fault active, `faults` must name the predicted bit and the matching
-   `raw_*` byte must show it set. Save the `raw` hexdump healthy vs faulted; the diff is the proof.
+   - `f_e_intemp` (byte 39, mask `0x80`) / `f_e_incoiltemp` etc.: unplug the corresponding indoor
+     thermistor (reversible).
+   - For a SECOND byte: `f_e_outtemp` (byte 64, mask `0x08`) via the outdoor temp thermistor, or any
+     byte-40 electronics fault, if reachable.
+3. **Observe (read-back is turnkey).** With each fault active, `faults` must name the predicted bit
+   and the matching `raw_*` byte must show it set; clearing the fault must clear it. Capture the
+   `raw` hexdump healthy vs faulted for each -- the diff is the proof. The bench tooling can read
+   both nodes' `:2323` consoles automatically, so once a fault is active just say so and the
+   before/after can be pulled and recorded here.
 4. **Cross-check, no bench fault needed.** The still-cloud "Master Bedroom AC" can run "Self
    diagnostics" in the app; compare its reported categories against our decode of that unit's
    status frame.
