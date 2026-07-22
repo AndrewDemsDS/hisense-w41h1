@@ -17,6 +17,8 @@ namespace Mute         { inline constexpr AttributeId Id = 0x0002; }
 namespace SleepProfile { inline constexpr AttributeId Id = 0x0003; }
 namespace CompressorHz { inline constexpr AttributeId Id = 0x0010; }
 namespace OutdoorTemp  { inline constexpr AttributeId Id = 0x0011; }
+namespace Features1    { inline constexpr AttributeId Id = 0x0012; }  // packed HisenseFeatures (docs/14)
+namespace Faults1      { inline constexpr AttributeId Id = 0x0013; }  // packed HisenseFaults   (docs/14)
 } // namespace Attributes
 
 } // namespace HisenseAircon

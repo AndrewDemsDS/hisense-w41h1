@@ -23,6 +23,12 @@
     <attribute side="server" code="0x0003" define="SLEEP_PROFILE" type="int8u"   writable="true"  default="0"     optional="false">SleepProfile</attribute>
     <attribute side="server" code="0x0010" define="COMPRESSOR_HZ" type="int8u"   writable="false" default="0"     optional="true">CompressorHz</attribute>
     <attribute side="server" code="0x0011" define="OUTDOOR_TEMP"  type="int8s"   writable="false" default="0"     optional="true">OutdoorTemp</attribute>
+    <!-- Packed diagnostics for the HACS integration (docs/14). int32u so bit 31 (VALID) is not
+         a sign bit. Features1 = HisenseFeatures (15 capability fields); Faults1 = HisenseFaults
+         (18 f_e_* bits). Bit layouts are the HISENSE_FEAT1_*/HISENSE_FAULT1_* contract in
+         hisense_rs485.h, mirrored by the integration's const.py + a host test. -->
+    <attribute side="server" code="0x0012" define="FEATURES1"     type="int32u"  writable="false" default="0"     optional="true">Features1</attribute>
+    <attribute side="server" code="0x0013" define="FAULTS1"       type="int32u"  writable="false" default="0"     optional="true">Faults1</attribute>
 
     <command source="client" code="0x00" name="Refresh" optional="true">
       <description>No-op; present so the cluster attaches to an endpoint.</description>
