@@ -37,6 +37,7 @@ static void hisense_breakglass_start(void);
 #include <app-common/zap-generated/ids/Attributes.h>
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/util/attribute-table.h>
+#include <app/util/endpoint-config-api.h>       // #72 emberAfEndpointEnableDisable (runtime endpoint gating)
 #include <protocols/interaction_model/StatusCode.h>
 #include <app/server/Server.h>                 // Server / fabric table / commissioning window (F1 "77")
 #include <app/server/CommissioningWindowManager.h>
@@ -480,6 +481,39 @@ static void matter_driver_on_recommission(uint8_t reason)
 // Driver feature-flags callback (bus-task context): log the A/C's 0x66/40 ProductType
 // capability/state flags each time they're parsed. Not surfaced to HA (capability flags
 // are static per model); available in-driver via hisense_get_features().
+/* #72 runtime capability gating (mirrors the ESP32 path; shared decision predicates in
+ * matter_aircon_map.h). AmebaZ2 uses the ember STATIC .zap data model, so emberAfEndpointEnable-
+ * Disable -- which LINKS here (attribute-storage.cpp), unlike esp-matter -- flips the isEnabled bit
+ * on the existing endpoint slot: no removal, no renumber, so the {0..10} contiguity boot-fault rule
+ * is untouched. cool_heat gates the composite ep1's Thermostat FeatureMap (35 Heat+Cool+Auto vs 2
+ * Cool-only) via the generated Set accessor (ep1 cannot be endpoint-disabled). Diff-guarded off the
+ * boot layout so an all-present unit makes ZERO calls. Bus-task context -> take the CHIP stack lock.
+ *
+ * BENCH note (validated on the ESP32 side, #72): the endpoint disable propagates to matter-server,
+ * but HA leaves a runtime-hidden entity lingering (unavailable) until a reload; the clean case is a
+ * unit gated at commissioning. The FeatureMap runtime change's HA re-derivation is still unproven. */
+static void apply_capability_gates(const HisenseFeatures *f)
+{
+    static int8_t   g_eco = 1, g_quiet = 1, g_display = 1;
+    static uint32_t g_fm  = MATTER_THERMOSTAT_FEATUREMAP_FULL;
+
+    const int8_t   eco = matter_gate_eco(f), quiet = matter_gate_quiet(f), display = matter_gate_display(f);
+    const uint32_t fm  = matter_thermostat_featuremap(f);
+    if (eco == g_eco && quiet == g_quiet && display == g_display && fm == g_fm) return;   // common case: no-op
+
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    if (eco != g_eco)        { emberAfEndpointEnableDisable(kEcoEp, eco);         g_eco = eco;
+        ChipLogProgress(DeviceLayer, "#72 gate: eco ep%d %s", kEcoEp, eco ? "shown" : "HIDDEN"); }
+    if (quiet != g_quiet)    { emberAfEndpointEnableDisable(kMuteEp, quiet);      g_quiet = quiet;
+        ChipLogProgress(DeviceLayer, "#72 gate: quiet ep%d %s", kMuteEp, quiet ? "shown" : "HIDDEN"); }
+    if (display != g_display){ emberAfEndpointEnableDisable(kDisplayEp, display); g_display = display;
+        ChipLogProgress(DeviceLayer, "#72 gate: display ep%d %s", kDisplayEp, display ? "shown" : "HIDDEN"); }
+    if (fm != g_fm)          { ThermAttr::FeatureMap::Set(kAirconEp, fm);         g_fm = fm;
+        ChipLogProgress(DeviceLayer, "#72 gate: thermostat FeatureMap -> %u (%s)", (unsigned) fm,
+                        fm == MATTER_THERMOSTAT_FEATUREMAP_FULL ? "Heat+Cool+Auto" : "Cool-only"); }
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+}
+
 static void matter_driver_on_features(const HisenseFeatures *f)
 {
     ChipLogProgress(DeviceLayer,
@@ -495,6 +529,7 @@ static void matter_driver_on_features(const HisenseFeatures *f)
         ChipLogProgress(DeviceLayer,
             "A/C features (ext): unknown -- reply %uB, need >39B", (unsigned)f->reply_len);
     }
+    apply_capability_gates(f);   // #72: hide the per-unit unsupported surfaces
 }
 
 // Driver link-health callback (#56, bus-task context) -> latch the state and post one
