@@ -166,6 +166,58 @@ int main() {
     { uint64_t acc = 0; hisense_energy_add(&acc, 1000000, 3600000); CHECK(hisense_energy_mwh(acc) == 1000000, "1kW*1h -> 1e6 mWh (1 kWh)"); }
     { uint64_t acc = 0; hisense_energy_add(&acc, -5, 3600000);      CHECK(acc == 0, "negative power clamped (import-only)"); }
 
+    // ---- #72 runtime capability gating: pure gate predicates -------------------
+    // The single source of truth for "expose this surface on THIS unit?". Wiring
+    // (endpoint disable / FeatureMap Set / command rejection) is HIL-only and NOT
+    // exercised here; these pin the DECISION logic that both platforms consume.
+    printf("[#72 capability gating]\n");
+    {
+        HisenseFeatures f = {};   // zero-init: valid=false, every flag 0
+
+        // valid==false (reply not yet parsed / bus silent) => PERMISSIVE: keep all.
+        // "unknown" must never be read as "unsupported" (docs/11 5.1).
+        CHECK(matter_gate_eco(&f),     "eco: valid=false -> permissive (exposed)");
+        CHECK(matter_gate_quiet(&f),   "quiet: valid=false -> permissive (exposed)");
+        CHECK(matter_gate_display(&f), "display: valid=false -> permissive (exposed)");
+        CHECK(matter_thermostat_featuremap(&f)==MATTER_THERMOSTAT_FEATUREMAP_FULL,
+              "featuremap: valid=false -> full 35 (permissive)");
+        CHECK(matter_gate_eco(NULL) && matter_gate_quiet(NULL) && matter_gate_display(NULL),
+              "NULL features -> permissive (exposed)");
+        CHECK(matter_thermostat_featuremap(NULL)==MATTER_THERMOSTAT_FEATUREMAP_FULL,
+              "featuremap: NULL -> full 35 (permissive)");
+
+        // valid==true, all gated flags absent => HIDE each surface.
+        f.valid = true;
+        CHECK(!matter_gate_eco(&f),     "eco: valid,power_save=0 -> hidden");
+        CHECK(!matter_gate_quiet(&f),   "quiet: valid,fan_mute=0 -> hidden");
+        CHECK(!matter_gate_display(&f), "display: valid,power_display=0 -> hidden");
+        CHECK(matter_thermostat_featuremap(&f)==MATTER_THERMOSTAT_FEATUREMAP_COOL,
+              "featuremap: valid,cool_heat=0 -> cooling-only 2 (no ghost Heat/Auto)");
+
+        // each flag present => expose exactly that surface.
+        f.power_save = true;    CHECK(matter_gate_eco(&f),     "eco: power_save=1 -> exposed");
+        f.fan_mute = true;      CHECK(matter_gate_quiet(&f),   "quiet: fan_mute=1 -> exposed");
+        f.power_display = 1;    CHECK(matter_gate_display(&f), "display: power_display!=0 -> exposed");
+        f.cool_heat = true;     CHECK(matter_thermostat_featuremap(&f)==MATTER_THERMOSTAT_FEATUREMAP_FULL,
+                                      "featuremap: cool_heat=1 -> full 35");
+
+        // gates read the VALID tier, NOT ext_valid: a basic (valid, !ext_valid) reply
+        // must still gate correctly -- guards against a mis-wire to bit30.
+        HisenseFeatures b = {}; b.valid = true; b.ext_valid = false;
+        b.power_save = true;   // valid-tier flag set, ext tier absent
+        CHECK(matter_gate_eco(&b),    "ext_valid=false: eco gates on valid-tier power_save");
+        CHECK(!matter_gate_quiet(&b), "ext_valid=false: quiet still hidden (fan_mute=0)");
+        CHECK(matter_thermostat_featuremap(&b)==MATTER_THERMOSTAT_FEATUREMAP_COOL,
+              "ext_valid=false: featuremap cooling-only on cool_heat=0");
+
+        // feature GAINED at runtime (0->1, e.g. head-unit swap behind the module):
+        // the predicate flips to exposed with no persisted state.
+        HisenseFeatures g = {}; g.valid = true;
+        CHECK(!matter_gate_eco(&g), "gained: before, eco hidden");
+        g.power_save = true;
+        CHECK(matter_gate_eco(&g),  "gained: after 0->1, eco exposed");
+    }
+
     printf("== %d passed, %d failed ==\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
