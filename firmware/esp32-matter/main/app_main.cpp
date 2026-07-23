@@ -971,6 +971,32 @@ private:
 };
 static HisenseOTARequestorDriver s_hisense_ota_driver;
 
+/* #83 defense-in-depth: Wi-Fi connectivity-transition diagnostics. CHIP's ESP32 ConnectivityManager
+ * already owns Wi-Fi reconnect and auto-re-arms on a FIXED CHIP_DEVICE_CONFIG_WIFI_STATION_RECONNECT_
+ * INTERVAL (5 s) timer (DriveStationState), so the "re-arm after a genuine association loss" half of
+ * #83 is already covered. A runtime exponential backoff would be nicer, but esp-matter's ESP32
+ * platform DECLARES ConnectivityManagerImpl::_SetWiFiStationReconnectInterval WITHOUT defining it
+ * (only _Get links; the member is set once at init), so ConnectivityMgr().SetWiFiStationReconnect-
+ * Interval() does not link on this platform -- and patching the SDK for a marginal win is not worth
+ * it. Note too: the field "never reconnects until power-cycle" symptom is the brownout REBOOT loop
+ * (the device resets at phy_init before CHIP even runs), which no reconnect logic can fix -- only the
+ * bulk cap / custom PCB (#11) does. So this handler stays purely OBSERVATIONAL: it timestamps
+ * Lost/Established transitions on the hisense_ac log so a real Wi-Fi drop can be told apart from a
+ * brownout reboot when triaging a field node. Runs on the CHIP event loop (PostEventOrDie ->
+ * DispatchEvent) with the stack lock already held; reads the event only, touches no CHIP state. */
+static void wifi_connectivity_log_handler(const chip::DeviceLayer::ChipDeviceEvent *event, intptr_t)
+{
+    if (event->Type != chip::DeviceLayer::DeviceEventType::kWiFiConnectivityChange) return;
+
+    const auto result = event->WiFiConnectivityChange.Result;
+    const unsigned up_s = (unsigned) (esp_timer_get_time() / 1000000);
+    if (result == chip::DeviceLayer::kConnectivity_Established) {
+        ESP_LOGW(TAG, "Wi-Fi connectivity: ESTABLISHED (uptime %us)", up_s);
+    } else if (result == chip::DeviceLayer::kConnectivity_Lost) {
+        ESP_LOGW(TAG, "Wi-Fi connectivity: LOST (uptime %us) -- CHIP auto-reconnects on its ~5s timer", up_s);
+    }
+}
+
 static void https_ota_task(void *arg)
 {
     ESP_LOGW(TAG, "HTTPS-OTA: fetching %s", HISENSE_OTA_URL);
@@ -1519,6 +1545,13 @@ extern "C" void app_main()
         ota_cfg.impl = &ota_impl;
         esp_matter_ota_requestor_set_config(ota_cfg);
     }
+
+    // #83 defense-in-depth: log Wi-Fi connectivity transitions. Registers an observer for CHIP's
+    // own connectivity-change event so a field node's Lost/Established transitions are timestamped
+    // (tells a real Wi-Fi drop apart from a brownout reboot). Observer only -- CHIP's DriveStation-
+    // State owns the actual 5s auto-reconnect (its interval setter is unimplemented on esp-matter
+    // ESP32, so no runtime backoff). Safe to register any time after esp_matter::start().
+    chip::DeviceLayer::PlatformMgr().AddEventHandler(wifi_connectivity_log_handler, 0);
 
     // HA entity labels (UserLabel key "ha_entitylabel") -> distinguishable same-type entities.
     // start() has returned (Server::Init done, endpoints exist); take the stack lock since we

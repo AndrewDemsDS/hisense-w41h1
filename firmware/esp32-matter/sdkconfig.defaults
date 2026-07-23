@@ -46,8 +46,8 @@ CONFIG_CUSTOM_DEVICE_INFO_PROVIDER=y
 # so it (and the fallback NUMBER) MUST stay equal to PROJECT_VER or the device reports a stale
 # softwareVersionString. Edit PROJECT_VER in CMakeLists.txt, then update both lines below.
 # esp32-lint.sh enforces this equality (fails the commit/CI if they drift).
-CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10107
-CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.1.7"
+CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10108
+CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.1.8"
 # --- OTA hardening (faster + reliable on marginal Wi-Fi) ---
 # Delta OTA: ship a diff (tens of KB) instead of the full ~1.5MB image over BDX.
 CONFIG_ENABLE_DELTA_OTA=y
@@ -74,6 +74,14 @@ CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
 CONFIG_ESP_BROWNOUT_DET=y
 CONFIG_ESP_BROWNOUT_DET_LVL_SEL_0=y
 CONFIG_ESP_BROWNOUT_DET_LVL=0
+
+# Reduce Wi-Fi TX power on the boot that FOLLOWS a brownout reset (#83). IDF-native, no code:
+# esp_phy_reduce_tx_power() forces the lowest PHY TX power before register_chipv7_phy on the boot
+# immediately after esp_reset_reason()==ESP_RST_BROWNOUT, trimming a little current on the retry
+# boot so a marginal rail is likelier to clear re-association. HONEST SCOPE: this is a POST-brownout
+# backoff, NOT a cut to the initial phy_init calibration PEAK that trips the reset (esp-idf#1308) --
+# only the bulk cap / custom PCB (#11) fixes the peak. Belt-and-suspenders, not a hardware substitute.
+CONFIG_ESP_PHY_REDUCE_TX_POWER=y
 
 # Task watchdog PANIC (#12): turn a hung task into a reboot (which re-runs the Wi-Fi/Matter/RS-485
 # bring-up) instead of a warning + a wedged node (Matter + A/C both dark) until a power cycle --
