@@ -216,6 +216,52 @@ static inline int8_t matter_setpoint_to_c(int16_t hundredths)
     return (int8_t)matter_clamp_setpoint_c(matter_round_setpoint_c(hundredths));
 }
 
+/* ---- #72 runtime capability gating: pure decision layer ----------------------
+ * The A/C reports its per-unit capabilities in the 0x66/ProductType reply
+ * (HisenseFeatures). These predicates are the SINGLE SOURCE OF TRUTH for "should
+ * this Matter surface be exposed on THIS unit?", shared by the ESP32 and AmebaZ2
+ * wirings so the two paths cannot drift. Pure + host-testable; they encode only the
+ * DECISION, never touch a Matter API.
+ *
+ * Design rule (docs/11 §5.1): gate on the VALID tier only, and be PERMISSIVE when
+ * capabilities are not yet known. An absent or not-yet-parsed reply (`valid == false`,
+ * e.g. the head unit is briefly silent or the bus has not answered yet) means
+ * "unknown", NOT "unsupported", so we keep the surface rather than hide a real
+ * capability. All four gated flags (cool_heat, power_save, fan_mute, power_display)
+ * live in the valid tier, so NONE of these consults ext_valid (bit30). */
+
+/* Eco switch (ep3) <- ac_power_save. Returns true = expose on this unit. */
+static inline bool matter_gate_eco(const HisenseFeatures *f)
+{
+    return (f == NULL) || !f->valid || f->power_save;
+}
+
+/* Quiet switch (ep4) <- ac_fan_mute. */
+static inline bool matter_gate_quiet(const HisenseFeatures *f)
+{
+    return (f == NULL) || !f->valid || f->fan_mute;
+}
+
+/* Display switch (ep9) <- ac_power_display (2-bit code; any non-zero = present). */
+static inline bool matter_gate_display(const HisenseFeatures *f)
+{
+    return (f == NULL) || !f->valid || (f->power_display != 0);
+}
+
+/* Thermostat FeatureMap for THIS unit: a heat-pump unit gets Heat+Cool+Auto (35);
+ * a cooling-only unit (cool_heat absent) gets Cooling-only (2) so HA never offers a
+ * Heat/Auto mode it cannot do. Permissive on unknown (valid==false) -> keep the full
+ * 35 default. Matter Thermostat FeatureMap bits: Heating=0x01, Cooling=0x02,
+ * AutoMode=0x20 (0x23 = 35). */
+#define MATTER_THERMOSTAT_FEATUREMAP_FULL  0x23u   /* 35: Heating + Cooling + AutoMode */
+#define MATTER_THERMOSTAT_FEATUREMAP_COOL  0x02u   /* 2:  Cooling only */
+static inline uint32_t matter_thermostat_featuremap(const HisenseFeatures *f)
+{
+    if (f == NULL || !f->valid) return MATTER_THERMOSTAT_FEATUREMAP_FULL;
+    return f->cool_heat ? MATTER_THERMOSTAT_FEATUREMAP_FULL
+                        : MATTER_THERMOSTAT_FEATUREMAP_COOL;
+}
+
 #ifdef __cplusplus
 }
 #endif
