@@ -154,10 +154,11 @@ static int cmd_features(int, char **)
 static int cmd_poll(int, char **)
 {
     LOCK(); HisenseState s = s_snap; bool h = s_have; uint32_t f = s_frames; UNLOCK();
-    // #12 (log-only): checksum-mismatch tally must stay 0 on real traffic before the RX checksum
-    // verify is allowed to gate parsing / the link-miss counter. Also surface heap here. The
-    // counter lives in the driver TU with no lock of its own; a word-sized read is atomic on
-    // Xtensa, so reading it outside s_mtx is safe (at worst one cycle stale) for a diagnostic.
+    // #12: the RX checksum verify now REJECTS a mismatch (skips the parse + counts a link-miss),
+    // so this tally is the count of corrupt 0x66 frames dropped since boot; it should stay at/near
+    // 0 on a healthy bus. Also surface heap here. The counter lives in the driver TU with no lock
+    // of its own; a word-sized read is atomic on Xtensa, so reading it outside s_mtx is safe (at
+    // worst one cycle stale) for a diagnostic.
     printf("checksum mismatches: %u  |  heap free=%u min_free=%u\r\n",
            (unsigned) hisense_checksum_mismatch_count(),
            (unsigned) esp_get_free_heap_size(), (unsigned) esp_get_minimum_free_heap_size());

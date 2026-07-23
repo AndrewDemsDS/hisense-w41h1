@@ -113,10 +113,11 @@ static void diag_cmd_poll(int sock)
 {
     char b[HISENSE_DIAG_BUF];
 
-    // #12 (log-only, shared driver): the RX checksum-mismatch tally must stay 0 on real traffic
-    // before the verify is allowed to gate parsing / link-miss. Shown here for parity with the
-    // ESP32 console; heap watermark is in `sys`. (parse_status already rejects a bad checksum,
-    // so this is belt-and-suspenders visibility for parse_features/parse_faults.)
+    // #12 (shared driver): the RX checksum verify now REJECTS a mismatch (skips the parse + counts
+    // a link-miss), so this tally is the count of corrupt 0x66 frames dropped since boot; it should
+    // stay at/near 0 on a healthy bus. Shown here for parity with the ESP32 console; heap watermark
+    // is in `sys`. (parse_status already rejected bad status frames; the reject now also covers
+    // parse_features/parse_faults.)
     snprintf(b, sizeof(b), "checksum mismatches: %u\r\n",
              (unsigned) hisense_checksum_mismatch_count());
     diag_say(sock, b);
