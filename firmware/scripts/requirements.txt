@@ -2,5 +2,5 @@
 # Pinned from the working venv so a fresh checkout is reproducible; Dependabot proposes bumps.
 # Install into the venv ota-release.env's OTAENV_PY points at:
 #   python -m venv ~/.matter-ota-venv && ~/.matter-ota-venv/bin/pip install -r firmware/scripts/requirements.txt
-aiohttp==3.14.1   # ms_ws.py + mcli/mnodes/ota_go/drive_ac (matter-server WebSocket client)
+aiohttp==3.14.3   # ms_ws.py + mcli/mnodes/ota_go/drive_ac (matter-server WebSocket client)
 bleak==3.0.2      # matter_scan.py (BLE discriminator scan during commissioning)
