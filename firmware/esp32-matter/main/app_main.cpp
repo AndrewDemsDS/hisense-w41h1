@@ -692,12 +692,67 @@ static void on_status(const HisenseState *st)
     // lk (ScopedChipStackLock) releases the CHIP stack lock here at scope exit.
 }
 
-// 0x66/40 ProductType feature-flags (bus-task context) -> log. Bit positions RE'd from the
-// stock firmware; decoded in the shared driver, not surfaced to HA (capability flags are static).
+/* #72 runtime capability gating. Hide the Matter surfaces a per-unit A/C does not support, decided
+ * by the SHARED predicates (matter_aircon_map.h) so this path and the AmebaZ2 one cannot drift:
+ *   power_save -> eco ep, fan_mute -> quiet ep, power_display -> display ep (endpoint enable/disable);
+ *   cool_heat  -> Thermostat FeatureMap (35 Heat+Cool+Auto vs 2 Cool-only).
+ *
+ * STRATEGY (first cut): retroactive-correct. Endpoints are created at boot (stable IDs, contiguous
+ * table -- we NEVER skip endpoint::create, a renumber would hard-fault the AmebaZ2 boot table) and
+ * default-enabled; this hides the absent ones once the 0x66 features reply lands. Runs in bus-task
+ * context, so it takes the CHIP stack lock (like on_link). Ordering is safe: esp_matter::start()
+ * calls endpoint::enable_all() which would clobber a pre-start disable, but the bus task only runs
+ * AFTER start(), so on_features always fires post-start.
+ *
+ * The guards are seeded to the KNOWN boot layout (all enabled; FeatureMap default 35), so an
+ * all-present unit -- every unit we own -- makes ZERO ember/attribute calls and never churns
+ * Descriptor/FeatureMap change reports on the ~60s features refresh.
+ *
+ * BENCH-PENDING, DO NOT SHIP UNVALIDATED (#64 lesson): needs (a) a flag-ABSENT unit or a spoofed
+ * 0x66 reply to exercise the hide path (all our units report every capability present), and
+ * (b) matter-server validation that HA actually drops the entity / re-derives HVAC modes on a live
+ * PartsList/FeatureMap change vs. requiring a manual re-interview. KNOWN CAVEAT: a unit commissioned
+ * DURING the boot window (before the first 0x66 reply) captures the full layout into HA's interview
+ * snapshot and needs a manual re-interview to reflect a later correction; persist-and-gate-at-boot
+ * is the follow-up if that matters. Compare the exposed PartsList/FeatureMap against 72-baseline.json. */
+static void apply_capability_gates(const HisenseFeatures *f)
+{
+    static int8_t  g_eco = 1, g_quiet = 1, g_display = 1;
+    static uint32_t g_fm = MATTER_THERMOSTAT_FEATUREMAP_FULL;
+
+    const int8_t   eco = matter_gate_eco(f), quiet = matter_gate_quiet(f), display = matter_gate_display(f);
+    const uint32_t fm  = matter_thermostat_featuremap(f);
+    if (eco == g_eco && quiet == g_quiet && display == g_display && fm == g_fm) return;   // common case: no-op
+
+    lock::ScopedChipStackLock lk(portMAX_DELAY);
+    // esp_matter's native per-endpoint enable/disable (the CHIP ember emberAfEndpointEnableDisable
+    // is declared but NOT linked in esp-matter's data model). endpoint::get(id) resolves the handle.
+    auto gate_ep = [](uint16_t id, int8_t want, int8_t *cur, const char *name) {
+        if (want == *cur) return;
+        endpoint_t *ep = endpoint::get(id);
+        if (!ep) return;
+        (want ? endpoint::enable(ep) : endpoint::disable(ep));
+        *cur = want;
+        ESP_LOGW(TAG, "#72 gate: %s ep%u %s", name, id, want ? "shown" : "HIDDEN");
+    };
+    gate_ep(s_ep_eco,     eco,     &g_eco,     "eco");
+    gate_ep(s_ep_mute,    quiet,   &g_quiet,   "quiet");
+    gate_ep(s_ep_display, display, &g_display, "display");
+    if (fm != g_fm)        {
+        esp_matter_attr_val_t v = esp_matter_bitmap32(fm);
+        attribute::update(s_ep_id, Thermostat::Id, chip::app::Clusters::Globals::Attributes::FeatureMap::Id, &v);
+        g_fm = fm;
+        ESP_LOGW(TAG, "#72 gate: thermostat FeatureMap -> %u (%s)", (unsigned) fm,
+                 fm == MATTER_THERMOSTAT_FEATUREMAP_FULL ? "Heat+Cool+Auto" : "Cool-only");
+    }
+}
+
+// 0x66/40 ProductType feature-flags (bus-task context). Log, then gate the per-unit capabilities (#72).
 static void on_features(const HisenseFeatures *f)
 {
     ESP_LOGI(TAG, "A/C features (0x66/40): ai=%d display=%d swing8=%d eco=%d mute=%d purify=%d",
              f->ai, f->power_display, f->swing_dir_8, f->power_save, f->fan_mute, f->purify);
+    apply_capability_gates(f);
 }
 
 // Bus link lost/restored (#56). On loss, null every liveness attribute (LocalTemperature +

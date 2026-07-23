@@ -2,7 +2,7 @@
 #   . ~/esp/esp-idf-v5.5.4/export.sh && . $ESP_MATTER_PATH/export.sh
 #   idf.py set-target esp32 && idf.py build flash monitor
 cmake_minimum_required(VERSION 3.16)
-set(PROJECT_VER "1.1.8")
+set(PROJECT_VER "1.1.10")
 
 # Unified versioning (issue #77): the Matter softwareVersion INT is DERIVED from PROJECT_VER --
 # MAJOR*10000+MINOR*100+PATCH -> a readable, strictly-monotonic uint32. This keeps the human
