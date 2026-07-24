@@ -398,6 +398,15 @@ typedef struct {
 #define HISENSE_FEAT1_EXT_VALID            30
 #define HISENSE_FEAT1_VALID                31
 
+/* The ONLY bits the #72 capability gate consumes (matter_gate_eco/quiet/display +
+ * matter_thermostat_featuremap): cool_heat, power_save, fan_mute, the 2-bit power_display, and
+ * VALID. #102 persists `features_word & HISENSE_FEAT1_GATE_MASK`, so a flip in a non-gating bit
+ * (demand_resp, an ext-tier flag flapping when a reply lands short) neither rewrites flash nor
+ * changes the persisted gate. */
+#define HISENSE_FEAT1_GATE_MASK ((1u << HISENSE_FEAT1_COOL_HEAT) | (1u << HISENSE_FEAT1_POWER_SAVE) \
+                               | (1u << HISENSE_FEAT1_FAN_MUTE)  | (0x3u << HISENSE_FEAT1_POWER_DISPLAY_SHIFT) \
+                               | (1u << HISENSE_FEAT1_VALID))
+
 static inline uint32_t hisense_features_to_bitmap32(const HisenseFeatures *f)
 {
     uint32_t b = 0;

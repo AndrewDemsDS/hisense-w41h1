@@ -38,6 +38,7 @@ static void hisense_breakglass_start(void);
 #include <app-common/zap-generated/ids/Clusters.h>
 #include <app/util/attribute-table.h>
 #include <app/util/endpoint-config-api.h>       // #72 emberAfEndpointEnableDisable (runtime endpoint gating)
+#include <platform/KeyValueStoreManager.h>      // #102 persist-and-gate-at-boot (CHIP KV store)
 #include <protocols/interaction_model/StatusCode.h>
 #include <app/server/Server.h>                 // Server / fabric table / commissioning window (F1 "77")
 #include <app/server/CommissioningWindowManager.h>
@@ -501,6 +502,8 @@ static void apply_capability_gates(const HisenseFeatures *f)
     const uint32_t fm  = matter_thermostat_featuremap(f);
     if (eco == g_eco && quiet == g_quiet && display == g_display && fm == g_fm) return;   // common case: no-op
 
+    // PRECONDITION: caller must NOT already hold the CHIP stack lock (plain LockChipStack, no
+    // reentrancy guard). Both call sites -- the boot gate and the bus-task on_features -- are lock-free.
     chip::DeviceLayer::PlatformMgr().LockChipStack();
     if (eco != g_eco)        { emberAfEndpointEnableDisable(kEcoEp, eco);         g_eco = eco;
         ChipLogProgress(DeviceLayer, "#72 gate: eco ep%d %s", kEcoEp, eco ? "shown" : "HIDDEN"); }
@@ -512,6 +515,37 @@ static void apply_capability_gates(const HisenseFeatures *f)
         ChipLogProgress(DeviceLayer, "#72 gate: thermostat FeatureMap -> %u (%s)", (unsigned) fm,
                         fm == MATTER_THERMOSTAT_FEATUREMAP_FULL ? "Heat+Cool+Auto" : "Cool-only"); }
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
+}
+
+/* #102 persist-and-gate-at-boot: cache the last-seen features (masked to the GATE bits) in the CHIP
+ * KV store so the gate is applied at boot before the interview (the retroactive path corrected AFTER
+ * the interview, orphaning an unavailable HA entity; see the #72 node-35 validation). Mirrors the
+ * ESP32 NVS path. PRECONDITION: capabilities are static per physical unit, so persisted == live.
+ * Virgin flash = nothing stored -> permissive -> clean from boot 2 (two-boot scheme); a factory RESET
+ * may keep this custom key, so a reset of the SAME unit is clean on boot 1. Only flash reused across
+ * DIFFERENT units (bench) mis-gates -> the live path corrects it. The VALID bit (31) is the real
+ * corruption guard; the size check is defence-in-depth (the ameba dct read-back length is not proven
+ * reliable). Flash-wear-guarded; the gate mask means a non-gating bit flip on the ~60s poll does not
+ * rewrite flash or move the gate. Key 12 chars, under the 32-char KVS limit. */
+static const char kGateKvKey[] = "hs-gate-feat";
+static void gate_persist_features(uint32_t bm)
+{
+    using chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr;
+    bm &= HISENSE_FEAT1_GATE_MASK;   // persist only the bits the gate consumes
+    uint32_t cur = 0; size_t rd = 0;
+    if (KeyValueStoreMgr().Get(kGateKvKey, &cur, sizeof(cur), &rd) == CHIP_NO_ERROR
+        && rd == sizeof(cur) && cur == bm) return;   // unchanged: save a flash write
+    KeyValueStoreMgr().Put(kGateKvKey, &bm, sizeof(bm));
+}
+static void gate_apply_persisted(void)
+{
+    using chip::DeviceLayer::PersistedStorage::KeyValueStoreMgr;
+    uint32_t bm = 0; size_t rd = 0;
+    if (KeyValueStoreMgr().Get(kGateKvKey, &bm, sizeof(bm), &rd) != CHIP_NO_ERROR
+        || rd != sizeof(bm) || !((bm >> HISENSE_FEAT1_VALID) & 1)) return;   // first boot / nothing valid -> permissive
+    HisenseFeatures f; hisense_features_from_bitmap32(bm, &f);
+    ChipLogProgress(DeviceLayer, "#102 applying persisted capability gate (feat=0x%08x) before commissioning", (unsigned) bm);
+    apply_capability_gates(&f);
 }
 
 static void matter_driver_on_features(const HisenseFeatures *f)
@@ -530,6 +564,7 @@ static void matter_driver_on_features(const HisenseFeatures *f)
             "A/C features (ext): unknown -- reply %uB, need >39B", (unsigned)f->reply_len);
     }
     apply_capability_gates(f);   // #72: hide the per-unit unsupported surfaces
+    if (f && f->valid) gate_persist_features(hisense_features_to_bitmap32(f));   // #102: cache for next boot
 }
 
 // Driver link-health callback (#56, bus-task context) -> latch the state and post one
@@ -584,6 +619,16 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     CHIP_ERROR err = CHIP_NO_ERROR;
 
     aircon.SetEp(kAirconEp);
+
+    // #102 persist-and-gate-at-boot: apply the LAST-SEEN capability gate NOW. matter_core_start() has
+    // run, so the static .zap endpoints are up AND Server::Init already opened the commissioning
+    // window. That is fine: a controller reads the ENDPOINT interview only after the PASE+CASE
+    // handshake (seconds later), whereas this fires ms after matter_core_start() -- so a feature-
+    // limited unit's interview snapshot excludes the absent endpoints. Reads from the KV cache (no
+    // bus wait), so far earlier than the retroactive on_features path. Nothing cached -> no-op
+    // (permissive). Runs before hisense_init() below spawns the RS-485 bus task / registers the
+    // features cb, so it and on_features never touch the apply_capability_gates static guards at once.
+    gate_apply_persisted();
 
     if (hisense_init(hisense_on_status) != pdPASS) {
         ChipLogError(DeviceLayer, "hisense_init failed!");

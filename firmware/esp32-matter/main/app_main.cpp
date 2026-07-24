@@ -709,13 +709,13 @@ static void on_status(const HisenseState *st)
  * all-present unit -- every unit we own -- makes ZERO ember/attribute calls and never churns
  * Descriptor/FeatureMap change reports on the ~60s features refresh.
  *
- * BENCH-PENDING, DO NOT SHIP UNVALIDATED (#64 lesson): needs (a) a flag-ABSENT unit or a spoofed
- * 0x66 reply to exercise the hide path (all our units report every capability present), and
- * (b) matter-server validation that HA actually drops the entity / re-derives HVAC modes on a live
- * PartsList/FeatureMap change vs. requiring a manual re-interview. KNOWN CAVEAT: a unit commissioned
- * DURING the boot window (before the first 0x66 reply) captures the full layout into HA's interview
- * snapshot and needs a manual re-interview to reflect a later correction; persist-and-gate-at-boot
- * is the follow-up if that matters. Compare the exposed PartsList/FeatureMap against 72-baseline.json. */
+ * HW-validated on node 35 (#72): endpoint::disable removes the ep from the Descriptor PartsList and
+ * matter-server picks it up. But a RUNTIME hide leaves the HA entity lingering (unavailable) until an
+ * integration reload -- so the retroactive path alone orphans an entity for a unit commissioned before
+ * the gate applies. #102 (persist-and-gate-at-boot, gate_apply_persisted below) fixes that by applying
+ * the LAST-SEEN gate at boot before the interview. Still bench-pending: the cool_heat FeatureMap
+ * runtime change's HA mode re-derivation is unproven. Compare the exposed PartsList/FeatureMap against
+ * 72-baseline.json. */
 static void apply_capability_gates(const HisenseFeatures *f)
 {
     static int8_t  g_eco = 1, g_quiet = 1, g_display = 1;
@@ -725,6 +725,8 @@ static void apply_capability_gates(const HisenseFeatures *f)
     const uint32_t fm  = matter_thermostat_featuremap(f);
     if (eco == g_eco && quiet == g_quiet && display == g_display && fm == g_fm) return;   // common case: no-op
 
+    // PRECONDITION: caller must NOT already hold the CHIP stack lock (both call sites -- the boot
+    // gate and the bus-task on_features -- are lock-free). A future reentrant caller would deadlock.
     lock::ScopedChipStackLock lk(portMAX_DELAY);
     // esp_matter's native per-endpoint enable/disable (the CHIP ember emberAfEndpointEnableDisable
     // is declared but NOT linked in esp-matter's data model). endpoint::get(id) resolves the handle.
@@ -748,16 +750,24 @@ static void apply_capability_gates(const HisenseFeatures *f)
     }
 }
 
-/* #102 persist-and-gate-at-boot: cache the last-seen features bitmap in NVS so the gate can be
- * applied at boot BEFORE commissioning. A fresh feature-limited unit then never advertises the
+/* #102 persist-and-gate-at-boot: cache the last-seen features (masked to the GATE bits) in NVS so
+ * the gate is applied at boot before the interview. A feature-limited unit then never advertises the
  * absent endpoints in its interview snapshot (the retroactive path corrected AFTER the interview,
- * which orphaned an unavailable HA entity -- see the #72 node-35 validation). First boot after a
- * factory reset has nothing persisted -> stays permissive (all shown) -> learns + persists ->
- * gates correctly from the next boot (a two-boot scheme, deliberately). Flash-wear-guarded. */
+ * orphaning an unavailable HA entity -- see the #72 node-35 validation).
+ * PRECONDITION: capabilities are static per physical unit, so persisted == live. On a VIRGIN flash
+ * nothing is stored -> gate_apply_persisted no-ops -> permissive -> on_features learns + persists ->
+ * clean from boot 2 (a two-boot scheme, for a never-observed unit). A factory RESET does not
+ * necessarily wipe this custom namespace, so a reset of the SAME unit keeps the (correct) gate and
+ * boot 1 is already clean. The only mis-gate is flash reused across DIFFERENT units (bench) -- the
+ * live path then corrects it (with the runtime-hide re-interview caveat). Flash-wear-guarded; the
+ * gate mask means a non-gating bit flip on the ~60s poll neither rewrites flash nor moves the gate.
+ * TODO(bench): confirm nvs_flash_erase scope on factory reset; add nvs_erase_key if the namespace
+ * survives and a guaranteed permissive-after-reset is wanted. */
 #define GATE_NVS_NS  "hisense_gate"
 #define GATE_NVS_KEY "feat32"
 static void gate_persist_features(uint32_t bm)
 {
+    bm &= HISENSE_FEAT1_GATE_MASK;   // persist only the bits the gate consumes (flash-wear + stability)
     nvs_handle_t h;
     if (nvs_open(GATE_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
     uint32_t cur = 0;
@@ -1641,11 +1651,14 @@ extern "C" void app_main()
     // ESP32, so no runtime backoff). Safe to register any time after esp_matter::start().
     chip::DeviceLayer::PlatformMgr().AddEventHandler(wifi_connectivity_log_handler, 0);
 
-    // #102 persist-and-gate-at-boot: apply the LAST-SEEN capability gate now, after start()'s
-    // enable_all() but BEFORE the commissioning window opens, so a fresh feature-limited unit's
-    // interview snapshot already excludes the absent endpoints (no orphaned HA entity). First boot
-    // after a factory reset has nothing persisted -> no-op (permissive). on_features refreshes it
-    // from the live 0x66 reply and re-persists.
+    // #102 persist-and-gate-at-boot: apply the LAST-SEEN capability gate now. start() has returned, so
+    // enable_all() ran AND Server::Init already opened the BLE+IP commissioning window (uncommissioned
+    // node). The window being open is fine: a controller only reads the ENDPOINT interview after the
+    // PASE+CASE handshake (seconds later), whereas this runs sub-ms after start() -- so a feature-
+    // limited unit's interview snapshot still excludes the absent endpoints. Reads from NVS (no bus
+    // wait), so far earlier than the retroactive on_features path. Nothing persisted -> no-op
+    // (permissive); on_features re-derives + re-persists. Runs before hisense_init() spawns the bus
+    // task, so it and on_features never touch the apply_capability_gates static guards concurrently.
     gate_apply_persisted();
 
     // HA entity labels (UserLabel key "ha_entitylabel") -> distinguishable same-type entities.
