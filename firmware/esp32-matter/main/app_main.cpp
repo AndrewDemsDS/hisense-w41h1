@@ -23,6 +23,7 @@
 #include <esp_log.h>
 #include <esp_timer.h>   // esp_timer_get_time() for the "77" settling grace
 #include <nvs_flash.h>
+#include <nvs.h>              // #102 nvs_open/get_u32/set_u32 (persist-and-gate-at-boot)
 #include <string.h>
 #include <esp_wifi.h>        // TX-power throttle during OTA (#12 brownout mitigation)
 #include <esp_https_ota.h>     // manual HTTPS-OTA backup path (fallback for a failed Matter OTA)
@@ -747,12 +748,44 @@ static void apply_capability_gates(const HisenseFeatures *f)
     }
 }
 
-// 0x66/40 ProductType feature-flags (bus-task context). Log, then gate the per-unit capabilities (#72).
+/* #102 persist-and-gate-at-boot: cache the last-seen features bitmap in NVS so the gate can be
+ * applied at boot BEFORE commissioning. A fresh feature-limited unit then never advertises the
+ * absent endpoints in its interview snapshot (the retroactive path corrected AFTER the interview,
+ * which orphaned an unavailable HA entity -- see the #72 node-35 validation). First boot after a
+ * factory reset has nothing persisted -> stays permissive (all shown) -> learns + persists ->
+ * gates correctly from the next boot (a two-boot scheme, deliberately). Flash-wear-guarded. */
+#define GATE_NVS_NS  "hisense_gate"
+#define GATE_NVS_KEY "feat32"
+static void gate_persist_features(uint32_t bm)
+{
+    nvs_handle_t h;
+    if (nvs_open(GATE_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    uint32_t cur = 0;
+    if (nvs_get_u32(h, GATE_NVS_KEY, &cur) == ESP_OK && cur == bm) { nvs_close(h); return; }  // unchanged: save flash
+    if (nvs_set_u32(h, GATE_NVS_KEY, bm) == ESP_OK) nvs_commit(h);
+    nvs_close(h);
+}
+static void gate_apply_persisted(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(GATE_NVS_NS, NVS_READONLY, &h) != ESP_OK) return;   // first boot: namespace absent -> permissive
+    uint32_t bm = 0;
+    esp_err_t e = nvs_get_u32(h, GATE_NVS_KEY, &bm);
+    nvs_close(h);
+    if (e != ESP_OK || !((bm >> HISENSE_FEAT1_VALID) & 1)) return;   // nothing valid cached -> stay permissive
+    HisenseFeatures f; hisense_features_from_bitmap32(bm, &f);
+    ESP_LOGW(TAG, "#102 applying persisted capability gate (feat=0x%08x) before commissioning", (unsigned) bm);
+    apply_capability_gates(&f);
+}
+
+// 0x66/40 ProductType feature-flags (bus-task context). Log, gate the per-unit capabilities (#72),
+// then persist the live features so the next boot can gate before commissioning (#102).
 static void on_features(const HisenseFeatures *f)
 {
     ESP_LOGI(TAG, "A/C features (0x66/40): ai=%d display=%d swing8=%d eco=%d mute=%d purify=%d",
              f->ai, f->power_display, f->swing_dir_8, f->power_save, f->fan_mute, f->purify);
     apply_capability_gates(f);
+    if (f && f->valid) gate_persist_features(hisense_features_to_bitmap32(f));   // #102
 }
 
 // Bus link lost/restored (#56). On loss, null every liveness attribute (LocalTemperature +
@@ -1607,6 +1640,13 @@ extern "C" void app_main()
     // State owns the actual 5s auto-reconnect (its interval setter is unimplemented on esp-matter
     // ESP32, so no runtime backoff). Safe to register any time after esp_matter::start().
     chip::DeviceLayer::PlatformMgr().AddEventHandler(wifi_connectivity_log_handler, 0);
+
+    // #102 persist-and-gate-at-boot: apply the LAST-SEEN capability gate now, after start()'s
+    // enable_all() but BEFORE the commissioning window opens, so a fresh feature-limited unit's
+    // interview snapshot already excludes the absent endpoints (no orphaned HA entity). First boot
+    // after a factory reset has nothing persisted -> no-op (permissive). on_features refreshes it
+    // from the live 0x66 reply and re-persists.
+    gate_apply_persisted();
 
     // HA entity labels (UserLabel key "ha_entitylabel") -> distinguishable same-type entities.
     // start() has returned (Server::Init done, endpoints exist); take the stack lock since we

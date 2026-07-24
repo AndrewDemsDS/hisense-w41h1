@@ -218,6 +218,33 @@ int main() {
         CHECK(matter_gate_eco(&g),  "gained: after 0->1, eco exposed");
     }
 
+    // ---- #102 persist-at-boot: features <-> bitmap roundtrip + gate consistency ----------
+    // The last-seen features are persisted as the compact bitmap and reconstructed at boot to
+    // gate BEFORE commissioning. The reconstruction must preserve every gate decision.
+    printf("[#102 features bitmap roundtrip]\n");
+    {
+        HisenseFeatures samples[3] = {};
+        samples[0].valid = true; samples[0].power_save = true; samples[0].cool_heat = true;
+                                 samples[0].power_display = 2;                 // eco+display, heat-pump
+        samples[1].valid = true;                                              // cooling-only, no eco/quiet/display
+        samples[2].valid = true; samples[2].ext_valid = true; samples[2].fan_mute = true;
+                                 samples[2].q_display = true; samples[2].demand_resp = 3; // quiet, ext tier
+        for (int i = 0; i < 3; i++) {
+            uint32_t bm = hisense_features_to_bitmap32(&samples[i]);
+            HisenseFeatures rt = {}; hisense_features_from_bitmap32(bm, &rt);
+            CHECK(hisense_features_to_bitmap32(&rt) == bm, "sample %d: to->from->to bitmap stable", i);
+            CHECK(matter_gate_eco(&rt)     == matter_gate_eco(&samples[i]),     "sample %d: eco gate survives roundtrip", i);
+            CHECK(matter_gate_quiet(&rt)   == matter_gate_quiet(&samples[i]),   "sample %d: quiet gate survives roundtrip", i);
+            CHECK(matter_gate_display(&rt) == matter_gate_display(&samples[i]), "sample %d: display gate survives roundtrip", i);
+            CHECK(matter_thermostat_featuremap(&rt) == matter_thermostat_featuremap(&samples[i]), "sample %d: featuremap survives roundtrip", i);
+        }
+        // first boot: nothing persisted -> word 0 -> valid=false -> gates permissive (show all)
+        HisenseFeatures z = {}; hisense_features_from_bitmap32(0, &z);
+        CHECK(!z.valid, "from_bitmap32(0) -> valid=false (first boot, permissive)");
+        CHECK(matter_gate_eco(&z) && matter_gate_quiet(&z) && matter_gate_display(&z), "first-boot word 0 -> all shown");
+        hisense_features_from_bitmap32(0, NULL);   // NULL must not crash
+    }
+
     printf("== %d passed, %d failed ==\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
