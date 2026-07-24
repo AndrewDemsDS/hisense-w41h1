@@ -22,7 +22,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-ENVF="$HERE/ota-release.env"
+ENVF="${ENVF:-$HERE/ota-release.env}"
 # shellcheck source=firmware/scripts/sync-files.sh
 . "$HERE/sync-files.sh"   # SYNC_FILES{,_REQUIRED,_OPTIONAL}: the set copied into the SDK example
 say() { printf '\033[1;36m[ota-release]\033[0m %s\n' "$*"; }
