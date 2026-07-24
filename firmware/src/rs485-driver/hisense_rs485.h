@@ -398,6 +398,15 @@ typedef struct {
 #define HISENSE_FEAT1_EXT_VALID            30
 #define HISENSE_FEAT1_VALID                31
 
+/* The ONLY bits the #72 capability gate consumes (matter_gate_eco/quiet/display +
+ * matter_thermostat_featuremap): cool_heat, power_save, fan_mute, the 2-bit power_display, and
+ * VALID. #102 persists `features_word & HISENSE_FEAT1_GATE_MASK`, so a flip in a non-gating bit
+ * (demand_resp, an ext-tier flag flapping when a reply lands short) neither rewrites flash nor
+ * changes the persisted gate. */
+#define HISENSE_FEAT1_GATE_MASK ((1u << HISENSE_FEAT1_COOL_HEAT) | (1u << HISENSE_FEAT1_POWER_SAVE) \
+                               | (1u << HISENSE_FEAT1_FAN_MUTE)  | (0x3u << HISENSE_FEAT1_POWER_DISPLAY_SHIFT) \
+                               | (1u << HISENSE_FEAT1_VALID))
+
 static inline uint32_t hisense_features_to_bitmap32(const HisenseFeatures *f)
 {
     uint32_t b = 0;
@@ -422,6 +431,34 @@ static inline uint32_t hisense_features_to_bitmap32(const HisenseFeatures *f)
     }
     if (f->valid) b |= 1u << HISENSE_FEAT1_VALID;
     return b;
+}
+
+/* Inverse of hisense_features_to_bitmap32: reconstruct HisenseFeatures from the packed word.
+ * Roundtrip-exact for every bitmap-encoded field; `reply_len` is NOT in the bitmap (diagnostic
+ * only) so it comes back 0. Used by the #72 persist-and-gate-at-boot path (#102): the last-seen
+ * features are persisted as this compact word and reconstructed at boot to gate the data model
+ * BEFORE commissioning. Pure, host-testable. */
+static inline void hisense_features_from_bitmap32(uint32_t b, HisenseFeatures *out)
+{
+    if (out == NULL) return;
+    out->cool_heat     = (b >> HISENSE_FEAT1_COOL_HEAT) & 1u;
+    out->ai            = (b >> HISENSE_FEAT1_AI) & 1u;
+    out->infinite_fan  = (b >> HISENSE_FEAT1_INFINITE_FAN) & 1u;
+    out->power_save    = (b >> HISENSE_FEAT1_POWER_SAVE) & 1u;
+    out->fan_mute      = (b >> HISENSE_FEAT1_FAN_MUTE) & 1u;
+    out->swing_dir_8   = (b >> HISENSE_FEAT1_SWING_DIR_8) & 1u;
+    out->swing_follow  = (b >> HISENSE_FEAT1_SWING_FOLLOW) & 1u;
+    out->humidity      = (b >> HISENSE_FEAT1_HUMIDITY) & 1u;
+    out->heat_8c       = (b >> HISENSE_FEAT1_HEAT_8C) & 1u;
+    out->purify        = (b >> HISENSE_FEAT1_PURIFY) & 1u;
+    out->power_display = (uint8_t)((b >> HISENSE_FEAT1_POWER_DISPLAY_SHIFT) & 0x3u);
+    out->demand_resp   = (uint8_t)((b >> HISENSE_FEAT1_DEMAND_RESP_SHIFT) & 0x3u);
+    out->ext_valid     = (b >> HISENSE_FEAT1_EXT_VALID) & 1u;
+    out->q_display     = (b >> HISENSE_FEAT1_Q_DISPLAY) & 1u;      /* 0 when ext_valid == 0 */
+    out->enable_8heat  = (b >> HISENSE_FEAT1_ENABLE_8HEAT) & 1u;
+    out->trans_102_64  = (b >> HISENSE_FEAT1_TRANS_102_64) & 1u;
+    out->reply_len     = 0;   /* not encoded in the bitmap */
+    out->valid         = (b >> HISENSE_FEAT1_VALID) & 1u;
 }
 
 /* Feature-flags callback: invoked (bus-task context) each time a 0x66/40
