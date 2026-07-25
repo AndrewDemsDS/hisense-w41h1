@@ -20,4 +20,33 @@ config HISENSE_DEBUG_BUILD
         flavours. Anything that changes bus or Matter behaviour would make bench
         results meaningless for the shipped image.
 
+config HISENSE_RS485_HW_MODE
+    bool "RS-485: let the UART peripheral drive DE (hardware half-duplex)"
+    default n
+    help
+        UNVALIDATED, BENCH-ONLY. Leave this OFF unless you are actively comparing
+        the two paths on a debug node with a scope or a frame-error count.
+
+        Default (OFF) is the path this project validated on real hardware: the
+        shared driver toggles the DE line itself as a plain GPIO, waits
+        HISENSE_DE_SETTLE_MS before the first byte, and holds DE high for
+        HISENSE_DE_DRAIN_MS after the last so the FIFO and shift register empty
+        before the transceiver stops driving. Finding that DE existed at all cost
+        a multi-day debug, so the default does not change.
+
+        When ON, DE is handed to the UART peripheral instead: the DE GPIO becomes
+        UART RTS and the port is put into UART_MODE_RS485_HALF_DUPLEX, so the
+        hardware asserts DE exactly while the TX FIFO drains and releases it on
+        the same clock as the bit stream. The software toggle and both delays are
+        compiled out, and serial_putc() stops waiting per byte.
+
+        This is what ESPHome's uart component does for every RS-485 device it
+        supports (flow_control_pin -> uart_set_pin RTS -> uart_set_mode), so it is
+        well proven in general -- just not yet against THIS A/C. It cannot desync
+        the way a software toggle can, and it removes ~30 ms of dead time per
+        frame.
+
+        AmebaZ2 is unaffected either way: it has no such peripheral mode and keeps
+        the software path unconditionally.
+
 endmenu
