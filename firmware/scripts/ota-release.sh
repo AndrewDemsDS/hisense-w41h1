@@ -838,12 +838,21 @@ revert_repackage() {
 import glob,struct,hmac,hashlib,sys,os
 dump,bi,out,newser=sys.argv[1],sys.argv[2],sys.argv[3],int(sys.argv[4])
 KEY=bytes.fromhex('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e5f')
+def inner_off(payload):
+    # #75: the bootloader ALSO verifies HMAC-SHA256(key, img[0:L]) == img[L:L+0x20], where
+    # L = next_img (manifest +0xE0) + 0x140. That trailer covers the serial AND the +0x00
+    # signature, so patching the serial invalidates it. boot_load compares it, prints
+    # "Hash Result Incorrect!" and hangs with the flash QE bit cleared. Missing this is
+    # what bricked the office unit on 2026-07-21.
+    return struct.unpack_from('<I',payload,0xE0)[0]+0x140
 def verify(payload,trailer,name):
     mac_ok=hmac.new(KEY,payload[0xE0:0x140],hashlib.sha256).digest()==payload[0:32]
+    L=inner_off(payload)
+    in_ok=L+0x20<=len(payload) and hmac.new(KEY,payload[0:L],hashlib.sha256).digest()==payload[L:L+0x20]
     sum_ok=struct.pack('<I',sum(payload)&0xffffffff)==trailer
     serial=struct.unpack_from('<I',payload,0xF4)[0]
-    print(f"  {name}: len={len(payload):#x} serial@0xF4={serial} hmac={'OK' if mac_ok else 'MISMATCH'} bytesum={'OK' if sum_ok else 'MISMATCH'}")
-    return mac_ok and sum_ok
+    print(f"  {name}: len={len(payload):#x} serial@0xF4={serial} hmac={'OK' if mac_ok else 'MISMATCH'} inner@{L:#x}={'OK' if in_ok else 'MISMATCH'} bytesum={'OK' if sum_ok else 'MISMATCH'}")
+    return mac_ok and in_ok and sum_ok
 refs=sorted(glob.glob(os.path.join(bi,'firmware_is-v*.bin')))
 if not refs:
     print("  no firmware_is-v*.bin in built-images/ -- cannot self-check the recipe"); sys.exit(1)
@@ -869,9 +878,12 @@ ok &= verify(img[:imglen],img[imglen:imglen+4],f"input image @0x{off:x} (unpatch
 if not ok:
     print("recipe self-check FAILED -- not building a revert image from unverified bytes"); sys.exit(1)
 payload=bytearray(img[:imglen])
+# Order matters: each step's input includes the previous step's output.
 struct.pack_into('<I',payload,0xF4,newser)       # serial so the bootloader prefers this slot
-payload[0:32]=hmac.new(KEY,bytes(payload[0xE0:0x140]),hashlib.sha256).digest()
-payload+=struct.pack('<I',sum(payload)&0xffffffff)
+payload[0:32]=hmac.new(KEY,bytes(payload[0xE0:0x140]),hashlib.sha256).digest()   # manifest sig
+_L=inner_off(payload)                            # inner image HMAC (#75) -- covers [0,L), incl. the sig
+payload[_L:_L+0x20]=hmac.new(KEY,bytes(payload[0:_L]),hashlib.sha256).digest()
+payload+=struct.pack('<I',sum(payload)&0xffffffff)                               # transport byte-sum
 open(out,'wb').write(payload)
 print(f"  signed payload: {out} ({len(payload):#x} bytes, serial {newser})")
 PY
@@ -886,9 +898,9 @@ print(json.dumps({"modelVersion":{"vid":0xFFF1,"pid":0x8001,"softwareVersion":v,
 PY
   say "  ota:      $ota  (+ .json manifest, payloadName=$(basename "$payload"))"
   say "  not staged. next: ota-release.sh revert --apply"
-  say "  WARNING: re-signed stock payloads failed to BOOT on hardware 2026-07-21 (see docs/10 §17"
-  say "  'Path 2: BLOCKED'). Applying this can brick the unit to a CH341A-clip recovery. Host-side"
-  say "  checks pass, but the bootloader rejects the re-signed image in a way they do not capture."
+  say "  NOTE: the 2026-07-21 brick (docs/10 §17 'Path 2') is root-caused (#75): the old recipe left"
+  say "  the inner image HMAC (at next_img+0x140) stale. This payload recomputes it and self-checks it."
+  say "  NOT yet confirmed on hardware -- the first apply is still a brick risk (CH341A-clip recovery)."
   # Version-consumption guard: the revert image carries serial SERIAL_BASE+v, so once it is
   # applied the next custom OTA must EXCEED v or the bootloader ties and the stock slot wins.
   # Keep version.txt ahead of every revert int ever handed out here.

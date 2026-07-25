@@ -516,19 +516,42 @@ build (`S1798.MP_TEST_VERSION_SE`, no Matter). The running stock slot (S2292) is
 conversion preserves, so a first-generation convert flips back to S2292 as intended; just do
 not treat "the other slot" as interchangeable before checking `:slots`.
 
-### Path 2: repackage the stock app as a Matter OTA (⚠️ BLOCKED: re-signed image fails to boot, 2026-07-21)
+### Path 2: repackage the stock app as a Matter OTA (root-caused 2026-07-25, awaiting hardware confirmation)
 
-**Status: host checks all pass, but the re-signed image does NOT boot.** On the office unit a
-repackaged payload (stock backup + serial patch + re-HMAC + re-sum, every check green, written
-byte-perfect to flash, verified by a post-mortem clip dump) left the unit dark: the boot
-attempt visibly ran and crashed (the GD25Q32 QE bit was found CLEARED afterwards, and was
-cleared again after a manual re-set + power cycle, i.e. the boot flow touches SR2 and never
-gets far enough to re-enable quad). The SAME stock bytes with the factory signature (serial
-100) boot fine on the same unit. So the bootloader/ROM acceptance is stricter than the
-decoded HMAC+bytesum recipe (docs/13) in some way the host-side verification does not
-capture: possibly a second key (OTP/eFuse vs the flash partition hash_key) or an extra
-manifest check. Until the prebuilt `bootloader.axf` is RE'd on this point, treat
-`--repackage`/`--apply` as a brick risk: the only recovery is the CH341A clip.
+**Status: the 2026-07-21 brick is explained and the recipe is fixed; not yet re-tried on hardware.**
+
+What happened: a repackaged payload (stock backup + serial patch + re-HMAC + re-sum, every check
+green, written byte-perfect to flash, verified by a post-mortem clip dump) left the unit dark, with
+the GD25Q32 QE bit found CLEARED and cleared again after a manual re-set plus power cycle.
+
+Root cause (issue #75): the bootloader verifies a **second, inner HMAC** that nothing in the old
+recipe recomputed:
+
+```
+L = u32le(img[0xE0])  (manifest `next_img`)  + 0x140
+HMAC-SHA256(partition hash_key, img[0 : L])  ==  img[L : L+0x20]
+```
+
+The hashed span starts at image offset 0, so it covers the serial at `+0xF4`. Patching the serial
+invalidated it while leaving the manifest signature and byte-sum trailer perfectly valid, which is
+why every host-side check passed. `boot_load` compares the trailer, prints `"Hash Result
+Incorrect!"`, and falls into its shared failure sink, which clears the flash QE bit and returns -1;
+the caller then hangs forever, with **no fall-back to the other slot** (which is why a perfectly
+valid custom image in FW2 did not rescue the unit). Symptom matched exactly.
+
+Verified across 29 real images: the relationship holds on every genuine image and fails on exactly
+the four `rac-stock-v*-payload.bin` files the old `--repackage` produced. `ota-release.sh` now
+recomputes the inner HMAC and **self-checks it on every archived image before building**, so this
+class of failure cannot ship silently again. Full analysis:
+[`reverse-engineering/analysis/bootloader.md`](../../reverse-engineering/analysis/bootloader.md).
+
+Correction to the old note here: "the SAME stock bytes with the factory signature boot fine on the
+same unit" was **not** a controlled comparison. Every observed successful stock boot had effectively
+one valid candidate slot (the clip recovery erased FW2; Path 1's flip invalidates it), whereas the
+failure had two. That difference is real but is not the cause; the inner HMAC is.
+
+⚠️ Still treat the first `--repackage`/`--apply` on real hardware as a brick risk until one unit is
+confirmed: recovery remains the CH341A clip.
 
 Recovery recipe that worked (clip): write the unit's own dump (per-unit data preserved) with
 fw1 replaced by the ORIGINAL stock slot bytes (from a `revert --backup` capture, factory
