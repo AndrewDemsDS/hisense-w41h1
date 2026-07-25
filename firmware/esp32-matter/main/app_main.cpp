@@ -25,7 +25,8 @@
 #include <nvs_flash.h>
 #include <nvs.h>              // #102 nvs_open/get_u32/set_u32 (persist-and-gate-at-boot)
 #include <string.h>
-#include <esp_wifi.h>        // TX-power throttle during OTA (#12 brownout mitigation)
+#include <esp_wifi.h>        // TX-power throttle during OTA (#12 brownout mitigation) + power-save mode
+#include <esp_netif.h>       // net-loss reboot watchdog: link-local-IPv6 liveness probe
 #include <esp_https_ota.h>     // manual HTTPS-OTA backup path (fallback for a failed Matter OTA)
 #include <esp_http_client.h>
 
@@ -1031,6 +1032,24 @@ static void on_recommission_cancel(void)
 #define HISENSE_OTA_TX_POWER_QDBM  40   /* 10 dBm, quarter-dBm units. Plenty for a LAN hop. */
 #define HISENSE_OTA_CHUNK_YIELD_MS 8    /* breathing room between flash writes */
 
+/* Set while EITHER OTA path is transferring, so the net-loss reboot watchdog (below) cannot kill
+ * a legitimately long download on a lossy link. Stamped with a start time because the suppression
+ * itself has to be bounded: the HTTPS perform-loop has no overall wall-clock ceiling (only a 30 s
+ * per-operation HTTP timeout), so a connection trickling just enough data to stay alive could
+ * otherwise hold the flag -- and suppress recovery -- forever. Plain volatile bool + int64: both
+ * are written only by the OTA paths and read only by the watchdog, and a torn read costs at worst
+ * one 60 s poll of delay. */
+static volatile bool    s_ota_active     = false;
+static volatile int64_t s_ota_started_us = 0;
+
+static void ota_activity_begin(void)
+{
+    s_ota_started_us = esp_timer_get_time();
+    s_ota_active     = true;
+}
+
+static void ota_activity_end(void) { s_ota_active = false; }
+
 /* #12 brownout mitigation, Matter (BDX) OTA path. The stock esp-matter OTA requestor runs the
  * whole download+apply at the full 20 dBm TX ceiling, so on this marginal A/C rail the concurrent
  * flash-write (300-500 mA) + Wi-Fi TX peak is exactly the combination that hung a node mid-OTA.
@@ -1044,6 +1063,7 @@ class HisenseOTARequestorDriver : public chip::DeviceLayer::ExtendedOTARequestor
 public:
     void HandleIdleStateExit() override
     {
+        ota_activity_begin();   // suppress the net-loss reboot watchdog for the transfer window
         if (!m_tx_saved) {   // capture the live ceiling ONCE, on the first exit-from-idle
             m_tx_saved = (esp_wifi_get_max_tx_power(&m_saved_tx) == ESP_OK);
             if (m_tx_saved) {
@@ -1056,6 +1076,7 @@ public:
     }
     void HandleIdleStateEnter(chip::IdleStateReason reason) override
     {
+        ota_activity_end();   // back to idle on ANY path -- re-arm the net-loss watchdog
         chip::DeviceLayer::ExtendedOTARequestorDriver::HandleIdleStateEnter(reason);
         if (m_tx_saved) {   // restore on ANY return to idle (success / abort / timeout)
             esp_wifi_set_max_tx_power(m_saved_tx);
@@ -1082,6 +1103,50 @@ static HisenseOTARequestorDriver s_hisense_ota_driver;
  * Lost/Established transitions on the hisense_ac log so a real Wi-Fi drop can be told apart from a
  * brownout reboot when triaging a field node. Runs on the CHIP event loop (PostEventOrDie ->
  * DispatchEvent) with the stack lock already held; reads the event only, touches no CHIP state. */
+/* Wi-Fi power-save policy.
+ *
+ * ESP-IDF's compiled-in default is WIFI_PS_MIN_MODEM (modem sleep), and NOTHING overrode it here:
+ * not this file, not sdkconfig, not CHIP's ESP32 ConnectivityManagerImpl_WiFi. Modem sleep parks
+ * the radio between DTIM beacons, which is the wrong trade for a mains-powered node on a marginal
+ * link (this node reads -68 dBm): every missed beacon window costs a recovery cycle, and forcing
+ * the radio continuously on is the standard mitigation for APs that mishandle power-save clients.
+ *
+ * Be honest about the strength of this one: it is a MITIGATION, not a proven root-cause fix. No
+ * upstream issue establishes it for our symptom. esp-idf#11615 reads like an exact match ("the ESP
+ * stays in this state until a reboot is performed") but it is closed and was root-caused to
+ * internal-DMA heap exhaustion under mbedtls, unrelated to modem sleep -- so it is NOT cited as
+ * evidence here. The reboot watchdog below is the change that actually guarantees recovery.
+ *
+ * Coexistence caveat, and why this is a policy rather than a one-shot call: BT is enabled and the
+ * ESP32 has ONE 2.4 GHz radio, so BLE timesharing leans on Wi-Fi's sleep windows. The "77"
+ * recommission path deliberately advertises BLE while Wi-Fi stays up, so while a commissioning
+ * window is open we fall BACK to MIN_MODEM rather than starve it, and return to NONE once it
+ * closes. Idempotent (reads current mode first), so it is safe to re-evaluate periodically.
+ *
+ * Touches CHIP state -> must run with the stack lock held. Call it from the CHIP event loop
+ * directly, or via apply_wifi_power_save_work() through ScheduleWork() from any other task. */
+static void apply_wifi_power_save(void)
+{
+    const bool ble_window =
+        chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen() ||
+        chip::DeviceLayer::ConnectivityMgr().IsBLEAdvertisingEnabled();
+    const wifi_ps_type_t want = ble_window ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE;
+
+    wifi_ps_type_t have = WIFI_PS_NONE;
+    if (esp_wifi_get_ps(&have) == ESP_OK && have == want) return;   // already there, stay quiet
+
+    const esp_err_t err = esp_wifi_set_ps(want);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_set_ps(%d) failed: %s", (int) want, esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGW(TAG, "Wi-Fi power save -> %s%s",
+             want == WIFI_PS_NONE ? "NONE" : "MIN_MODEM",
+             ble_window ? " (BLE window open: keeping sleep windows for coex)" : "");
+}
+
+static void apply_wifi_power_save_work(intptr_t) { apply_wifi_power_save(); }
+
 static void wifi_connectivity_log_handler(const chip::DeviceLayer::ChipDeviceEvent *event, intptr_t)
 {
     if (event->Type != chip::DeviceLayer::DeviceEventType::kWiFiConnectivityChange) return;
@@ -1090,6 +1155,9 @@ static void wifi_connectivity_log_handler(const chip::DeviceLayer::ChipDeviceEve
     const unsigned up_s = (unsigned) (esp_timer_get_time() / 1000000);
     if (result == chip::DeviceLayer::kConnectivity_Established) {
         ESP_LOGW(TAG, "Wi-Fi connectivity: ESTABLISHED (uptime %us)", up_s);
+        // esp_wifi_set_ps() needs a started Wi-Fi stack, so the connected transition is the
+        // earliest safe point. Already on the CHIP event loop with the stack lock held.
+        apply_wifi_power_save();
     } else if (result == chip::DeviceLayer::kConnectivity_Lost) {
         ESP_LOGW(TAG, "Wi-Fi connectivity: LOST (uptime %us) -- CHIP auto-reconnects on its ~5s timer", up_s);
     }
@@ -1098,6 +1166,7 @@ static void wifi_connectivity_log_handler(const chip::DeviceLayer::ChipDeviceEve
 static void https_ota_task(void *arg)
 {
     ESP_LOGW(TAG, "HTTPS-OTA: fetching %s", HISENSE_OTA_URL);
+    ota_activity_begin();   // suppress the net-loss reboot watchdog for the transfer window
 
     int8_t saved_tx = 0;
     bool   tx_saved = (esp_wifi_get_max_tx_power(&saved_tx) == ESP_OK);
@@ -1119,6 +1188,7 @@ static void https_ota_task(void *arg)
     if (err != ESP_OK || h == NULL) {
         ESP_LOGE(TAG, "HTTPS-OTA: begin failed: %s", esp_err_to_name(err));
         if (tx_saved) esp_wifi_set_max_tx_power(saved_tx);
+        ota_activity_end();
         vTaskDelete(NULL);
         return;
     }
@@ -1146,6 +1216,7 @@ static void https_ota_task(void *arg)
         esp_https_ota_abort(h);
         if (tx_saved) esp_wifi_set_max_tx_power(saved_tx);
     }
+    ota_activity_end();   // every non-rebooting exit re-arms the net-loss watchdog
     vTaskDelete(NULL);
 }
 
@@ -1465,19 +1536,124 @@ bool emberAfAttributeWriteAccessCallback(chip::EndpointId endpoint,
     return true;
 }
 
-// #12: periodic heap-watermark log. A slow leak over long uptime is invisible until it bites
-// (an allocation fails -> crash/reboot), and this node runs unattended for weeks. Logging the
-// lifetime MINIMUM free heap (esp_get_minimum_free_heap_size) makes a downward trend observable
-// on the serial / :2323 console long before it becomes a fault. Low priority, 60 s cadence, runs
-// even while the A/C link is down (when a stuck retry loop would leak) -> negligible cost.
-static void heap_watchdog_task(void *arg)
+/* Periodic health task: heap watermark (#12) + net-loss reboot watchdog.
+ *
+ * ---- The failure the reboot watchdog exists for (node 35, 2026-07-25) --------------------------
+ * The node dropped off the fabric at 09:08 local and never came back. matter-server retried 8
+ * times over 27 minutes; every attempt failed at "Timeout waiting for mDNS resolution". It only
+ * returned when the unit was power-cycled BY HAND.
+ *
+ * The firmware was alive and healthy the whole time. Evidence: bootreason after the manual cycle
+ * read power-on, so the chip never self-reset; and the RS-485 bus task kept polling the A/C at a
+ * clean 1 Hz throughout (28387 frames, 0 checksum mismatches). The sibling AmebaZ2 node on the
+ * same fabric logged nothing at all in that window, so the AP was fine too. This was a wedge in
+ * the network stack of this specific node, with the application none the wiser.
+ *
+ * Nothing here noticed, and structurally nothing could. The IDF task watchdog covers exactly one
+ * task -- hisense_bus, the only caller of esp_task_wdt_add() -- and hisense_bus talks to the
+ * RS-485 bus, not the network, so it keeps feeding the watchdog happily while Wi-Fi, lwIP or the
+ * CHIP thread are stuck. Idle-task WDT checks are off on both cores, so there is no
+ * global-starvation backstop either. The connectivity observer above only logs. A network-side
+ * wedge was therefore both invisible and permanent.
+ *
+ * ---- Why a reboot, and why 15 minutes ---------------------------------------------------------
+ * ESPHome hit this same wall and settled on the same answer: wifi.reboot_timeout and
+ * api.reboot_timeout both default to 15 minutes, documented as necessary "because sometimes the
+ * low level ESP functions report that the ESP is connected to the network, when in fact it is not
+ * -- only a full reboot fixes it". That is a precise description of this morning. A reboot is
+ * crude, but it is the only recovery that provably works for the documented terminal states, and
+ * 15 min is long enough that ordinary roaming or an AP restart never trips it.
+ *
+ * ---- Why liveness is checked at two layers ----------------------------------------------------
+ * The wedge can sit at either layer, and the one below it keeps looking perfectly healthy:
+ *   1. associated -- esp_wifi_sta_get_ap_info(). Covers a deauth we never reassociated from,
+ *      including CHIP's DriveStationState() early-return paths that leave no retry timer armed.
+ *   2. link-local IPv6 valid -- esp_netif_get_ip6_linklocal(). Matter is IPv6-ONLY, and a
+ *      spurious Duplicate-Address-Detection failure (espressif/esp-idf#5796, open since 2020:
+ *      some routers echo the node's own multicast NS and lwIP reads it as a real duplicate)
+ *      invalidates the link-local address while association and IPv4 stay perfectly healthy.
+ *      CHIP calls esp_netif_create_ip6_linklocal() exactly once, on the connect transition, and
+ *      never re-checks -- so that state is terminal without a reboot. Checking IPv4 alone would
+ *      have missed this morning's failure completely, which is why IPv4 is logged (diagnostic)
+ *      but deliberately NOT part of the verdict: Matter does not need it, and requiring it would
+ *      reboot-loop a node on an IPv6-only segment.
+ */
+#define HISENSE_HEALTH_POLL_MS      60000               /* heap log + liveness cadence */
+#define HISENSE_NET_DEAD_REBOOT_US  (15 * 60 * 1000000LL)  /* ESPHome's default reboot_timeout */
+#define HISENSE_OTA_GATE_MAX_US     (20 * 60 * 1000000LL)  /* ceiling on OTA suppression */
+
+/* True only if the station is associated AND holds a valid link-local IPv6 (see rationale above).
+ * Pure ESP-IDF calls -- no CHIP state -- so this is safe to run without the stack lock. */
+static bool network_is_live(void)
+{
+    wifi_ap_record_t ap = {};
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return false;   // not associated
+
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta == NULL) return false;
+
+    esp_ip6_addr_t ll = {};
+    if (esp_netif_get_ip6_linklocal(sta, &ll) != ESP_OK) return false;   // Matter is IPv6-only
+
+    return true;
+}
+
+/* An unprovisioned node has no credentials to connect WITH, so "no network" is its correct
+ * resting state -- rebooting it would cut short the commissioning window app_main() deliberately
+ * holds open for exactly that case. Read straight from esp_wifi rather than
+ * ConnectivityMgr().IsWiFiStationProvisioned() so no CHIP stack lock is needed here. */
+static bool wifi_is_provisioned(void)
+{
+    wifi_config_t cfg = {};
+    if (esp_wifi_get_config(WIFI_IF_STA, &cfg) != ESP_OK) return false;
+    return cfg.sta.ssid[0] != '\0';
+}
+
+static void health_watchdog_task(void *arg)
 {
     (void) arg;
+    int64_t last_good_us = esp_timer_get_time();   // full grace window from boot
+
     for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(HISENSE_HEALTH_POLL_MS));
+
         ESP_LOGI(TAG, "heap: free=%u min_free=%u (bytes)",
                  (unsigned) esp_get_free_heap_size(),
                  (unsigned) esp_get_minimum_free_heap_size());
-        vTaskDelay(pdMS_TO_TICKS(60000));
+
+        /* Re-assert the power-save policy: a closing "77" BLE window has to return the radio to
+         * NONE, and this is also a cheap self-heal if anything in the SDK resets the mode.
+         * Hops to the CHIP event loop because it reads CHIP state. */
+        chip::DeviceLayer::PlatformMgr().ScheduleWork(apply_wifi_power_save_work, 0);
+
+        const int64_t now = esp_timer_get_time();
+
+        if (network_is_live() || !wifi_is_provisioned()) {
+            last_good_us = now;
+            continue;
+        }
+
+        const int64_t dead_s = (now - last_good_us) / 1000000;
+
+        /* Never kill a transfer in flight -- but do not let a STUCK transfer suppress recovery
+         * forever either, hence the bounded gate. */
+        if (s_ota_active && (now - s_ota_started_us) < HISENSE_OTA_GATE_MAX_US) {
+            ESP_LOGW(TAG, "net watchdog: no live network for %llds, OTA in flight -- holding off",
+                     (long long) dead_s);
+            continue;
+        }
+
+        if ((now - last_good_us) < HISENSE_NET_DEAD_REBOOT_US) {
+            ESP_LOGW(TAG, "net watchdog: no live network for %llds (reboot at %llds)",
+                     (long long) dead_s,
+                     (long long) (HISENSE_NET_DEAD_REBOOT_US / 1000000));
+            continue;
+        }
+
+        ESP_LOGE(TAG, "net watchdog: no live network for %llds -- REBOOTING to recover the stack",
+                 (long long) dead_s);
+        vTaskDelay(pdMS_TO_TICKS(200));   // let the log line drain before the reset
+        esp_restart();
     }
 }
 
@@ -1721,10 +1897,11 @@ extern "C" void app_main()
     hisense_set_link_cb(on_link);           // #56: bus silence -> null liveness attrs
     if (hisense_init(on_status) != pdPASS) ESP_LOGE(TAG, "hisense_init failed");
 
-    // #12: heap-leak visibility over long unattended uptime. 4096-byte stack matches this repo's
+    // #12: heap-leak visibility over long unattended uptime, plus the net-loss reboot watchdog
+    // (see the header comment on health_watchdog_task). 4096-byte stack matches this repo's
     // convention for ESP_LOG-ing tasks (diag_watch/breakglass=4096); a smaller stack has a
     // documented history of printf overflowing it on this platform (see the bus-task stack note).
-    xTaskCreate(heap_watchdog_task, "heap_wd", 4096, NULL, 1, NULL);
+    xTaskCreate(health_watchdog_task, "health_wd", 4096, NULL, 1, NULL);
 
 #ifdef CONFIG_HISENSE_DEBUG_BUILD
     diag_console_start();   // :2323 telnet diagnostics (token/poll/watch/decode/selftest)

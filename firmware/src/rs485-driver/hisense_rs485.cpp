@@ -105,6 +105,21 @@ static QueueHandle_t        s_tx_queue = NULL;
                                    // FIFO+shift drains (<=16B @9600 ~= 17ms);
                                    // releasing early truncates our frame's tail
 
+/* Who owns the DE line.
+ *
+ * 1 (default, and the only option on AmebaZ2): this driver owns it -- the software toggle above,
+ *   which is the hardware-validated path.
+ * 0: the UART peripheral owns it. ESP-IDF only, opt-in via CONFIG_HISENSE_RS485_HW_MODE, where the
+ *   HAL puts the port in UART_MODE_RS485_HALF_DUPLEX and DE becomes hardware RTS (what ESPHome's
+ *   uart component does). The toggle and BOTH delays must then be compiled out: driving the GPIO
+ *   by hand would fight the peripheral for the pin, and the delays would just add dead time to a
+ *   turnaround the hardware already sequences exactly. */
+#if defined(ESP_PLATFORM) && defined(CONFIG_HISENSE_RS485_HW_MODE)
+#define HISENSE_RS485_SW_DE 0
+#else
+#define HISENSE_RS485_SW_DE 1
+#endif
+
 /* ---------------------------------------------------------------------------
  * Checksum: big-endian sum over bytes [start, end_exclusive). Callers pass
  * start=2 (skip F4 F5) and end_exclusive = offset of the first checksum byte.
@@ -900,19 +915,23 @@ static size_t hisense_build_link_1e(uint8_t *out, size_t cap, bool heard_ac)
  * -------------------------------------------------------------------------*/
 static void hisense_tx_raw(const uint8_t *buf, size_t len)
 {
+#if HISENSE_RS485_SW_DE
     gpio_write(&s_de, 1);                              // drive the bus
     vTaskDelay(pdMS_TO_TICKS(HISENSE_DE_SETTLE_MS));   // let the driver settle
+#endif
 
     for (size_t i = 0; i < len; i++) {
         serial_putc(&s_uart, buf[i]);
     }
 
+#if HISENSE_RS485_SW_DE
     // serial_putc only guarantees the byte reached the TX FIFO, not that it has
     // shifted out. Hold DE high until the whole FIFO+shift register drains, or
     // we truncate our frame's tail on the wire and the A/C rejects it.
     vTaskDelay(pdMS_TO_TICKS(HISENSE_DE_DRAIN_MS));
 
     gpio_write(&s_de, 0);                              // release: back to receive
+#endif
 }
 
 /* ---------------------------------------------------------------------------
@@ -1303,9 +1322,11 @@ static void hisense_bus_task(void *pvParameters)
 #ifdef ESP_PLATFORM
     /* #12: subscribe to the IDF task watchdog so a WEDGED bus task trips the WDT (timeout
      * CONFIG_ESP_TASK_WDT_TIMEOUT_S) instead of hanging the bus silently. The task feeds it
-     * once per poll cycle below. NOTE: CONFIG_ESP_TASK_WDT_PANIC is unset in sdkconfig, so a
-     * trip LOGS rather than rebooting -- flipping that is a maintainer decision. AmebaZ2 has
-     * no esp_task_wdt; the host tests stub the whole RTOS, so both skip this. */
+     * once per poll cycle below, plus once per drained TX item (see step 2). NOTE: the ESP32
+     * build sets CONFIG_ESP_TASK_WDT_PANIC=y AND CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y, so a
+     * trip PANICS AND REBOOTS the chip -- it is a real self-heal, not just a log line, and that
+     * is exactly why the feeds below have to cover every slow path. AmebaZ2 has no
+     * esp_task_wdt; the host tests stub the whole RTOS, so both skip this. */
     esp_task_wdt_add(NULL);
 #endif
 
@@ -1370,6 +1391,16 @@ static void hisense_bus_task(void *pvParameters)
         if (s_tx_queue != NULL) {
             HisenseTxItem item;
             while (xQueueReceive(s_tx_queue, &item, 0) == pdTRUE) {
+#ifdef ESP_PLATFORM
+                /* Feed the WDT per DRAINED ITEM, not just once per cycle at the top of the loop.
+                 * hisense_transact() contains no feed of its own and burns up to its full
+                 * timeout_ms plus DE settle/drain on a silent bus (~560 ms). The queue holds 8
+                 * (xQueueCreate below), and a full drain plus the link keepalive and the status
+                 * poll is ~5.5-7 s of unfed wall clock against a 5 s timeout -- i.e. a burst of
+                 * Matter commands arriving while the A/C is unresponsive could panic-reboot the
+                 * node all by itself. Same #ifdef idiom as the other feeds: no-op on AmebaZ2. */
+                esp_task_wdt_reset();
+#endif
                 n = hisense_transact(item.data, item.len, 500, 0x00);  // may echo a 0x66 status
                 if (n > 0) hisense_consume_status((size_t)n);
             }

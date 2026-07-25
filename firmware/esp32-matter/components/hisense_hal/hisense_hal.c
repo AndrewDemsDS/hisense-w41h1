@@ -81,12 +81,27 @@ void serial_baud(serial_t *obj, int baud)
         .source_clk = UART_SCLK_DEFAULT,
     };
     uart_param_config(HAL_UART_NUM, &cfg);
+#ifdef CONFIG_HISENSE_RS485_HW_MODE
+    /* Opt-in hardware half-duplex (see CONFIG_HISENSE_RS485_HW_MODE's help text). The DE line
+     * becomes this UART's RTS, and the peripheral asserts it exactly while the TX FIFO drains --
+     * the same sequence ESPHome's uart component uses for every RS-485 device it supports:
+     *   uart_set_pin(num, tx, rx, flow_control_pin as RTS, UART_PIN_NO_CHANGE)
+     *   uart_set_mode(num, UART_MODE_RS485_HALF_DUPLEX)
+     * PA_17 is the DE GPIO (PinNames.h remaps it to the ESP32 pin actually wired). */
+    uart_set_pin(HAL_UART_NUM, obj->tx, obj->rx, PA_17, UART_PIN_NO_CHANGE);
+#else
     uart_set_pin(HAL_UART_NUM, obj->tx, obj->rx,
                  UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+#endif
     if (!s_evt_q) {
         uart_driver_install(HAL_UART_NUM, HAL_UART_RX_BUF, 0,
                             HAL_UART_EVT_QLEN, &s_evt_q, 0);
     }
+#ifdef CONFIG_HISENSE_RS485_HW_MODE
+    /* Order matters: ESP-IDF requires uart_set_mode() AFTER uart_driver_install(), because the
+     * install resets the RS485 config registers. ESPHome sequences it the same way and says so. */
+    uart_set_mode(HAL_UART_NUM, UART_MODE_RS485_HALF_DUPLEX);
+#endif
 #ifdef HISENSE_HAL_UART_INTERNAL_LOOPBACK
     // DIAGNOSTIC ONLY: internally wire this UART's TX to its own RX inside the
     // chip, so a transmit must show up as a receive if the RX path is healthy.
@@ -145,11 +160,19 @@ void serial_putc(serial_t *obj, int c)
     uint8_t b = (uint8_t)c;
     uart_write_bytes(HAL_UART_NUM, &b, 1);
     g_hal_tx_bytes++;
+#ifndef CONFIG_HISENSE_RS485_HW_MODE
     // Block until the byte has actually left the wire. uart_write_bytes() only
     // queues to the TX FIFO; hisense_tx_raw() drops the DE line right after its
     // putc loop, so without this the tail of the frame would be cut off while DE
     // is already low (RS-485 half-duplex). At 9600 baud this is ~1ms/byte.
     uart_wait_tx_done(HAL_UART_NUM, pdMS_TO_TICKS(20));
+#else
+    // Hardware RS-485 mode: the peripheral holds DE asserted until the FIFO and
+    // shift register are empty, so there is nothing to race and no reason to
+    // block here. Letting the bytes accumulate in the FIFO is also what makes
+    // this a one-shot frame write (ESPHome's write_array) rather than 16
+    // separate stop-and-wait transmissions.
+#endif
 }
 
 void serial_free(serial_t *obj)
