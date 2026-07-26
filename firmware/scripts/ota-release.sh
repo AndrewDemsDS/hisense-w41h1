@@ -915,11 +915,21 @@ PY
 revert_apply() {
   load_env
   : "${OTAENV_PY:?}" "${MS_WS:?}" "${NODE_ID:?}" "${PI_HOST:?}" "${PI_OTA_DIR:?}" "${PI_SSH_KEY:?}"
-  local v; v="$(revert_version)"
-  local src_ota="$REPO/firmware/built-images/rac-stock-v$v.ota"
-  local src_json="$REPO/firmware/built-images/rac-stock-v$v.json"
-  [ -f "$src_ota" ] && [ -f "$src_json" ] \
-    || die "no rac-stock-v$v.{ota,json} -- run 'revert --repackage <stock-dump.bin>' first"
+  # Do NOT recompute revert_version() here. revert_repackage() consumes int v and then bumps
+  # version.txt to v+1 (its guard `cur_version <= v` is a tautology, since v is defined as
+  # max(cur,released)+1). A separately-invoked apply would therefore compute v+2 and die looking
+  # for a pair that was never built. Use the newest pair actually present on disk instead.
+  local bi="$REPO/firmware/built-images" v="" f n
+  for f in "$bi"/rac-stock-v*.ota; do
+    [ -e "$f" ] || continue
+    n="${f##*/rac-stock-v}"; n="${n%.ota}"
+    case "$n" in *[!0-9]*) continue ;; esac
+    [ -f "$bi/rac-stock-v$n.json" ] || continue
+    if [ -z "$v" ] || [ "$n" -gt "$v" ]; then v="$n"; fi
+  done
+  [ -n "$v" ] || die "no rac-stock-v*.{ota,json} pair in $bi -- run 'revert --repackage <stock-dump.bin>' first"
+  local src_ota="$bi/rac-stock-v$v.ota" src_json="$bi/rac-stock-v$v.json"
+  say "applying newest repackaged revert image on disk: rac-stock-v$v"
   # stage() is keyed to the cur_version rac-v* names, so this duplicates its scp + junk
   # prune + matter-server restart for the rac-stock-* pair instead of refactoring it.
   say "stage rac-stock-v$v on $PI_HOST:$PI_OTA_DIR + restart matter-server"
