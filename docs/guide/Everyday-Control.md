@@ -39,8 +39,9 @@ It gives you:
 Then hide the now-redundant native entities (the Power switch and the raw special-mode switches).
 
 > **Prerequisite:** dry / fan-only / single-setpoint must be unlocked on the native climate. HA
-> gates those on a vendor allow-list; the companion `matter_ac_unlock` component adds the W41H1's
-> test IDs `0xFFF1/0x8001`.
+> gates those on a vendor allow-list; the companion
+> [`ha-matter-extra-hvac-modes`](https://github.com/AndrewDemsDS/ha-matter-extra-hvac-modes)
+> integration (domain `matter_extra_hvac_modes`) lifts that gate for test-vendor `0xFFF1` devices.
 
 ## Special modes (Eco / Turbo / Mute-Quiet / Sleep)
 
