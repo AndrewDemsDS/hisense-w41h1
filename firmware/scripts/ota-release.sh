@@ -713,11 +713,11 @@ revert_backup() {
   done
   [ -n "$ip" ] || die "usage: ota-release.sh revert --backup <unit-ip> [out.bin]"
   say "revert --backup $ip:$BREAKGLASS_PORT (fetch + validate the inactive-slot stock image)"
-  python3 - "$ip" "$BREAKGLASS_TOKEN" "$BREAKGLASS_PORT" "$out" \
+  PYTHONPATH="$HERE" python3 - "$ip" "$BREAKGLASS_TOKEN" "$BREAKGLASS_PORT" "$out" \
     "$REPO/firmware/built-images" "${SERIAL_BASE:-1100}" <<'PY'
-import socket,sys,re,struct,hmac,hashlib,os
+import socket,sys,re,os
+from amebaz2_image import failures,read_serial,verify
 ip,token,port,out,bi,base=sys.argv[1],sys.argv[2],int(sys.argv[3]),sys.argv[4],sys.argv[5],int(sys.argv[6])
-KEY=bytes.fromhex('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e5f')
 def fail(msg):  # die loudly, save nothing
     print(f"[revert] FAILED: {msg}"); sys.exit(1)
 try:
@@ -757,13 +757,12 @@ if i<0: fail("no 4096-byte 0xFF run in the backup -- slot empty or not a stock i
 imglen=i-4
 if not 0x100000<=imglen<=0x180000: fail(f"carved length {imglen:#x} outside [0x100000,0x180000]")
 image,trailer=buf[:imglen],buf[imglen:imglen+4]
-serial=struct.unpack_from('<I',image,0xF4)[0]
+serial=read_serial(image)
 if serial>=base:
     fail(f"serial@0xF4={serial} >= {base} -- the inactive slot holds a CUSTOM image, not stock (nothing to back up; a second custom OTA already overwrote it)")
-if hmac.new(KEY,image[0xE0:0x140],hashlib.sha256).digest()!=image[0:32]:
-    fail("HMAC mismatch -- the backup is corrupt or not a stock image")
-if struct.pack('<I',sum(image)&0xffffffff)!=trailer:
-    fail("bytesum trailer mismatch -- the backup is corrupt")
+ok,lines=verify(image,trailer)   # manifest sig + EVERY sub-image trailer + byte-sum (#75)
+for ln in lines: print(f"[revert]   {ln}")
+if not ok: fail("the backup does not verify: "+"; ".join(failures(lines)))
 if not out:
     tag=ip.split('%')[0]                          # drop an IPv6 zone id for the filename
     if re.fullmatch(r"(\d{1,3}\.){3}\d{1,3}",tag): tag=tag.rsplit('.',1)[1]
@@ -771,7 +770,7 @@ if not out:
     out=os.path.join(bi,f"stock-backup-{tag}-sn{serial}.bin")
 open(out,'wb').write(buf)                         # raw slot bytes: image + trailer + 0xFF pad
 print(f"[revert] saved {out} ({len(buf):#x} bytes, stock serial {serial})")
-print(f"[revert] all checks passed: serial {serial} < {base}, HMAC OK, bytesum OK")
+print(f"[revert] all checks passed: serial {serial} < {base}, manifest sig + every sub-image trailer + byte-sum OK")
 print(f"[revert] next (when needed): ota-release.sh revert --repackage {out}")
 PY
 }
