@@ -390,6 +390,13 @@ in BOTH flavours, gated only by the token being set at build time:
   re-commission over BLE (`chip-tool pairing code-wifi ... --bypass-attestation-verifier 1`
   from a laptop in range), then hand off to HA via `open-commissioning-window`.
 
+  ⚠️ A CH341A clip-copied DCT byte range is **not** equivalent to `:wipekv`. Writing in a
+  known-good post-wipe DCT capture via the clip left one unit deterministically wedged at
+  `SendTrustedRootCert` (IM `0x0501`) even though every byte matched; running the firmware's own
+  `:wipekv` (which formats both DCT regions with the device's own DCT layer) fixed it
+  immediately. Prefer this command whenever the device is reachable; fall back to the clip only
+  when it is not.
+
 **Fails closed.** No `BREAKGLASS_TOKEN` in `ota-release.env` means the socket is never opened, and
 the boot log says so instead of staying silent. There is deliberately no default token: a default in
 a public repo is equivalent to no authentication. Set it in `ota-release.env` (gitignored); the
@@ -485,6 +492,36 @@ Two OTA-only paths back to the stock ConnectLife firmware. Path 1 was **proven o
 stock boots and rejoins ConnectLife by itself → re-convert to 1.3.8 (full round trip).
 Feature-map evidence: `reverse-engineering/docs/13`.
 
+### Triage first: is it bricked, or did it just leave our fabric?
+
+**Network silence alone is not evidence of a brick.** Two healthy-unit cases look identical to a
+brick if you only watch the network:
+
+- **After any stock revert (Path 1 or Path 2), the unit leaves our Matter fabric** and rejoins
+  ConnectLife on its own network (its own Wi-Fi profile, its own cloud); it is simply invisible
+  to us on our VLAN, whether or not that network is reachable from here.
+- **After converting a unit with a prior custom life back to custom**, the surviving Matter DCT
+  (`0x3E0000`/`0x3ED000`) leaves `FabricCount() != 0`, so connectedhomeip's `Server.cpp:520-534`
+  takes the "already commissioned" branch and explicitly disables BLE advertising; there is no
+  window to scan for (see [docs/12 step 7](12-ota-convert-stock-unit.md)).
+
+The actual discriminator is the flash **Quad-Enable (QE) bit**. A bootloader rejection routes
+through `boot_load`'s shared failure sink into `hal_flash_return_spi`, which **clears** QE; a
+healthy boot leaves it **set** (full mechanism in
+[`reverse-engineering/analysis/bootloader.md`](../../reverse-engineering/analysis/bootloader.md)).
+Check, in order:
+
+1. **QE bit via the CH341A**, read-only, no soldering: settles it with zero network access.
+2. **`<token>:slots`** over break-glass, on any network the device might answer on: any reply at
+   all (`ok: fw1_sn=<u> fw2_sn=<u> cur=<idx>`) proves the firmware is alive and both slots readable.
+3. **A fresh CH341A dump**, reading the FWHS headers/signatures of both app slots directly, if
+   break-glass is also unreachable.
+
+**Path 2 is now hardware-confirmed** (2026-07-26/27, office unit): a repackaged stock image built
+with the inner-HMAC fix booted, read back as VID `5004` / PID `13825` / `softwareVersion 2`. It
+booted from **FW2**, confirming `boot_load` picks a slot by signature and serial only and does not
+care which physical slot holds the image (do not add slot guards to the tooling).
+
 ### Path 1: slot-flip (no payload, preferred when it applies)
 
 A stock→custom OTA conversion writes only the inactive slot, so the stock image stays intact
@@ -516,24 +553,94 @@ build (`S1798.MP_TEST_VERSION_SE`, no Matter). The running stock slot (S2292) is
 conversion preserves, so a first-generation convert flips back to S2292 as intended; just do
 not treat "the other slot" as interchangeable before checking `:slots`.
 
-### Path 2: repackage the stock app as a Matter OTA (⚠️ BLOCKED: re-signed image fails to boot, 2026-07-21)
+### Path 2: repackage the stock app as a Matter OTA (root-caused 2026-07-25, hardware-confirmed 2026-07-26/27)
 
-**Status: host checks all pass, but the re-signed image does NOT boot.** On the office unit a
-repackaged payload (stock backup + serial patch + re-HMAC + re-sum, every check green, written
-byte-perfect to flash, verified by a post-mortem clip dump) left the unit dark: the boot
-attempt visibly ran and crashed (the GD25Q32 QE bit was found CLEARED afterwards, and was
-cleared again after a manual re-set + power cycle, i.e. the boot flow touches SR2 and never
-gets far enough to re-enable quad). The SAME stock bytes with the factory signature (serial
-100) boot fine on the same unit. So the bootloader/ROM acceptance is stricter than the
-decoded HMAC+bytesum recipe (docs/13) in some way the host-side verification does not
-capture: possibly a second key (OTP/eFuse vs the flash partition hash_key) or an extra
-manifest check. Until the prebuilt `bootloader.axf` is RE'd on this point, treat
-`--repackage`/`--apply` as a brick risk: the only recovery is the CH341A clip.
+**Status: the 2026-07-21 brick is explained, the recipe is fixed, and a repackaged image has
+booted on real hardware (office unit: VID `5004` / PID `13825` / `softwareVersion 2` read off the
+device, booted from FW2).**
+
+What happened: a repackaged payload (stock backup + serial patch + re-HMAC + re-sum, every check
+green, written byte-perfect to flash, verified by a post-mortem clip dump) left the unit dark, with
+the GD25Q32 QE bit found CLEARED and cleared again after a manual re-set plus power cycle.
+
+Root cause (issue #75): the bootloader verifies a **second, inner HMAC** that nothing in the old
+recipe recomputed:
+
+```
+# for sub-image i whose header is at H (the first is at H = 0xE0):
+S     = u32le(img[H])         # segment SIZE at H+0x00 -- NOT next_img
+END   = H + 0x60 + S
+START = 0 if i == 0 else H
+img[END : END+0x20]  ==  HMAC-SHA256(partition hash_key, img[START:END])
+next header = H + u32le(img[H+4])          # RELATIVE; 0xFFFFFFFF terminates
+
+# sub-image 0 is at H = 0xE0, so its trailer is at u32le(img[0xE0]) + 0x140, and it is the
+# only span that reaches the serial at +0xF4. `img[0xE0]` is the SIZE field. Calling it
+# `next_img` (as this doc used to) and reading img[0xE4] instead puts the trailer 0x2E0 bytes
+# too late and makes every genuine image look corrupt. Detail: reverse-engineering/docs/13.
+```
+
+The hashed span starts at image offset 0, so it covers the serial at `+0xF4`. Patching the serial
+invalidated it while leaving the manifest signature and byte-sum trailer perfectly valid, which is
+why every host-side check passed. `boot_load` compares the trailer, prints `"Hash Result
+Incorrect!"`, and falls into its shared failure sink, which clears the flash QE bit and returns -1;
+the caller then hangs forever, with **no fall-back to the other slot** (which is why a perfectly
+valid custom image in FW2 did not rescue the unit). Symptom matched exactly.
+
+Verified across 29 real images: the relationship holds on every genuine image and fails on exactly
+the four `rac-stock-v*-payload.bin` files the old `--repackage` produced. `ota-release.sh` now
+recomputes the inner HMAC and **self-checks it on every archived image before building**, so this
+class of failure cannot ship silently again. Full analysis:
+[`reverse-engineering/analysis/bootloader.md`](../../reverse-engineering/analysis/bootloader.md).
+
+Correction to the old note here: "the SAME stock bytes with the factory signature boot fine on the
+same unit" was **not** a controlled comparison. Every observed successful stock boot had effectively
+one valid candidate slot (the clip recovery erased FW2; Path 1's flip invalidates it), whereas the
+failure had two. That difference is real but is not the cause; the inner HMAC is.
+
+**Confirmed on hardware 2026-07-27** (office unit): a repackaged stock image booted, and the
+device reported VID 5004 / PID 13825 / sw 2. Recovery if one ever does fail is still the CH341A
+clip. `--repackage` now self-checks every sub-image trailer, and `--apply` re-verifies the
+payload before staging, so the #75 class cannot ship silently again.
+
+#### Silence is not a brick (this cost hours, twice, on 2026-07-26/27)
+
+A unit that has gone quiet is almost never bricked. Two expected states look identical from the
+network:
+
+- **After a revert to stock**, the unit leaves our Matter fabric and associates to its own
+  network. Invisible to us by design.
+- **After converting a unit that had a prior custom life**, the Matter DCT survives the round
+  trip, so `FabricCount() != 0` and connectedhomeip explicitly DISABLES BLE advertising. No
+  first-boot window ever opens, so BLE scanning finds nothing no matter how long you look.
+
+Check in this order, cheapest first:
+
+1. `<token>:slots` over the break-glass listener. An answer proves the unit is alive and tells
+   you which slot booted.
+2. If you have a clip on anyway, read the flash **QE bit**: `python3 firmware/flasher/ch341_sr.py`
+   (SR2 bit 1). A bootloader rejection routes through `boot_load`'s shared failure sink and
+   **clears QE**; a healthy boot leaves it **set**. This is the definitive discriminator and it
+   was readable the whole time on both occasions.
+3. Read the app slots out of a dump and walk the sub-image chain (§17 rule above). A valid chain
+   in the booted slot plus QE set means the firmware is fine and the problem is elsewhere.
+
+`boot_load` is **slot-agnostic**: the image base is `0x98000000 + slot_start` from the partition
+table and the virtual base is taken verbatim from the section header. Stock has booted fine from
+FW2. **Never add a "stock must live in FW1" guard to any revert or convert path** -- it would
+refuse a case that is proven to work.
 
 Recovery recipe that worked (clip): write the unit's own dump (per-unit data preserved) with
 fw1 replaced by the ORIGINAL stock slot bytes (from a `revert --backup` capture, factory
 signature) and fw2 erased to 0xFF; `ch341flash-full.py` re-sets QE at the end. Boots stock,
 ConnectLife rejoins.
+
+⚠️ That recipe rewrites the **app slots** (fw1/fw2), not the Matter DCT. If a unit instead needs
+its DCT reset (the SendTrustedRootCert wedge, docs/12), do not clip-copy a known-good DCT byte
+range in as a substitute: one unit treated that way was left deterministically wedged at
+`SendTrustedRootCert` even though every byte matched. Use the firmware's own `<token>:wipekv`
+(§13) whenever the device is reachable; it formats the DCT with the device's own layer instead of
+foreign bytes copied in from elsewhere.
 
 What still holds from the host work:
 
@@ -546,17 +653,40 @@ signature. So:
 
 ```
 ota-release.sh revert --repackage <stock-dump.bin>   # carve fw1 @0x10000, patch serial @+0xF4,
-                                                     # re-HMAC, re-sum, wrap as rac-stock-v<N>.ota
-ota-release.sh revert --apply                        # stage on the Pi + update_node, verify sw 4
+                                                     # re-HMAC (incl. the #75 inner HMAC), re-sum,
+                                                     # wrap as rac-stock-v<N>.ota
+ota-release.sh revert --apply --ip <unit-ip>         # confirm, stage on the Pi, update_node,
+                                                     # then CLASSIFY the outcome (see below)
+ota-release.sh revert --slots <unit-ip>              # read-only slot probe (triage; changes nothing)
 ```
 
 `--repackage` first re-verifies the recipe byte-exact against every archived
 `firmware_is-v*.bin` and the dump's unpatched fw1, and dies loudly on any mismatch. The
 revert int is `max(version.txt, .released-version) + 1` and the patched serial follows the
-§11 rule (`SERIAL_BASE + int`), so the bootloader accepts the "older" stock payload. `--apply`
-verification is stock-aware: success = the unit reports softwareVersion **4** (vendor 5004)
-sustained, or drops off the fabric; `.released-version` is left alone so the next custom OTA
-still has to beat the last custom int.
+§11 rule (`SERIAL_BASE + int`), so the bootloader accepts the "older" stock payload.
+`.released-version` is left alone so the next custom OTA still has to beat the last custom int.
+
+**`--apply` verdicts.** It prints a confirmation first (target `NODE_ID` and where it came
+from, the node's live identity read back through matter-server, which slot the image lands in,
+and that the unit leaves this fabric), requires you to type `revert node <id>`, and then
+classifies the outcome into exactly one of three verdicts:
+
+| verdict | exit | evidence |
+|---|---|---|
+| `REVERTED` | 0 | the unit reports softwareVersion **4** (vendor 5004) on three sustained fresh reads, or on the 180 s re-check |
+| `NOT REVERTED` | 3 | the node answers on a custom softwareVersion, or the break-glass listener answers `:slots`. Only the custom firmware serves that, so the module is alive and the OTA simply never took |
+| `AMBIGUOUS` | 4 | silence on every channel we own |
+
+A fabric drop is **no longer** treated as success. It was until 2026-07-27, and that is exactly
+how two healthy units got called bricks: stock leaves our fabric AND joins its own
+factory-provisioned network, so a healthy reverted unit and a bootloader-rejected module are
+both invisible to us. Absence is not evidence. On `AMBIGUOUS` the script prints the triage
+list: the ConnectLife app (a reverted unit reappears there by itself), `revert --slots <ip>`
+(read-only; an answer proves the custom firmware is still running), then the flash **QE bit**
+via `firmware/flasher/ch341_sr.py` (cleared = the bootloader rejected the image and hung, set =
+it did not), then the app slots read out of a clip dump. Pass `--ip <unit-ip>` so the
+break-glass probe can run at all; without it the best verdict the script can reach is
+`AMBIGUOUS`.
 
 **Recommended journey.** Right after the FIRST OTA conversion (docs/12), while the stock
 image still sits intact in the inactive slot, fetch a copy of it once and keep the file:

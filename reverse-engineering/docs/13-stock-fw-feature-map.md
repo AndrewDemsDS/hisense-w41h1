@@ -65,11 +65,47 @@ the RS-485 bus.
 
 ## OTA image acceptance (fully decoded, byte-exact verified)
 
-- FWHS `+0x00` (32 B) = **HMAC-SHA256 over the 0x60-byte manifest `img[0xE0:0x140]`**,
-  keyed by the partition-table **hash_key** (flash `0x140` for FW1, `0x180` for FW2;
-  the SDK default `0001…1e5f`, cleartext in the partition table). It covers the serial
-  and sizes, **not** the image body. Recomputation matches the stored signature on
-  fw1, fw2, and `firmware_is-v10307.bin`.
+There are **two** HMAC relationships, both keyed by the same partition-table **hash_key**
+(flash `0x140` for FW1, `0x180` for FW2; the SDK default `0001…1e5f`, cleartext in the
+partition table). A re-signing recipe must reproduce **both**, in this order.
+
+- **(a) Manifest signature.** FWHS `+0x00` (32 B) = **HMAC-SHA256 over the 0x60-byte
+  manifest `img[0xE0:0x140]`**. It covers the serial and sizes, **not** the image body.
+  Enforced by the OTA code and used for slot validity.
+- **(b) Inner image HMAC, one per sub-image.** A hash-then-trailer at a **content-derived**
+  offset, so fixed-offset searching does not find it. **Enforced by the bootloader**, not by
+  the OTA code. The general rule, for sub-image `i` whose header sits at offset `H` (the first
+  is at `H = 0xE0`):
+
+  ```
+  S     = u32le(img[H])         # segment SIZE
+  END   = H + 0x60 + S          # the trailer offset
+  START = 0 if i == 0 else H
+  img[END : END+0x20]  ==  HMAC-SHA256(hash_key, img[START:END])
+  next header = H + u32le(img[H+4])      # RELATIVE; 0xFFFFFFFF terminates the chain
+  ```
+
+  ⚠️ **Naming trap.** `u32le(img[0xE0])` is the SIZE field `S`. It is **not** `next_img`.
+  `next_img` lives at `H+4` and is a **relative** offset. An earlier revision of this section
+  and of `ota-release.sh` called `img[0xE0]` "next_img"; the code read the right offset so it
+  worked, but generalising the wrong name to sub-images 1..N puts the trailer at
+  `0x4060` instead of `0x3d80` on a real image, and every check then reports MISMATCH.
+
+  Because sub-image 0's span starts at image offset 0, it is the only one that covers the
+  serial at `+0xF4` and the `+0x00` signature from (a), so a serial patch stales exactly that
+  one trailer. Verified on 37 real files: every image has 3 sub-images. Custom builds are
+  `0xE0 / 0x4000 / 0xF8000`. Stock has **two** layouts in the wild,
+  `0xE0 / 0x8000 / 0x114000` (office, 0x1589c0 bytes) and `0xE0 / 0x8000 / 0x120000`
+  (kitchen / `w41h1_dump1`, 0x16ab40 bytes), so **walk the chain, never hardcode offsets**.
+  The last trailer does **not** land at EOF: `elf2bin` appends 0 or 0x20 bytes of `0x87`
+  padding (both occur across the archive) before the 4-byte byte-sum, so an
+  `END+0x20 == len` assert rejects most genuine images.
+
+  ⚠️ Omitting (b) is what bricked a unit on 2026-07-21 (issue #75): every host-side check
+  still passes, but `boot_load` prints `"Hash Result Incorrect!"`, clears the flash
+  Quad-Enable bit, and hangs, with **no fall-back to the other slot**. Verified across 29
+  real images: (b) holds on every genuine image and failed on exactly the four payloads
+  the old `revert --repackage` produced.
 - **Serial at manifest `+0xF4`** (LE u32, 100 on both stock slots): the bootloader
   boots the signature-valid slot with the highest serial.
 - **Transport checksum trailer:** last 4 bytes = u32 LE byte-sum of everything before
@@ -183,11 +219,18 @@ per-model gating ([11-model-capability-map.md](11-model-capability-map.md)).
    addresses). Caveats: this only works while the other slot still holds stock
    (serial 100); a second custom OTA overwrites it. On virgin units the fallback slot
    holds the fw2 MP-test image, not the production app.
-2. **Repackage revert recipe (proven end-to-end):** carve fw1 at flash `0x10000`,
-   length `0x16ab40`; patch `*(u32le*)(img+0xF4)` to a serial above the running one
-   (strictly greater); set `img[0:32] = HMAC-SHA256(00010203…1c1d1e5f, img[0xE0:0x140])`;
-   append `u32le(bytesum(img))`. Verified byte-exact against fw1, fw2, and
-   `firmware_is-v10307.bin`. Delivery via Matter OTA, `ATWO`, or `HOTA=`.
+2. **Repackage revert recipe.** Carve fw1 at flash `0x10000`, length `0x16ab40`, then,
+   **in this order** (each step's input contains the previous step's output):
+   1. patch `*(u32le*)(img+0xF4)` to a serial strictly above the running one;
+   2. `img[0:32] = HMAC-SHA256(00010203…1c1d1e5f, img[0xE0:0x140])`  (relationship (a));
+   3. `L = u32le(img[0xE0]) + 0x140; img[L:L+0x20] = HMAC-SHA256(key, img[0:L])`  ((b));
+   4. append `u32le(bytesum(img))`.
+
+   Step 3 was **missing until 2026-07-25** and is what bricked a unit (#75). Round-trip
+   proof the recipe is now complete: running it with the serial left unchanged reproduces
+   the original stock image byte-for-byte. Implemented and self-checked in
+   `firmware/scripts/ota-release.sh revert --repackage`; still awaiting one on-hardware
+   confirmation. Delivery via Matter OTA, `ATWO`, or `HOTA=`.
 3. **The cloud channel cannot be spoofed** (pinned CA + per-device dkey), and **no
    public stock image exists**: the example file on `download.hismarttv.com` is from
    an older module generation with zero overlap. Official image IDs can only be

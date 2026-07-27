@@ -306,6 +306,33 @@ it clears the display. The firmware sets it while the commissioning window is op
 (`hisense_set_provisioning(true)`) and clears it on pair/timeout, so the A/C "77" display tracks
 our pairing state. **[PROVEN on HW.]**
 
+**So the panel is module-driven, not A/C-driven.** There is no "display 77" command frame. The A/C
+shows the code purely because we report `prov_status=1` inside the 1 Hz `0x1E` we already send.
+Nothing else has to be put on the bus to light it.
+
+**Fixed 2026-07-27:** that bit used to be set only by the remote-"77" path
+(`recommission_open_window`), so a commissioning window opened any *other* way left the panel
+blank while the device was genuinely pairable. The two other sources are the first-boot autostart
+window `Server::Init` opens when `FabricCount()==0` (this is the boot right after `:wipekv`) and
+the Administrator Commissioning cluster. The firmware now drives the bit from
+`CommissioningWindowManager`'s `AppDelegate` open/close notifications, plus a one-shot sync at
+driver init because the autostart window is already open by then and its notification has been
+missed. Panel "77" is therefore a reliable "this unit is pairable right now" indicator, and its
+absence after a `:wipekv` reboot means the window did not open, not that the unit is dead.
+
+**Verified on hardware 2026-07-27** (office unit, v1.3.31, node 64), for a window opened via the
+Administrator Commissioning cluster rather than the remote gesture, i.e. a source that lit nothing
+before this change:
+
+| step | `link` console reports | panel |
+|---|---|---|
+| no window | `OUTBOUND prov_status=0 => panel "77" should be off right now` | off |
+| window open (`open_commissioning_window`) | `OUTBOUND prov_status=1 => panel "77" should be LIT right now` | **shows 77** |
+| window closed | back to `prov_status=0` | clears |
+
+The `link` command reports the outbound bit directly, so this is checkable over the network
+without standing at the unit. Use it before concluding anything about a silent module.
+
 ## Capturing the real frames
 
 The exact byte layout has to come from the wire. Use

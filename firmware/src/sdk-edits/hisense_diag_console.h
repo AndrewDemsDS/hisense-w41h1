@@ -262,8 +262,11 @@ static void diag_cmd_link(int sock)
     snprintf(b + o, sizeof(b) - o,
              "  payload[4]=byte[17]=0x%02x  masked link_req=0x%02x\r\n"
              "  (\"77\" bits: 0x08 reconfig / 0x20 smartcfg. 0x00 while pressing the remote\r\n"
-             "   sequence => the request never reaches us; the fault is upstream of Matter.)\r\n",
-             n > 17 ? f[17] : 0, (unsigned) hisense_get_last_link_req());
+             "   sequence => the request never reaches us; the fault is upstream of Matter.)\r\n"
+             "  OUTBOUND prov_status=%u => panel \"77\" should be %s right now\r\n",
+             n > 17 ? f[17] : 0, (unsigned) hisense_get_last_link_req(),
+             (unsigned) (hisense_get_provisioning() ? 1 : 0),
+             hisense_get_provisioning() ? "LIT" : "off");
     diag_say(sock, b);
 }
 

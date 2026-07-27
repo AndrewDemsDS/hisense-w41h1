@@ -50,7 +50,11 @@ PY
 
 echo
 echo "== Layer 3: diagnostics bitmap contract (firmware <-> HACS integration) =="
-python3 "$(dirname "$0")/test_diag_contract.py"
+python3 ./test_diag_contract.py
+
+echo
+echo "== Layer 4: AmebaZ2 image signing chain (#75) =="
+python3 ./test_image_chain.py
 
 echo
 echo "ALL QA LAYERS PASSED"

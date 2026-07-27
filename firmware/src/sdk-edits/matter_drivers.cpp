@@ -42,6 +42,7 @@ static void hisense_breakglass_start(void);
 #include <protocols/interaction_model/StatusCode.h>
 #include <app/server/Server.h>                 // Server / fabric table / commissioning window (F1 "77")
 #include <app/server/CommissioningWindowManager.h>
+#include <app/server/AppDelegate.h>            // commissioning-window open/close -> A/C panel "77"
 /* lwIP BSD sockets, UNCONDITIONALLY. The #61 break-glass listener below ships in BOTH flavours
  * and needs socket()/bind()/listen()/accept()/setsockopt() plus SOL_SOCKET/SO_REUSEADDR, but the
  * only include of this header used to sit inside hisense_diag_console.h's HISENSE_DEBUG_BUILD
@@ -352,6 +353,45 @@ public:
 };
 static RecommissionFabricDelegate s_recommission_delegate;
 
+/* Panel "77" for EVERY commissioning window, not just the one "77" itself opened.
+ *
+ * The A/C lights "77" iff our OUTBOUND 0x1E reports prov_status=1 (payload[4] bit3, bench-proven
+ * 2026-07-09), and the only caller of hisense_set_provisioning(true) was recommission_open_window().
+ * So a window we did not open ourselves left the panel blank while the device was in fact pairable:
+ *   - the CHIP_DEVICE_CONFIG_ENABLE_PAIRING_AUTOSTART window Server::Init opens when
+ *     FabricCount()==0 (Server.cpp) -- i.e. the first boot after ":wipekv";
+ *   - a window opened by a controller via the Administrator Commissioning cluster.
+ * That is the exact ambiguity that cost hours on the office unit: with nothing on the panel,
+ * "pairable" and "bricked" look identical from outside.
+ *
+ * CommissioningWindowManager notifies this delegate on every open/close (StartAdvertisement /
+ * StopAdvertisement), so one hook covers all three sources. Flag only, NO frame is queued here:
+ * the next ~1Hz 0x1E carries the bit, so nothing new or speculative goes on the bus and the
+ * prompt-clear push stays where it already is (recommission_finish -> hisense_send_exit_77).
+ *
+ * The Closed notification also fires when a commissioner establishes PASE (OnSessionEstablished
+ * -> StopAdvertisement). That is the wanted UX -- "77" means "waiting for a commissioner" -- and
+ * it re-arms itself: a failed or abandoned attempt re-advertises and re-fires Opened. */
+class CommissioningWindowPanelDelegate : public AppDelegate
+{
+public:
+    void OnCommissioningWindowOpened() override
+    {
+        ChipLogProgress(DeviceLayer, "commissioning window OPEN -> A/C panel \"77\" on");
+        hisense_set_provisioning(true);
+    }
+    /* Hardcoded false, deliberately NOT re-derived from IsCommissioningWindowOpen():
+     * CommissioningWindowManager::Cleanup() fires this notification BEFORE ResetState() clears
+     * mWindowStatus, so a re-derive would read "still open" on the real close and the panel would
+     * never drop "77". */
+    void OnCommissioningWindowClosed() override
+    {
+        ChipLogProgress(DeviceLayer, "commissioning window CLOSED -> A/C panel \"77\" off");
+        hisense_set_provisioning(false);
+    }
+};
+static CommissioningWindowPanelDelegate s_cw_panel_delegate;
+
 /* Single teardown for EVERY exit from "77" so the device is never left half-in it. Three ways
  * out -- expired, the user left "77" on the A/C, or the re-pair succeeded -- and the first two
  * must restore the previous state exactly: old fabric intact, CHIP window shut, BLE advert back
@@ -661,6 +701,22 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     HISENSE_INIT_STAGE(2);
 
     chip::Server::GetInstance().GetFabricTable().AddFabricDelegate(&s_recommission_delegate);  // F1: swap fabric on new pairing
+    /* Panel "77" for ANY commissioning window (see CommissioningWindowPanelDelegate above).
+     * Registering here does not clobber anything: matter_core.cpp only sets initParams.appDelegate
+     * under CONFIG_ENABLE_AMEBA_FABRIC_OBSERVER, which platform_opts_matter.h pins to 0, so the
+     * manager's delegate is null. Re-check this if that observer is ever enabled.
+     * matter_core_start() already ran (see the #102 note at the top of this function), so on a
+     * first boot the autostart window is ALREADY open and its Opened notification is long gone --
+     * sync the flag from the live state instead of waiting for an edge that will never arrive.
+     * Without this sync the ":wipekv" reboot still lands on a blank panel. */
+    {
+        auto &cwm = chip::Server::GetInstance().GetCommissioningWindowManager();
+        cwm.SetAppDelegate(&s_cw_panel_delegate);
+        if (cwm.IsCommissioningWindowOpen()) {
+            ChipLogProgress(DeviceLayer, "boot: commissioning window already open -> A/C panel \"77\" on");
+            hisense_set_provisioning(true);
+        }
+    }
     hisense_set_recommission_cb(matter_driver_on_recommission);   // F1: remote "77" -> open window
     hisense_set_recommission_cancel_cb(matter_driver_on_recommission_cancel);  // user left "77"
     hisense_set_link_cb(matter_driver_on_link);                   // #56: bus silence -> mark unavailable
@@ -1197,7 +1253,10 @@ static void hisense_breakglass_task(void *arg)
                 // entries wedge commissioning; no Matter-level fix exists).
                 static const char kWipeOk[] =
                     "ok: wiping matter KV; device reboots uncommissioned.\r\n"
-                    "wifi fast-reconnect survives; press \"77\" if no window after boot.\r\n";
+                    "wifi fast-reconnect survives. fw >= 1.3.31: the A/C panel shows \"77\"\r\n"
+                    "while the boot commissioning window is open -- that is your pairable\r\n"
+                    "indicator. No \"77\" a minute after the reboot => the window did not\r\n"
+                    "open (press \"77\" on the remote), NOT a brick.\r\n";
                 ChipLogProgress(DeviceLayer, "break-glass: wiping matter KV (factory reset)");
                 lwip_write(cs, kWipeOk, sizeof(kWipeOk) - 1);
                 lwip_close(cs);
