@@ -620,6 +620,12 @@ void hisense_set_link_frame_cb(hisense_link_frame_cb_t cb);
 // false when it closes. Bench-confirmed 2026-07-09 (injecting that bit showed "77").
 void hisense_set_provisioning(bool on);
 
+// Current outbound prov_status, i.e. whether our 0x1E is currently ASKING the panel to show
+// "77". Diagnostic: with this, a blank panel splits cleanly into "we are not asserting the bit"
+// (a firmware/window problem) and "we are asserting it and the A/C ignores us" (a bus problem).
+// Guessing between those two is what made a pairable unit look bricked.
+bool hisense_get_provisioning(void);
+
 // Promptly clear provisioning + push one online 0x1E, so the A/C drops "77" (e.g.
 // after a commissioning window times out with no new pairing) without waiting for
 // the next ~1Hz heartbeat.

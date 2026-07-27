@@ -1163,6 +1163,29 @@ static void wifi_connectivity_log_handler(const chip::DeviceLayer::ChipDeviceEve
     }
 }
 
+/* Panel "77" for EVERY commissioning window, mirroring the AmebaZ2 half.
+ *
+ * The A/C lights "77" iff our outbound 0x1E reports prov_status=1 (payload[4] bit3), and the only
+ * caller of hisense_set_provisioning(true) was the remote-"77" path. A window opened any other way
+ * (the autostart window Server::Init opens when FabricCount()==0, or the Administrator
+ * Commissioning cluster) left the panel blank on a pairable unit.
+ *
+ * esp-matter installs its OWN AppDelegate (AppDelegateImpl in esp_matter_core.cpp) and republishes
+ * the notifications as platform events, so hook the EVENT here. Do NOT call
+ * CommissioningWindowManager::SetAppDelegate() on this target: it would replace esp-matter's
+ * delegate and silently kill every commissioning/fabric event it raises.
+ * Flag only, no frame queued: the next ~1Hz 0x1E carries it. */
+static void commissioning_window_panel_handler(const chip::DeviceLayer::ChipDeviceEvent *event, intptr_t)
+{
+    if (event->Type == chip::DeviceLayer::DeviceEventType::kCommissioningWindowOpened) {
+        ESP_LOGW(TAG, "commissioning window OPEN -> A/C panel \"77\" on");
+        hisense_set_provisioning(true);
+    } else if (event->Type == chip::DeviceLayer::DeviceEventType::kCommissioningWindowClosed) {
+        ESP_LOGW(TAG, "commissioning window CLOSED -> A/C panel \"77\" off");
+        hisense_set_provisioning(false);
+    }
+}
+
 static void https_ota_task(void *arg)
 {
     ESP_LOGW(TAG, "HTTPS-OTA: fetching %s", HISENSE_OTA_URL);
@@ -1826,6 +1849,18 @@ extern "C" void app_main()
     // State owns the actual 5s auto-reconnect (its interval setter is unimplemented on esp-matter
     // ESP32, so no runtime backoff). Safe to register any time after esp_matter::start().
     chip::DeviceLayer::PlatformMgr().AddEventHandler(wifi_connectivity_log_handler, 0);
+
+    /* Panel "77" for ANY commissioning window (see commissioning_window_panel_handler).
+     * start() has returned, so an autostart window on an uncommissioned node may ALREADY be open
+     * and its event already dispatched -- sync from the live state as well as subscribing, exactly
+     * like the AmebaZ2 half. Take the stack lock: we are not on the Matter event loop here. */
+    chip::DeviceLayer::PlatformMgr().AddEventHandler(commissioning_window_panel_handler, 0);
+    chip::DeviceLayer::PlatformMgr().LockChipStack();
+    if (chip::Server::GetInstance().GetCommissioningWindowManager().IsCommissioningWindowOpen()) {
+        ESP_LOGW(TAG, "boot: commissioning window already open -> A/C panel \"77\" on");
+        hisense_set_provisioning(true);
+    }
+    chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 
     // #102 persist-and-gate-at-boot: apply the LAST-SEEN capability gate now. start() has returned, so
     // enable_all() ran AND Server::Init already opened the BLE+IP commissioning window (uncommissioned

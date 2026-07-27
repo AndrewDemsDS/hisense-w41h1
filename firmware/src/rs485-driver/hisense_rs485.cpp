@@ -1255,6 +1255,11 @@ void hisense_set_provisioning(bool on)
     s_prov_active = on;   // see the header doc for the "77" prov_status semantics
 }
 
+bool hisense_get_provisioning(void)
+{
+    return s_prov_active;
+}
+
 void hisense_send_exit_77(void)
 {
     // Clear prov, then push one online 0x1E now so the A/C drops "77" promptly.
