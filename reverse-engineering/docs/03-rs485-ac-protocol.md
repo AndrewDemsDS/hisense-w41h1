@@ -320,6 +320,19 @@ driver init because the autostart window is already open by then and its notific
 missed. Panel "77" is therefore a reliable "this unit is pairable right now" indicator, and its
 absence after a `:wipekv` reboot means the window did not open, not that the unit is dead.
 
+**Verified on hardware 2026-07-27** (office unit, v1.3.31, node 64), for a window opened via the
+Administrator Commissioning cluster rather than the remote gesture, i.e. a source that lit nothing
+before this change:
+
+| step | `link` console reports | panel |
+|---|---|---|
+| no window | `OUTBOUND prov_status=0 => panel "77" should be off right now` | off |
+| window open (`open_commissioning_window`) | `OUTBOUND prov_status=1 => panel "77" should be LIT right now` | **shows 77** |
+| window closed | back to `prov_status=0` | clears |
+
+The `link` command reports the outbound bit directly, so this is checkable over the network
+without standing at the unit. Use it before concluding anything about a silent module.
+
 ## Capturing the real frames
 
 The exact byte layout has to come from the wire. Use
