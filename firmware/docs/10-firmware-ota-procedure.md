@@ -607,17 +607,40 @@ signature. So:
 
 ```
 ota-release.sh revert --repackage <stock-dump.bin>   # carve fw1 @0x10000, patch serial @+0xF4,
-                                                     # re-HMAC, re-sum, wrap as rac-stock-v<N>.ota
-ota-release.sh revert --apply                        # stage on the Pi + update_node, verify sw 4
+                                                     # re-HMAC (incl. the #75 inner HMAC), re-sum,
+                                                     # wrap as rac-stock-v<N>.ota
+ota-release.sh revert --apply --ip <unit-ip>         # confirm, stage on the Pi, update_node,
+                                                     # then CLASSIFY the outcome (see below)
+ota-release.sh revert --slots <unit-ip>              # read-only slot probe (triage; changes nothing)
 ```
 
 `--repackage` first re-verifies the recipe byte-exact against every archived
 `firmware_is-v*.bin` and the dump's unpatched fw1, and dies loudly on any mismatch. The
 revert int is `max(version.txt, .released-version) + 1` and the patched serial follows the
-§11 rule (`SERIAL_BASE + int`), so the bootloader accepts the "older" stock payload. `--apply`
-verification is stock-aware: success = the unit reports softwareVersion **4** (vendor 5004)
-sustained, or drops off the fabric; `.released-version` is left alone so the next custom OTA
-still has to beat the last custom int.
+§11 rule (`SERIAL_BASE + int`), so the bootloader accepts the "older" stock payload.
+`.released-version` is left alone so the next custom OTA still has to beat the last custom int.
+
+**`--apply` verdicts.** It prints a confirmation first (target `NODE_ID` and where it came
+from, the node's live identity read back through matter-server, which slot the image lands in,
+and that the unit leaves this fabric), requires you to type `revert node <id>`, and then
+classifies the outcome into exactly one of three verdicts:
+
+| verdict | exit | evidence |
+|---|---|---|
+| `REVERTED` | 0 | the unit reports softwareVersion **4** (vendor 5004) on three sustained fresh reads, or on the 180 s re-check |
+| `NOT REVERTED` | 3 | the node answers on a custom softwareVersion, or the break-glass listener answers `:slots`. Only the custom firmware serves that, so the module is alive and the OTA simply never took |
+| `AMBIGUOUS` | 4 | silence on every channel we own |
+
+A fabric drop is **no longer** treated as success. It was until 2026-07-27, and that is exactly
+how two healthy units got called bricks: stock leaves our fabric AND joins its own
+factory-provisioned network, so a healthy reverted unit and a bootloader-rejected module are
+both invisible to us. Absence is not evidence. On `AMBIGUOUS` the script prints the triage
+list: the ConnectLife app (a reverted unit reappears there by itself), `revert --slots <ip>`
+(read-only; an answer proves the custom firmware is still running), then the flash **QE bit**
+via `firmware/flasher/ch341_sr.py` (cleared = the bootloader rejected the image and hung, set =
+it did not), then the app slots read out of a clip dump. Pass `--ip <unit-ip>` so the
+break-glass probe can run at all; without it the best verdict the script can reach is
+`AMBIGUOUS`.
 
 **Recommended journey.** Right after the FIRST OTA conversion (docs/12), while the stock
 image still sits intact in the inactive slot, fetch a copy of it once and keep the file:

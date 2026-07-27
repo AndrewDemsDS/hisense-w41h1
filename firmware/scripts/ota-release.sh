@@ -15,7 +15,8 @@
 #   ota-release.sh revert --backup <unit-ip> [out.bin] # fetch+validate the inactive-slot stock image (#19)
 #   ota-release.sh revert --flip <unit-ip> [--force]   # break-glass slot-flip back to stock (#19)
 #   ota-release.sh revert --repackage <stock-dump.bin> # carve+resign stock app as a Matter .ota (#19)
-#   ota-release.sh revert --apply                      # stage the stock .ota + push it via update_node
+#   ota-release.sh revert --slots <unit-ip>            # read-only: print both slots' FWHS serials
+#   ota-release.sh revert --apply [--ip <ip>] [--yes]  # stage the stock .ota + push it via update_node
 #
 # Environment-specific paths/hosts come from ota-release.env (gitignored; copy .env.example).
 set -euo pipefail
@@ -686,7 +687,10 @@ PY
 #     (serial patch + HMAC-SHA256 + bytesum trailer; recipe proven byte-exact against
 #     firmware_is-v10307.bin and the dump's fw1), then wrap it as a Matter .ota so the
 #     normal update_node channel pushes stock back onto the unit.
-#   --apply: stage the repackaged image on the Pi + drive update_node for $NODE_ID.
+#   --apply: stage the repackaged image on the Pi + drive update_node for $NODE_ID, then
+#     CLASSIFY the outcome (reverted / not reverted / ambiguous). Never infers success from
+#     silence: stock leaves this fabric and a bootloader-rejected module does too (#75).
+#   --slots <unit-ip>: read-only :slots probe used for triage (changes nothing).
 #   --backup <unit-ip>: 1.3.9+ answers `<token>:backup` with a header line
 #     `ok: backup <addr_hex> <len_dec>\r\n` + exactly <len> raw bytes of the INACTIVE slot
 #     (0x1AC000 max, trailing 0xFF padding). Fetch it once right after the first conversion
@@ -821,6 +825,31 @@ print(f"[revert] revert reply: {r!r}")
 print("[revert] running image invalidated + reset issued; the bootloader now boots the other slot. Give the unit ~30 s.")
 PY
 }
+# Probe the break-glass listener with `<token>:slots`. Prints the raw `ok: ...` reply and
+# returns 0 ONLY when the unit answered. Asymmetric on purpose: an answer is decisive (only
+# the custom firmware serves :slots), silence proves nothing at all -- stock has no listener,
+# so a healthy stock unit and a bootloader-rejected module are both silent here.
+breakglass_slots() {  # <ip> [timeout-seconds]
+  local ip="$1" t="${2:-8}"
+  [ -n "${BREAKGLASS_TOKEN:-}" ] && [ -n "${BREAKGLASS_PORT:-}" ] || return 1
+  python3 - "$ip" "$BREAKGLASS_TOKEN" "$BREAKGLASS_PORT" "$t" <<'PY'
+import socket,sys
+ip,token,port,t=sys.argv[1],sys.argv[2],int(sys.argv[3]),float(sys.argv[4])
+d=b""
+try:
+    with socket.create_connection((ip,port),timeout=t) as s:   # handles IPv6 link-local (fe80::..%if)
+        s.sendall(f"{token}:slots".encode()); s.settimeout(t)
+        while b"\n" not in d and len(d)<512:
+            b=s.recv(256)
+            if not b: break
+            d+=b
+except OSError:
+    sys.exit(1)
+r=d.decode(errors="replace").strip()
+if not r.startswith("ok:"): sys.exit(1)
+print(r)
+PY
+}
 revert_repackage() {
   load_env
   local dump="${1:-}"
@@ -953,9 +982,109 @@ PY
     say "         so the next custom build beats serial $(( ${SERIAL_BASE:-1100} + v )). COMMIT firmware/src/version.txt."
   fi
 }
+# Read-only break-glass probe. Prints the slot map and changes NOTHING (unlike --flip, which
+# invalidates the running image). This is the triage command: an answer PROVES the custom
+# firmware is alive, silence proves nothing.
+revert_slots() {  # <unit-ip>
+  load_env
+  : "${BREAKGLASS_TOKEN:?}" "${BREAKGLASS_PORT:?}"
+  local ip="${1:-}" r
+  [ -n "$ip" ] || die "usage: ota-release.sh revert --slots <unit-ip>"
+  if r="$(breakglass_slots "$ip" 8)"; then
+    say "$ip:$BREAKGLASS_PORT answered: $r"
+    say "  ANSWERED = the CUSTOM firmware is running (only it serves :slots). The module is alive."
+    return 0
+  fi
+  say "$ip:$BREAKGLASS_PORT did not answer."
+  say "  This is NOT a verdict. Stock carries no break-glass listener, and stock also joins its"
+  say "  OWN factory-provisioned network, so a healthy reverted unit is not even at this address."
+  say "  A bootloader-rejected module is equally silent. Discriminate with the flash QE bit:"
+  say "  python3 $REPO/firmware/flasher/ch341_sr.py  (QE cleared = the bootloader rejected it)."
+  return 1
+}
+# Printed whenever --apply cannot tell "stock is running" from "the bootloader rejected the
+# image". Network silence is NOT a verdict: stock leaves this fabric, joins its own network
+# and has no break-glass listener, so a healthy revert and a #75-class rejection look
+# identical from here. Two healthy units were declared bricked on 2026-07-26 for exactly this
+# reason. These are the checks that actually discriminate.
+revert_triage() {  # <unit-ip-or-placeholder>
+  local ip="${1:-<unit-ip>}"
+  say "----------------------------------------------------------------------"
+  say "TRIAGE: the unit is silent. Silence alone means NOTHING. Run these, in order."
+  say ""
+  say "1. VENDOR APP (no tools). A reverted unit IS stock: it rejoins ConnectLife by itself"
+  say "   and reappears in the ConnectLife app as the same appliance. If the app sees it, the"
+  say "   revert WORKED. Note the A/C keeps working from the IR remote either way, so 'the"
+  say "   A/C responds' says nothing about the Wi-Fi module."
+  say ""
+  say "2. BREAK-GLASS (no tools, read-only). Stock does not carry the listener, so:"
+  say "     ota-release.sh revert --slots $ip"
+  say "   ANSWERS -> the CUSTOM firmware is still running: the revert did not take, the unit"
+  say "              is healthy, nothing is bricked. Retry --apply, or flip if stock is in the"
+  say "              other slot. SILENT -> consistent with stock AND with a rejected image;"
+  say "              not a verdict."
+  say ""
+  say "3. FLASH QE BIT (CH341A clip; the definitive test). boot_load routes every image"
+  say "   rejection through its shared failure sink (hal_flash_return_spi), which CLEARS the"
+  say "   GD25Q32 QE bit; a healthy boot leaves it SET (docs/10 §17 Path 2, issue #75)."
+  say "     python3 $REPO/firmware/flasher/ch341_sr.py"
+  say "   QE=0 -> the bootloader REJECTED the image (bricked, and it will NOT fall back to the"
+  say "           other slot). QE=1 -> it did not reject anything; chase the network instead."
+  say ""
+  say "4. READ THE SLOTS OUT OF A DUMP (CH341A clip; settles it definitively)."
+  say "     python3 $REPO/firmware/flasher/ch341dump.py /tmp/unit.bin"
+  say "   fw1 app @0x10000, fw2 app @0x190000; serial = u32le at app+0xF4 (stock 100, custom"
+  say "   ${SERIAL_BASE:-1100}+versionInt). 'revert --repackage /tmp/unit.bin' re-verifies the"
+  say "   FULL acceptance recipe (manifest sig + #75 inner HMAC + bytesum) on fw1; for fw2,"
+  say "   slice it out first: dd if=/tmp/unit.bin of=/tmp/fw2.bin bs=4096 skip=400."
+  say ""
+  say "5. RECOVERY, only if 3/4 say rejected: clip-write the unit's own dump with fw1 replaced"
+  say "   by ORIGINAL stock slot bytes (factory signature, from 'revert --backup') and fw2"
+  say "   erased to 0xFF, via ch341flash-full.py (it re-sets QE). docs/10 §17."
+  say "----------------------------------------------------------------------"
+}
+# One-shot Basic Information read for the pre-apply summary: proves NODE_ID resolves to a unit
+# that is reachable RIGHT NOW, and gives the operator something to match against the appliance
+# in front of them. Empty output = the node did not answer.
+ms_identity() {  # -> "sw=<int> vendor=<int> product=<int> label=<str>"
+  "$OTAENV_PY" - "$MS_WS" "$NODE_ID" 2>/dev/null <<'PY'
+import asyncio,json,sys,aiohttp
+URL,NODE=sys.argv[1],int(sys.argv[2])
+async def call(ws,c,a,m,t=20):
+    await ws.send_json({"message_id":m,"command":c,"args":a})
+    while True:
+        d=json.loads((await ws.receive(timeout=t)).data)
+        if d.get("message_id")==m: return d
+async def main():
+    out={}
+    async with aiohttp.ClientSession() as s:
+        async with s.ws_connect(URL,heartbeat=30) as ws:
+            await ws.receive(timeout=10)
+            for k,p in (("sw","0/40/9"),("vendor","0/40/1"),("product","0/40/2"),("label","0/40/5")):
+                try:
+                    r=await call(ws,"read_attribute",{"node_id":NODE,"attribute_path":p},k,20)
+                    res=r.get("result"); out[k]=res.get(p) if isinstance(res,dict) else res
+                except Exception: out[k]="?"
+    print(f"softwareVersion={out.get('sw')} vendor={out.get('vendor')} product={out.get('product')} label={out.get('label')!r}")
+asyncio.run(main())
+PY
+}
 revert_apply() {
   load_env
   : "${OTAENV_PY:?}" "${MS_WS:?}" "${NODE_ID:?}" "${PI_HOST:?}" "${PI_OTA_DIR:?}" "${PI_SSH_KEY:?}"
+  # --ip is optional but strongly recommended: the break-glass listener is the ONLY no-clip
+  # signal that separates "stock is running" from "the bootloader rejected the image", so
+  # without it the post-apply verdict can never be better than AMBIGUOUS. --yes skips the
+  # confirmation prompt (scripted runs only).
+  local ip="" assume_yes=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --ip)     ip="${2:-}"; [ -n "$ip" ] || die "--ip needs the unit's IP"; shift 2 ;;
+      --ip=*)   ip="${1#--ip=}"; shift ;;
+      --yes|-y) assume_yes=1; shift ;;
+      *) die "unknown argument for revert --apply: $1 (usage: revert --apply [--ip <unit-ip>] [--yes])" ;;
+    esac
+  done
   # Do NOT recompute revert_version() here. revert_repackage() consumes int v and then bumps
   # version.txt to v+1 (its guard `cur_version <= v` is a tautology, since v is defined as
   # max(cur,released)+1). A separately-invoked apply would therefore compute v+2 and die looking
@@ -970,6 +1099,62 @@ revert_apply() {
   done
   [ -n "$v" ] || die "no rac-stock-v*.{ota,json} pair in $bi -- run 'revert --repackage <stock-dump.bin>' first"
   local src_ota="$bi/rac-stock-v$v.ota" src_json="$bi/rac-stock-v$v.json"
+
+  # ---- pre-apply confirmation ------------------------------------------------------------
+  # State, before anything is written: which node, which physical unit, which slot the image
+  # lands in, and that the unit leaves this fabric. The 2026-07-26 confusion started with
+  # nobody having written down what "healthy afterwards" was supposed to look like.
+  local slots="" fw1="" fw2="" cur="" tgt="" other=""
+  if [ -n "$ip" ]; then
+    if slots="$(breakglass_slots "$ip" 8)"; then
+      fw1="$(printf '%s' "$slots" | sed -n 's/.*fw1_sn=\([0-9]*\).*/\1/p')"
+      fw2="$(printf '%s' "$slots" | sed -n 's/.*fw2_sn=\([0-9]*\).*/\1/p')"
+      cur="$(printf '%s' "$slots" | sed -n 's/.*cur=\([0-9]*\).*/\1/p')"
+      if [ "$cur" = "1" ]; then tgt=2; other="$fw2"; else tgt=1; other="$fw1"; fi
+    else
+      slots=""
+      say "WARNING: $ip:${BREAKGLASS_PORT:-?} did not answer :slots. Wrong IP, BREAKGLASS_TOKEN/PORT"
+      say "         unset in $ENVF, or the unit is already not running custom firmware. Fix it"
+      say "         BEFORE applying: with no working break-glass probe the post-apply verdict"
+      say "         can only ever be AMBIGUOUS."
+    fi
+  fi
+  local pre; pre="$(ms_identity || true)"
+  say "----------------------------------------------------------------------"
+  say "revert --apply: about to push STOCK firmware onto a LIVE unit."
+  say "  env file       : $ENVF"
+  say "  target node    : $NODE_ID  (read from $ENVF -- an exported NODE_ID is IGNORED, load_env"
+  say "                   sources the env file AFTER the environment. To target another unit,"
+  say "                   copy the env file and run with ENVF=<copy>.)"
+  say "  node reads now : ${pre:-NO ANSWER (node $NODE_ID unreachable through matter-server; update_node will likely fail)}"
+  say "  matter-server  : $MS_WS  (staging on $PI_HOST:$PI_OTA_DIR)"
+  say "  image          : $(basename "$src_ota")  softwareVersion int $v, FWHS serial $(( ${SERIAL_BASE:-1100} + v ))"
+  say "  unit ip        : ${ip:-NOT GIVEN -- no break-glass probe, verdicts will be weaker}"
+  if [ -n "$slots" ]; then
+    say "  slots now      : fw1_sn=$fw1 fw2_sn=$fw2 running=fw$cur"
+    say "  OTA lands in   : fw$tgt (the INACTIVE slot; whatever it holds now is overwritten)"
+    if [ -n "$other" ] && [ "$other" -lt "${SERIAL_BASE:-1100}" ]; then
+      say "  NOTE: fw$tgt ALREADY holds a stock image (serial $other < ${SERIAL_BASE:-1100}). Prefer"
+      say "        'ota-release.sh revert --flip $ip': it boots that slot with NO flash write and"
+      say "        NO re-signed payload, so it carries none of the #75 image-rejection risk. It"
+      say "        also keeps the factory-signed stock bytes instead of overwriting them."
+    fi
+  fi
+  say "  after this     : the unit LEAVES this Matter fabric, rejoins ConnectLife on its own"
+  say "                   network, and loses the break-glass listener and the :2323 console."
+  say "                   Silence afterwards is EXPECTED and is NOT proof of success."
+  say "----------------------------------------------------------------------"
+  if [ "$assume_yes" = 1 ]; then
+    say "--yes given: proceeding without confirmation"
+  else
+    local reply=""
+    # Fails CLOSED: a missing/unreadable /dev/tty makes `read` fail, which aborts here rather
+    # than silently proceeding to push firmware at a unit nobody is watching.
+    read -r -p "[ota-release] type 'revert node $NODE_ID' to proceed: " reply </dev/tty \
+      || die "no interactive terminal for the confirmation prompt -- re-run with --yes if you are sure"
+    [ "$reply" = "revert node $NODE_ID" ] || die "aborted (got '$reply')"
+  fi
+
   say "applying newest repackaged revert image on disk: rac-stock-v$v"
   # Re-verify the payload behind this .ota BEFORE it goes near a device. --repackage checks its
   # own output, but --apply picks the newest pair on disk, which may have been produced by an
@@ -1018,15 +1203,63 @@ PY
     "rm -f $PI_OTA_DIR/chip_kvs_ota_provider_* $PI_OTA_DIR/ota_provider_*.log 2>/dev/null; \
      docker restart matter-server >/dev/null 2>&1"   # restart => reload manifests (loaded once at init)
   say "  staged + provider junk pruned + matter-server restarted (manifest cache reloaded)"
-  say "apply rac-stock-v$v to node $NODE_ID (update_node with retries; stock-verify afterwards)"
-  if "$OTAENV_PY" - "$MS_WS" "$NODE_ID" "$v" <<'PY'
-import asyncio,json,sys,aiohttp
+  say "apply rac-stock-v$v to node $NODE_ID (update_node with retries, then classify the outcome)"
+  local rc=0
+  "$OTAENV_PY" - "$MS_WS" "$NODE_ID" "$v" "$ip" "${BREAKGLASS_TOKEN:-}" "${BREAKGLASS_PORT:-0}" \
+    "${SERIAL_BASE:-1100}" <<'PY' || rc=$?
+import asyncio,json,re,socket,sys,aiohttp
 URL,NODE,V=sys.argv[1],int(sys.argv[2]),int(sys.argv[3])
+IP,TOKEN,PORT,BASE=sys.argv[4],sys.argv[5],int(sys.argv[6]),int(sys.argv[7])
+# Exit codes: 0 = CONFIRMED on stock, 3 = CONFIRMED still on custom (revert did not take, unit
+# healthy), 4 = AMBIGUOUS. Never report success from silence: a healthy stock unit and a
+# bootloader-rejected module both vanish from this fabric, which is how two healthy units got
+# called bricks on 2026-07-26.
 async def call(ws,c,a,m,t=600):
     await ws.send_json({"message_id":m,"command":c,"args":a})
     while True:
         d=json.loads((await ws.receive(timeout=t)).data)
         if d.get("message_id")==m: return d
+def slots():
+    """`<token>:slots` over the break-glass listener, or None if the unit did not answer.
+    An answer is decisive (only the custom firmware serves it); silence is not evidence."""
+    if not IP or not TOKEN: return None
+    d=b""
+    try:
+        with socket.create_connection((IP,PORT),timeout=8) as s:
+            s.sendall(f"{TOKEN}:slots".encode()); s.settimeout(8)
+            while b"\n" not in d and len(d)<512:
+                b=s.recv(256)
+                if not b: break
+                d+=b
+    except OSError:
+        return None
+    r=d.decode(errors="replace").strip()
+    return r if r.startswith("ok:") else None
+def slots_note(r):
+    m=re.match(r"ok:\s*fw1_sn=(\d+)\s+fw2_sn=(\d+)\s+cur=(\d+)",r)
+    if not m: return f"break-glass answered {r!r}"
+    f1,f2,c=int(m.group(1)),int(m.group(2)),int(m.group(3))
+    run=f1 if c==1 else f2
+    return (f"break-glass answered: fw1_sn={f1} fw2_sn={f2} running=fw{c} "
+            f"(serial {run} = {'CUSTOM' if run>=BASE else 'stock'})")
+def not_reverted(why):
+    print(f"[revert] VERDICT: NOT REVERTED -- {why}")
+    print("[revert] the module is HEALTHY and still running the custom firmware; nothing is bricked.")
+    print("[revert] retry 'revert --apply', or use 'revert --flip <ip>' if the other slot holds stock.")
+    sys.exit(3)
+async def read_ident():
+    """Fresh (softwareVersion, vendorId) read, or (None,None) when the node is silent."""
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(URL,heartbeat=30) as ws:
+                await ws.receive(timeout=8)
+                r=await call(ws,"read_attribute",{"node_id":NODE,"attribute_path":"0/40/9"},"g",30)
+                res=r.get("result"); v=res.get("0/40/9") if isinstance(res,dict) else res
+                rv=await call(ws,"read_attribute",{"node_id":NODE,"attribute_path":"0/40/1"},"gv",30)
+                rres=rv.get("result"); vend=rres.get("0/40/1") if isinstance(rres,dict) else rres
+                return v,vend
+    except Exception:
+        return None,None
 async def node_unavailable():
     try:
         async with aiohttp.ClientSession() as s:
@@ -1049,57 +1282,86 @@ async def main():
                     print("[revert] declined:",r.get("error_code"),r.get("details",""))
         except Exception as e: print("[revert] exc",repr(e)[:120])
         await asyncio.sleep(15)
-    # Verify the STOCK outcome, NOT the revert int: after the reboot the unit runs stock
-    # firmware, which reports softwareVersion 4 / vendor 5004 (0xFFF1 is the custom line) --
-    # or it drops off the fabric entirely. flash()'s sustained-new-version gate would wait
-    # forever here, so this polls fresh read_attribute 0/40/9 for v4 instead.
-    good=0
+    # Classify. Stock reports softwareVersion 4 / vendor 5004 (0xFFF1 is the custom line), so a
+    # SUSTAINED 4 is a real confirmation. Nothing else is: this loop only gathers evidence and
+    # never concludes from silence. The decision happens after it.
+    good=0; cust=0; silent=0
     for _ in range(30):
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.ws_connect(URL,heartbeat=30) as ws:
-                    await ws.receive(timeout=8)
-                    r=await call(ws,"read_attribute",{"node_id":NODE,"attribute_path":"0/40/9"},"g",30)
-                    res=r.get("result")
-                    v=res.get("0/40/9") if isinstance(res,dict) else res
-                    rv=await call(ws,"read_attribute",{"node_id":NODE,"attribute_path":"0/40/1"},"gv",30)
-                    rres=rv.get("result")
-                    vend=rres.get("0/40/1") if isinstance(rres,dict) else rres
-                    if v==4:
-                        good+=1; print(f"[revert] unit reports stock softwareVersion 4 (vendor {vend}) ({good}/3)")
-                        if good>=3:
-                            print("[revert] SUCCESS: unit is on stock firmware (softwareVersion 4 sustained)")
-                            return
-                    else:
-                        good=0; print(f"[revert] unit reports softwareVersion {v} (vendor {vend}), waiting for stock ...")
-        except Exception:
-            # A failed read right after the reboot can also mean stock left the fabric.
-            if await node_unavailable():
-                print("[revert] SUCCESS (with warning): node unavailable -- stock firmware dropped off the fabric")
+        v,vend=await read_ident()
+        if v==4:
+            good+=1; cust=0; silent=0
+            print(f"[revert] unit reports stock softwareVersion 4 (vendor {vend}) ({good}/3)",flush=True)
+            if good>=3:
+                print("[revert] VERDICT: REVERTED -- unit is on stock firmware (softwareVersion 4 sustained)")
                 return
-            print("[revert] read failed (unit rebooting?) ...")
+        elif v is not None:
+            good=0; silent=0; cust+=1
+            print(f"[revert] unit still answers on softwareVersion {v} (vendor {vend}) ({cust} in a row) ...",flush=True)
+        else:
+            good=0; cust=0; silent+=1
+            print(f"[revert] no answer from node {NODE} ({silent} in a row) -- expected on stock, "
+                  "equally expected on a dead module. Not a verdict.",flush=True)
         await asyncio.sleep(12)
-    print("[revert] FAILED: unit never sustained stock softwareVersion 4 and never left the fabric")
-    sys.exit(2)
+    # No sustained stock version. Use the one signal that discriminates without a clip.
+    print("[revert] ~6 min without a sustained stock version; probing the break-glass listener",flush=True)
+    r=slots()
+    if r: not_reverted(slots_note(r)+" -- so the custom firmware is still running and the OTA never took")
+    # Timed re-check: a unit whose OTA failed can take a while to rejoin the fabric, and that
+    # comeback is a decisive negative. Give it one more window before declaring ambiguity.
+    print("[revert] silent. Waiting 180 s for a late comeback, then re-probing",flush=True)
+    await asyncio.sleep(180)
+    v,vend=await read_ident()
+    if v==4:
+        print(f"[revert] VERDICT: REVERTED -- unit answered on stock softwareVersion 4 (vendor {vend}) after the wait")
+        return
+    if v is not None:
+        not_reverted(f"node {NODE} came back on softwareVersion {v} (vendor {vend}) -- the OTA never took")
+    r=slots()
+    if r: not_reverted(slots_note(r)+" (after the wait) -- so the custom firmware is still running")
+    unavail=await node_unavailable()
+    print("[revert] VERDICT: AMBIGUOUS -- the unit is silent on every channel we own.")
+    print(f"[revert]   matter-server reports node {NODE} available=False: {unavail}. That is expected")
+    print("[revert]   for BOTH a healthy stock unit and a dead module, so it is NOT a verdict.")
+    if not IP or not TOKEN:
+        print("[revert]   no --ip (or no BREAKGLASS_TOKEN), so the one no-clip discriminator never ran.")
+    else:
+        print(f"[revert]   break-glass at {IP}:{PORT} did not answer: consistent with stock (which has")
+        print("[revert]   no listener) AND with a bootloader rejection.")
+    print("[revert] Stock also joins its OWN factory-provisioned network, so it may be invisible to")
+    print("[revert] us while perfectly healthy: absence from our VLAN is NOT evidence either.")
+    print("[revert] Do not record this as success and do not record it as a brick. Triage below.")
+    sys.exit(4)
 asyncio.run(main())
 PY
-  then
-    say "revert applied: the unit runs STOCK firmware now (it will NOT report v$v -- expected)."
-    say "next steps: the unit speaks ConnectLife again. To put it back on custom firmware,"
-    say "re-convert from scratch: firmware/docs/12-ota-convert-stock-unit.md (firmware/scripts/ota_convert_stock.sh)."
-    # Deliberately NOT writing .released-version: it tracks the CUSTOM line, and a later
-    # custom OTA must still be strictly greater than the version that was rolled back.
-  else
-    die "revert verification failed -- unit neither sustained stock softwareVersion 4 nor left the fabric; see the [revert] lines above"
-  fi
+  case "$rc" in
+    0)
+      say "revert applied: the unit runs STOCK firmware now (it will NOT report v$v -- expected)."
+      say "next steps: the unit speaks ConnectLife again. To put it back on custom firmware,"
+      say "re-convert from scratch: firmware/docs/12-ota-convert-stock-unit.md (firmware/scripts/ota_convert_stock.sh)."
+      say "AFTER that re-conversion, run the break-glass ':wipekv' BEFORE trying to commission:"
+      say "the Matter DCT (0x3E0000/0x3ED000) survives the stock round trip, so the stack sees a"
+      say "fabric, takes the 'already commissioned' branch and NEVER advertises BLE (docs/12 step 7)."
+      # Deliberately NOT writing .released-version: it tracks the CUSTOM line, and a later
+      # custom OTA must still be strictly greater than the version that was rolled back.
+      ;;
+    3) die "revert did NOT take -- the unit is still running the custom firmware (healthy, not bricked); see the [revert] lines above" ;;
+    4)
+      revert_triage "${ip:-<unit-ip>}"
+      printf '\033[1;31m[ota-release] AMBIGUOUS:\033[0m %s\n' \
+        "revert outcome UNKNOWN -- silence is neither success nor a brick; run the triage checks above" >&2
+      exit 4
+      ;;
+    *) die "revert --apply failed unexpectedly (exit $rc) -- see the [revert] lines above" ;;
+  esac
 }
 revert() {
   case "${1:-}" in
     --backup)    shift; revert_backup "$@" ;;
     --flip)      shift; revert_flip "$@" ;;
     --repackage) shift; revert_repackage "$@" ;;
-    --apply)     revert_apply ;;
-    *) die "usage: ota-release.sh revert {--backup <unit-ip> [out.bin]|--flip <unit-ip> [--force]|--repackage <stock-dump.bin>|--apply}" ;;
+    --apply)     shift; revert_apply "$@" ;;
+    --slots)     shift; revert_slots "$@" ;;
+    *) die "usage: ota-release.sh revert {--backup <unit-ip> [out.bin]|--flip <unit-ip> [--force]|--slots <unit-ip>|--repackage <stock-dump.bin>|--apply [--ip <unit-ip>] [--yes]}" ;;
   esac
 }
 
@@ -1177,5 +1439,5 @@ case "$cmd" in
     ;;
   publish) publish ;;
   revert)  revert "$@" ;;
-  *) die "usage: ota-release.sh {lint|build [--bump[-minor|-major]] [--debug]|package|stage|flash|tag|publish|verint [semver]|release [--bump[-minor|-major]] [--tag] [--flash] [--debug]|revert {--backup <unit-ip> [out.bin]|--flip <unit-ip> [--force]|--repackage <stock-dump.bin>|--apply}}" ;;
+  *) die "usage: ota-release.sh {lint|build [--bump[-minor|-major]] [--debug]|package|stage|flash|tag|publish|verint [semver]|release [--bump[-minor|-major]] [--tag] [--flash] [--debug]|revert {--backup <unit-ip> [out.bin]|--flip <unit-ip> [--force]|--slots <unit-ip>|--repackage <stock-dump.bin>|--apply [--ip <unit-ip>] [--yes]}}" ;;
 esac
