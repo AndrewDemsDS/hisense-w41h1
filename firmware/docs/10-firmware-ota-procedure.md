@@ -528,8 +528,17 @@ Root cause (issue #75): the bootloader verifies a **second, inner HMAC** that no
 recipe recomputed:
 
 ```
-L = u32le(img[0xE0])  (manifest `next_img`)  + 0x140
-HMAC-SHA256(partition hash_key, img[0 : L])  ==  img[L : L+0x20]
+# for sub-image i whose header is at H (the first is at H = 0xE0):
+S     = u32le(img[H])         # segment SIZE at H+0x00 -- NOT next_img
+END   = H + 0x60 + S
+START = 0 if i == 0 else H
+img[END : END+0x20]  ==  HMAC-SHA256(partition hash_key, img[START:END])
+next header = H + u32le(img[H+4])          # RELATIVE; 0xFFFFFFFF terminates
+
+# sub-image 0 is at H = 0xE0, so its trailer is at u32le(img[0xE0]) + 0x140, and it is the
+# only span that reaches the serial at +0xF4. `img[0xE0]` is the SIZE field. Calling it
+# `next_img` (as this doc used to) and reading img[0xE4] instead puts the trailer 0x2E0 bytes
+# too late and makes every genuine image look corrupt. Detail: reverse-engineering/docs/13.
 ```
 
 The hashed span starts at image offset 0, so it covers the serial at `+0xF4`. Patching the serial
@@ -550,8 +559,37 @@ same unit" was **not** a controlled comparison. Every observed successful stock 
 one valid candidate slot (the clip recovery erased FW2; Path 1's flip invalidates it), whereas the
 failure had two. That difference is real but is not the cause; the inner HMAC is.
 
-⚠️ Still treat the first `--repackage`/`--apply` on real hardware as a brick risk until one unit is
-confirmed: recovery remains the CH341A clip.
+**Confirmed on hardware 2026-07-27** (office unit): a repackaged stock image booted, and the
+device reported VID 5004 / PID 13825 / sw 2. Recovery if one ever does fail is still the CH341A
+clip. `--repackage` now self-checks every sub-image trailer, and `--apply` re-verifies the
+payload before staging, so the #75 class cannot ship silently again.
+
+#### Silence is not a brick (this cost hours, twice, on 2026-07-26/27)
+
+A unit that has gone quiet is almost never bricked. Two expected states look identical from the
+network:
+
+- **After a revert to stock**, the unit leaves our Matter fabric and associates to its own
+  network. Invisible to us by design.
+- **After converting a unit that had a prior custom life**, the Matter DCT survives the round
+  trip, so `FabricCount() != 0` and connectedhomeip explicitly DISABLES BLE advertising. No
+  first-boot window ever opens, so BLE scanning finds nothing no matter how long you look.
+
+Check in this order, cheapest first:
+
+1. `<token>:slots` over the break-glass listener. An answer proves the unit is alive and tells
+   you which slot booted.
+2. If you have a clip on anyway, read the flash **QE bit**: `python3 firmware/flasher/ch341_sr.py`
+   (SR2 bit 1). A bootloader rejection routes through `boot_load`'s shared failure sink and
+   **clears QE**; a healthy boot leaves it **set**. This is the definitive discriminator and it
+   was readable the whole time on both occasions.
+3. Read the app slots out of a dump and walk the sub-image chain (§17 rule above). A valid chain
+   in the booted slot plus QE set means the firmware is fine and the problem is elsewhere.
+
+`boot_load` is **slot-agnostic**: the image base is `0x98000000 + slot_start` from the partition
+table and the virtual base is taken verbatim from the section header. Stock has booted fine from
+FW2. **Never add a "stock must live in FW1" guard to any revert or convert path** -- it would
+refuse a case that is proven to work.
 
 Recovery recipe that worked (clip): write the unit's own dump (per-unit data preserved) with
 fw1 replaced by the ORIGINAL stock slot bytes (from a `revert --backup` capture, factory

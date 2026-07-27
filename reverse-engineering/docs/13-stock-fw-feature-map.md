@@ -72,11 +72,34 @@ partition table). A re-signing recipe must reproduce **both**, in this order.
 - **(a) Manifest signature.** FWHS `+0x00` (32 B) = **HMAC-SHA256 over the 0x60-byte
   manifest `img[0xE0:0x140]`**. It covers the serial and sizes, **not** the image body.
   Enforced by the OTA code and used for slot validity.
-- **(b) Inner image HMAC.** `HMAC-SHA256(hash_key, img[0:L]) == img[L:L+0x20]`, where
-  `L = u32le(img[0xE0]) + 0x140` (the manifest's `next_img` field). A hash-then-trailer
-  at a **content-derived** offset, so fixed-offset searching does not find it. Its span
-  starts at image offset 0, so it covers the serial at `+0xF4` **and** the `+0x00`
-  signature from (a). **Enforced by the bootloader**, not by the OTA code.
+- **(b) Inner image HMAC, one per sub-image.** A hash-then-trailer at a **content-derived**
+  offset, so fixed-offset searching does not find it. **Enforced by the bootloader**, not by
+  the OTA code. The general rule, for sub-image `i` whose header sits at offset `H` (the first
+  is at `H = 0xE0`):
+
+  ```
+  S     = u32le(img[H])         # segment SIZE
+  END   = H + 0x60 + S          # the trailer offset
+  START = 0 if i == 0 else H
+  img[END : END+0x20]  ==  HMAC-SHA256(hash_key, img[START:END])
+  next header = H + u32le(img[H+4])      # RELATIVE; 0xFFFFFFFF terminates the chain
+  ```
+
+  ⚠️ **Naming trap.** `u32le(img[0xE0])` is the SIZE field `S`. It is **not** `next_img`.
+  `next_img` lives at `H+4` and is a **relative** offset. An earlier revision of this section
+  and of `ota-release.sh` called `img[0xE0]` "next_img"; the code read the right offset so it
+  worked, but generalising the wrong name to sub-images 1..N puts the trailer at
+  `0x4060` instead of `0x3d80` on a real image, and every check then reports MISMATCH.
+
+  Because sub-image 0's span starts at image offset 0, it is the only one that covers the
+  serial at `+0xF4` and the `+0x00` signature from (a), so a serial patch stales exactly that
+  one trailer. Verified on 37 real files: every image has 3 sub-images. Custom builds are
+  `0xE0 / 0x4000 / 0xF8000`. Stock has **two** layouts in the wild,
+  `0xE0 / 0x8000 / 0x114000` (office, 0x1589c0 bytes) and `0xE0 / 0x8000 / 0x120000`
+  (kitchen / `w41h1_dump1`, 0x16ab40 bytes), so **walk the chain, never hardcode offsets**.
+  The last trailer does **not** land at EOF: `elf2bin` appends 0 or 0x20 bytes of `0x87`
+  padding (both occur across the archive) before the 4-byte byte-sum, so an
+  `END+0x20 == len` assert rejects most genuine images.
 
   ⚠️ Omitting (b) is what bricked a unit on 2026-07-21 (issue #75): every host-side check
   still passes, but `boot_load` prints `"Hash Result Incorrect!"`, clears the flash

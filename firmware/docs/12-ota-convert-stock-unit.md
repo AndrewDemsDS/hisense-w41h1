@@ -81,7 +81,27 @@ Everything below is automated in
    Watch the provider log: `QueryImage → UpdateAvailable → BDX:Block …×N → BlockAckEOF →
    ApplyUpdateRequest version 23`. The unit then reboots into our firmware.
 7. **Confirm it booted our firmware**: the unit drops IPv4 (our build is IPv6-only), stays
-   associated to Wi-Fi, and **"77" now works** (F1). It boots uncommissioned.
+   associated to Wi-Fi, and **"77" now works** (F1).
+
+   ⚠️ **"It boots uncommissioned" is only true for a virgin stock unit.** The Matter DCT
+   regions (`0x3E0000` / `0x3ED000`) **survive** the stock <-> custom round trip. On any unit
+   with a prior custom life (or a cloud/app pairing history), `FabricCount() != 0`, so
+   `connectedhomeip`'s `Server.cpp` takes the "already commissioned" branch and **explicitly
+   disables BLE advertising**. No 15-minute first-boot window ever opens and BLE scanning finds
+   nothing, however long you scan. This is suppression, not a brick (docs/10 §17, "Silence is
+   not a brick").
+
+   **Run `<token>:wipekv` BEFORE attempting to commission such a unit.** It formats both DCT
+   regions with the device's own DCT layer and reboots; Wi-Fi fast-reconnect survives, so the
+   unit comes back on the network and advertises a fresh window. Preconditions: firmware
+   >= 1.3.16, the unit reachable on the network (the listener is IPv6-only), and an image built
+   with `BREAKGLASS_TOKEN` set (a token-less build compiles the listener out entirely).
+
+   ⚠️ **A clip-copied DCT is NOT equivalent to `:wipekv`.** Writing a known-good post-wipe DCT
+   byte range in over the CH341A left the office unit deterministically wedged at
+   `SendTrustedRootCert` (IM 0x0501), exactly like the un-wiped case. Running the firmware's own
+   `:wipekv` fixed it immediately and commissioning then succeeded on the first try. Use the
+   firmware path, not a byte copy.
 8. **Commission into Home Assistant**: our firmware passes attestation normally (consistent test
    certs), so no bypass here. Press "77", then in HA: Matter → Add device → `3497-011-2332`.
    (Or `commission_with_code(code, network_only=True)` via the matter-server, which is dual-homed
@@ -137,6 +157,18 @@ Recovery loop used on the office unit, no physical access beyond "77" presses:
    the matter-server (`commission_with_code`, `network_only=True`); `pairing unpair` the
    temporary chip-tool fabric once HA is in.
 
-Result: office unit = node 62, exactly one fabric (HA), `softwareVersion 10316` verified by
-live `read_attribute`. If converting more units with a cloud history, ship a `:wipekv`-capable
-image in step 5 the first time and run `:wipekv` right after step 7, before commissioning.
+Result (2026-07-27, after a full stock revert and re-convert): office unit = **node 64**, one
+fabric (HA), `softwareVersion 10330` and `CommissionedFabrics 1` verified by live
+`read_attribute`, `LocalTemperature` 2500 (RS-485 bus healthy), stock still intact in FW2
+(`fw1_sn=11430 fw2_sn=11429 cur=1`). The stale node 62 was removed from matter-server.
+
+If converting more units with a cloud history: ship a `:wipekv`-capable image in step 5 the
+first time, and run `:wipekv` right after step 7, **before** commissioning. Two things to
+expect so you do not misread them as a brick:
+
+- Between the revert and the re-convert the unit is invisible to us because stock leaves our
+  fabric and associates to its own network. That is correct behaviour.
+- After the re-convert it is invisible over BLE because the surviving DCT suppresses the
+  advertisement (step 7). `:wipekv` is the remedy, not a longer scan.
+
+When a unit really does need adjudicating, the flash QE bit settles it (docs/10 §17).

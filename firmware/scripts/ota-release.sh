@@ -834,24 +834,53 @@ revert_repackage() {
   # custom firmware_is-v*.bin and the dump's unpatched fw1 must HMAC/bytesum-verify. A dump
   # from a different build or a wrong key fails loudly here instead of on the device.
   say "revert --repackage v$v (serial $(( ${SERIAL_BASE:-1100} + v ))): verify the signing recipe first"
-  python3 - "$dump" "$bi" "$payload" "$(( ${SERIAL_BASE:-1100} + v ))" <<'PY'
+  python3 - "$dump" "$bi" "$payload" "$(( ${SERIAL_BASE:-1100} + v ))" "${SERIAL_BASE:-1100}" <<'PY'
 import glob,struct,hmac,hashlib,sys,os
-dump,bi,out,newser=sys.argv[1],sys.argv[2],sys.argv[3],int(sys.argv[4])
+dump,bi,out,newser,base=sys.argv[1],sys.argv[2],sys.argv[3],int(sys.argv[4]),int(sys.argv[5])
 KEY=bytes.fromhex('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e5f')
 def inner_off(payload):
-    # #75: the bootloader ALSO verifies HMAC-SHA256(key, img[0:L]) == img[L:L+0x20], where
-    # L = next_img (manifest +0xE0) + 0x140. That trailer covers the serial AND the +0x00
-    # signature, so patching the serial invalidates it. boot_load compares it, prints
-    # "Hash Result Incorrect!" and hangs with the flash QE bit cleared. Missing this is
-    # what bricked the office unit on 2026-07-21.
+    # #75: besides the manifest signature the bootloader verifies ONE HMAC trailer PER
+    # sub-image. For sub-image i at header offset H: S=u32le(img[H]) is the segment SIZE,
+    # the trailer is at END=H+0x60+S and covers img[START:END] with START=0 for i==0 else H.
+    # Sub-image 0 sits at H=0xE0, so END = 0xE0+0x60+S = u32le(img[0xE0])+0x140. Only that
+    # first span reaches the serial at +0xF4 and the +0x00 signature, so patching the serial
+    # staleness ONLY this trailer -- which is why recomputing just this one is sufficient.
+    #
+    # NAMING TRAP (this comment used to get it wrong): u32le(img[0xE0]) is the SIZE field, it
+    # is NOT next_img. next_img is u32le(img[H+4]) and is a RELATIVE offset (next header =
+    # H + that value; 0xFFFFFFFF terminates). Confusing the two gives 0x4060 instead of 0x3d80
+    # on a real image, so a verifier built on the wrong name rejects every genuine build.
+    #
+    # boot_load compares the trailer, prints "Hash Result Incorrect!" and hangs with the flash
+    # QE bit cleared. Missing this is what bricked the office unit on 2026-07-21.
     return struct.unpack_from('<I',payload,0xE0)[0]+0x140
+def chain(payload):
+    # Walk the sub-image chain and return [(H,END,match)] for EVERY trailer, not just #0.
+    # Measured to reproduce all three trailers on all 23 archived firmware_is-v*.bin (custom
+    # layout 0xE0/0x4000/0xF8000) and on every stock carve (TWO layouts in the wild:
+    # 0xE0/0x8000/0x114000 and 0xE0/0x8000/0x120000 -- never hardcode these). It fails only on
+    # the four pre-#75 rac-stock-v*-payload.bin. Do NOT assert the last trailer ends at EOF:
+    # elf2bin pads 0 or 0x20 trailing 0x87 bytes (both occur across the archive). And note the
+    # walk is slot-agnostic by construction: boot_load takes the image base from the partition
+    # table, stock has booted fine from FW2, so never gate any of this on a slot index.
+    H=0xE0; i=0; out=[]
+    while True:
+        if H+0x60>len(payload): return None
+        S=struct.unpack_from('<I',payload,H)[0]; nxt=struct.unpack_from('<I',payload,H+4)[0]
+        END=H+0x60+S; START=0 if i==0 else H
+        if END+0x20>len(payload): return None
+        out.append((H,END,hmac.new(KEY,payload[START:END],hashlib.sha256).digest()==payload[END:END+0x20]))
+        if nxt==0xffffffff: return out
+        if nxt==0 or i>15: return None
+        H+=nxt; i+=1
 def verify(payload,trailer,name):
     mac_ok=hmac.new(KEY,payload[0xE0:0x140],hashlib.sha256).digest()==payload[0:32]
-    L=inner_off(payload)
-    in_ok=L+0x20<=len(payload) and hmac.new(KEY,payload[0:L],hashlib.sha256).digest()==payload[L:L+0x20]
+    c=chain(payload)
+    in_ok=c is not None and all(m for _,_,m in c)
     sum_ok=struct.pack('<I',sum(payload)&0xffffffff)==trailer
     serial=struct.unpack_from('<I',payload,0xF4)[0]
-    print(f"  {name}: len={len(payload):#x} serial@0xF4={serial} hmac={'OK' if mac_ok else 'MISMATCH'} inner@{L:#x}={'OK' if in_ok else 'MISMATCH'} bytesum={'OK' if sum_ok else 'MISMATCH'}")
+    sub="UNWALKABLE" if c is None else " ".join("%#x=%s"%(e,"OK" if m else "MISMATCH") for _,e,m in c)
+    print(f"  {name}: len={len(payload):#x} serial@0xF4={serial} hmac={'OK' if mac_ok else 'MISMATCH'} trailers[{sub}] bytesum={'OK' if sum_ok else 'MISMATCH'}")
     return mac_ok and in_ok and sum_ok
 refs=sorted(glob.glob(os.path.join(bi,'firmware_is-v*.bin')))
 if not refs:
@@ -874,6 +903,16 @@ for off in (0x10000,0):
     img=c; imglen=l; break
 if img is None:
     print("  no HMAC-valid stock image at 0x10000 (dump) or 0x0 (backup) -- refusing"); sys.exit(1)
+# The carve proves "a signed image is here", NOT "that image is stock". A dump taken from an
+# already-converted unit carves just as cleanly (dumps/office_postfail2_20260727.bin -> serial
+# 11430), and shipping that as a "revert to stock" .ota would push CUSTOM firmware under a
+# stock label. revert --backup already applies this exact test; --repackage did not.
+# Stock carries serial 100; custom carries SERIAL_BASE+versionInt. This is a SERIAL test, not
+# a slot test: boot_load is slot-agnostic and stock has booted fine from FW2, so never gate
+# any revert path on which slot the bytes came from.
+_s=struct.unpack_from('<I',img,0xF4)[0]
+if _s>=base:
+    print(f"  carved image serial@0xF4={_s} >= {base}: this is a CUSTOM image, not stock -- refusing"); sys.exit(1)
 ok &= verify(img[:imglen],img[imglen:imglen+4],f"input image @0x{off:x} (unpatched)")
 if not ok:
     print("recipe self-check FAILED -- not building a revert image from unverified bytes"); sys.exit(1)
@@ -899,8 +938,10 @@ PY
   say "  ota:      $ota  (+ .json manifest, payloadName=$(basename "$payload"))"
   say "  not staged. next: ota-release.sh revert --apply"
   say "  NOTE: the 2026-07-21 brick (docs/10 §17 'Path 2') is root-caused (#75): the old recipe left"
-  say "  the inner image HMAC (at next_img+0x140) stale. This payload recomputes it and self-checks it."
-  say "  NOT yet confirmed on hardware -- the first apply is still a brick risk (CH341A-clip recovery)."
+  say "  sub-image 0's inner HMAC (at size@0xE0 + 0x140) stale. This payload recomputes it and"
+  say "  self-checks EVERY sub-image trailer, on this payload and on every archived image."
+  say "  CONFIRMED ON HARDWARE 2026-07-27: a repackaged stock image booted (VID 5004 / PID 13825 / sw 2)."
+  say "  Recovery if it ever does fail is still the CH341A clip; a rejected image hangs with QE CLEARED."
   # Version-consumption guard: the revert image carries serial SERIAL_BASE+v, so once it is
   # applied the next custom OTA must EXCEED v or the bootloader ties and the stock slot wins.
   # Keep version.txt ahead of every revert int ever handed out here.
@@ -930,6 +971,44 @@ revert_apply() {
   [ -n "$v" ] || die "no rac-stock-v*.{ota,json} pair in $bi -- run 'revert --repackage <stock-dump.bin>' first"
   local src_ota="$bi/rac-stock-v$v.ota" src_json="$bi/rac-stock-v$v.json"
   say "applying newest repackaged revert image on disk: rac-stock-v$v"
+  # Re-verify the payload behind this .ota BEFORE it goes near a device. --repackage checks its
+  # own output, but --apply picks the newest pair on disk, which may have been produced by an
+  # older revision of this script: built-images/ still holds the four pre-#75
+  # rac-stock-v*-payload.bin that bricked the office unit, and a version accident is all it
+  # takes for one of them to be "newest". Costs milliseconds.
+  say "  re-verifying the payload (manifest sig + EVERY sub-image HMAC + bytesum)"
+  python3 - "$bi" "$src_json" <<'PY'
+import json,os,struct,hmac,hashlib,sys
+bi,mf=sys.argv[1],sys.argv[2]
+KEY=bytes.fromhex('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e5f')
+m=json.load(open(mf))["modelVersion"]
+pn=m.get("payloadName")
+if not pn:
+    print(f"  {os.path.basename(mf)} has no payloadName -- built by a pre-#75 script revision. REFUSING."); sys.exit(1)
+p=os.path.join(bi,pn)
+if not os.path.exists(p):
+    print(f"  payload {pn} missing -- cannot verify what this .ota carries. REFUSING."); sys.exit(1)
+d=open(p,'rb').read(); img,tr=d[:-4],d[-4:]
+if hmac.new(KEY,img[0xE0:0x140],hashlib.sha256).digest()!=img[0:32]:
+    print("  manifest signature MISMATCH -- REFUSING"); sys.exit(1)
+if struct.pack('<I',sum(img)&0xffffffff)!=tr:
+    print("  bytesum trailer MISMATCH -- REFUSING"); sys.exit(1)
+# Full sub-image chain: END=H+0x60+u32le(img[H]); START=0 for the first, else H; next header
+# = H + u32le(img[H+4]) (RELATIVE), 0xFFFFFFFF terminates. Trailing 0x87 pad after the last
+# trailer is normal (0 or 0x20 bytes), so do not require END+0x20 == len.
+H=0xE0; i=0
+while True:
+    if H+0x60>len(img): print("  chain UNWALKABLE -- REFUSING"); sys.exit(1)
+    S=struct.unpack_from('<I',img,H)[0]; nxt=struct.unpack_from('<I',img,H+4)[0]
+    END=H+0x60+S; START=0 if i==0 else H
+    if END+0x20>len(img): print("  chain trailer past EOF -- REFUSING"); sys.exit(1)
+    if hmac.new(KEY,img[START:END],hashlib.sha256).digest()!=img[END:END+0x20]:
+        print(f"  sub-image {i} trailer @{END:#x} MISMATCH (issue #75 signature) -- REFUSING to stage a brick"); sys.exit(1)
+    if nxt==0xffffffff: break
+    if nxt==0 or i>15: print("  malformed chain -- REFUSING"); sys.exit(1)
+    H+=nxt; i+=1
+print(f"  {pn}: manifest sig OK, {i+1} sub-image trailers OK, bytesum OK, serial@0xF4={struct.unpack_from('<I',img,0xF4)[0]}")
+PY
   # stage() is keyed to the cur_version rac-v* names, so this duplicates its scp + junk
   # prune + matter-server restart for the rac-stock-* pair instead of refactoring it.
   say "stage rac-stock-v$v on $PI_HOST:$PI_OTA_DIR + restart matter-server"
