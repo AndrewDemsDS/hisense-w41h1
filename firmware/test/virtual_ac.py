@@ -54,6 +54,31 @@ STATUS_HDR = bytes(
     ]
 )
 
+# ---- ProductType (`66 40`) capability flags -------------------------------
+# Source: reverse-engineering/docs/10-stock-fw-init-and-comms.md section 5a,
+# handle_producttype_cmd_result @ 0x9b6f0c4c [PROVEN]. Guard there is
+# payload[0]==0x66 && payload[1]==0x40; frame_byte = payload_off + 13.
+# Advertising a flag here makes the MODULE believe the A/C supports it, which is
+# how we exercise features no A/C we own reports (issue #15: ai, swing_direction_8).
+# Nothing is inferred: every (byte, mask) below is copied from that table.
+CAPS = {
+    "cool_heat": (18, 0x80),
+    "purify": (23, 0x08),
+    "power_save": (23, 0x40),
+    "fan_mute": (24, 0x40),
+    "infinite_fan_speed": (25, 0x08),
+    "swing_follow": (26, 0x02),
+    "8heat": (26, 0x80),
+    "power_display": (27, 0xC0),  # bits6-7, read as (b >> 6)
+    "swing_direction_8": (28, 0x10),
+    "ai": (28, 0x40),
+    "humidity": (32, 0x01),
+    "dr": (35, 0x03),  # bits0-1, read as (b & 3)
+    "trans_102_64": (38, 0x08),
+    "enable_8heat": (39, 0x04),
+    "q_display": (39, 0x40),
+}
+
 # command index (2n+1 on the wire) <-> names
 CMD_MODE = {1: "fan", 3: "heat", 5: "cool", 7: "dry", 9: "auto"}  # byte18 nibble
 CMD_FAN = {
@@ -109,6 +134,7 @@ class VirtualAC:
         self.mute = False
         self.sleep = 0  # 0 off, 1..4 profile
         self.comp = 0  # compressor Hz
+        self.caps = set()  # advertised in the `66 40` ProductType reply
         self._t0 = None
 
     def _sim_physics(self, now):
@@ -149,7 +175,33 @@ class VirtualAC:
         ck = checksum(s, 156)
         s[156], s[157] = ck >> 8, ck & 0xFF
         s[158], s[159] = ETX1, ETX2
-        return stuff(bytes(s[:158])) + bytes([ETX1, ETX2])
+        # Stuff the BODY + checksum only. The F4 F5 / F4 FB markers must not be
+        # escaped (stuff() says so); stuffing from index 0 doubled the leading STX,
+        # emitting "f4 f4 f5 ..." which a real module rejects. Host tests missed it
+        # because both ends share the tolerant splitter; the bench module did not.
+        return bytes([STX1, STX2]) + stuff(bytes(s[2:158])) + bytes([ETX1, ETX2])
+
+    def producttype_frame(self):
+        """Reply to the module's `66 40` ProductType query, advertising self.caps.
+
+        Same envelope as status_frame() (which the module demonstrably accepts):
+        only the subtype byte and the flag payload differ. Length gates in the
+        stock parser are len-2 > 0x14 / 0x17 / 0x18, all satisfied here.
+        """
+        s = bytearray(160)
+        s[0:16] = STATUS_HDR
+        s[14] = 0x40  # subtype: ProductType, not the `66 00` status poll
+        for name in self.caps:
+            byte, mask = CAPS[name]
+            s[byte] |= mask
+        ck = checksum(s, 156)
+        s[156], s[157] = ck >> 8, ck & 0xFF
+        s[158], s[159] = ETX1, ETX2
+        # Stuff the BODY + checksum only. The F4 F5 / F4 FB markers must not be
+        # escaped (stuff() says so); stuffing from index 0 doubled the leading STX,
+        # emitting "f4 f4 f5 ..." which a real module rejects. Host tests missed it
+        # because both ends share the tolerant splitter; the bench module did not.
+        return bytes([STX1, STX2]) + stuff(bytes(s[2:158])) + bytes([ETX1, ETX2])
 
     def apply_command(self, f):
         """f is an un-stuffed command frame (0x65). Update state from the fields set."""
@@ -206,8 +258,11 @@ class VirtualAC:
         )
 
 
-def run(read_fn, write_fn):
+def run(read_fn, write_fn, caps=frozenset()):
     ac = VirtualAC()
+    ac.caps = set(caps)
+    if ac.caps:
+        print(f"# advertising ProductType capabilities: {sorted(ac.caps)}")
     print(f"# virtual A/C up. initial: {ac._snapshot()}")
     buf = bytearray()
     while True:
@@ -225,12 +280,36 @@ def run(read_fn, write_fn):
                 if len(f) < 14:
                     continue
                 cls = f[13]
-                if cls == 0x66 and len(f) < 30:  # status-request poll
+                if cls == 0x66 and len(f) > 14 and f[14] == 0x40:
+                    # ProductType query -- advertise the capability flags
+                    write_fn(ac.producttype_frame())
+                    print(
+                        f"  [66 40] ProductType query -> advertised {sorted(ac.caps) or 'none'}"
+                    )
+                elif cls == 0x66 and len(f) < 30:  # status-request poll
                     ac._sim_physics(time.time())
                     write_fn(ac.status_frame())
                 elif cls == 0x65:  # command
                     ac.apply_command(f)
                     write_fn(ac.status_frame())  # echo new state
+                elif cls in (0x0A, 0x07, 0x1E):
+                    # Handshake / keepalive frames (DevType, Version, LINK). The
+                    # A/C is a pure slave: the module matches replies to requests
+                    # by the transaction primitive, not by class, and RX frames
+                    # are hard-gated on byte[2]==0x01 (docs/10 section: "no
+                    # class-demux on RX"). So a faithful slave reply is the request
+                    # echoed back with byte[2] flipped to the RX direction. Without
+                    # this the module's `heard_ac` never latches and it never issues
+                    # the `66 40` ProductType query. (Found running against the real
+                    # module: the status/command replies alone are not enough.)
+                    reply = bytearray(f)
+                    reply[2] = 0x01
+                    ck = checksum(reply, len(reply) - 4)
+                    reply[-4], reply[-3] = ck >> 8, ck & 0xFF
+                    write_fn(
+                        bytes(reply[:2]) + stuff(bytes(reply[2:-2])) + bytes(reply[-2:])
+                    )
+                    print(f"  [0x{cls:02X}] handshake poll -> echoed slave reply")
         else:
             time.sleep(0.02)
 
@@ -247,7 +326,19 @@ def main():
         help="attach to a TCP socket HOST:PORT (e.g. Renode UART: 127.0.0.1:3456)",
     )
     ap.add_argument("--baud", type=int, default=9600)
+    ap.add_argument(
+        "--capabilities",
+        default="",
+        help="comma-separated flags to advertise in the `66 40` ProductType reply "
+        "(e.g. ai,swing_direction_8). Known: " + ",".join(sorted(CAPS)),
+    )
     a = ap.parse_args()
+    caps = {c.strip() for c in a.capabilities.split(",") if c.strip()}
+    unknown = caps - set(CAPS)
+    if unknown:
+        sys.exit(
+            f"unknown capability flag(s): {sorted(unknown)}; known: {sorted(CAPS)}"
+        )
 
     if a.connect:
         import socket
@@ -263,7 +354,7 @@ def main():
             except BlockingIOError:
                 return b""
 
-        run(rd, lambda d: sk.sendall(d))
+        run(rd, lambda d: sk.sendall(d), caps)
         return
 
     if a.pty:
@@ -284,12 +375,12 @@ def main():
         def wr(d):
             os.write(master, d)
 
-        run(rd, wr)
+        run(rd, wr, caps)
     else:
         import serial
 
         s = serial.Serial(a.port, a.baud, timeout=0.02)
-        run(lambda: s.read(512), lambda d: s.write(d))
+        run(lambda: s.read(512), lambda d: s.write(d), caps)
 
 
 if __name__ == "__main__":
