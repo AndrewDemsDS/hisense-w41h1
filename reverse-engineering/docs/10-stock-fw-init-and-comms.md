@@ -133,14 +133,28 @@ The Wi-Fi module is **bus master / sole initiator**; the A/C mainboard is a pure
 | 2 | **DIR** | `0x00` M→AC, `0x01` AC→M (RX gate `==1` @ `0x9b6f2e56`) | `0x9b6f0a48` |
 | 3 | **CTRL** | `0x40` normal. bit6(`0x40`)→2-byte cksum; bit5(`0x20`)→16-bit BE LEN; bit0→extra pre-LEN byte. Width helper `0x9b6f0958`: `0x40→2, 0x80→2, 0xC0→4, 0x00→1` | – |
 | 4 | **LEN** | 8-bit payload count (16-bit BE if CTRL bit5). `total_frame = LEN+9` | `0x9b6f2e92` |
-| 5,6 | rsvd | `0x00 0x00` | `0x9b6f09dc` |
+| 5,6 | rsvd on TX / **net resp** on RX | `0x00 0x00` outbound. Inbound `[5]` **MUST be `0x01`** (gate `0x9b6f2f94/96`, else `-5` "net resp error") | `0x9b6f09dc` |
 | 7,8 | **link_seq hi/lo** | `00 00` on first handshake frame, `01 01` after (session token, §4.4) | `0x9b6f09dc` reads `0x10009687/86` |
 | 9,10 | markers | `0xFE 0x01` (fixed sub-header terminator) | `0x9b6f09ee/f2` |
-| 11,12 | pad | `0x00 0x00` | `0x9b6f2a76` |
+| 11,12 | pad on TX / **trans resp** on RX | `0x00 0x00` outbound. Inbound `[11]` **MUST be `0x01`** (gate `0x9b6f2fcc-2fe8`, else `-6` "trans resp error") | `0x9b6f2a76` |
 | 13 | **CLASS** | message class (§3.3) | `inner[0]` |
 | 14.. | payload | class-specific; `inner[1]` usually subtype/len | – |
 | N | **CKSUM** | width bytes, **big-endian running SUM over bytes `[2 .. 5+LEN)`** | decoder `0x9b6f2f6c`; encoder `0x9b6f097c` |
 | N+1,2 | ETX | `0xF4 0xFB` | `0x9b6f2aea/ec` |
+
+> ⚠️ **The table above is the TX (module → A/C) layout. Do not copy it to build a reply.**
+> Stock's RX parser `device_package_get_cmd` (`0x9b6f2e00`) enforces **three** independent
+> response flags, and the module's own transmit path writes `0x00` into all three:
+> `[2]` link resp, `[5]` net resp, `[11]` trans resp, each of which **must be `0x01`** inbound.
+> Payload `[2]` (frame `[15]`) is a fourth marker, `0x01` = A/C → module response.
+> A reply built by echoing the request therefore fails at `[5]` with `-5` before any class
+> handler runs. **Hardware-confirmed 2026-07-28**: setting all three made stock accept the
+> DevType reply and walk `0x0A → 0x07 → 0x66 → steady 0x1E`; without them it retried forever,
+> alternating 9600/115200. `virtual_ac.py`'s `STATUS_HDR`, captured from a real A/C, already
+> has all three set, which is why status frames always worked and only the handshake did not.
+> The DevType reply additionally carries device-type at `[16]` and sub-type at `[17]`, so it
+> must be **longer than the 20-byte request** or those offsets land on the checksum and the
+> peer latches the checksum as its device type.
 
 Byte-stuffing: a literal `0xF4` inside dir…checksum is escaped `F4 F4`; the end tag is a lone `F4 FB` (`0x9b6f7854`). Checksum verified byte-exact on all four captured templates. The A/C→module sub-header is laid out differently (e.g. status response header `01 40 97 01 00 FE 01 01 01 01 00 66…` puts `FE` at byte[7]); the decoder walks that variable RX sub-header via nested `net resp` / `trans resp` byte-`==1` checks (`0x9b6f2f94`, `0x9b6f2fe8`). **[PROVEN]**
 
@@ -156,7 +170,12 @@ Byte-stuffing: a literal `0xF4` inside dir…checksum is escaped `F4 F4`; the en
 | **0x65** | Control / set | M→AC | pack `0x9b6f2c60` ("DevTypeCMD1"), emit `0x9b6f8658` | `65` + 33 B body | Device-type-gated control write |
 | **0x1D** (num29) | Reconfig / OTA request | AC→M | handled `0x9b6f4108`; reconfig `0x9b6f3bf8` | – | A/C answers DevType with 0x1D to demand re-provisioning / OTA reboot |
 
-**Not bus classes:** `0x65/0x66/0x67` at `0x9b6ef158/1b4/1b8/1bc` are cloud-JSON opcodes; `0x67` never appears on the A/C bus. `handle_deviceID_result` (`0x9b6f0aa2`) matches sub-header bytes (`byte[3]==0x10 && byte[4]==0x24`), not a top-level class. **[PROVEN]**
+**Not bus classes:** `0x65/0x66/0x67` at `0x9b6ef158/1b4/1b8/1bc` are cloud-JSON opcodes. `handle_deviceID_result` (`0x9b6f0aa2`) matches sub-header bytes (`byte[3]==0x10 && byte[4]==0x24`), not a top-level class. **[PROVEN]**
+
+> ⚠️ **Correction 2026-07-28:** this section previously claimed `0x67` "never appears on the A/C bus".
+> That is **DISPROVEN on the wire**: stock emits `f4 f5 00 40 0b 00 00 01 01 fe 01 00 00 67 00 00 01 b3 f4 fb`
+> once per ProductType cycle, right after each `0x66/40` exchange. Observed against a synthetic A/C, so it
+> may be a reaction to our ProductType reply rather than normal traffic. Tracked in issue #110.
 
 **⚖ Resolved (0x66 subtypes):** the bus-protocol thread's two-subtype model (`66 00`=status poll, `66 40`=ProductType) is authoritative, two distinct builders (`0x9b6f2bac` emits `66 00`, `0x9b6f2b0c` emits `66 40`). The field-maps thread's flag table (§5a) is the parser for the **`66 40`** response (`handle_producttype_cmd_result` guards `payload[1]==0x40` @ `0x9b6f0c74`); the `66 00` poll response is consumed inline (`f_electricity`/`f_ecm`/`f_power_display`). Both large responses carry a transparent tail the module forwards to cloud without decoding. **[PROVEN builders; INFERRED that the two large responses share the transparent-tail structure.]**
 

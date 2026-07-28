@@ -33,6 +33,12 @@ sys.path.insert(
 from decode_ac_frames import checksum, split_frames
 
 STX1, STX2, ETX1, ETX2 = 0xF4, 0xF5, 0xF4, 0xFB
+
+# Device-type / sub-type this model reports in the DevType (0x0A) reply, at frame
+# [16]/[17]. Stock latches them and then carries them in envelope [7][8] of every
+# later frame, which is how the value was confirmed on hardware: replying 01 01
+# flipped the module's [7][8] from fe 01 to 01 01. See docs/10 §5d.
+DEVTYPE = (0x01, 0x01)
 STATUS_HDR = bytes(
     [
         0xF4,
@@ -293,23 +299,51 @@ def run(read_fn, write_fn, caps=frozenset()):
                     ac.apply_command(f)
                     write_fn(ac.status_frame())  # echo new state
                 elif cls in (0x0A, 0x07, 0x1E):
-                    # Handshake / keepalive frames (DevType, Version, LINK). The
-                    # A/C is a pure slave: the module matches replies to requests
-                    # by the transaction primitive, not by class, and RX frames
-                    # are hard-gated on byte[2]==0x01 (docs/10 section: "no
-                    # class-demux on RX"). So a faithful slave reply is the request
-                    # echoed back with byte[2] flipped to the RX direction. Without
-                    # this the module's `heard_ac` never latches and it never issues
-                    # the `66 40` ProductType query. (Found running against the real
-                    # module: the status/command replies alone are not enough.)
+                    # Handshake / keepalive frames (DevType, Version, LINK). The A/C is
+                    # a pure slave and the module matches replies to requests by the
+                    # transaction primitive, not by class.
+                    #
+                    # A reply is NOT just the request with byte[2] flipped. Stock's RX
+                    # parser device_package_get_cmd enforces THREE independent response
+                    # flags, and the module's own TX path writes 0x00 into all of them:
+                    #     frame[2]  link resp       must be 0x01  (else -2)
+                    #     frame[5]  net resp        must be 0x01  (else -5)
+                    #     frame[11] transport resp  must be 0x01  (else -6)
+                    # plus payload[2] (frame[15]) = 0x01 as the A/C->module marker.
+                    # Echoing the request leaves [5]/[11] at 0x00, so stock rejects it
+                    # before the class handler ever runs. Our own driver is permissive
+                    # and accepted the echo, which is why this went unnoticed; STATUS_HDR
+                    # above (captured from real hardware) already has all three set.
+                    # Confirmed on hardware: with the gates set, stock accepts DevType and
+                    # walks 0x0A -> 0x07 -> 0x66 -> steady 0x1E.
                     reply = bytearray(f)
                     reply[2] = 0x01
-                    ck = checksum(reply, len(reply) - 4)
-                    reply[-4], reply[-3] = ck >> 8, ck & 0xFF
+                    reply[5] = 0x01
+                    reply[11] = 0x01
+                    if len(reply) > 15:
+                        reply[15] = 0x01
+                    if cls == 0x0A:
+                        # The DevType reply carries device-type at frame[16] and sub-type
+                        # at frame[17]. In the 20-byte request those offsets are the
+                        # CHECKSUM, so the reply must be longer or the peer latches the
+                        # checksum as its device type (which is exactly what the old echo
+                        # did: checksum 01 59 showed up as the module's [7][8]).
+                        reply = bytearray(f[:16])
+                        reply[2] = 0x01
+                        reply[5] = 0x01
+                        reply[11] = 0x01
+                        reply[15] = 0x01
+                        reply.extend(DEVTYPE)  # device-type, sub-type
+                        reply[4] = len(reply) + 4 - 9  # LEN = total - 9
+                        ck = checksum(reply, len(reply))
+                        reply.extend([ck >> 8, ck & 0xFF, ETX1, ETX2])
+                    else:
+                        ck = checksum(reply, len(reply) - 4)
+                        reply[-4], reply[-3] = ck >> 8, ck & 0xFF
                     write_fn(
                         bytes(reply[:2]) + stuff(bytes(reply[2:-2])) + bytes(reply[-2:])
                     )
-                    print(f"  [0x{cls:02X}] handshake poll -> echoed slave reply")
+                    print(f"  [0x{cls:02X}] handshake poll -> slave reply")
         else:
             time.sleep(0.02)
 
