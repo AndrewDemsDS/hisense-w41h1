@@ -332,6 +332,11 @@ def run(read_fn, write_fn, caps=frozenset()):
                         reply[2] = 0x01
                         reply[5] = 0x01
                         reply[11] = 0x01
+                        # source address: a real A/C sends 00 00 on the 0x0A reply
+                        # (docs/10 4.5). The parser ignores [7..10], but match the
+                        # measured frame rather than mirroring the request.
+                        reply[9] = 0x00
+                        reply[10] = 0x00
                         reply[15] = 0x01
                         reply.extend(DEVTYPE)  # device-type, sub-type
                         reply[4] = len(reply) + 4 - 9  # LEN = total - 9
