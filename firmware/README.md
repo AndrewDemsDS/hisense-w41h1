@@ -50,24 +50,16 @@ reopens the commissioning window and swaps fabrics without wiping the device. Th
 six-step phased plan (all done) is preserved in git history; live status, open issues, and the
 fleet-OTA plan for the remaining units live in the **GitHub issue tracker**.
 
-## Flashing a unit: two ways
+## Flashing a unit
 
-A fresh **stock** `AEH-W41H1` can be converted to this firmware **without ever opening it**, or
-via SPI clip:
+A **stock** `AEH-W41H1` is flashed with this firmware over an SPI clip:
 
-1. **OTA conversion, preferred (no disassembly, no CH341A).** The stock firmware ships a live
-   commissionable Matter interface **+ an OTA Requestor cluster (`0x2A`)**, so you commission it
-   (`chip-tool --bypass-attestation-verifier 1`, on the same L2/IoT SSID), repackage the `.ota` to
-   the stock target vid/pid (`5004/13825`), and hand it our image over Matter BDX, its AmebaZ2
-   image processor writes + boots it (same SDK ⇒ same partition layout). Proven on the kitchen unit.
-   Full recipe + the four traps (attestation `604`, cross-VLAN mDNS, `0x0501` retry, vid/pid header):
-   **[docs/12](docs/12-ota-convert-stock-unit.md)**: automated in `scripts/ota_convert_stock.sh`.
-2. **CH341A SPI flash, direct / recovery fallback.** Clip the GD25Q32 and write the app region:
-   `python3 flasher/ch341flash.py built-images/flash_rac-integrated-vNN.bin` (region `0x0–0x140000`,
-   preserves the commissioning KV at `0x2FF000+` → power-cycle, no re-commission). Whole-chip
-   restore: `ch341flash-full.py`; back up first with `ch341dump.py`. See
-   **[docs/10](docs/10-firmware-ota-procedure.md)** (clip-image + recovery details). ⚠️ Handle gently, **repeated clip cycles can ESD-kill
-   the module's RF** (this is how the living-room unit died); prefer the OTA path when the unit is alive.
+**CH341A SPI flash.** Clip the GD25Q32 and write the app region:
+`python3 flasher/ch341flash.py built-images/flash_rac-integrated-vNN.bin` (region `0x0–0x140000`,
+preserves the commissioning KV at `0x2FF000+` → power-cycle, no re-commission). Whole-chip
+restore: `ch341flash-full.py`; back up first with `ch341dump.py`. See
+**[docs/10](docs/10-firmware-ota-procedure.md)** (clip-image + recovery details). ⚠️ Handle gently, **repeated clip cycles can ESD-kill
+the module's RF** (this is how the living-room unit died).
 
 Once on our firmware, version-to-version updates are ordinary **Matter OTA**
 ([docs/10](docs/10-firmware-ota-procedure.md)), no physical access at all.

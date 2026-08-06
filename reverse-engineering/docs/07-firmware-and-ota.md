@@ -1,10 +1,8 @@
 # Firmware update (OTA) & custom-firmware feasibility
 
 > **Answered empirically since this analysis was written.** The "plausible, probably possible"
-> verdict below has been **proven on hardware**: a stock W41H1 is now converted to custom Matter
-> firmware and runs it, full stock→custom OTA conversion procedure in
-> [`firmware/docs/12-ota-convert-stock-unit.md`](../../firmware/docs/12-ota-convert-stock-unit.md).
-> The original feasibility RE is kept below for provenance.
+> verdict below has been **proven on hardware**: a stock W41H1 was converted to custom Matter
+> firmware and runs it. The original feasibility RE is kept below for provenance.
 
 ## Firmware layout
 

@@ -129,9 +129,3 @@ rebooted into the new version, confirmed across three fresh attribute reads.
 The CH341A clip path is the recovery route if OTA is unavailable. `package` also produces the 4 MB
 `flash_rac-integrated-v<N>.bin` for it. See [Recovery & Reflash](Recovery-and-Reflash).
 
-## Converting a still-stock unit over the air
-
-A **stock** W41H1 can be converted to custom firmware with **no clip at all**. Its stock firmware
-already has a live Matter interface + OTA requestor. Full walk-through:
-[Installing the Custom Firmware](Installing-Custom-Firmware) (Path A), with the step-by-step *why* in
-`firmware/docs/12-ota-convert-stock-unit.md`.

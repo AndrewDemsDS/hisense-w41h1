@@ -90,11 +90,6 @@ Reflash with the **CH341A clip** (not flashrom). Region write to repair (preserv
 or whole-chip write of `flash_rac-stock-v1.bin` for a clean restore. Keep `dumps/w41h1_dump1.bin` as
 the net. ([Recovery & Reflash](Recovery-and-Reflash))
 
-## Can I convert a still-stock unit without opening it?
-
-Yes. The stock firmware has a live Matter interface + OTA requestor, so a stock W41H1 can be
-converted **over the air**. No clip, no disassembly. ([Installing the Custom Firmware](Installing-Custom-Firmware) · `firmware/docs/12-ota-convert-stock-unit.md`)
-
 ## How do I find out which features MY A/C has?
 
 Flash the **debug** image and ask it. The A/C reports its own capabilities in a `0x66/40`

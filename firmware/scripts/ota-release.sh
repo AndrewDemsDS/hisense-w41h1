@@ -1336,10 +1336,10 @@ PY
     0)
       say "revert applied: the unit runs STOCK firmware now (it will NOT report v$v -- expected)."
       say "next steps: the unit speaks ConnectLife again. To put it back on custom firmware,"
-      say "re-convert from scratch: firmware/docs/12-ota-convert-stock-unit.md (firmware/scripts/ota_convert_stock.sh)."
-      say "AFTER that re-conversion, run the break-glass ':wipekv' BEFORE trying to commission:"
-      say "the Matter DCT (0x3E0000/0x3ED000) survives the stock round trip, so the stack sees a"
-      say "fabric, takes the 'already commissioned' branch and NEVER advertises BLE (docs/12 step 7)."
+      say "re-flash the custom image over CH341 (firmware/docs/10-firmware-ota-procedure.md)."
+      say "if you re-commission afterwards and the stack takes the 'already commissioned' branch"
+      say "and never advertises BLE, run the break-glass ':wipekv' first: the Matter DCT"
+      say "(0x3E0000/0x3ED000) survives the stock round trip, so a stale fabric can linger."
       # Deliberately NOT writing .released-version: it tracks the CUSTOM line, and a later
       # custom OTA must still be strictly greater than the version that was rolled back.
       ;;
