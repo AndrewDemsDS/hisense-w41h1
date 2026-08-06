@@ -19,7 +19,7 @@ build, not a live measurement.
 |---|---|---|
 | **Cost** | ~€5 BOM (ESP32 board + 3.3 V RS-485 transceiver) | €0 if the module works, plus ~€5 for a CH341A clip you will need anyway |
 | **Sourcing** | Available everywhere | W41H1 is fragile (ESD) and hard to source in the EU |
-| **First flash** | USB, no disassembly of anything | CH341A SPI clip on the GD25Q32, or OTA conversion from stock (`docs/12`) |
+| **First flash** | USB, no disassembly of anything | CH341A SPI clip on the GD25Q32 |
 | **Reproducibility** | Not byte-reproducible | Byte-reproducible since 1.3.5 |
 | **MCU / toolchain** | ESP-IDF 5.5.4, open source, version-pinned in `dependencies.lock`, ~8.3 GB | Realtek AmebaZ2 SDK, proprietary, lives outside the repo, ~32 GB, not pinned |
 | **Transport** | Matter over Wi-Fi (2.4 GHz) | Matter over Wi-Fi (2.4 GHz) |

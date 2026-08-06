@@ -31,7 +31,7 @@ without opening anything.
 | | |
 |---|---|
 | [Hardware and wiring](guide/Hardware-and-Wiring.html) | pinout, the 4-pin module port, RS-485 A/B |
-| [Installing the custom firmware](guide/Installing-Custom-Firmware.html) | CH341A clip, or convert a stock unit over the air |
+| [Installing the custom firmware](guide/Installing-Custom-Firmware.html) | flashing the module over a CH341A SPI clip |
 | [Commissioning and Home Assistant](guide/Commissioning-and-HA-Setup.html) | pairing into python-matter-server and HA |
 | [Everyday control](guide/Everyday-Control.html) | modes, fan, swing, Eco / Quiet / Turbo / Sleep |
 | [OTA updates](guide/OTA-Updates.html) | Matter OTA, the break-glass HTTP path, and the serial trap |

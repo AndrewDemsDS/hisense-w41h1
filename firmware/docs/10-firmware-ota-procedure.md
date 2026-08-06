@@ -384,11 +384,11 @@ in BOTH flavours, gated only by the token being set at build time:
 - `<token>:backup` (>= 1.3.9): stream the inactive (stock) slot's raw image (§17)
 - `<token>:wipekv` (>= 1.3.16): factory-reset the Matter KV (formats both Matter DCT regions,
   `0x3E0000`/`0x3ED000`) and reboot. The cure for the "previously cloud-paired stock unit"
-  commissioning wedge: see [docs/12 §"SendTrustedRootCert wedge"](12-ota-convert-stock-unit.md).
+  commissioning wedge.
   Wlan fast-reconnect data is untouched, but the fresh KV has no CHIP network config, so the
   device comes back **uncommissioned in BLE commissioning mode with Wi-Fi down**: plan to
-  re-commission over BLE (`chip-tool pairing code-wifi ... --bypass-attestation-verifier 1`
-  from a laptop in range), then hand off to HA via `open-commissioning-window`.
+  re-commission over BLE from a laptop in range (the stock certs do not cross-reference, so
+  attestation bypass is required), then hand off to HA via `open-commissioning-window`.
 
   ⚠️ A CH341A clip-copied DCT byte range is **not** equivalent to `:wipekv`. Writing in a
   known-good post-wipe DCT capture via the clip left one unit deterministically wedged at
@@ -503,7 +503,7 @@ brick if you only watch the network:
 - **After converting a unit with a prior custom life back to custom**, the surviving Matter DCT
   (`0x3E0000`/`0x3ED000`) leaves `FabricCount() != 0`, so connectedhomeip's `Server.cpp:520-534`
   takes the "already commissioned" branch and explicitly disables BLE advertising; there is no
-  window to scan for (see [docs/12 step 7](12-ota-convert-stock-unit.md)).
+  window to scan for.
 
 The actual discriminator is the flash **Quad-Enable (QE) bit**. A bootloader rejection routes
 through `boot_load`'s shared failure sink into `hal_flash_return_spi`, which **clears** QE; a
@@ -539,8 +539,8 @@ ota-release.sh revert --flip <unit-ip> [--force]
 The script queries `:slots` first and refuses unless the other slot's serial is below
 `SERIAL_BASE` (stock carries serial 100; custom serials are `SERIAL_BASE + versionInt`), so a
 flip onto an older **custom** image needs `--force`. Guard inside the firmware too: revert
-refuses when the other slot is not older. Returning to custom afterwards = re-run the docs/12
-conversion (stock's dormant OTA Requestor).
+refuses when the other slot is not older. Returning to custom afterwards means re-flashing the
+custom image over CH341 (see above).
 
 **Why it is safe for the cloud binding:** the regions stock needs stay byte-intact under the
 custom firmware (constant-scanned against the deployed image): Wi-Fi profile `0x2FF000`,
@@ -636,7 +636,7 @@ signature) and fw2 erased to 0xFF; `ch341flash-full.py` re-sets QE at the end. B
 ConnectLife rejoins.
 
 ⚠️ That recipe rewrites the **app slots** (fw1/fw2), not the Matter DCT. If a unit instead needs
-its DCT reset (the SendTrustedRootCert wedge, docs/12), do not clip-copy a known-good DCT byte
+its DCT reset (the SendTrustedRootCert wedge), do not clip-copy a known-good DCT byte
 range in as a substitute: one unit treated that way was left deterministically wedged at
 `SendTrustedRootCert` even though every byte matched. Use the firmware's own `<token>:wipekv`
 (§13) whenever the device is reachable; it formats the DCT with the device's own layer instead of
@@ -688,7 +688,7 @@ it did not), then the app slots read out of a clip dump. Pass `--ip <unit-ip>` s
 break-glass probe can run at all; without it the best verdict the script can reach is
 `AMBIGUOUS`.
 
-**Recommended journey.** Right after the FIRST OTA conversion (docs/12), while the stock
+**Recommended journey.** Right after the first conversion to custom firmware, while the stock
 image still sits intact in the inactive slot, fetch a copy of it once and keep the file:
 
 ```
