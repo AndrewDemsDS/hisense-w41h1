@@ -98,3 +98,53 @@ CONFIG_ESP_PHY_REDUCE_TX_POWER=y
 CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
 CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+
+# --- RAM diet (BOTH targets; issue: C3 could not commission without it) ---
+# Found on the ESP32-C3 SuperMini 2026-08-07: with the stock config the node had ~4.7 KB free heap
+# and a min-ever of 16 bytes, and commissioning failed with
+#   E chip[CR]: mbedTLS error: BIGNUM - Memory allocation failed
+#   E chip[FP]: Failed NOC chain validation, VerifyCredentials returned: 4a (CA_CERT_NOT_FOUND)
+# P-256 cert-chain validation could not allocate a bignum, so the chain walk found no CA and the
+# controller was told the NOC was invalid -- it reads as a certificate/attestation fault and is
+# nothing of the kind. Being marginal it also wandered between attempts (a fresh boot got further
+# than a third consecutive try, because fragmentation matters). After these settings:
+# free heap 4,740 -> 119,364 B, min_free 16 -> 46,180 B, and commissioning succeeded first try.
+#
+# These live in the COMMON defaults on purpose. None of them is C3-specific: the classic ESP32 is
+# also a BLE peripheral that only ever talks to one commissioner, also never uses the central or
+# observer roles, and also has the same 11-endpoint data model. It simply has 520 KB SRAM instead
+# of 400 KB, so it was not yet hurting. Keeping one config for both boards is the point -- see
+# sdkconfig.defaults.esp32c3, which is now only the handful of settings that cannot be shared.
+#
+# All are behaviour-neutral: no cluster, endpoint, bus or Matter semantics change, so bench results
+# stay comparable across the two boards. Taken from esp-matter docs/en/optimizations.rst rather
+# than hand-invented.
+
+# We are a BLE peripheral serving one commissioner at a time; central/observer are dead code.
+# These matter DURING commissioning, which is exactly when the heap is tightest (BLE and Wi-Fi are
+# both up and the crypto runs while they are).
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_MAX_BONDS=2
+CONFIG_BT_NIMBLE_MAX_CCCDS=2
+CONFIG_BT_NIMBLE_WHITELIST_SIZE=1
+CONFIG_BT_NIMBLE_GATT_MAX_PROCS=1
+CONFIG_BT_NIMBLE_ENABLE_CONN_REATTEMPT=n
+# Matter runs its own PASE/CASE at the application layer and does not rely on BLE link security.
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
+
+# Move library code out of IRAM/DRAM into flash. Pure DRAM-for-flash trades -- watch the image
+# size, the C3 build sits ~5% under the app partition limit.
+CONFIG_FREERTOS_PLACE_FUNCTIONS_INTO_FLASH=y
+CONFIG_HEAP_PLACE_FUNCTION_INTO_FLASH=y
+CONFIG_RINGBUF_PLACE_FUNCTIONS_INTO_FLASH=y
+# Safe here only because nothing in this firmware printf()s a float -- nano format drops full
+# float conversion. Re-check with a `%f` grep before adding any float logging.
+CONFIG_NEWLIB_NANO_FORMAT=y
+
+# esp-matter statically sizes these tables and the default 16 costs ~550 bytes per unused slot.
+# This device uses endpoints 0..10, so 12 leaves margin without paying for 16. DO NOT trim to the
+# exact count: too low and endpoints silently fail to register, which is far worse than the RAM.
+CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=12
+CONFIG_ESP_MATTER_MAX_DEVICE_TYPE_COUNT=12

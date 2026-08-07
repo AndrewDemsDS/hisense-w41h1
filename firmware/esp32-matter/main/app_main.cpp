@@ -1509,6 +1509,19 @@ static const char *reset_reason_str(esp_reset_reason_t r)
     case ESP_RST_DEEPSLEEP:return "deep sleep wake";
     case ESP_RST_BROWNOUT: return "BROWNOUT (supply sagged)";
     case ESP_RST_SDIO:     return "SDIO";
+    /* The classic ESP32 never reports the reasons below, but the C3 does -- and until they were
+     * listed here they all collapsed into "unknown (N)", which is worse than useless on the one
+     * diagnostic this project uses to decide whether the A/C's 5 V rail is the problem (#12/#83).
+     * PWR_GLITCH especially: it is a supply-integrity reset that is NOT a brownout, so seeing it
+     * as "unknown" would hide exactly the evidence the brownout note asks for. USB/JTAG are the
+     * benign ones -- they are what a reflash or an `idf.py monitor` reset looks like on a board
+     * whose only port is the built-in USB-Serial/JTAG, so they must be distinguishable from a
+     * real fault rather than lumped in with it. */
+    case ESP_RST_USB:        return "USB peripheral reset (reflash / host reset -- benign)";
+    case ESP_RST_JTAG:       return "JTAG reset (debugger -- benign)";
+    case ESP_RST_EFUSE:      return "efuse error";
+    case ESP_RST_PWR_GLITCH: return "POWER GLITCH (supply integrity -- investigate)";
+    case ESP_RST_CPU_LOCKUP: return "CPU lockup (double exception)";
     default:               return "unknown";
     }
 }

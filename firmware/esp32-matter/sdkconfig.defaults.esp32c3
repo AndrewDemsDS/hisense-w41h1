@@ -1,0 +1,56 @@
+# ESP32-C3 target overlay. IDF picks this up AUTOMATICALLY whenever the target is esp32c3:
+# for every entry in SDKCONFIG_DEFAULTS it also reads "<entry>.<target>". So this file is merged
+# on top of sdkconfig.defaults with no change to the build command. Board on the bench: the
+# ESP32-C3 SuperMini (4MB embedded flash, no PSRAM, no USB-UART bridge chip).
+#
+# KEEP THIS FILE SMALL. Only settings that are impossible or wrong on the classic ESP32 belong
+# here; anything that should hold for both boards goes in sdkconfig.defaults, or the two targets
+# drift and we end up maintaining two firmwares. In particular the RAM-diet settings that made
+# commissioning work on the C3 are COMMON -- they are correct on the ESP32 too, just less urgent.
+# Everything below is here because the symbol either does not exist on the ESP32 or means the
+# opposite there.
+
+# --- Console: the SuperMini has NO USB-UART bridge ---
+# The USB-C port goes straight to the C3's built-in USB-Serial/JTAG peripheral (GPIO18/19, not
+# broken out to the header). The IDF default for C3 is still ESP_CONSOLE_UART, which would put
+# every log line on GPIO21 -- a pin nothing is listening to -- and `idf.py monitor` would show a
+# dead port on a perfectly healthy node. The classic ESP32 has no such peripheral and keeps UART.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- Keep the USB PHY alive across Wi-Fi init (C3-only trap) ---
+# soc_caps.h sets SOC_WIFI_PHY_NEEDS_USB_WORKAROUND=1 for esp32c3: the Wi-Fi and USB PHYs
+# interfere, and PHY init leaves the USB peripheral dead unless this workaround is on. The failure
+# is nasty precisely because it looks like a crash -- serial output stops at the exact moment Wi-Fi
+# comes up, which is also the moment the interesting logs (association, Matter bring-up, RS-485
+# handshake) start. The node is fine; you just went blind. On a board whose ONLY local
+# observability path is this USB console, that is not optional. The ESP32 lacks the soc cap, so
+# the symbol does not exist there.
+CONFIG_ESP_PHY_ENABLE_USB=y
+
+# --- Brownout threshold: LOWEST available, same intent as the ESP32, opposite number ---
+# sdkconfig.defaults picks ESP_BROWNOUT_DET_LVL_SEL_0 and explains at length why the LOWEST
+# threshold is deliberate (the A/C's 5 V rail sags under flash-write + Wi-Fi TX peaks; a higher
+# threshold would reset the node instead of riding it out). That symbol does not exist on the C3,
+# and the scale is INVERTED between the two chips:
+#     ESP32:  SEL_0 = 2.43 V (lowest)  ... SEL_7 = 2.80 V (highest)
+#     C3:     SEL_7 = 2.51 V (lowest)  ... SEL_2 = 3.27 V (highest)
+# So the C3 equivalent of the ESP32's SEL_0 is SEL_7 -- the same decision, the opposite number.
+# It happens to also be the IDF default today, but pin it: a future IDF default change would
+# otherwise silently raise the trip point on the exact board that must not reset on a sag, and
+# nothing in the build output would flag it.
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
+CONFIG_ESP_BROWNOUT_DET_LVL=7
+
+# --- RAM diet, the two pieces that are C3-only (the rest is in sdkconfig.defaults) ---
+# SPI_FLASH_ROM_IMPL needs ESP_ROM_HAS_SPI_FLASH, which the C3 ROM has and the classic ESP32 ROM
+# does not. BT_CTRL_RUN_IN_FLASH_ONLY is an option of the RISC-V BLE controller; the ESP32 uses
+# the BTDM controller and has no equivalent. Both trade flash for DRAM.
+CONFIG_SPI_FLASH_ROM_IMPL=y
+CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
+
+# --- Single core ---
+# The C3 is single-core RISC-V, so ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1 (set in sdkconfig.defaults for
+# the dual-core ESP32) does not exist here. It is a "=n" in a defaults file, so Kconfig just warns
+# about an unknown symbol and moves on -- the scoped-WDT-panic intent from sdkconfig.defaults
+# (panic only on tasks we explicitly subscribe and feed, never on idle-task starvation) is
+# unchanged, because CPU0's check is still disabled there.

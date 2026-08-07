@@ -66,5 +66,5 @@ direct_dependencies:
 - espressif/esp_secure_cert_mgr
 - espressif/mdns
 manifest_hash: 23158991195c91464282b0a6d37181b80b3866864ee8d0b7330ae1c3b40c7681
-target: esp32
+target: esp32c3
 version: 2.0.0

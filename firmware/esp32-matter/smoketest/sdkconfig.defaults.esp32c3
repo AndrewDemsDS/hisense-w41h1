@@ -1,0 +1,11 @@
+# ESP32-C3 overlay for the busmon smoketest. Merged automatically on top of sdkconfig.defaults
+# when the target is esp32c3 (IDF reads "<defaults-file>.<target>" for every entry).
+
+# The SuperMini has no USB-UART bridge: its USB-C port is wired to the C3's built-in
+# USB-Serial/JTAG peripheral. IDF still defaults the console to UART on this target, which would
+# send every ESP_LOGI to GPIO21 with nothing attached. busmon is nothing BUT its log output, so
+# without this the app runs perfectly and looks completely dead.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# busmon never brings up Wi-Fi, so the ESP_PHY_ENABLE_USB workaround needed by the Matter app
+# does not apply here -- nothing touches the PHY to knock the USB peripheral over.
