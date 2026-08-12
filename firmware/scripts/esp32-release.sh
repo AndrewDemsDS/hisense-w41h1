@@ -204,7 +204,7 @@ build() {
     say "verified: CONFIG_HISENSE_DEBUG_BUILD=y (console present)"
   fi
 
-  local archive="$IMG/$(img_prefix)-hisense_ac_matter-v$semver.bin"
+  local archive; archive="$IMG/$(img_prefix)-hisense_ac_matter-v$semver.bin"   # split: SC2155
   mkdir -p "$IMG"; cp "$NEW_BIN" "$archive"
   say "archived fresh image -> $archive"
 }
