@@ -46,8 +46,8 @@ CONFIG_CUSTOM_DEVICE_INFO_PROVIDER=y
 # so it (and the fallback NUMBER) MUST stay equal to PROJECT_VER or the device reports a stale
 # softwareVersionString. Edit PROJECT_VER in CMakeLists.txt, then update both lines below.
 # esp32-lint.sh enforces this equality (fails the commit/CI if they drift).
-CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10112
-CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.1.12"
+CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER=10114
+CONFIG_DEVICE_SOFTWARE_VERSION_STRING="1.1.14"
 # --- OTA hardening (faster + reliable on marginal Wi-Fi) ---
 # Delta OTA: ship a diff (tens of KB) instead of the full ~1.5MB image over BDX.
 CONFIG_ENABLE_DELTA_OTA=y
@@ -148,3 +148,4 @@ CONFIG_NEWLIB_NANO_FORMAT=y
 # exact count: too low and endpoints silently fail to register, which is far worse than the RAM.
 CONFIG_ESP_MATTER_MAX_DYNAMIC_ENDPOINT_COUNT=12
 CONFIG_ESP_MATTER_MAX_DEVICE_TYPE_COUNT=12
+

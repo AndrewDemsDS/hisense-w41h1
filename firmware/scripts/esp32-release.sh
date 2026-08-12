@@ -82,9 +82,21 @@ assert_idf_matches_lock() {
   fi
   say "IDF v$live matches dependencies.lock"
 }
+# The built-images archive namespace is PER-TARGET. An esp32 (Xtensa) and an esp32c3 (RISC-V)
+# build can carry the same PROJECT_VER, and they did: v1.1.12 exists for both. A delta generated
+# against the wrong architecture's base is meaningless -- the device verifies the base SHA and
+# refuses it, so it fails safely, but the OTA silently never applies and the reason is not obvious.
+# Derive the target from the generated sdkconfig so the base lookup, the archive name and the
+# patch generator's --chip all agree. Defaults to esp32 when sdkconfig is absent (fresh checkout).
+idf_target() {
+  local t; t=$(sed -n 's/^CONFIG_IDF_TARGET="\(.*\)"/\1/p' "$ESP/sdkconfig" 2>/dev/null | head -1)
+  echo "${t:-esp32}"
+}
+img_prefix() { idf_target; }
+
 int_to_semver_bin() {  # archived full-image path for a given INT, by scanning built-images
   local want="$1" f v
-  for f in "$IMG"/esp32-hisense_ac_matter-v*.bin; do
+  for f in "$IMG"/"$(img_prefix)"-hisense_ac_matter-v*.bin; do
     [ -e "$f" ] || continue
     v=$(sed -n 's#.*-v\([0-9]*\.[0-9]*\.[0-9]*\)\(-DELTA-BASE\)\?\.bin$#\1#p' <<< "$f")
     [ -n "$v" ] && [ "$(semver_to_int "$v")" = "$want" ] && { echo "$f"; return; }
@@ -170,8 +182,12 @@ build() {
     say "flavour: RELEASE (no console) -- node 28 normally wants debug"
   fi
 
-  say "idf.py build ($semver, int $int)"
-  ( cd "$ESP" && idf.py -DSDKCONFIG_DEFAULTS="$sdkdef" set-target esp32 \
+  # set-target was hardcoded to esp32. That silently flipped an esp32c3 tree back to Xtensa (and
+  # wiped its build/ + sdkconfig), producing an image for the wrong architecture with nothing in
+  # the log saying so. Take the target from the existing sdkconfig, overridable with ESP32_TARGET.
+  local target="${ESP32_TARGET:-$(idf_target)}"
+  say "idf.py build ($semver, int $int, target $target)"
+  ( cd "$ESP" && idf.py -DSDKCONFIG_DEFAULTS="$sdkdef" set-target "$target" \
               && idf.py -DSDKCONFIG_DEFAULTS="$sdkdef" build )
   [ -f "$NEW_BIN" ] || die "build produced no $NEW_BIN"
   # Fail loudly rather than shipping a consoleless image by accident.
@@ -181,7 +197,7 @@ build() {
     say "verified: CONFIG_HISENSE_DEBUG_BUILD=y (console present)"
   fi
 
-  local archive="$IMG/esp32-hisense_ac_matter-v$semver.bin"
+  local archive="$IMG/$(img_prefix)-hisense_ac_matter-v$semver.bin"
   mkdir -p "$IMG"; cp "$NEW_BIN" "$archive"
   say "archived fresh image -> $archive"
 }
@@ -210,7 +226,7 @@ package() {
     local base; base="$(int_to_semver_bin "$rel")" || die "delta base for int $rel not in built-images/ (#82)"
     payload="$IMG/esp32-v$int.patch"
     say "delta patch vs base $(basename "$base") -> $(basename "$payload")"
-    "$IDF_PYTHON" "$DELTA_PATCH_GEN" create_patch --chip esp32 \
+    "$IDF_PYTHON" "$DELTA_PATCH_GEN" create_patch --chip "$(idf_target)" \
       --base_binary "$base" --new_binary "$NEW_BIN" --patch_file_name "$payload"
   fi
 

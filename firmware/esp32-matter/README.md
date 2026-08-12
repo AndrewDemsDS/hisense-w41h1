@@ -69,7 +69,7 @@ nothing to edit by hand when you swap boards. Pick your board's column.
 | RS-485 B | → | | | B |
 | | | TX `PA_14` = **GPIO5** → | **GPIO19** → | DI |
 | | | RX `PA_13` = **GPIO6** ← | **GPIO18** ← | RO |
-| | | DE `PA_17` = **GPIO7** → | **GPIO4** → | DE+RE (tied) |
+| | | DE `PA_17` = **GPIO10** → | **GPIO4** → | DE+RE (tied) |
 
 The ESP32 column is the **hardware-validated** set (live bus read confirmed 2026-07-12). The C3
 column is **simulator-validated** (`virtual_ac.py` over a USB-TTL adapter, 2026-08-07: handshake,
@@ -79,9 +79,12 @@ nothing has spoken to a real mainboard on those pins yet.
 > ⚠️ **C3: never put the UART on GPIO18/19.** On the classic ESP32 those are the validated UART
 > pins; on the C3 they are the USB D-/D+ lines feeding the built-in USB-Serial/JTAG. On the
 > SuperMini that USB port is the *only* way in (there is no bridge chip), so muxing them away
-> costs you flashing and console at once. They aren't even on the header. The C3 set (5/6/7) is
-> three consecutive pins on one row, avoiding the strapping pins (2/8/9), USB (18/19) and
-> UART0 (20/21).
+> costs you flashing and console at once. They aren't even on the header. The C3 set avoids the
+> strapping pins (2/8/9), USB (18/19) and UART0 (20/21).
+>
+> ⚠️ **C3 DE is GPIO10** (moved from GPIO7 on 2026-08-10 after a wiring fault shorted the DE/EN
+> line to 3V3). Firmware and wiring must agree: if they disagree the transceiver never gets
+> transmit-enable and `busstats` shows tx_bytes climbing with rx_bytes and evt_total pinned at 0.
 >
 > ⚠️ **C3: fit a ~10k pulldown on DE.** DE floats from power-on until `gpio_init()` runs, and a DE
 > that drifts high parks a second driver on the A/C's RS-485 bus. It presents as intermittent bus

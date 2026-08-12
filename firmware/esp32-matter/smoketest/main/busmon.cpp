@@ -5,7 +5,7 @@
 //
 // Wiring (PinNames.h picks the set from the build target):
 //   classic ESP32     TX=GPIO19->DI, RX=GPIO18<-RO, DE=GPIO4->DE+RE(tied)
-//   ESP32-C3 SuperMini TX=GPIO5 ->DI, RX=GPIO6 <-RO, DE=GPIO7->DE+RE(tied)
+//   ESP32-C3 SuperMini TX=GPIO5 ->DI, RX=GPIO6 <-RO, DE=GPIO10->DE+RE(tied)
 // transceiver A/B -> A/C bus; COMMON GROUND between the board and the A/C bus.
 #include <stdio.h>
 #include "esp_log.h"

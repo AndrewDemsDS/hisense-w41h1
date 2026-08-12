@@ -16,12 +16,17 @@ typedef int PinName;
 // run. Every pin here is a plain GPIO: no strapping pin (2 / 8 / 9), no USB (18 / 19, which
 // carry the only link to the board and are not broken out anyway), no UART0 (20 / 21).
 //
-// NOTE: 5/6/7 double as the JTAG pins MTDI/MTCK/MTDO. That is harmless here -- debugging goes
-// through the C3's BUILT-IN USB-Serial/JTAG, so external JTAG is never muxed in, and the pins
-// boot as ordinary GPIOs.
+// NOTE: 5/6 double as the JTAG pins MTDI/MTCK. That is harmless here -- debugging goes through
+// the C3's BUILT-IN USB-Serial/JTAG, so external JTAG is never muxed in, and the pins boot as
+// ordinary GPIOs.
 #define PA_14   5   // UART1 TX  -> transceiver DI
 #define PA_13   6   // UART1 RX  <- transceiver RO
-#define PA_17   7   // RS-485 DE -> transceiver DE+RE (tied)
+#define PA_17  10   // RS-485 DE -> transceiver DE+RE (tied)
+// DE is GPIO10 as of 2026-08-10; the boards are wired to GPIO10 (confirmed with the user).
+// Originally GPIO7, moved after a wiring fault shorted the DE/EN line to 3V3 on the first board.
+// GPIO10 is a plain GPIO on the SuperMini header: not strapping (2 / 8 / 9), not USB (18 / 19),
+// not UART0 (20 / 21), not a JTAG pin. Firmware and wiring MUST agree -- if they disagree the
+// transceiver never gets transmit-enable and `busstats` shows tx climbing with rx/evt at 0.
 // ⚠️ DE floats until gpio_init() runs. Fit a ~10k pulldown from DE to GND so the transceiver
 // stays in receive through reset and the download-mode window: a DE that drifts high parks a
 // second driver on the A/C's bus and corrupts traffic between the mainboard and everything
