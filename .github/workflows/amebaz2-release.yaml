@@ -53,23 +53,41 @@ jobs:
       # is why this step used to rename everything to *-CI-REBUILD.
       - name: Collect this version's artifacts + checksums
         run: |
-          # built-images/ accumulates versions on a reused runner: reference exact filenames, not globs.
+          # built-images/ accumulates versions on a reused runner: reference exact filenames, not
+          # globs. The build outputs keep their canonical local names (other tooling and the #82
+          # delta-base lookup depend on them); the release assets are COPIES under short, uniform
+          # names that match the esp32 workflow: <target>-v<semver>[-debug].<ext>. Note the asset
+          # version is the SEMVER, matching the tag -- the source filenames use the derived int.
           V=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
+          SEMVER=$(cat firmware/src/version.txt)
           echo "V=$V" >> "$GITHUB_ENV"
           cd firmware/built-images
-          sha256sum "flash_rac-integrated-v$V.bin" "rac-v$V.ota" "rac-v$V.json" \
-                    "flash_rac-integrated-v$V-debug.bin" "rac-v$V-debug.ota" \
-                    "rac-v$V-debug.json" > "SHA256SUMS-v$V.txt"
+          out=release-assets
+          rm -rf "$out"; mkdir -p "$out"
+          cp "flash_rac-integrated-v$V.bin"       "$out/amebaz2-v$SEMVER.bin"
+          cp "rac-v$V.ota"                        "$out/amebaz2-v$SEMVER.ota"
+          cp "rac-v$V.json"                       "$out/amebaz2-v$SEMVER.json"
+          cp "flash_rac-integrated-v$V-debug.bin" "$out/amebaz2-v$SEMVER-debug.bin"
+          cp "rac-v$V-debug.ota"                  "$out/amebaz2-v$SEMVER-debug.ota"
+          cp "rac-v$V-debug.json"                 "$out/amebaz2-v$SEMVER-debug.json"
+          cd "$out"
+          sha256sum "amebaz2-v$SEMVER.bin" "amebaz2-v$SEMVER.ota" "amebaz2-v$SEMVER.json" \
+                    "amebaz2-v$SEMVER-debug.bin" "amebaz2-v$SEMVER-debug.ota" \
+                    "amebaz2-v$SEMVER-debug.json" > "amebaz2-SHA256SUMS.txt"
 
       - name: Attach to the GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true   # auto "What's Changed" from commits/PRs since the last tag
-          files: |
-            firmware/built-images/flash_rac-integrated-v${{ env.V }}.bin
-            firmware/built-images/rac-v${{ env.V }}.ota
-            firmware/built-images/rac-v${{ env.V }}.json
-            firmware/built-images/flash_rac-integrated-v${{ env.V }}-debug.bin
-            firmware/built-images/rac-v${{ env.V }}-debug.ota
-            firmware/built-images/rac-v${{ env.V }}-debug.json
-            firmware/built-images/SHA256SUMS-v${{ env.V }}.txt
+          append_body: true
+          body: |
+            **Target:** AmebaZ2 (RTL8710C) -- the stock AEH-W41H1 module.
+
+            | asset | what it is |
+            |---|---|
+            | `amebaz2-vX.Y.Z.bin` | full-chip flash image, for the CH341 SPI clip |
+            | `amebaz2-vX.Y.Z.ota` | Matter OTA payload + `.json` manifest |
+            | `*-debug.*` | adds the unauthenticated `:2323` console -- bench units only |
+
+            Not interchangeable with the `esp32-v*` releases: different SoC entirely.
+          files: firmware/built-images/release-assets/*
