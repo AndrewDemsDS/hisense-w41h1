@@ -34,7 +34,14 @@ ESP="$REPO/firmware/esp32-matter"
 IMG="$REPO/firmware/built-images"
 CMAKE="$ESP/CMakeLists.txt"
 NEW_BIN="$ESP/build/hisense_ac_matter.bin"
-RELEASED_MARK="$IMG/.released-version-esp32"   # softwareVersion INT last CONFIRMED booted on the ESP32
+# softwareVersion INT last CONFIRMED booted -- PER TARGET. It used to be one shared file, which is
+# wrong the moment two architectures exist: releasing to the C3 wrote the C3's version into the
+# marker the esp32 path reads, so a later esp32 release would compare against a version that board
+# never ran and hunt for an `esp32-…-vX.Y.Z.bin` base that does not exist. That fails safe (the #82
+# gate refuses to build) but the reason is opaque. Keyed on the target, so the esp32 file keeps its
+# original name and meaning and the C3 gets its own. Defined as a function, not a constant, because
+# the target is only known once sdkconfig exists (see idf_target below).
+released_mark() { echo "$IMG/.released-version-$(idf_target)"; }
 
 say() { printf '\033[1;36m[esp32-release]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[esp32-release] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -53,7 +60,7 @@ semver_to_int() {
   echo $(( M*10000 + m*100 + p ))
 }
 cur_int() { semver_to_int "$(cur_semver)"; }
-released_int() { [ -f "$RELEASED_MARK" ] && cat "$RELEASED_MARK" || echo 0; }
+released_int() { local m; m="$(released_mark)"; [ -f "$m" ] && cat "$m" || echo 0; }
 
 # ---- IDF toolchain guard -------------------------------------------------------------------
 # dependencies.lock records the IDF that produced the last committed build. Sourcing a different
@@ -378,7 +385,7 @@ async def main():
     sys.exit(2)
 asyncio.run(main())
 PY
-  then echo "$int" > "$RELEASED_MARK"; say "recorded on-device version $int"; check_subscription_log "$ESP32_NODE_ID"
+  then echo "$int" > "$(released_mark)"; say "recorded on-device version $int ($(idf_target))"; check_subscription_log "$ESP32_NODE_ID"
   else die "flash verification failed for v$int -- version string not sustained or the subscription gate failed (#64); see the [flash] lines above"; fi
 }
 
