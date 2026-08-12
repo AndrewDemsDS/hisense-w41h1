@@ -3,8 +3,10 @@
 // the full-path on-target test: HAL UART TX/RX + DE half-duplex + frame reassembly
 // + status parse, end-to-end against real hardware. No esp-matter yet.
 //
-// Wiring (PinNames.h): ESP32 TX=GPIO19->DI, RX=GPIO18<-RO, DE=GPIO4->DE+RE(tied);
-// transceiver A/B -> A/C bus; COMMON GROUND between ESP32 and the A/C bus.
+// Wiring (PinNames.h picks the set from the build target):
+//   classic ESP32     TX=GPIO19->DI, RX=GPIO18<-RO, DE=GPIO4->DE+RE(tied)
+//   ESP32-C3 SuperMini TX=GPIO5 ->DI, RX=GPIO6 <-RO, DE=GPIO10->DE+RE(tied)
+// transceiver A/B -> A/C bus; COMMON GROUND between the board and the A/C bus.
 #include <stdio.h>
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"

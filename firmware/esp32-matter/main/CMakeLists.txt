@@ -6,7 +6,7 @@ set(HISENSE_SRCS
     "app_main.cpp"
     "../../src/sdk-edits/ElectricalPowerMeasurementDelegate.cpp")
 set(HISENSE_REQUIRES
-    esp_matter hisense_rs485 hisense_hal esp_https_ota esp_http_client esp_netif)
+    esp_matter hisense_rs485 hisense_hal esp_https_ota esp_http_client esp_netif esp_driver_gpio)
 
 if(CONFIG_HISENSE_DEBUG_BUILD)
     list(APPEND HISENSE_SRCS "diag_console.cpp")

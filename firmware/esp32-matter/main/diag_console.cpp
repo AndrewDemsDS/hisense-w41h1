@@ -17,6 +17,9 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
+#include "driver/gpio.h"
+#include "PinNames.h"   // PA_17 (DE) / PA_13 (RX) -- keep pintest in step with the wiring
+
 #include "diag_console.h"
 
 static const char *TAG = "diag";
@@ -361,6 +364,90 @@ static int cmd_bootreason(int, char **)
     return 0;
 }
 
+/* Raw HAL byte/event counters, BELOW the frame layer.
+ *
+ * `poll` only reports decoded frames, so when it says nothing arrived there is no way to tell
+ * apart three completely different faults that all need different fixes:
+ *   TX climbing, RX 0        -> we transmit fine; the fault is the transceiver, the wiring past
+ *                               it, or the A/C. Nothing in the firmware will help.
+ *   TX 0                     -> we never transmit at all; the fault is the driver / DE / UART
+ *                               path, and HISENSE_RS485_HW_MODE is the next thing to try.
+ *   RX > 0 but no frames     -> bytes are arriving but framing or checksum is rejecting them,
+ *                               a different problem again (and `checksum mismatches` tells which).
+ * evt_total/evt_data separate "the UART peripheral raised events" from "those events carried
+ * data", and rx_task_up proves the RX task actually reached its loop rather than dying at init.
+ * Counters live in hisense_hal.c and are already used by the busmon smoketest. */
+extern "C" {
+extern volatile uint32_t g_hal_tx_bytes;  extern volatile uint32_t g_hal_rx_bytes;
+extern volatile uint32_t g_hal_evt_total; extern volatile uint32_t g_hal_evt_data;
+extern volatile uint8_t  g_hal_rx_task_up;
+}
+
+/* Electrical check of the RS-485 DE / transceiver EN line, WITHOUT a meter.
+ *
+ * `busstats` says whether bytes move; it cannot say whether the DE pin is physically free. This
+ * drives DE both ways and reads the PAD back (GPIO_MODE_INPUT_OUTPUT keeps the input buffer alive
+ * on an output), so anything external holding the line shows up remotely:
+ *   drive 0 -> reads 0, drive 1 -> reads 1   pin is FREE. DE is fine; suspect RE/RO downstream.
+ *   drive 0 -> reads 1                       held HIGH externally (short to 3V3). With DE+RE tied
+ *                                            that pins the transceiver in TRANSMIT: the driver is
+ *                                            always on and the RECEIVER IS ALWAYS OFF, which is
+ *                                            exactly "commands work, nothing ever comes back".
+ *   drive 1 -> reads 0                       held LOW externally (short to GND) -> can never
+ *                                            transmit.
+ * The first board in this project had precisely the short-to-3V3 fault, found with a multimeter.
+ *
+ * Side effect, deliberate and small: this asserts the bus driver for ~20 ms. The bus task already
+ * transmits about once a second, so it changes nothing that was not already happening. It does NOT
+ * work in HISENSE_RS485_HW_MODE (the pin belongs to the UART as RTS there), which is one more
+ * reason v1.1.14 went back to the software DE path. */
+static int cmd_pintest(int, char **)
+{
+    const gpio_num_t pin = (gpio_num_t) PA_17;
+    gpio_config_t io = {};
+    io.pin_bit_mask = 1ULL << (int) pin;
+    io.mode         = GPIO_MODE_INPUT_OUTPUT;
+    io.pull_up_en   = GPIO_PULLUP_DISABLE;
+    io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io.intr_type    = GPIO_INTR_DISABLE;
+    gpio_config(&io);
+
+    gpio_set_level(pin, 0); vTaskDelay(pdMS_TO_TICKS(20));
+    int lo = gpio_get_level(pin);
+    gpio_set_level(pin, 1); vTaskDelay(pdMS_TO_TICKS(20));
+    int hi = gpio_get_level(pin);
+    gpio_set_level(pin, 0); vTaskDelay(pdMS_TO_TICKS(20));
+    int lo2 = gpio_get_level(pin);
+
+    printf("DE/EN pin GPIO%d readback:  drive0=%d  drive1=%d  drive0=%d\r\n",
+           (int) pin, lo, hi, lo2);
+    if (lo == 0 && hi == 1 && lo2 == 0)
+        printf("  VERDICT: pin is FREE and follows the driver.\r\n"
+               "  -> DE is not the fault. Suspect RE not tied to DE, or RO -> GPIO%d.\r\n", (int) PA_13);
+    else if (lo == 1 || lo2 == 1)
+        printf("  VERDICT: HELD HIGH externally (short to 3V3?).\r\n"
+               "  -> transceiver stuck in TRANSMIT, receiver permanently disabled.\r\n"
+               "  -> explains working commands with zero bytes ever received.\r\n");
+    else
+        printf("  VERDICT: HELD LOW externally (short to GND?) -> cannot transmit at all.\r\n");
+    return 0;
+}
+
+static int cmd_busstats(int, char **)
+{
+    printf("HAL counters (raw bytes, below the frame layer):\r\n");
+    printf("  tx_bytes   = %lu\r\n", (unsigned long) g_hal_tx_bytes);
+    printf("  rx_bytes   = %lu\r\n", (unsigned long) g_hal_rx_bytes);
+    printf("  evt_total  = %lu   (any UART event dequeued)\r\n", (unsigned long) g_hal_evt_total);
+    printf("  evt_data   = %lu   (UART_DATA events)\r\n", (unsigned long) g_hal_evt_data);
+    printf("  rx_task_up = %u    (RX task reached its loop)\r\n", (unsigned) g_hal_rx_task_up);
+    printf("  run it twice a few seconds apart -- the DELTAS are what matter:\r\n"
+           "   tx rising + rx flat  -> we transmit, nothing comes back: transceiver / wiring / A-C\r\n"
+           "   tx flat              -> we never transmit: driver / DE / UART path\r\n"
+           "   rx rising, no frames -> bytes arrive but framing rejects them (see `poll` checksum)\r\n");
+    return 0;
+}
+
 // Compact codec self-check (subset of the host golden vectors).
 static int cmd_selftest(int, char **)
 {
@@ -482,6 +569,10 @@ extern "C" void diag_console_start(void)
             { "link",     "hexdump the last 0x1E LINK reply (find the real \"77\" bit)", NULL, cmd_link, NULL, NULL },
             { "tx",       "#52 bench probe: tx <offset> <value> — current frame, one byte overridden",
                           NULL, cmd_tx, NULL, NULL },
+            { "busstats", "raw HAL tx/rx byte counters — is the silence ours or theirs?",
+                          NULL, cmd_busstats, NULL, NULL },
+            { "pintest",  "electrical check of the DE/EN pin (drive + read back) — no meter needed",
+                          NULL, cmd_pintest, NULL, NULL },
         };
         for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) esp_console_cmd_register(&cmds[i]);
     }
