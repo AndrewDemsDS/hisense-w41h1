@@ -1,9 +1,9 @@
 name: ESP32 firmware release
 
-# On an `esp32-vX.Y.Z` tag: build the ESP32 image and attach it to the GitHub Release. Runs on the
-# same self-hosted `sdk-builder` runner as the AmebaZ2 build, reusing its installed ESP-IDF +
-# esp-matter (a cold esp-matter bootstrap in a hosted container is slow and fragile). The runner
-# must export two paths so none leak into this workflow:
+# On an `esp32-vX.Y.Z` tag: build BOTH supported targets and attach them to the one GitHub Release.
+# Runs on the same self-hosted `sdk-builder` runner as the AmebaZ2 build, reusing its installed
+# ESP-IDF + esp-matter (a cold esp-matter bootstrap in a hosted container is slow and fragile). The
+# runner must export two paths so none leak into this workflow:
 #   IDF_EXPORT        = <esp-idf>/export.sh   (the IDF matching versions.env IDF_PIN)
 #   ESP_MATTER_EXPORT = <esp-matter>/export.sh
 # Tag-push only, so fork PRs can't reach the runner. stage/flash stay manual.
@@ -20,6 +20,19 @@ jobs:
     # (not `self-hosted`), so this runs-on would never match there. Skip on Gitea.
     if: ${{ github.server_url == 'https://github.com' }}
     runs-on: [self-hosted, sdk-builder]
+    strategy:
+      # One release, two architectures. Serialised on purpose: both jobs attach to the SAME
+      # release, and running them in parallel races on creating it. The builds are minutes, not
+      # hours, so sequential is the cheap way to keep the upload deterministic.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        # esp32   = classic Xtensa dev board
+        # esp32c3 = ESP32-C3 SuperMini (the deployed module). Images are NOT interchangeable:
+        # different architectures entirely, so publishing only one silently ships the wrong
+        # binary for half the fleet. The per-target sdkconfig.defaults.<target> overlay is
+        # picked up automatically by IDF.
+        target: [esp32, esp32c3]
     defaults:
       run:
         shell: bash   # ESP-IDF export.sh + esp-matter export.sh are bash
@@ -35,7 +48,7 @@ jobs:
       # Both flavours are published (#22). Separate build dirs so neither clobbers the other, and
       # RELEASE is built last so build/ ends up holding the image users should deploy. The version
       # int is identical for both by design; the flavour lives in the FILENAME.
-      - name: Build both flavours (reuse the runner's ESP-IDF + esp-matter)
+      - name: Build both flavours for ${{ matrix.target }}
         run: |
           : "${IDF_EXPORT:?set IDF_EXPORT on the runner to the esp-idf export.sh path}"
           : "${ESP_MATTER_EXPORT:?set ESP_MATTER_EXPORT on the runner to the esp-matter export.sh path}"
@@ -44,33 +57,53 @@ jobs:
           # shellcheck disable=SC1090
           . "$ESP_MATTER_EXPORT"
           cd firmware/esp32-matter
-          idf.py set-target esp32
+          idf.py set-target "${{ matrix.target }}"
           idf.py -B build.debug -DSDKCONFIG=sdkconfig.ci.debug \
                  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.debug" build
           idf.py build
 
       - name: Collect artifacts + checksums
         run: |
-          # #89: ESP-IDF builds are not byte-reproducible, so this rebuild is NOT the deployed
-          # image. Critically, delta OTA verifies the BASE image's hash, so a patch built against
-          # this file is rejected by the device. The valid delta base is uploaded under the
-          # canonical name by `esp32-release.sh publish` from the box that flashed the node.
+          # #89: ESP-IDF builds are not byte-reproducible, so these are NOT the deployed images.
+          # Critically, delta OTA verifies the BASE image's hash, so a patch built against these
+          # files is rejected by the device. The valid delta base is uploaded under the canonical
+          # name by `esp32-release.sh publish` from the box that flashed the node. That warning
+          # used to live in a "-CI-REBUILD" filename; it now lives in the release body, so the
+          # asset names can stay short without losing the caveat.
           cd firmware/esp32-matter
-          cp build.debug/hisense_ac_matter.bin build/hisense_ac_matter-debug-CI-REBUILD.bin
-          mv build/hisense_ac_matter.bin build/hisense_ac_matter-CI-REBUILD.bin
-          cd build
-          sha256sum hisense_ac_matter-CI-REBUILD.bin hisense_ac_matter-debug-CI-REBUILD.bin bootloader/bootloader.bin \
-            partition_table/partition-table.bin ota_data_initial.bin flasher_args.json > SHA256SUMS.txt
+          t='${{ matrix.target }}'
+          v="${GITHUB_REF_NAME#esp32-v}"
+          out=release-assets
+          rm -rf "$out"; mkdir -p "$out"
+          cp build.debug/hisense_ac_matter.bin          "$out/$t-v$v-debug.bin"
+          cp build/hisense_ac_matter.bin                "$out/$t-v$v.bin"
+          cp build/bootloader/bootloader.bin            "$out/$t-bootloader.bin"
+          cp build/partition_table/partition-table.bin  "$out/$t-partition-table.bin"
+          cp build/ota_data_initial.bin                 "$out/$t-ota-data.bin"
+          cp build/flasher_args.json                    "$out/$t-flasher-args.json"
+          # Checksum the payload only -- globbing after the sums file exists would try to hash it
+          # while it is being written.
+          cd "$out"
+          sha256sum "$t-v$v.bin" "$t-v$v-debug.bin" "$t-bootloader.bin" \
+                    "$t-partition-table.bin" "$t-ota-data.bin" "$t-flasher-args.json" \
+            > "$t-SHA256SUMS.txt"
 
-      - name: Attach to the GitHub Release
+      - name: Attach ${{ matrix.target }} to the GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true   # auto "What's Changed" from commits/PRs since the last tag
-          files: |
-            firmware/esp32-matter/build/hisense_ac_matter-CI-REBUILD.bin
-            firmware/esp32-matter/build/hisense_ac_matter-debug-CI-REBUILD.bin
-            firmware/esp32-matter/build/bootloader/bootloader.bin
-            firmware/esp32-matter/build/partition_table/partition-table.bin
-            firmware/esp32-matter/build/ota_data_initial.bin
-            firmware/esp32-matter/build/flasher_args.json
-            firmware/esp32-matter/build/SHA256SUMS.txt
+          append_body: true
+          body: |
+            **Targets:** `esp32` (classic Xtensa dev board) and `esp32c3` (SuperMini).
+            The images are architecture-specific and **not interchangeable** -- flash the set
+            matching your board.
+
+            Each target ships a `release` and a `-debug` flavour. The debug flavour adds the
+            unauthenticated `:2323` diagnostic console and is for bench units only.
+
+            > These binaries are **CI rebuilds, not the deployed images**. ESP-IDF builds are not
+            > byte-reproducible and delta OTA verifies the base image's hash, so a patch generated
+            > against these files will be rejected by the device. The canonical delta base is
+            > published separately by `esp32-release.sh publish` from the machine that flashed the
+            > node (#89).
+          files: firmware/esp32-matter/release-assets/*
