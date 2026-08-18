@@ -18,6 +18,13 @@ if git diff --cached --name-only | grep -qE '^firmware/esp32-matter/'; then
 fi
 
 # Prose slop gate: block em dashes in newly-added markdown (no-op when no .md is staged).
+# This is the portable gate every contributor gets.
 bash "$REPO/firmware/scripts/stop-slop.sh" || exit 1
+
+# This repo sets a repo-scoped core.hooksPath, which shadows any global pre-commit. Chain to it
+# so a maintainer's own wider gate (code comments, commit prose) still runs. Absent = skipped,
+# so a plain clone behaves exactly as before. Same pattern as prepare-commit-msg.
+G="$HOME/.local/share/git/hooks/pre-commit"
+[ -x "$G" ] && { "$G" "$@" || exit 1; }
 
 exit 0
