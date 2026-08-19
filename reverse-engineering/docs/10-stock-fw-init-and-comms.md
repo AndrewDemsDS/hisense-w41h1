@@ -698,9 +698,24 @@ tx_override: byte 17 = 0x03 (General) -> no change
 ```
 
 So byte 17 in the `0x65` combined frame **cancels sleep and cannot select a profile**. Any
-non-zero value clears it; none sets one. Setting a profile must therefore arrive some other way,
-which is consistent with the remote setting sleep and mute in one action and with the community
-reference shipping canned `sleep_1..4` frames rather than a field write.
+non-zero value clears it; none sets one.
+
+**RESOLVED the same day.** Setting a profile arrives on the MINIMAL frame, not the combined one,
+and the minimal frame was broken for an unrelated reason: `hisense_build_single_field()` omitted
+`frame[31] = 0x01`, the marker every combined command writes. With it added, byte 17 selects
+every profile:
+
+```
+byte 17 = 0x03 -> sleep_raw 0 -> 2   General
+byte 17 = 0x05 -> sleep_raw 2 -> 4   Old
+byte 17 = 0x07 -> sleep_raw 4 -> 6   Young
+byte 17 = 0x09 -> sleep_raw 6 -> 8   Kids
+byte 17 = 0x01 -> sleep_raw 8 -> 0   off
+```
+
+The encoding decoded from the capability table was right all along; only the carrier was wrong.
+Mute (byte 35) was broken by the same missing byte and is fixed by the same change, which also
+repairs ep4/ep6 on both Matter builds. See `firmware/docs/07`.
 
 **All four profiles confirmed on hardware (2026-08-19)**, by rotating them on the A/C's remote:
 
@@ -721,10 +736,6 @@ pure byte-17 change on the A/C's side. So the carrier we are missing has to set 
 sleep is already on, without disturbing mute, which is a narrower target than "sleep is a
 composite action".
 
-The remaining lead is a capture of the STOCK dongle talking to the mainboard while the
-ConnectLife app sets a sleep profile. The RS-485 bus only carries module-to-mainboard traffic, so
-the A/C's own remote cannot be sniffed this way; one of the fleet's still-stock units is the
-source. `reverse-engineering/tools/sniff.py` is the tool.
 
 Note byte 37 already carries the horizontal-swing companion (`0x14`, bits 2 and 4) while
 `t_8heat` occupies bits 0 and 1, so an implementation must OR into that byte rather than

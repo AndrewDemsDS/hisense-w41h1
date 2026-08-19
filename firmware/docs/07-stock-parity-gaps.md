@@ -19,8 +19,8 @@ to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` fl
 | Fan (6 discrete speeds) | ✅ | ✅ | ✅ | FanControl mode + percent |
 | Eco / power-save | ✅ | ✅ | ✅ | ep3 OnOff "Eco" + mfg `0xFFF1FC00/0x0000` |
 | Turbo / boost | ✅ | ✅ | ✅ | ep5 OnOff "Turbo" + mfg `/0x0002` |
-| Mute / quiet | ✅ | ✅ | ⚠️ | ep4 OnOff "Quiet" + mfg `/0x0002`. **Matter builds send a frame the A/C ignores**, see the note below. Fixed on the ESPHome path only. |
-| Sleep profile (4) | ✅ | ✅ | ❌ | ep6 ModeSelect. Ignored by the A/C on every frame tried; see docs/10 7.4c. |
+| Mute / quiet | ✅ | ✅ | ✅ | ep4 OnOff "Quiet" + mfg `/0x0002`; `hisense_build_mute_frame`, fixed 2026-08-19 (see the note below). |
+| Sleep profile (4) | ✅ | ✅ | ✅ | ep6 ModeSelect; `hisense_build_sleep_frame`, fixed 2026-08-19. All four profiles verified. |
 | Aux/PTC heat relay | ✅ | – | ✅ | ep7 BooleanState (read-only status) |
 | Outdoor + coil temp | ✅ | – | ✅ | ep2 / ep8 TemperatureMeasurement |
 | Power (V/I/W) | ✅ | – | ✅ | ElectricalPowerMeasurement (see #16, `power_estimate.h`) |
@@ -76,23 +76,24 @@ a capability invisible while the field name held `ac_purify`. `ac_enable_8heat` 
 `diag_console` `features` command, both now print the extended tier or explicitly say UNKNOWN.
 
 
-## Mute and sleep: the frame the A/C ignores (2026-08-19)
+## Mute and sleep: one missing byte (2026-08-19, FIXED)
 
-Both Matter builds send these two through `hisense_build_mute_frame` / `hisense_build_sleep_frame`
-(`matter_drivers.cpp` 830/855, `app_main.cpp` 237/243). Those build a MINIMAL frame: a zeroed
-buffer, the header, `f[23]=0x04` and the one named byte. On a live `CF35LR03G` that frame is
-accepted on the wire and then ignored.
+Both were broken on all three firmwares and are now fixed in the shared driver, with no change
+at any call site.
 
-The combined command frame differs in more than the named byte. It also writes `frame[31]=0x01`
-and the companion bytes, and every control that rides it works. Sending mute as the combined
-frame with byte 35 patched via `hisense_build_command_override()` fixed Quiet immediately: the
-switch held and the A/C dropped the fan to quiet, logging `A/C mute 0 -> 1 (fan_raw 0x02)`.
+`hisense_build_mute_frame` / `hisense_build_sleep_frame` build from a zeroed buffer: header,
+`f[23]=0x04`, and the one named byte. Every COMBINED command also writes `frame[31] = 0x01`.
+Every control riding the combined frame worked; both single-field frames were accepted on the
+wire and silently ignored. Adding that marker to `hisense_build_single_field()` fixed both.
 
-**Quiet is therefore broken on both Matter builds and fixed only on the ESPHome path.** The port
-is a shared-driver change (the builders need the caller's `HisenseCommand` shadow to build a
-combined frame), so it is not a drop-in edit and needs a rebuild of both Matter images to verify.
+Verified on a live `CF35LR03G`: all four sleep profiles select (`sleep_raw` 2/4/6/8, and 0 for
+off), the Sleep select entity reads every option back, and mute engages with `fan_raw 0x02`.
 
-Sleep is not fixed by the same change. Its encoding is confirmed correct from a stock dump
-(command byte 17, `profile*2+1`, docs/10 7.4c) and the A/C still ignores it, so the open question
-is whether this indoor unit implements sleep at all. The discriminator is pressing Sleep on the
-A/C's own remote and watching `sleep_raw`.
+What made it hard to see is worth remembering. From `sleep_raw = 0`, "selected a profile" and
+"ignored" are the same observation, and byte 17 in the combined frame *does* act, but only to
+cancel. Every probe from a zero start therefore looked like silence. Setting a profile on the
+A/C's own remote first, then commanding a different one, is what separated the two cases.
+
+**Both Matter builds call the same two builders** (`matter_drivers.cpp` 830/855,
+`app_main.cpp` 237/243), so their ep4 Quiet and ep6 Sleep are fixed by this driver change.
+Neither image has been rebuilt to confirm it on hardware yet.
