@@ -188,6 +188,37 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
            f"{before.get('swing_mode')} -> {after.get('swing_mode')}")
     node.no_collateral("swing", before, {"swing_mode"})
 
+    # --- 4b. FULL FAN LADDER ----------------------------------------------------------
+    # All seven steps, not just a sample. Five arrive as ESPHome's built-in enum and two stay
+    # custom, and the split is invisible to the caller -- which is exactly why the enum path
+    # went unnoticed when it was broken.
+    print("[fan ladder: all 7 steps]")
+    for name in ("Auto", "Quiet", "Low", "Medium-low", "Medium", "Medium-high", "High"):
+        before = node.climate_snapshot()
+        client.climate_command(key=node.climate.key, custom_fan_mode=name)
+        await asyncio.sleep(settle)
+        after = node.climate_snapshot()
+        moved = (before.get("fan_mode") != after.get("fan_mode")
+                 or before.get("custom_fan_mode") != after.get("custom_fan_mode"))
+        record(f"fan {name}", moved or name == "Auto",
+               f"fan_mode={after.get('fan_mode')} custom={after.get('custom_fan_mode')}")
+        node.no_collateral(f"fan {name}", before, {"fan_mode", "custom_fan_mode"})
+
+    # --- 4c. MODE SWEEP ----------------------------------------------------------------
+    # HEAT is deliberately skipped: it would heat the room to prove a mapping the host tests
+    # already cover. Cool / dry / fan-only / heat-cool exercise the same code path.
+    print("[mode sweep]")
+    for label, mode_val in (("cool", 2), ("dry", 5), ("fan_only", 4), ("heat_cool", 1)):
+        before = node.climate_snapshot()
+        client.climate_command(key=node.climate.key, mode=mode_val)
+        await asyncio.sleep(settle)
+        after = node.climate_snapshot()
+        record(f"mode {label}", str(after.get("mode")) == str(mode_val),
+               f"wanted {mode_val}, got {after.get('mode')}")
+        # A mode change legitimately moves the action, and dry/turbo may move the fan.
+        node.no_collateral(f"mode {label}", before,
+                           {"mode", "fan_mode", "custom_fan_mode", "target_temperature"})
+
     # --- 5. THE DISPLAY REGRESSION ----------------------------------------------------
     # Turn the panel off, then drive eco, turbo and quiet in turn. Each of those sends a
     # frame carrying byte 36; before the fix they re-lit the panel while the switch still
@@ -219,8 +250,15 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
             # Turbo is not a pure flag: the A/C itself forces fan high and setpoint 16 C when
             # it engages (hardware-confirmed, see the turbo_on comment in hisense_rs485.h).
             # That is the unit's behaviour, not shadow drift, so it is expected here.
-            allowed = ({"target_temperature", "fan_mode", "custom_fan_mode"}
-                       if mode_name == "Turbo" else set())
+            # Turbo and Quiet are not pure flags: the A/C forces fan high + setpoint 16 C for
+            # turbo, and drops the fan to quiet for mute (both hardware-confirmed in
+            # hisense_rs485.h). Those are the unit's behaviour, not shadow drift.
+            if mode_name == "Turbo":
+                allowed = {"target_temperature", "fan_mode", "custom_fan_mode", "mode"}
+            elif mode_name == "Quiet":
+                allowed = {"fan_mode", "custom_fan_mode"}
+            else:
+                allowed = set()
             node.no_collateral(f"{mode_name}", before, allowed)
             # put it back
             client.switch_command(key=e.key, state=bool(was))

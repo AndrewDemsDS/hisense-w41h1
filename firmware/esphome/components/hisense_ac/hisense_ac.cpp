@@ -183,14 +183,6 @@ void HisenseAC::send_command() {
     ESP_LOGW(TAG, "command frame dropped: TX queue full");
 }
 
-/// The single-field frames (mute, sleep) are built from a zeroed buffer, so they also write
-/// byte 36 = 0x00 and re-light the panel. Re-assert only when the user wants it OFF: when the
-/// preference is ON, the 0x00 those frames send already agrees and costs nothing.
-void HisenseAC::reassert_display_if_off() {
-  if (this->display_pref_ == HISENSE_DISPLAY_OFF)
-    this->send_command();
-}
-
 void HisenseAC::send_power(bool on) {
   uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
   size_t len = hisense_build_power_frame(on, frame, sizeof(frame));
@@ -198,20 +190,37 @@ void HisenseAC::send_power(bool on) {
     ESP_LOGW(TAG, "power %s frame not sent", on ? "on" : "off");
 }
 
+/* Mute and sleep ride the COMBINED frame with one byte patched, not the driver's minimal
+ * single-field frame. On a real A/C (2026-08-19) both single-field frames were accepted on the
+ * wire and then ignored: the switch never held and the status never changed, while every
+ * combined-frame control worked. The frames differ in more than the named byte -- the combined
+ * builder also writes frame[31] = 0x01 and the companion bytes, which the zeroed single-field
+ * buffer omits -- and the driver's own header flags exactly this ("bench-check the dongle's
+ * exact mute/sleep frames if either is ignored by the A/C").
+ *
+ * hisense_build_command_override() exists for this: it reproduces the proven frame byte for
+ * byte with ONE pre-checksum byte replaced. Both targets are bytes the combined builder writes
+ * as 0x00 (mute @35, sleep @17; swing lives at 32), so patching them costs nothing else, and
+ * the frame carries the current shadow including the display preference. */
 void HisenseAC::send_mute(bool on) {
   uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
-  size_t len = hisense_build_mute_frame(on, frame, sizeof(frame));
+  this->cmd_.display = this->display_pref_;
+  size_t len = hisense_build_command_override(&this->cmd_, frame, sizeof(frame), 35,
+                                              on ? 0x30 : 0x10);
   if (len == 0 || !hisense_send_frame(frame, len))
     ESP_LOGW(TAG, "mute frame not sent");
-  this->reassert_display_if_off();
 }
 
 void HisenseAC::send_sleep(uint8_t profile) {
   uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
-  size_t len = hisense_build_sleep_frame(profile, frame, sizeof(frame));
+  if (profile > 4)
+    profile = 0;
+  // Same encoding the driver's sleep frame used: 0 = off (0x01), 1..4 = profile * 2 + 1.
+  uint8_t v = (profile == 0) ? 0x01 : (uint8_t) (profile * 2 + 1);
+  this->cmd_.display = this->display_pref_;
+  size_t len = hisense_build_command_override(&this->cmd_, frame, sizeof(frame), 17, v);
   if (len == 0 || !hisense_send_frame(frame, len))
     ESP_LOGW(TAG, "sleep frame not sent");
-  this->reassert_display_if_off();
 }
 
 void HisenseAC::dump_config() {

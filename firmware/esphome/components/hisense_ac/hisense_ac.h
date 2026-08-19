@@ -122,7 +122,6 @@ class HisenseAC : public Component {
   volatile bool link_up_{false};
   volatile bool link_dirty_{false};
 
-  void reassert_display_if_off();
   void publish_telemetry_(const HisenseState &state);
   void publish_diagnostics_();
 
