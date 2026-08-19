@@ -702,6 +702,25 @@ non-zero value clears it; none sets one. Setting a profile must therefore arrive
 which is consistent with the remote setting sleep and mute in one action and with the community
 reference shipping canned `sleep_1..4` frames rather than a field write.
 
+**All four profiles confirmed on hardware (2026-08-19)**, by rotating them on the A/C's remote:
+
+```
+sleep_raw 0 -> 4    Old       + mute 0 -> 1 (fan_raw 0x02)
+sleep_raw 4 -> 6    Young
+sleep_raw 6 -> 8    Kids
+sleep_raw 8 -> 0    off
+sleep_raw 0 -> 2    General
+```
+
+`sleep_raw = profile * 2` therefore holds for every profile, not just the General case seen
+first, which closes the status side of `t_sleep` completely.
+
+Note where the mute edge falls: ONCE, when sleep first engages, and never again as the profile
+changes. Engaging sleep also engages mute with a quiet fan; switching profile within sleep is a
+pure byte-17 change on the A/C's side. So the carrier we are missing has to set a profile while
+sleep is already on, without disturbing mute, which is a narrower target than "sleep is a
+composite action".
+
 The remaining lead is a capture of the STOCK dongle talking to the mainboard while the
 ConnectLife app sets a sleep profile. The RS-485 bus only carries module-to-mainboard traffic, so
 the A/C's own remote cannot be sniffed this way; one of the fleet's still-stock units is the
