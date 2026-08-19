@@ -72,6 +72,8 @@ class HisenseAC : public Component {
   void tx_override(int offset, int value);
   /// Two-byte variant: some controls are not a single field write (sleep + mute together).
   void tx_override2(int off1, int val1, int off2, int val2);
+  /// Send the MINIMAL (single-field) frame: one field set, everything else 'leave alone'.
+  void tx_single(int offset, int value);
 
   /// The command shadow. Entities mutate this, then call send_command().
   HisenseCommand &cmd() { return this->cmd_; }

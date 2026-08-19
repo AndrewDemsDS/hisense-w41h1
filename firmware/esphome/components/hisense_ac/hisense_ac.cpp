@@ -220,6 +220,18 @@ void HisenseAC::tx_override2(int off1, int val1, int off2, int val2) {
     ESP_LOGW(TAG, "tx_override2 frame dropped: TX queue full");
 }
 
+void HisenseAC::tx_single(int offset, int value) {
+  // Deliberately NOT the combined frame: this is the shape a generic attribute setter would
+  // send, one field set and every other byte left at 0x00 ("leave alone").
+  uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
+  size_t len = (offset == 17) ? hisense_build_sleep_frame((uint8_t) ((value - 1) / 2), frame,
+                                                          sizeof(frame))
+                              : hisense_build_mute_frame(value == 0x30, frame, sizeof(frame));
+  ESP_LOGI(TAG, "tx_single: byte %d = 0x%02X (len %u)", offset, (unsigned) value, (unsigned) len);
+  if (len == 0 || !hisense_send_frame(frame, len))
+    ESP_LOGW(TAG, "tx_single frame not sent");
+}
+
 void HisenseAC::send_power(bool on) {
   uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
   size_t len = hisense_build_power_frame(on, frame, sizeof(frame));
@@ -227,35 +239,27 @@ void HisenseAC::send_power(bool on) {
     ESP_LOGW(TAG, "power %s frame not sent", on ? "on" : "off");
 }
 
-/* Mute and sleep ride the COMBINED frame with one byte patched, not the driver's minimal
- * single-field frame. On a real A/C (2026-08-19) both single-field frames were accepted on the
- * wire and then ignored: the switch never held and the status never changed, while every
- * combined-frame control worked. The frames differ in more than the named byte -- the combined
- * builder also writes frame[31] = 0x01 and the companion bytes, which the zeroed single-field
- * buffer omits -- and the driver's own header flags exactly this ("bench-check the dongle's
- * exact mute/sleep frames if either is ignored by the A/C").
+/* Mute and sleep use the driver's MINIMAL single-field frame, which is what the stock module's
+ * generic attribute setter sends: one field set, every other byte 0x00 = "leave alone".
  *
- * hisense_build_command_override() exists for this: it reproduces the proven frame byte for
- * byte with ONE pre-checksum byte replaced. Both targets are bytes the combined builder writes
- * as 0x00 (mute @35, sleep @17; swing lives at 32), so patching them costs nothing else, and
- * the frame carries the current shadow including the display preference. */
+ * That frame was ignored by the A/C until 2026-08-19, when the cause turned out to be a single
+ * missing byte: frame[31] = 0x01, which every combined command writes and the zeroed buffer
+ * omitted. With the marker added in hisense_build_single_field(), both attributes work: all
+ * four sleep profiles select (sleep_raw 2/4/6/8) and mute engages with fan_raw 0x02.
+ *
+ * The minimal frame is preferable to patching the combined one, because it leaves mode,
+ * setpoint, fan and swing alone instead of re-asserting the shadow on every mute or sleep. */
 void HisenseAC::send_mute(bool on) {
   uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
   this->cmd_.display = this->display_pref_;
-  size_t len = hisense_build_command_override(&this->cmd_, frame, sizeof(frame), 35,
-                                              on ? 0x30 : 0x10);
+  size_t len = hisense_build_mute_frame(on, frame, sizeof(frame));
   if (len == 0 || !hisense_send_frame(frame, len))
     ESP_LOGW(TAG, "mute frame not sent");
 }
 
 void HisenseAC::send_sleep(uint8_t profile) {
   uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
-  if (profile > 4)
-    profile = 0;
-  // Same encoding the driver's sleep frame used: 0 = off (0x01), 1..4 = profile * 2 + 1.
-  uint8_t v = (profile == 0) ? 0x01 : (uint8_t) (profile * 2 + 1);
-  this->cmd_.display = this->display_pref_;
-  size_t len = hisense_build_command_override(&this->cmd_, frame, sizeof(frame), 17, v);
+  size_t len = hisense_build_sleep_frame(profile, frame, sizeof(frame));
   if (len == 0 || !hisense_send_frame(frame, len))
     ESP_LOGW(TAG, "sleep frame not sent");
 }

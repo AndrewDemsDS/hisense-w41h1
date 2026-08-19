@@ -733,6 +733,53 @@ assign, exactly as a bit-packed frame implies.
 These are testable from the debug console with no firmware change:
 `tx 37 0x03` should engage 8 C heat, `tx 37 0x01` should clear it.
 
+
+### 7.4d Full capability table decoded from a stock dump (2026-08-19)
+
+All 60 `t_`/`f_` records in the stock module's table, decoded with the 7.4a/7.4b
+rules. The nine command bytes 7.4b confirmed independently all reproduce here, which is the
+cross-check that the walk is right: `t_eco`/`t_super` 33, `t_up_down`/`t_left_right` 32,
+`t_temp` 19, `t_fan_speed` 16, `t_dimmer` 36, `t_purify` 34, `t_8heat` 37.
+
+**There is no second sleep attribute.** `t_sleep` is the only sleep record, so the missing
+profile-set path is not another field we failed to write.
+
+| attribute | `desc` | status | command |
+|---|---|---|---|
+| `t_8heat` | `083e0116` | byte 77 bit 0, 1-bit | byte 37, shift 1 |
+| `t_anion` | `0c070106` | byte 22 bit 4, 1-bit | byte 21, shift 1 |
+| `t_dal` | `0e44052c` | byte 83 bit 6, 1-bit | byte 59, shift 5 |
+| `t_demand_response` | `0f44072c` | byte 83 bit 7, 1-bit | byte 59, shift 7 |
+| `t_dimmer` | `0f160715` | byte 37 bit 7, 1-bit | byte 36, shift 7 |
+| `t_eco` | `0a140512` | byte 35 bit 2, 1-bit | byte 33, shift 5 |
+| `t_fan_mute` | `0a150514` | byte 36 bit 2, 1-bit | byte 35, shift 5 |
+| `t_fan_speed` | `39010101` | byte 16 bit 1, 7-bit | byte 16, shift 1 |
+| `t_fan_speed_s` | `38000101` | byte 15 bit 0, 7-bit | byte 16, shift 1 |
+| `t_fanspeedCV` | `383b0119` | byte 74 bit 0, 7-bit | byte 40, shift 1 |
+| `t_fresh_air` | `0e661f03` | byte 117 bit 6, 1-bit | byte 18, shift 7 |
+| `t_humidity` | `38040104` | byte 19 bit 0, 7-bit | byte 19, shift 1 |
+| `t_left_right` | `0e140511` | byte 35 bit 6, 1-bit | byte 32, shift 5 |
+| `t_pump` | `0d070306` | byte 22 bit 5, 1-bit | byte 21, shift 3 |
+| `t_purify` | `0f150713` | byte 36 bit 7, 1-bit | byte 34, shift 7 |
+| `t_sleep` | `39020102` | byte 17 bit 1, 7-bit | byte 17, shift 1 |
+| `t_super` | `09140312` | byte 35 bit 1, 1-bit | byte 33, shift 3 |
+| `t_swing_angle` | `19130110` | byte 34 bit 1, 3-bit | byte 31, shift 1 |
+| `t_swing_direction` | `18450120` | byte 84 bit 0, 3-bit | byte 47, shift 1 |
+| `t_swing_follow` | `1441021a` | byte 80 bit 4, 2-bit | byte 41, shift 2 |
+| `t_talr` | `0d44032c` | byte 83 bit 5, 1-bit | byte 59, shift 3 |
+| `t_temp` | `38040104` | byte 19 bit 0, 7-bit | byte 19, shift 1 |
+| `t_temp_compensate` | `240b0408` | byte 26 bit 4, 4-bit | byte 23, shift 4 |
+| `t_temp_type` | `090b0108` | byte 26 bit 1, 1-bit | byte 23, shift 1 |
+| `t_tms` | `0e450520` | byte 84 bit 6, 1-bit | byte 47, shift 5 |
+| `t_up_down` | `0f140711` | byte 35 bit 7, 1-bit | byte 32, shift 7 |
+| `t_work_mode` | `1c030503` | byte 18 bit 4, 3-bit | byte 18, shift 5 |
+
+Controls this repo does not implement yet, with their command bytes now known:
+`t_anion` (21), `t_pump` (21), `t_swing_direction` (47), `t_swing_follow` (41),
+`t_fanspeedCV` (40), `t_temp_compensate` (23), and `t_dal` / `t_talr` /
+`t_demand_response` (all 59). Status fields beyond the 160-byte window we parse also
+appear: `f_cool_qvalue` at 153, `f_heat_qvalue` at 155, `t_fresh_air` at 117.
+
 ### 7.5 The extractor, and what static RE has now settled
 
 A status-bit extractor lives at **`0x9b6f8ac8`** (file `0x28ac8`). It loads a RAM struct pointer

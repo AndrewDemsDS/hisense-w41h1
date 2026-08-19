@@ -456,6 +456,12 @@ static size_t hisense_build_single_field(uint8_t off, uint8_t val, uint8_t *out,
     memset(f, 0, sizeof(f));
     memcpy(f, HISENSE_CMD_HEADER, HISENSE_CMD_HEADER_LEN);
     f[23]  = 0x04;
+    // frame[31] = 0x01 is written by EVERY combined command, and every control that rides the
+    // combined frame works while both single-field frames were accepted and ignored on a real
+    // A/C (2026-08-19). The zeroed buffer omitted it, so a minimal frame was missing whatever
+    // that marker means to the mainboard. Setting it here is the difference between this frame
+    // and the combined one that is NOT the target field.
+    f[31]  = 0x01;
     f[off] = val;
     finalize_frame(f, HISENSE_CMD_CHK_OFFSET, HISENSE_CMD_END_OFFSET);
     return hisense_stuff_checksum(f, HISENSE_CMD_FRAME_LEN, out, cap);

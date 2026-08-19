@@ -65,7 +65,13 @@ api:
         offset2: int
         value2: int
       then:
-        - lambda: 'id(ac_bus).tx_override2(offset, value, offset2, value2);' 
+        - lambda: 'id(ac_bus).tx_override2(offset, value, offset2, value2);'
+    - service: tx_single
+      variables:
+        offset: int
+        value: int
+      then:
+        - lambda: 'id(ac_bus).tx_single(offset, value);' 
 
 ota:
   - platform: esphome
@@ -115,17 +121,13 @@ switch:
     display:
       name: Panel display
 
-# Sleep is commented out until its command encoding is known. The A/C reports t_sleep as
-# supported, and the status side is confirmed (byte 17 = profile * 2), but nothing we send moves
-# it: byte 17 = profile*2+1 is inherited from a 3-speed reference implementation and was never
-# confirmed on a W41H1. Verified on hardware 2026-08-19 -- all five profiles commanded, the
-# frame demonstrably accepted (it cleared mute via byte 35), and sleep_raw never moved once.
-# An entity that silently does nothing is worse than no entity; re-enable when the byte is found.
-# select:
-#   - platform: hisense_ac
-#     hisense_ac_id: ac_bus
-#     sleep_profile:
-#       name: Sleep profile
+# Sleep works as of 2026-08-19. All four profiles verified on a live A/C (sleep_raw 2/4/6/8),
+# once the minimal command frame gained frame[31] = 0x01, the marker it had been missing.
+select:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    sleep_profile:
+      name: Sleep profile
 
 sensor:
   - platform: hisense_ac
