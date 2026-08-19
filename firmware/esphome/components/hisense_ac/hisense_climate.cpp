@@ -153,9 +153,18 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
     wanted_index = (int8_t) esphome_fan_enum_to_index((uint8_t) *call.get_fan_mode());
   }
   if (wanted_index >= 0) {
-    cmd.fan = esphome_fan_index_to_hisense((uint8_t) wanted_index);
+    if (wanted_index == 1) {
+      // "Quiet" is not reachable through the fan byte on this unit. Commanding fan 0x03 (the
+      // 3-speed reference's "mute" value, flagged // VERIFY in the driver and never confirmed
+      // on a W41H1) put the A/C on HIGH. The A/C reaches quiet via the MUTE flag instead:
+      // toggling mute drove fan_raw to 0x02 on hardware 2026-08-19, which is what the driver
+      // documents ("also sets fan_raw=0x02 quiet").
+      this->parent_->send_mute(true);
+    } else {
+      cmd.fan = esphome_fan_index_to_hisense((uint8_t) wanted_index);
+      send_combined = true;
+    }
     this->publish_fan_index((uint8_t) wanted_index);
-    send_combined = true;
   }
 
   if (call.get_swing_mode().has_value()) {

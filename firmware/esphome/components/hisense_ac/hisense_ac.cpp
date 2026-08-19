@@ -79,6 +79,14 @@ void HisenseAC::loop() {
   ESP_LOGD(TAG, "RX status: power=%d mode=%d setpoint=%d indoor=%d fan_raw=0x%02X holdoff=%d",
            state.power_on, (int) state.mode, state.setpoint_c, state.indoor_temp_c, state.fan_raw,
            this->in_command_holdoff());
+  // Edge-logged at INFO because these two are how the A/C answers a mute or sleep command, and
+  // a command that is accepted-then-ignored looks identical to one that was never sent unless
+  // you can see the raw byte move. Silent in steady state.
+  if (this->last_.valid && state.sleep_raw != this->last_.sleep_raw)
+    ESP_LOGI(TAG, "A/C sleep_raw %u -> %u", this->last_.sleep_raw, state.sleep_raw);
+  if (this->last_.valid && state.mute_on != this->last_.mute_on)
+    ESP_LOGI(TAG, "A/C mute %d -> %d (fan_raw 0x%02X)", this->last_.mute_on, state.mute_on,
+             state.fan_raw);
   this->last_ = state;
 
   // Keep the command shadow tracking reality, so a later single-field write rebuilds the
