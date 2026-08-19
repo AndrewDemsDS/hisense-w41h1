@@ -57,7 +57,15 @@ api:
         offset: int
         value: int
       then:
-        - lambda: 'id(ac_bus).tx_override(offset, value);' 
+        - lambda: 'id(ac_bus).tx_override(offset, value);'
+    - service: tx_override2
+      variables:
+        offset: int
+        value: int
+        offset2: int
+        value2: int
+      then:
+        - lambda: 'id(ac_bus).tx_override2(offset, value, offset2, value2);' 
 
 ota:
   - platform: esphome

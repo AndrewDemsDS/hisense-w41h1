@@ -667,9 +667,45 @@ different frame class than the `0x65` combined command (the community reference 
 all and the module advertises it because the capability table is the MODULE's generic table,
 refined per model only by the ProductType tree (docs/11 5.1).
 
-**The cheap discriminator, not yet run:** press Sleep on the A/C's own remote and watch
-`sleep_raw`. If it moves, the unit implements sleep and the command path is wrong; if it never
-moves, the model does not implement it and the firmware is already correct.
+**Discriminator RUN 2026-08-19: the unit DOES implement sleep.** Pressing Sleep on the A/C's own
+remote moved the byte:
+
+```
+A/C sleep_raw 0 -> 2      (profile 1 = General, i.e. profile * 2 as decoded)
+A/C mute      0 -> 1      (fan_raw 0x00)
+A/C sleep_raw 2 -> 0      (off again)
+```
+
+Three things follow. The status decode is confirmed live. The command path is what is wrong, not
+the A/C, so the entity is disabled for a fixable reason. And the unit read `Mode: OFF` throughout,
+so sleep does NOT require the A/C to be running, which removes one hypothesis.
+
+Note the remote set **mute at the same instant**, with `fan_raw 0x00` -- a value that is not in
+the fan ladder and not the `0x02` our own mute command produces. So this remote's Sleep looks like
+a COMPOSITE action, not a single field write, which fits the remaining candidate: sleep arrives as
+its own frame class rather than a field in the `0x65` combined command, exactly as the community
+reference implies by shipping canned `sleep_1..4` frames.
+
+**What byte 17 actually does, measured from a non-zero start (2026-08-19).** Every earlier probe
+began at `sleep_raw = 0`, where "selected a profile" and "ignored" are indistinguishable. Starting
+from `sleep_raw = 2` (set on the remote) the behaviour is unambiguous:
+
+```
+tx_override: byte 17 = 0x05 (Old)   ->  A/C sleep_raw 2 -> 0     cleared, NOT set to 4
+tx_override: byte 17 = 0x07 (Young) ->  no change (already 0)
+tx_override: byte 17 = 0x09 (Kids)  ->  no change
+tx_override: byte 17 = 0x03 (General) -> no change
+```
+
+So byte 17 in the `0x65` combined frame **cancels sleep and cannot select a profile**. Any
+non-zero value clears it; none sets one. Setting a profile must therefore arrive some other way,
+which is consistent with the remote setting sleep and mute in one action and with the community
+reference shipping canned `sleep_1..4` frames rather than a field write.
+
+The remaining lead is a capture of the STOCK dongle talking to the mainboard while the
+ConnectLife app sets a sleep profile. The RS-485 bus only carries module-to-mainboard traffic, so
+the A/C's own remote cannot be sniffed this way; one of the fleet's still-stock units is the
+source. `reverse-engineering/tools/sniff.py` is the tool.
 
 Note byte 37 already carries the horizontal-swing companion (`0x14`, bits 2 and 4) while
 `t_8heat` occupies bits 0 and 1, so an implementation must OR into that byte rather than

@@ -909,6 +909,13 @@ size_t hisense_build_command(const HisenseCommand *cmd, uint8_t *out, size_t out
 size_t hisense_build_command_override(const HisenseCommand *cmd, uint8_t *out, size_t out_cap,
                                       int ovr_off, uint8_t ovr_val);
 
+// BENCH ONLY. Same, with TWO bytes patched. Exists because not every control is a single field
+// write: the A/C's own remote sets sleep and mute together (observed 2026-08-19), while the
+// combined frame writes byte 35 = 0x00 and so clears mute in the very frame that tries to set
+// sleep. Both offsets are range-checked exactly as the single-byte form.
+size_t hisense_build_command_override2(const HisenseCommand *cmd, uint8_t *out, size_t out_cap,
+                                       int off1, uint8_t val1, int off2, uint8_t val2);
+
 // Builds the literal power on/off frame, ported byte-for-byte from
 // messages.h `on[]`/`off[]` (NOT synthesized -- these carry several bytes
 // whose individual semantics are unconfirmed, see hisense_rs485.cpp).
