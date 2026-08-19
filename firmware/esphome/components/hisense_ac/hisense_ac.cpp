@@ -72,6 +72,10 @@ void HisenseAC::loop() {
 
   if (!have_state)
     return;
+  // A decoded frame IS the link being up. The driver's link callback only fires on EDGES, so a
+  // link that is healthy from boot never produces a "restored" edge and link_up_ would sit at
+  // its initial false forever, reporting a working bus as down. Seen on a real A/C 2026-08-19.
+  this->link_up_ = true;
   ESP_LOGD(TAG, "RX status: power=%d mode=%d setpoint=%d indoor=%d fan_raw=0x%02X holdoff=%d",
            state.power_on, (int) state.mode, state.setpoint_c, state.indoor_temp_c, state.fan_raw,
            this->in_command_holdoff());
@@ -167,6 +171,9 @@ void HisenseAC::send_command() {
   ESP_LOGD(TAG, "TX combined: mode=%d setpoint=%d fan=0x%02X vswing=%d hswing=%d feature=%d",
            (int) this->cmd_.mode, (int) this->cmd_.setpoint, (unsigned) this->cmd_.fan,
            (int) this->cmd_.vswing, (int) this->cmd_.hswing, (int) this->cmd_.feature);
+  // Stamp the user's standing display preference on every combined frame. Leaving it at
+  // NOCHANGE writes 0x00, which real hardware treats as "on".
+  this->cmd_.display = this->display_pref_;
   size_t len = hisense_build_command(&this->cmd_, frame, sizeof(frame));
   if (len == 0) {
     ESP_LOGW(TAG, "command frame build failed");
@@ -174,9 +181,14 @@ void HisenseAC::send_command() {
   }
   if (!hisense_send_frame(frame, len))
     ESP_LOGW(TAG, "command frame dropped: TX queue full");
-  // `display` is one-shot: it rides the combined frame, so leaving it set would re-assert the
-  // panel on every later mode/setpoint/fan change and fight the user's remote.
-  this->cmd_.display = HISENSE_DISPLAY_NOCHANGE;
+}
+
+/// The single-field frames (mute, sleep) are built from a zeroed buffer, so they also write
+/// byte 36 = 0x00 and re-light the panel. Re-assert only when the user wants it OFF: when the
+/// preference is ON, the 0x00 those frames send already agrees and costs nothing.
+void HisenseAC::reassert_display_if_off() {
+  if (this->display_pref_ == HISENSE_DISPLAY_OFF)
+    this->send_command();
 }
 
 void HisenseAC::send_power(bool on) {
@@ -191,6 +203,7 @@ void HisenseAC::send_mute(bool on) {
   size_t len = hisense_build_mute_frame(on, frame, sizeof(frame));
   if (len == 0 || !hisense_send_frame(frame, len))
     ESP_LOGW(TAG, "mute frame not sent");
+  this->reassert_display_if_off();
 }
 
 void HisenseAC::send_sleep(uint8_t profile) {
@@ -198,6 +211,7 @@ void HisenseAC::send_sleep(uint8_t profile) {
   size_t len = hisense_build_sleep_frame(profile, frame, sizeof(frame));
   if (len == 0 || !hisense_send_frame(frame, len))
     ESP_LOGW(TAG, "sleep frame not sent");
+  this->reassert_display_if_off();
 }
 
 void HisenseAC::dump_config() {

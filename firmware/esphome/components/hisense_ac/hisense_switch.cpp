@@ -9,8 +9,13 @@ namespace hisense_ac {
 static const char *const TAG = "hisense_ac.switch";
 
 void HisenseSwitch::setup() {
-  if (this->parent_ != nullptr)
-    this->parent_->add_status_listener(this);
+  if (this->parent_ == nullptr)
+    return;
+  this->parent_->add_status_listener(this);
+  // Boot the display switch to the firmware's standing preference (on), so the UI and what
+  // the frames assert agree from the first poll rather than after the first toggle.
+  if (this->kind_ == SWITCH_DISPLAY)
+    this->publish_state(this->parent_->display_pref_on());
 }
 
 void HisenseSwitch::write_state(bool state) {
@@ -34,8 +39,9 @@ void HisenseSwitch::write_state(bool state) {
       this->parent_->send_mute(state);
       break;
     case SWITCH_DISPLAY:
-      // One-shot: send_command() resets it so ordinary traffic stops re-asserting the panel.
-      cmd.display = state ? HISENSE_DISPLAY_ON : HISENSE_DISPLAY_OFF;
+      // Standing preference, re-asserted on every later frame. See the note on
+      // HisenseAC::set_display_pref: byte 36 rides every command and 0x00 lights the panel.
+      this->parent_->set_display_pref(state);
       this->parent_->send_command();
       break;
   }
@@ -58,9 +64,10 @@ void HisenseSwitch::on_status(const HisenseState &state) {
       this->publish_state(state.mute_on);
       break;
     case SWITCH_DISPLAY:
-      // The status frame carries no display bit, so this one is write-only and keeps whatever
-      // was last commanded. The Matter build hit the same wall (its ep9 switch could never
-      // self-correct); nothing to publish here rather than publishing a guess.
+      // The status frame carries no display bit, so this one is write-only. Publishing the
+      // standing preference at least keeps the switch honest about what the firmware is
+      // asserting, which is what the panel will be showing unless the remote changed it.
+      this->publish_state(this->parent_->display_pref_on());
       break;
   }
 }

@@ -57,6 +57,13 @@ class HisenseAC : public Component {
   void send_mute(bool on);
   void send_sleep(uint8_t profile);
 
+  /// Panel display is STICKY, not one-shot. Byte 36 rides every frame, and 0x00 ("no change")
+  /// turns the panel ON on real hardware, so a command that does not state a preference
+  /// re-lights a display the user switched off. Confirmed on an A/C 2026-08-19; only 0x40
+  /// (off) and 0xC0 (on) were ever bench-confirmed, 0x00 was an assumption.
+  void set_display_pref(bool on) { this->display_pref_ = on ? HISENSE_DISPLAY_ON : HISENSE_DISPLAY_OFF; }
+  bool display_pref_on() const { return this->display_pref_ != HISENSE_DISPLAY_OFF; }
+
   /// The command shadow. Entities mutate this, then call send_command().
   HisenseCommand &cmd() { return this->cmd_; }
 
@@ -115,6 +122,7 @@ class HisenseAC : public Component {
   volatile bool link_up_{false};
   volatile bool link_dirty_{false};
 
+  void reassert_display_if_off();
   void publish_telemetry_(const HisenseState &state);
   void publish_diagnostics_();
 
@@ -124,6 +132,8 @@ class HisenseAC : public Component {
   std::vector<StatusListener *> listeners_;
   uint32_t holdoff_until_{0};
   bool features_published_{false};
+  // Defaults to ON to match the switch's boot state; the A/C ships with the panel lit.
+  HisenseDisplay display_pref_{HISENSE_DISPLAY_ON};
 #ifdef USE_BINARY_SENSOR
   std::vector<std::pair<uint8_t, binary_sensor::BinarySensor *>> fault_sensors_;
   std::vector<std::pair<uint8_t, binary_sensor::BinarySensor *>> capability_sensors_;
