@@ -641,6 +641,36 @@ already drives: `t_fan_speed` -> 16, `t_power` -> 18, `t_temp` -> 19, `t_swing_a
 | `t_purify` (ionizer) | 34 | `0xC0` | `0x40` |
 | `t_temp_type` (C/F display unit) | 23 | `0x03` | `0x01` |
 
+### 7.4c `t_sleep` decodes, and the A/C ignores it anyway [CONFIRMED table, NEGATIVE on hardware]
+
+Decoded from a stock dump taken 2026-08-19 (record at file `0x129ec0`, `desc=39020102`):
+
+| side | decode | meaning |
+|---|---|---|
+| status | `desc[2]=0x02`, `desc[3]=0x39` | byte 17, 7-bit, shift 1, so `profile * 2` |
+| command | `desc[0]=0x02`, `desc[1]=0x01` | byte 17, shift 1, so `profile * 2 + 1` |
+
+Both sides agree with what this repo already sent: General `0x03`, Old `0x05`, Young `0x07`,
+Kids `0x09`, off `0x01` at byte 17. The table therefore CONFIRMS the encoding rather than
+correcting it.
+
+The A/C does not act on it. On a live `CF35LR03G` all five profiles were commanded, first as
+the driver's single-field frame and then as the combined frame with byte 17 patched via
+`hisense_build_command_override()`. The frame was demonstrably accepted each time (the same
+frame cleared mute through byte 35), and `sleep_raw` never moved once. A bounded sweep of the
+18 unknown payload bytes at `0x03`, plus byte 17 with the status-side encoding, moved nothing
+either.
+
+So the encoding, the byte and the frame are all ruled out. Two candidates remain: sleep needs a
+different frame class than the `0x65` combined command (the community reference ships canned
+`sleep_1..4` frames rather than a field write), or this indoor unit does not implement sleep at
+all and the module advertises it because the capability table is the MODULE's generic table,
+refined per model only by the ProductType tree (docs/11 5.1).
+
+**The cheap discriminator, not yet run:** press Sleep on the A/C's own remote and watch
+`sleep_raw`. If it moves, the unit implements sleep and the command path is wrong; if it never
+moves, the model does not implement it and the firmware is already correct.
+
 Note byte 37 already carries the horizontal-swing companion (`0x14`, bits 2 and 4) while
 `t_8heat` occupies bits 0 and 1, so an implementation must OR into that byte rather than
 assign, exactly as a bit-packed frame implies.

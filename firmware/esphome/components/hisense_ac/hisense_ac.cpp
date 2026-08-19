@@ -191,6 +191,20 @@ void HisenseAC::send_command() {
     ESP_LOGW(TAG, "command frame dropped: TX queue full");
 }
 
+void HisenseAC::tx_override(int offset, int value) {
+  uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
+  this->cmd_.display = this->display_pref_;
+  size_t len = hisense_build_command_override(&this->cmd_, frame, sizeof(frame), offset,
+                                              (uint8_t) value);
+  if (len == 0) {
+    ESP_LOGW(TAG, "tx_override rejected: offset %d out of the payload range", offset);
+    return;
+  }
+  ESP_LOGI(TAG, "tx_override: byte %d = 0x%02X", offset, (unsigned) value);
+  if (!hisense_send_frame(frame, len))
+    ESP_LOGW(TAG, "tx_override frame dropped: TX queue full");
+}
+
 void HisenseAC::send_power(bool on) {
   uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
   size_t len = hisense_build_power_frame(on, frame, sizeof(frame));

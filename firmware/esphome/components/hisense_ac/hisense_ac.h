@@ -64,6 +64,13 @@ class HisenseAC : public Component {
   void set_display_pref(bool on) { this->display_pref_ = on ? HISENSE_DISPLAY_ON : HISENSE_DISPLAY_OFF; }
   bool display_pref_on() const { return this->display_pref_ != HISENSE_DISPLAY_OFF; }
 
+  /// BENCH PROBE. Send the current combined frame with exactly ONE pre-checksum byte replaced.
+  /// Every other byte stays at the shadow's known-good state, which is what makes an offset
+  /// sweep safe to run against a live A/C: a failed probe is a no-op rather than a surprise
+  /// mode or setpoint change. The ESPHome analogue of the Matter build's `tx` diag command
+  /// (#52). Offsets outside the payload are rejected by the driver.
+  void tx_override(int offset, int value);
+
   /// The command shadow. Entities mutate this, then call send_command().
   HisenseCommand &cmd() { return this->cmd_; }
 

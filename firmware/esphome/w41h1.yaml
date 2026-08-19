@@ -48,6 +48,16 @@ api:
   # a log stream plus a test client get refused mid-handshake ("EOF received"), which reads like
   # a broken device rather than a full table. Bench work needs the room.
   max_connections: 8
+  services:
+    # Bench probe: send the combined frame with ONE byte patched, to locate an unknown field
+    # (the sleep command byte is the open one). Writes an arbitrary payload byte, so it is a
+    # bench instrument, not something to bind to a dashboard button.
+    - service: tx_override
+      variables:
+        offset: int
+        value: int
+      then:
+        - lambda: 'id(ac_bus).tx_override(offset, value);' 
 
 ota:
   - platform: esphome
