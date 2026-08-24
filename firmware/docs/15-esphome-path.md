@@ -231,10 +231,13 @@ the ESPHome column in [`13-path-comparison.md`](13-path-comparison.md), the `ESP
 page for the docs site, and `esphome config` as a hardware-free CI step in `.github/workflows/qa.yaml`
 (pinned to esphome 2026.7.4, and checked to fail on a renamed option rather than to merely run).
 
-Outstanding: replace the stale `reverse-engineering/esphome/w41h1-esp32.yaml`, which still points at
-the third-party `airconintl` component whose byte map is unvalidated for this unit, with a pointer
-to `firmware/esphome/`. An `esphome-vX.Y.Z` tag build stays optional; ESPHome has no delta-OTA base
-and no software version gate, so it needs none of `esp32-release.sh`.
+The stale `reverse-engineering/esphome/w41h1-esp32.yaml` is gone, replaced by a README in that
+directory pointing at `firmware/esphome/` and recording why the third-party `airconintl` config it
+carried is not what to hand a user (its payload byte map is unvalidated for this unit). The RE
+README and `05-esp32-replacement.md` now point at the in-repo firmwares too.
+
+Outstanding: an `esphome-vX.Y.Z` tag build, which stays optional. ESPHome has no delta-OTA base and
+no software version gate, so it needs none of `esp32-release.sh`.
 
 ## Testing
 
