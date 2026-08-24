@@ -22,6 +22,9 @@ every byte offset are hardware-confirmed against a real unit.
 - **ESP32 + RS-485 (replacement track):** when the original module dies, an ESP32 board replaces the
   dongle on the same 4-pin bus. The esp-matter node runs a live unit in Home Assistant, commissioned
   and updated over Matter OTA the same as the AmebaZ2 track.
+- **ESPHome (same board, no Matter):** a third firmware for that ESP32, reusing the identical
+  driver, that exposes the A/C over the ESPHome native API for Home Assistant users who do not need
+  Matter. On a live unit since 2026-08; see [ESPHome Build](ESPHome-Build).
 
 ## How it works
 
@@ -52,6 +55,7 @@ flowchart LR
 | [Protocol Overview](Protocol-Overview) | the RS-485 A/C protocol, framing, the Matter↔Hisense mapping |
 | [Testing & QA](Testing-and-QA) | no-hardware host tests, the virtual A/C simulator, the HIL gate |
 | [ESP32 Replacement Build](ESP32-Replacement-Build) | the ESP32 + RS-485 replacement track |
+| [ESPHome Build](ESPHome-Build) | the same ESP32 board without Matter, native to Home Assistant |
 
 ---
 

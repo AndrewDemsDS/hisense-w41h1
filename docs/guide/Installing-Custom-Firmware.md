@@ -51,4 +51,5 @@ Write the `flash_rac-integrated-*.bin` image, unclip, power-cycle. Full detail l
 - **Bricked it?** Flash `flash_rac-stock-v1.bin` to return to stock (see
   **[Recovery & Reflash](Recovery-and-Reflash)**).
 - If the original module is **dead**, replace it with an ESP32 (see
-  **[ESP32 Replacement Build](ESP32-Replacement-Build)**).
+  **[ESP32 Replacement Build](ESP32-Replacement-Build)**). On that board you can flash the Matter
+  firmware, or, if Home Assistant is your only controller, the **[ESPHome Build](ESPHome-Build)**.

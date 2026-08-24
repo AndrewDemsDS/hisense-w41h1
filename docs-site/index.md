@@ -40,9 +40,11 @@ without opening anything.
 
 ## Choosing a path
 
-[ESP32 vs AmebaZ2](firmware/13-path-comparison.html) compares the two on cost, toolchain,
-reproducibility, OTA mechanics, flash headroom and diagnostics, with figures measured on this
-project's own hardware rather than taken from datasheets.
+[ESP32 vs AmebaZ2](firmware/13-path-comparison.html) compares the three firmware tracks on cost,
+toolchain, reproducibility, OTA mechanics, flash headroom and diagnostics, with figures measured on
+this project's own hardware rather than taken from datasheets. On an ESP32 board the choice is
+Matter or the [ESPHome build](guide/ESPHome-Build.html), which drops the Matter stack and exposes
+the A/C natively to Home Assistant.
 
 ## Reverse engineering
 

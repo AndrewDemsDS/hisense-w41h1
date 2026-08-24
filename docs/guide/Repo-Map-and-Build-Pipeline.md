@@ -23,6 +23,7 @@ SDKs you fetch yourself. It does **not** contain the SDKs.
 | `firmware/test/` | No-hardware QA: host codec + Matter-map tests + `virtual_ac.py`. See [Testing and QA](Testing-and-QA). |
 | `firmware/docs/` | Wiring plan, attestation, QA strategy, energy monitoring, and the canonical OTA/build procedure (`10-firmware-ota-procedure.md`). |
 | `firmware/esp32-matter/` | The ESP32 esp-matter replacement track; see [ESP32 Replacement Build](ESP32-Replacement-Build). |
+| `firmware/esphome/` | The ESPHome firmware for that same ESP32 board: custom `hisense_ac` component plus a reference YAML, no Matter stack. See [ESPHome Build](ESPHome-Build). |
 | `reverse-engineering/` | Protocol / hardware / cloud / OTA RE + `tools/` (sniffer, decoders). |
 | `patches/` | Your delta to the two SDKs, `git apply`-able; base commits pinned in `versions.env`. |
 | `dumps/` | ⚠️ **local-only, gitignored**: raw flash (Wi-Fi creds + device RSA key + vendor blob). Never published. |

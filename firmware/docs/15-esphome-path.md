@@ -186,8 +186,9 @@ the ESPHome path takes a build-time dependency on the `esp32-matter` directory l
 ever moves to a shared location, both firmwares update together.
 
 **Phases 1 to 3 are implemented and building** (834 KB flash, 45.5% of the app partition, 47.6 KB
-RAM, 55% of the partition free, so the ESP32 delta-OTA machinery is unnecessary). What
-remains is Phase 4, hardware.
+RAM, 55% of the partition free, so the ESP32 delta-OTA machinery is unnecessary), and the firmware
+has since run on a live A/C. Phase 4 is partly banked, Phase 5 is most of the way through, and the
+open items are named under each below.
 
 **Phase 1, hub plus climate. DONE.** Hub component, driver init, the loop hand-off, and the `climate`
 entity covering power, mode, setpoint, fan, swing, current temperature and action. Bench-validated
@@ -204,18 +205,36 @@ aux heat, the 18 fault bits, the 15 capability flags, bus link, checksum counter
 Exit criterion: every row of the inventory table has a live entity, and the capability flags match
 what the debug node's `features` console command reports on the esp-matter build.
 
-**Phase 4, hardware validation. NEXT.** Stages 2 and 3 of the ESP32 bring-up procedure: A/B only on the
-real bus while USB-powered, then powered from the connector. Do not skip the ground-loop warning.
-Exit criterion: a real A/C driven end to end from HA, with the DI-tap sniffer confirming the frames,
-which is the same Layer 5 gate the other paths pass.
+**Phase 4, hardware validation. IN PROGRESS.** The node has run on a live `CF35LR03G` and been
+driven end to end from Home Assistant: every field of the climate card, the eco / turbo / quiet /
+display switches, and all four sleep profiles. Two protocol bugs surfaced here rather than on the
+bench, and both fixes landed in the shared driver, so all three firmwares carry them:
 
-**Phase 5, docs and CI.** A `firmware/esphome/README.md`, a row in
-[`13-path-comparison.md`](13-path-comparison.md), a guide page for the docs site, and `esphome config`
-as a hardware-free CI step beside the existing lints. Replace the stale
-`reverse-engineering/esphome/w41h1-esp32.yaml`, which currently points at the third-party
-`airconintl` component whose byte map is unvalidated for this unit, with a pointer to the real
-config. Optionally add an `esphome-vX.Y.Z` tag build; ESPHome has no delta-OTA base or software
-version gate, so it needs none of `esp32-release.sh`.
+- Byte 36 rides every COMBINED frame and `0x00` means "display on", not "leave this field alone",
+  so driving eco, turbo or quiet re-lit a panel the user had switched off. The hub now carries the
+  display state in the command shadow.
+- `hisense_build_single_field()` built from a zeroed buffer and never wrote `frame[31] = 0x01`, the
+  marker every combined command sets. Both single-field frames were accepted on the wire and
+  silently ignored, which is why mute and sleep read as unreachable on all three firmwares.
+  Fixed 2026-08-19, story in [`07-stock-parity-gaps.md`](07-stock-parity-gaps.md).
+
+`firmware/test/hil_esphome_actuation.py` drives the node over the native API and checks two
+properties per control, actuation and no collateral change, snapshotting and restoring the unit's
+state around the run. It needs real hardware, so it stays outside `run_tests.sh`.
+
+Outstanding: stage 3 of the bring-up procedure (powered from the A/C connector's 5 V instead of
+USB, and closed up), plus a DI-tap sniffer pass confirming the frames on the wire, which is the
+same Layer 5 gate the other two paths pass. Do not skip the ground-loop warning.
+
+**Phase 5, docs and CI. MOSTLY DONE.** Landed: [`firmware/esphome/README.md`](../esphome/README.md),
+the ESPHome column in [`13-path-comparison.md`](13-path-comparison.md), the `ESPHome-Build` guide
+page for the docs site, and `esphome config` as a hardware-free CI step in `.github/workflows/qa.yaml`
+(pinned to esphome 2026.7.4, and checked to fail on a renamed option rather than to merely run).
+
+Outstanding: replace the stale `reverse-engineering/esphome/w41h1-esp32.yaml`, which still points at
+the third-party `airconintl` component whose byte map is unvalidated for this unit, with a pointer
+to `firmware/esphome/`. An `esphome-vX.Y.Z` tag build stays optional; ESPHome has no delta-OTA base
+and no software version gate, so it needs none of `esp32-release.sh`.
 
 ## Testing
 

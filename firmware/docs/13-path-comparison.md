@@ -1,37 +1,45 @@
-# 13 · Choosing a path: ESP32 (esp-matter) vs AmebaZ2 (stock module)
+# 13 · Choosing a path: ESP32 (esp-matter), ESP32 (ESPHome), or AmebaZ2 (stock module)
 
-There are two ways to run this project, and both end at the same place: a Matter device on your
-Wi-Fi that speaks the A/C's RS-485 bus, with no cloud. They differ in what hardware you put in the
-module bay and which SDK you build against.
+There are three ways to run this project, and all three end at the same place: a local device on
+your Wi-Fi that speaks the A/C's RS-485 bus, with no cloud. They differ in what hardware goes in the
+module bay, which toolchain you build against, and how Home Assistant sees the result.
 
-**Short answer.** If you do not already have a working `AEH-W41H1`, take the **ESP32** path. If you
-have a working module and would rather not add hardware, take the **AmebaZ2** path. Neither is a
-dead end: the RS-485 driver is shared source, so switching later costs a rebuild, not a rewrite.
+**Short answer.** If you do not already have a working `AEH-W41H1`, put an **ESP32** in the bay,
+then pick its firmware: **esp-matter** if you want Matter (and with it Apple Home, Google Home or
+Alexa), **ESPHome** if Home Assistant is the only controller you care about and you want the
+smallest possible toolchain. If you have a working module and would rather not add hardware, take
+the **AmebaZ2** path. None of them is a dead end: the RS-485 driver is shared source across all
+three, so switching later costs a rebuild, not a rewrite.
 
 Every number below was measured on this project's own hardware and builds (2026-07-18, AmebaZ2
-`1.2.9` / ESP32 `1.0.10`), not taken from datasheets. Both paths have shipped several releases since
-(AmebaZ2 `1.3.22`, ESP32 `1.1.6` as of 2026-07-22); treat the figures below as a snapshot from that
-build, not a live measurement.
+`1.2.9` / ESP32 `1.0.10`), not taken from datasheets. Both Matter paths have shipped several
+releases since (AmebaZ2 `1.3.22`, ESP32 `1.1.6` as of 2026-07-22); treat the figures below as a
+snapshot from that build, not a live measurement. The ESPHome figures are from the 2026-08 bring-up
+against ESPHome 2026.7.4.
 
 ## At a glance
 
-| | **ESP32** (esp-matter) | **AmebaZ2** (stock W41H1) |
-|---|---|---|
-| **Cost** | ~€5 BOM (ESP32 board + 3.3 V RS-485 transceiver) | €0 if the module works, plus ~€5 for a CH341A clip you will need anyway |
-| **Sourcing** | Available everywhere | W41H1 is fragile (ESD) and hard to source in the EU |
-| **First flash** | USB, no disassembly of anything | CH341A SPI clip on the GD25Q32 |
-| **Reproducibility** | Not byte-reproducible | Byte-reproducible since 1.3.5 |
-| **MCU / toolchain** | ESP-IDF 5.5.4, open source, version-pinned in `dependencies.lock`, ~8.3 GB | Realtek AmebaZ2 SDK, proprietary, lives outside the repo, ~32 GB, not pinned |
-| **Transport** | Matter over Wi-Fi (2.4 GHz) | Matter over Wi-Fi (2.4 GHz) |
-| **OTA** | Delta, mandatory (a full image is rejected). 873 KB this release | Full image, 1.2 MB `.ota` |
-| **Flash budget** | 4 MB, app 1.66 MB in a 1.88 MB slot (~84 % used) | 4 MB, `firmware_is.bin` 1.23 MB |
-| **Remote diagnostics** | `:2323` console (`features`, `poll`, `decode`, `selftest`) | `:2323` console (`features`, `poll`, `version`), debug flavour |
-| **Energy** | Not a differentiator, see below | Not a differentiator, see below |
-| **Build time** | ~7 min clean | ~110 s clean (parallel `-j`) |
+| | **ESP32** (esp-matter) | **ESP32** (ESPHome) | **AmebaZ2** (stock W41H1) |
+|---|---|---|---|
+| **Cost** | ~€5 BOM (ESP32 board + 3.3 V RS-485 transceiver) | Same ~€5 BOM, identical wiring | €0 if the module works, plus ~€5 for a CH341A clip you will need anyway |
+| **Sourcing** | Available everywhere | Available everywhere | W41H1 is fragile (ESD) and hard to source in the EU |
+| **First flash** | USB, no disassembly of anything | USB, `esphome run` | CH341A SPI clip on the GD25Q32 |
+| **Reproducibility** | Not byte-reproducible | Not byte-reproducible, and nothing depends on it (no delta base to archive) | Byte-reproducible since 1.3.5 |
+| **MCU / toolchain** | ESP-IDF 5.5.4, open source, version-pinned in `dependencies.lock`, ~8.3 GB | `pip install esphome`; it fetches its own ESP-IDF, no esp-matter, no `sdk/` | Realtek AmebaZ2 SDK, proprietary, lives outside the repo, ~32 GB, not pinned |
+| **Transport** | Matter over Wi-Fi (2.4 GHz) | ESPHome native API, Home Assistant only | Matter over Wi-Fi (2.4 GHz) |
+| **OTA** | Delta, mandatory (a full image is rejected). 873 KB this release | Full image over ESPHome's own OTA, `esphome run` | Full image, 1.2 MB `.ota` |
+| **Flash budget** | 4 MB, app 1.66 MB in a 1.88 MB slot (~84 % used) | 4 MB, app 834 KB (45.5 % of the slot), 47.6 KB RAM | 4 MB, `firmware_is.bin` 1.23 MB |
+| **Remote diagnostics** | `:2323` console (`features`, `poll`, `decode`, `selftest`) | `logger:` over the API plus diagnostic entities, always on, no second flavour | `:2323` console (`features`, `poll`, `version`), debug flavour |
+| **Energy** | Not a differentiator, see below | Not a differentiator, see below | Not a differentiator, see below |
+| **Build time** | ~7 min clean | not measured | ~110 s clean (parallel `-j`) |
+| **Maturity** | Deployed, several releases | Newest of the three, on a live A/C since 2026-08, connector-power stage still open | Deployed, several releases |
 
 ## The dimensions, in detail
 
 ### Cost
+
+Both ESP32 firmwares run on the same board and the same wiring, so cost and sourcing do not
+separate them; only the toolchain and the transport do.
 
 The ESP32 path costs about €5 in parts: an ESP32 dev board and a **3.3 V** RS-485 transceiver
 (MAX3485 / SP3485 / SN65HVD75). Do not use a 5 V MAX485 module: its RO pin pushes 5 V into the
@@ -94,14 +102,27 @@ live **inside the SDK tree**, mirrored back into this repo rather than the other
 indirection is the single biggest ergonomic difference between the two paths, and it is why the
 AmebaZ2 build has more ways to silently produce a wrong image.
 
-Practically: a newcomer can stand up the ESP32 toolchain unattended. The AmebaZ2 toolchain needs the
-SDK obtained separately and placed correctly first.
+ESPHome is the smallest of the three by a wide margin: `pip install esphome`, then `esphome run`.
+It pulls its own ESP-IDF and needs no esp-matter checkout, no `sdk/` symlink and no release script.
+The driver and the ESP-IDF HAL are reused unchanged, registered as local IDF components from the
+custom component's `__init__.py`, so there is still exactly one copy of the protocol code in the
+repo. See [`15-esphome-path.md`](15-esphome-path.md).
+
+Practically: a newcomer can stand up the ESP32 toolchain unattended, and the ESPHome one in a
+minute. The AmebaZ2 toolchain needs the SDK obtained separately and placed correctly first.
 
 ### Transport
 
-Both paths are **Matter over Wi-Fi on 2.4 GHz**, so this dimension does not differentiate them.
-Neither is a Thread device, neither needs a Thread border router, and both commission with the same
-pairing flow through `python-matter-server`.
+**This is where ESPHome parts company with the other two.** The esp-matter and AmebaZ2 builds are
+both **Matter over Wi-Fi on 2.4 GHz**, so that dimension does not differentiate *them*. Neither is a
+Thread device, neither needs a Thread border router, and both commission with the same pairing flow
+through `python-matter-server`.
+
+The ESPHome build speaks the **ESPHome native API to Home Assistant and nothing else**. No
+commissioning, no fabric, no `python-matter-server`, and no companion HACS integration for the
+diagnostics (every fault bit and capability flag is its own entity instead of a bitmap). The price
+is every controller that is not Home Assistant: Apple Home, Google Home and Alexa all need Matter,
+so they need one of the other two builds. That trade is the whole decision.
 
 Two operational notes. The ESP32 node here is reachable over IPv6 in practice, so tooling that
 assumes IPv4 may need adjusting. And the two paths commission with **different product IDs**
@@ -128,8 +149,10 @@ not by the core. Any claim here without a meter would be invented, so there is n
 
 ### Flash headroom
 
-Both targets are 4 MB with A/B OTA slots. The ESP32 is the tighter of the two in practice: the app
-is 1.66 MB inside a 1.88 MB slot, about 84 % full, leaving roughly 300 KB. That is comfortable now
+All three targets are 4 MB with A/B OTA slots. The esp-matter build is the tightest in practice:
+the app is 1.66 MB inside a 1.88 MB slot, about 84 % full, leaving roughly 300 KB. Dropping the
+Matter stack is most of what the ESPHome build's 834 KB (45.5 % of the same slot) buys, which is
+also why it needs none of the delta-OTA machinery. That is comfortable now
 but it is the budget that a debug console, verbose logging and future features all draw from.
 
 ### Diagnostics
@@ -144,23 +167,35 @@ smaller instrument: `features`, `poll` and `version`, without `decode` or `selft
 a line-oriented REPL rather than a port of the ESP32's `esp_console` machinery, which depends on
 per-task stdout redirection that does not exist on this target.
 
-Both consoles are **debug-flavour only**. They have no authentication and can drive the A/C bus, so
+The ESPHome build answers this differently: there is no console and no debug flavour, because
+`logger:` streams over the API on the deployed image and the capability flags, fault bits, bus link
+and checksum counter are all diagnostic entities in Home Assistant. Nothing needs to be reflashed to
+ask a live unit what it supports.
+
+Both Matter consoles are **debug-flavour only**. They have no authentication and can drive the A/C bus, so
 release images on both paths exclude them. If you need to ask a deployed unit what it supports, flash
 the debug image, ask, and flash back.
 
 ## Recommendation
 
-**Take the ESP32 path if** you do not have a working W41H1, you want a toolchain you can rebuild
-from scratch, you want remote diagnostics, or you expect to work on capabilities and need to
-measure what your specific A/C reports.
+**Take the ESP32 esp-matter path if** you do not have a working W41H1 and you want Matter: a
+controller other than Home Assistant, a toolchain you can rebuild from scratch, remote diagnostics,
+or capability work that needs `decode` and `selftest` on a live unit.
+
+**Take the ESP32 ESPHome path if** Home Assistant is your only controller and you would rather not
+own a Matter build at all. It is the shortest route from an empty board to a working climate card:
+one `pip install`, one YAML, `esphome run`, and the A/C appears over the native API with the same
+control surface and per-bit diagnostics. It is also the newest of the three, so prefer it if you are
+comfortable being an early user.
 
 **Take the AmebaZ2 path if** you have a healthy module, you want nothing extra in the module bay,
 and you are content to build against a large proprietary SDK you must obtain yourself.
 
-**For most people arriving at this project now, ESP32 is the better default.** Not because the
-firmware is better (both run the same driver and expose the same Matter endpoints), but because
-every non-firmware factor favours it: parts you can buy, a toolchain you can pin, flashing over USB
-instead of a chip clip, and a console to see what the A/C is telling you.
+**For most people arriving at this project now, an ESP32 is the better default.** Not because the
+firmware is better (all three run the same driver and expose the same control surface), but because
+every non-firmware factor favours it: parts you can buy, a toolchain you can pin, and flashing over
+USB instead of a chip clip. Which of its two firmwares you flash comes down to one question: does
+anything other than Home Assistant need to see this A/C?
 
 The AmebaZ2 path keeps its own strong justification: it is the only one that needs **no added
 hardware at all**, and it proves the module can be fully de-clouded in place, which is the thing
@@ -171,5 +206,8 @@ this project set out to demonstrate.
 - **Energy consumption is unmeasured** on both paths (see above).
 - **Long-term reliability is not compared.** Both fleets are small and young. The known failure has
   been a dead W41H1 radio, which is a sample of one and not evidence of a rate.
+- **The ESPHome path has the least field time.** It has driven a live A/C since 2026-08 and found
+  two protocol bugs the bench had not, but stage 3 of the bring-up (powered from the A/C connector,
+  closed up) is still open, so it has not been left running unattended for as long as the other two.
 - **Numbers are from this project's units and builds.** Image sizes and build times will move with
   SDK versions and enabled features.
