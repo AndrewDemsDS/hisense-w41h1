@@ -14,3 +14,4 @@
 - [Protocol Overview](Protocol-Overview)
 - [Testing & QA](Testing-and-QA)
 - [ESP32 Replacement Build](ESP32-Replacement-Build)
+- [ESPHome Build](ESPHome-Build)

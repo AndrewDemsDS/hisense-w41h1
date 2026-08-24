@@ -44,6 +44,17 @@ jobs:
       - name: Host QA + lint
         run: bash firmware/scripts/ota-release.sh lint
 
+      # The ESPHome variant has no other gate: its component is Python + C++ that the host tests
+      # only reach through esphome_aircon_map.h, so a broken schema or a renamed option would
+      # otherwise reach a user's first `esphome run`. `config` validates the YAML AND every
+      # platform schema in components/hisense_ac without a toolchain, in seconds. A full compile
+      # would need ESP-IDF and belongs on the self-hosted runner, not here.
+      - name: ESPHome config validation
+        run: |
+          cd firmware/esphome
+          cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
+          pipx run esphome==2026.7.4 config w41h1.yaml
+
       - name: softwareVersion must increase vs base (when firmware changed)
         if: ${{ github.event_name == 'pull_request' }}
         env:

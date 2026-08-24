@@ -40,6 +40,7 @@ GUIDE_ORDER = [
     "OTA-Updates",
     "Recovery-and-Reflash",
     "ESP32-Replacement-Build",
+    "ESPHome-Build",
     "FAQ-Gotchas",
 ]
 

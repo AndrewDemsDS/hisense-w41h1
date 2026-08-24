@@ -62,8 +62,13 @@ firmware/scripts/ota-release.env
 # compiled host-test binaries (build artifacts)
 /firmware/test/test_codec
 /firmware/test/test_matter_map
+/firmware/test/test_esphome_map
 
 # python lint cache
 .ruff_cache/
 _site_src/
 wiki-src/
+
+# ESPHome: generated build tree + the local secrets file (secrets.yaml.example is tracked)
+/firmware/esphome/.esphome/
+/firmware/esphome/secrets.yaml

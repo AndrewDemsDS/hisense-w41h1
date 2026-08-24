@@ -16,6 +16,12 @@ g++ -std=c++11 -Wall -Istubinc -I. -I../src/rs485-driver \
 ./test_matter_map
 
 echo
+echo "== Layer 1c: ESPHome <-> A/C mapping (ESPHome-side QA, no chip, no ESPHome) =="
+g++ -std=c++11 -Wall -Istubinc -I. -I../src/rs485-driver \
+    test_esphome_map.cpp ../src/rs485-driver/hisense_rs485.cpp -o test_esphome_map
+./test_esphome_map
+
+echo
 echo "== Layer 2: virtual A/C <-> decoder round-trip =="
 python3 - <<'PY'
 import importlib.util, sys

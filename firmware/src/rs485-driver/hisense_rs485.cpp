@@ -456,6 +456,12 @@ static size_t hisense_build_single_field(uint8_t off, uint8_t val, uint8_t *out,
     memset(f, 0, sizeof(f));
     memcpy(f, HISENSE_CMD_HEADER, HISENSE_CMD_HEADER_LEN);
     f[23]  = 0x04;
+    // frame[31] = 0x01 is written by EVERY combined command, and every control that rides the
+    // combined frame works while both single-field frames were accepted and ignored on a real
+    // A/C (2026-08-19). The zeroed buffer omitted it, so a minimal frame was missing whatever
+    // that marker means to the mainboard. Setting it here is the difference between this frame
+    // and the combined one that is NOT the target field.
+    f[31]  = 0x01;
     f[off] = val;
     finalize_frame(f, HISENSE_CMD_CHK_OFFSET, HISENSE_CMD_END_OFFSET);
     return hisense_stuff_checksum(f, HISENSE_CMD_FRAME_LEN, out, cap);
@@ -482,6 +488,9 @@ size_t hisense_build_sleep_frame(uint8_t profile, uint8_t *out, size_t out_cap)
  * pre-checksum byte just before finalize_frame(), which is the only correct place
  * to do it: the checksum is computed over the patched frame and the 0xF4 stuffing
  * happens afterwards, so callers can address true frame offsets and ignore both. */
+static int     g_ovr2_off = -1;   /* second patch pair, see build_command_impl */
+static uint8_t g_ovr2_val = 0;
+
 static size_t build_command_impl(const HisenseCommand *cmd, uint8_t *out, size_t out_cap,
                                  int ovr_off, uint8_t ovr_val)
 {
@@ -597,6 +606,13 @@ static size_t build_command_impl(const HisenseCommand *cmd, uint8_t *out, size_t
     if (ovr_off >= 0 && (size_t) ovr_off < HISENSE_CMD_FRAME_LEN) {
         frame[ovr_off] = ovr_val;
     }
+    // Optional SECOND patch. Some controls are not a single field write: the A/C's own remote
+    // sets sleep and mute in the same action (observed 2026-08-19), and our frame writes byte 35
+    // as 0x00, which clears mute while trying to set sleep. Patching two bytes lets that be
+    // tested without inventing a new frame shape.
+    if (g_ovr2_off >= 0 && (size_t) g_ovr2_off < HISENSE_CMD_FRAME_LEN) {
+        frame[g_ovr2_off] = g_ovr2_val;
+    }
 
     finalize_frame(frame, HISENSE_CMD_CHK_OFFSET, HISENSE_CMD_END_OFFSET);
 
@@ -619,6 +635,21 @@ size_t hisense_build_command_override(const HisenseCommand *cmd, uint8_t *out, s
         return 0;
     }
     return build_command_impl(cmd, out, out_cap, ovr_off, ovr_val);
+}
+
+size_t hisense_build_command_override2(const HisenseCommand *cmd, uint8_t *out, size_t out_cap,
+                                       int off1, uint8_t val1, int off2, uint8_t val2)
+{
+    size_t n;
+    if (off1 < (int) HISENSE_CMD_HEADER_LEN || off1 >= (int) HISENSE_CMD_CHK_OFFSET ||
+        off2 < (int) HISENSE_CMD_HEADER_LEN || off2 >= (int) HISENSE_CMD_CHK_OFFSET) {
+        return 0;
+    }
+    g_ovr2_off = off2;
+    g_ovr2_val = val2;
+    n = build_command_impl(cmd, out, out_cap, off1, val1);
+    g_ovr2_off = -1;   /* one-shot: never leak into an ordinary command */
+    return n;
 }
 
 /* ---------------------------------------------------------------------------

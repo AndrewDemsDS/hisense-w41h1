@@ -16,6 +16,44 @@ CONST = (
     ROOT
     / "integrations/hisense-unified-ac/custom_components/hisense_unified_ac/const.py"
 )
+ESPHOME_BS = ROOT / "firmware/esphome/components/hisense_ac/binary_sensor.py"
+
+# The ESPHome entity keys read as entity names ("fault_indoor_temp"), the macros read as struct
+# fields ("IN_TEMP"). Neither is derivable from the other, so the pairing is spelled out once
+# here; that is what makes a renumbered bit a test failure instead of a mislabelled sensor.
+ALIASES = {
+    "fault_indoor_temp": "IN_TEMP",
+    "fault_indoor_coil_temp": "IN_COIL_TEMP",
+    "fault_indoor_humidity": "IN_HUMIDITY",
+    "fault_water_full": "WATER_FULL",
+    "fault_indoor_fan_motor": "IN_FAN_MOTOR",
+    "fault_grille": "GRILLE",
+    "fault_indoor_vzero": "IN_VZERO",
+    "fault_indoor_comms": "IN_COM",
+    "fault_indoor_display": "IN_DISPLAY",
+    "fault_indoor_keys": "IN_KEYS",
+    "fault_indoor_wifi": "IN_WIFI",
+    "fault_indoor_ele": "IN_ELE",
+    "fault_indoor_eeprom": "IN_EEPROM",
+    "fault_outdoor_eeprom": "OUT_EEPROM",
+    "fault_outdoor_coil_temp": "OUT_COIL_TEMP",
+    "fault_outdoor_gas_temp": "OUT_GAS_TEMP",
+    "fault_outdoor_temp": "OUT_TEMP",
+    "fault_over_temp": "OVER_TEMP",
+    "capability_cool_heat": "COOL_HEAT",
+    "capability_ai": "AI",
+    "capability_infinite_fan": "INFINITE_FAN",
+    "capability_power_save": "POWER_SAVE",
+    "capability_fan_mute": "FAN_MUTE",
+    "capability_swing_dir_8": "SWING_DIR_8",
+    "capability_swing_follow": "SWING_FOLLOW",
+    "capability_humidity": "HUMIDITY",
+    "capability_heat_8c": "HEAT_8C",
+    "capability_purify": "PURIFY",
+    "capability_q_display": "Q_DISPLAY",
+    "capability_enable_8heat": "ENABLE_8HEAT",
+    "capability_trans_102_64": "TRANS_102_64",
+}
 
 
 def firmware_macros() -> dict[str, int]:
@@ -35,11 +73,55 @@ def const_namespace() -> dict:
     return ns
 
 
+def check_esphome_bits(fw: dict[str, int]) -> list[str]:
+    """The ESPHome component names one binary sensor per bit, so its dicts are a third copy of
+    the layout. Unlike the HACS integration this one lives in-tree, but it drifts just as
+    silently: a renumbered bit would relabel a fault rather than fail anything."""
+    errors: list[str] = []
+    ns: dict = {}
+    # Parse rather than import: importing would pull in esphome, which is not a test dependency.
+    text = ESPHOME_BS.read_text()
+    for dict_name, prefix in (
+        ("FAULT_BITS", "HISENSE_FAULT1_"),
+        ("CAPABILITY_BITS", "HISENSE_FEAT1_"),
+    ):
+        body = re.search(rf"^{dict_name} = \{{(.*?)^\}}", text, re.S | re.M)
+        if body is None:
+            errors.append(f"{ESPHOME_BS.name}: {dict_name} not found")
+            continue
+        entries = re.findall(r'"(\w+)":\s*\((\d+),', body.group(1))
+        ns[dict_name] = entries
+        for key, bit in entries:
+            # "fault_indoor_temp" -> HISENSE_FAULT1_IN_TEMP is not mechanical, so the component
+            # key carries the macro suffix after its prefix only when they agree; compare on the
+            # bit index via the name the component chose.
+            macro_suffix = ALIASES.get(key)
+            if macro_suffix is None:
+                errors.append(f"{dict_name}: {key} has no macro alias in this test")
+                continue
+            macro = prefix + macro_suffix
+            if fw.get(macro) != int(bit):
+                errors.append(
+                    f"esphome {key}: bit {bit} != firmware {macro}={fw.get(macro)}"
+                )
+    if len(ns.get("FAULT_BITS", [])) != 18:
+        errors.append(f"esphome FAULT_BITS has {len(ns.get('FAULT_BITS', []))} entries, want 18")
+    return errors
+
+
 def main() -> None:
+    fw = firmware_macros()
+    esphome_errors = check_esphome_bits(fw)
+    if esphome_errors:
+        print("[diag contract] FAIL (ESPHome component)")
+        for e in esphome_errors:
+            print("  -", e)
+        sys.exit(1)
+    print("[diag contract] OK: ESPHome binary_sensor bit map matches hisense_rs485.h")
+
     if not CONST.exists():
         print("[diag contract] SKIP: HACS submodule not checked out")
         return
-    fw = firmware_macros()
     ns = const_namespace()
     errors: list[str] = []
 

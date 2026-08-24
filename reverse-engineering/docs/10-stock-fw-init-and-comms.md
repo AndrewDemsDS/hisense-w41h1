@@ -641,12 +641,155 @@ already drives: `t_fan_speed` -> 16, `t_power` -> 18, `t_temp` -> 19, `t_swing_a
 | `t_purify` (ionizer) | 34 | `0xC0` | `0x40` |
 | `t_temp_type` (C/F display unit) | 23 | `0x03` | `0x01` |
 
+### 7.4c `t_sleep` decodes, and the A/C ignores it anyway [CONFIRMED table, NEGATIVE on hardware]
+
+Decoded from a stock dump taken 2026-08-19 (record at file `0x129ec0`, `desc=39020102`):
+
+| side | decode | meaning |
+|---|---|---|
+| status | `desc[2]=0x02`, `desc[3]=0x39` | byte 17, 7-bit, shift 1, so `profile * 2` |
+| command | `desc[0]=0x02`, `desc[1]=0x01` | byte 17, shift 1, so `profile * 2 + 1` |
+
+Both sides agree with what this repo already sent: General `0x03`, Old `0x05`, Young `0x07`,
+Kids `0x09`, off `0x01` at byte 17. The table therefore CONFIRMS the encoding rather than
+correcting it.
+
+The A/C does not act on it. On a live `CF35LR03G` all five profiles were commanded, first as
+the driver's single-field frame and then as the combined frame with byte 17 patched via
+`hisense_build_command_override()`. The frame was demonstrably accepted each time (the same
+frame cleared mute through byte 35), and `sleep_raw` never moved once. A bounded sweep of the
+18 unknown payload bytes at `0x03`, plus byte 17 with the status-side encoding, moved nothing
+either.
+
+So the encoding, the byte and the frame are all ruled out. Two candidates remain: sleep needs a
+different frame class than the `0x65` combined command (the community reference ships canned
+`sleep_1..4` frames rather than a field write), or this indoor unit does not implement sleep at
+all and the module advertises it because the capability table is the MODULE's generic table,
+refined per model only by the ProductType tree (docs/11 5.1).
+
+**Discriminator RUN 2026-08-19: the unit DOES implement sleep.** Pressing Sleep on the A/C's own
+remote moved the byte:
+
+```
+A/C sleep_raw 0 -> 2      (profile 1 = General, i.e. profile * 2 as decoded)
+A/C mute      0 -> 1      (fan_raw 0x00)
+A/C sleep_raw 2 -> 0      (off again)
+```
+
+Three things follow. The status decode is confirmed live. The command path is what is wrong, not
+the A/C, so the entity is disabled for a fixable reason. And the unit read `Mode: OFF` throughout,
+so sleep does NOT require the A/C to be running, which removes one hypothesis.
+
+Note the remote set **mute at the same instant**, with `fan_raw 0x00` -- a value that is not in
+the fan ladder and not the `0x02` our own mute command produces. So this remote's Sleep looks like
+a COMPOSITE action, not a single field write, which fits the remaining candidate: sleep arrives as
+its own frame class rather than a field in the `0x65` combined command, exactly as the community
+reference implies by shipping canned `sleep_1..4` frames.
+
+**What byte 17 actually does, measured from a non-zero start (2026-08-19).** Every earlier probe
+began at `sleep_raw = 0`, where "selected a profile" and "ignored" are indistinguishable. Starting
+from `sleep_raw = 2` (set on the remote) the behaviour is unambiguous:
+
+```
+tx_override: byte 17 = 0x05 (Old)   ->  A/C sleep_raw 2 -> 0     cleared, NOT set to 4
+tx_override: byte 17 = 0x07 (Young) ->  no change (already 0)
+tx_override: byte 17 = 0x09 (Kids)  ->  no change
+tx_override: byte 17 = 0x03 (General) -> no change
+```
+
+So byte 17 in the `0x65` combined frame **cancels sleep and cannot select a profile**. Any
+non-zero value clears it; none sets one.
+
+**RESOLVED the same day.** Setting a profile arrives on the MINIMAL frame, not the combined one,
+and the minimal frame was broken for an unrelated reason: `hisense_build_single_field()` omitted
+`frame[31] = 0x01`, the marker every combined command writes. With it added, byte 17 selects
+every profile:
+
+```
+byte 17 = 0x03 -> sleep_raw 0 -> 2   General
+byte 17 = 0x05 -> sleep_raw 2 -> 4   Old
+byte 17 = 0x07 -> sleep_raw 4 -> 6   Young
+byte 17 = 0x09 -> sleep_raw 6 -> 8   Kids
+byte 17 = 0x01 -> sleep_raw 8 -> 0   off
+```
+
+The encoding decoded from the capability table was right all along; only the carrier was wrong.
+Mute (byte 35) was broken by the same missing byte and is fixed by the same change, which also
+repairs ep4/ep6 on both Matter builds. See `firmware/docs/07`.
+
+**All four profiles confirmed on hardware (2026-08-19)**, by rotating them on the A/C's remote:
+
+```
+sleep_raw 0 -> 4    Old       + mute 0 -> 1 (fan_raw 0x02)
+sleep_raw 4 -> 6    Young
+sleep_raw 6 -> 8    Kids
+sleep_raw 8 -> 0    off
+sleep_raw 0 -> 2    General
+```
+
+`sleep_raw = profile * 2` therefore holds for every profile, not just the General case seen
+first, which closes the status side of `t_sleep` completely.
+
+Note where the mute edge falls: ONCE, when sleep first engages, and never again as the profile
+changes. Engaging sleep also engages mute with a quiet fan; switching profile within sleep is a
+pure byte-17 change on the A/C's side. So the carrier we are missing has to set a profile while
+sleep is already on, without disturbing mute, which is a narrower target than "sleep is a
+composite action".
+
+
 Note byte 37 already carries the horizontal-swing companion (`0x14`, bits 2 and 4) while
 `t_8heat` occupies bits 0 and 1, so an implementation must OR into that byte rather than
 assign, exactly as a bit-packed frame implies.
 
 These are testable from the debug console with no firmware change:
 `tx 37 0x03` should engage 8 C heat, `tx 37 0x01` should clear it.
+
+
+### 7.4d Full capability table decoded from a stock dump (2026-08-19)
+
+All 60 `t_`/`f_` records in the stock module's table, decoded with the 7.4a/7.4b
+rules. The nine command bytes 7.4b confirmed independently all reproduce here, which is the
+cross-check that the walk is right: `t_eco`/`t_super` 33, `t_up_down`/`t_left_right` 32,
+`t_temp` 19, `t_fan_speed` 16, `t_dimmer` 36, `t_purify` 34, `t_8heat` 37.
+
+**There is no second sleep attribute.** `t_sleep` is the only sleep record, so the missing
+profile-set path is not another field we failed to write.
+
+| attribute | `desc` | status | command |
+|---|---|---|---|
+| `t_8heat` | `083e0116` | byte 77 bit 0, 1-bit | byte 37, shift 1 |
+| `t_anion` | `0c070106` | byte 22 bit 4, 1-bit | byte 21, shift 1 |
+| `t_dal` | `0e44052c` | byte 83 bit 6, 1-bit | byte 59, shift 5 |
+| `t_demand_response` | `0f44072c` | byte 83 bit 7, 1-bit | byte 59, shift 7 |
+| `t_dimmer` | `0f160715` | byte 37 bit 7, 1-bit | byte 36, shift 7 |
+| `t_eco` | `0a140512` | byte 35 bit 2, 1-bit | byte 33, shift 5 |
+| `t_fan_mute` | `0a150514` | byte 36 bit 2, 1-bit | byte 35, shift 5 |
+| `t_fan_speed` | `39010101` | byte 16 bit 1, 7-bit | byte 16, shift 1 |
+| `t_fan_speed_s` | `38000101` | byte 15 bit 0, 7-bit | byte 16, shift 1 |
+| `t_fanspeedCV` | `383b0119` | byte 74 bit 0, 7-bit | byte 40, shift 1 |
+| `t_fresh_air` | `0e661f03` | byte 117 bit 6, 1-bit | byte 18, shift 7 |
+| `t_humidity` | `38040104` | byte 19 bit 0, 7-bit | byte 19, shift 1 |
+| `t_left_right` | `0e140511` | byte 35 bit 6, 1-bit | byte 32, shift 5 |
+| `t_pump` | `0d070306` | byte 22 bit 5, 1-bit | byte 21, shift 3 |
+| `t_purify` | `0f150713` | byte 36 bit 7, 1-bit | byte 34, shift 7 |
+| `t_sleep` | `39020102` | byte 17 bit 1, 7-bit | byte 17, shift 1 |
+| `t_super` | `09140312` | byte 35 bit 1, 1-bit | byte 33, shift 3 |
+| `t_swing_angle` | `19130110` | byte 34 bit 1, 3-bit | byte 31, shift 1 |
+| `t_swing_direction` | `18450120` | byte 84 bit 0, 3-bit | byte 47, shift 1 |
+| `t_swing_follow` | `1441021a` | byte 80 bit 4, 2-bit | byte 41, shift 2 |
+| `t_talr` | `0d44032c` | byte 83 bit 5, 1-bit | byte 59, shift 3 |
+| `t_temp` | `38040104` | byte 19 bit 0, 7-bit | byte 19, shift 1 |
+| `t_temp_compensate` | `240b0408` | byte 26 bit 4, 4-bit | byte 23, shift 4 |
+| `t_temp_type` | `090b0108` | byte 26 bit 1, 1-bit | byte 23, shift 1 |
+| `t_tms` | `0e450520` | byte 84 bit 6, 1-bit | byte 47, shift 5 |
+| `t_up_down` | `0f140711` | byte 35 bit 7, 1-bit | byte 32, shift 7 |
+| `t_work_mode` | `1c030503` | byte 18 bit 4, 3-bit | byte 18, shift 5 |
+
+Controls this repo does not implement yet, with their command bytes now known:
+`t_anion` (21), `t_pump` (21), `t_swing_direction` (47), `t_swing_follow` (41),
+`t_fanspeedCV` (40), `t_temp_compensate` (23), and `t_dal` / `t_talr` /
+`t_demand_response` (all 59). Status fields beyond the 160-byte window we parse also
+appear: `f_cool_qvalue` at 153, `f_heat_qvalue` at 155, `t_fresh_air` at 117.
 
 ### 7.5 The extractor, and what static RE has now settled
 

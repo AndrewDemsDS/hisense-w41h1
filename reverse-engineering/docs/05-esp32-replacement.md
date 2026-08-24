@@ -72,8 +72,15 @@ The W41H1 firmware's status fields line up with the above (confirms the unit sup
 
 ## Recommended build
 
-Don't hand-roll the frame builder, flash **`pslawinski/esphome_airconintl`** (or
-`akrabi/hisense_ac_esphome`) which already implements this map, then wire the ESP32 as in
-[`../esphome/w41h1-esp32.yaml`](../esphome/w41h1-esp32.yaml). Verify against your unit by
-capturing a few real frames ([`../tools/sniff.py`](../tools/sniff.py)) and checking the
-mode/temp/fan bytes match the tables above before trusting writes.
+Don't hand-roll the frame builder, and don't reach for a community component either: this repo
+now ships its own, over the codec that was validated against this bus. Flash
+[`../../firmware/esphome/`](../../firmware/esphome/) (ESPHome, Home Assistant only) or
+[`../../firmware/esp32-matter/`](../../firmware/esp32-matter/) (Matter). Both compile the same
+`firmware/src/rs485-driver/`, so a protocol fix reaches both.
+
+The third-party components this doc used to recommend (`pslawinski/esphome_airconintl`,
+`akrabi/hisense_ac_esphome`) speak the same bus and remain useful reading, but their payload byte
+map is unvalidated for this unit, which is the whole point of the SUPERSEDED banner above. If you
+do use one, verify against your unit by capturing real frames
+([`../tools/sniff.py`](../tools/sniff.py)) and checking the mode/temp/fan bytes against the tables
+above before trusting writes.

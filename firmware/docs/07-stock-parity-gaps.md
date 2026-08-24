@@ -19,8 +19,8 @@ to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` fl
 | Fan (6 discrete speeds) | ✅ | ✅ | ✅ | FanControl mode + percent |
 | Eco / power-save | ✅ | ✅ | ✅ | ep3 OnOff "Eco" + mfg `0xFFF1FC00/0x0000` |
 | Turbo / boost | ✅ | ✅ | ✅ | ep5 OnOff "Turbo" + mfg `/0x0002` |
-| Mute / quiet | ✅ | ✅ | ✅ | ep4 OnOff "Quiet" + mfg `/0x0002`; `hisense_build_mute_frame` |
-| Sleep profile (4) | ✅ | ✅ | ✅ | ep6 ModeSelect; `hisense_build_sleep_frame` |
+| Mute / quiet | ✅ | ✅ | ✅ | ep4 OnOff "Quiet" + mfg `/0x0002`; `hisense_build_mute_frame`, fixed 2026-08-19 (see the note below). |
+| Sleep profile (4) | ✅ | ✅ | ✅ | ep6 ModeSelect; `hisense_build_sleep_frame`, fixed 2026-08-19. All four profiles verified. |
 | Aux/PTC heat relay | ✅ | – | ✅ | ep7 BooleanState (read-only status) |
 | Outdoor + coil temp | ✅ | – | ✅ | ep2 / ep8 TemperatureMeasurement |
 | Power (V/I/W) | ✅ | – | ✅ | ElectricalPowerMeasurement (see #16, `power_estimate.h`) |
@@ -74,3 +74,26 @@ a capability invisible while the field name held `ac_purify`. `ac_enable_8heat` 
 `ac_trans_102_64` read 0. Base-tier flags match the 2026-07-16 capture unchanged (`RE docs/11
 §5.1`). Consumers updated: `matter_drivers.cpp` `on_features` logging and the esp32
 `diag_console` `features` command, both now print the extended tier or explicitly say UNKNOWN.
+
+
+## Mute and sleep: one missing byte (2026-08-19, FIXED)
+
+Both were broken on all three firmwares and are now fixed in the shared driver, with no change
+at any call site.
+
+`hisense_build_mute_frame` / `hisense_build_sleep_frame` build from a zeroed buffer: header,
+`f[23]=0x04`, and the one named byte. Every COMBINED command also writes `frame[31] = 0x01`.
+Every control riding the combined frame worked; both single-field frames were accepted on the
+wire and silently ignored. Adding that marker to `hisense_build_single_field()` fixed both.
+
+Verified on a live `CF35LR03G`: all four sleep profiles select (`sleep_raw` 2/4/6/8, and 0 for
+off), the Sleep select entity reads every option back, and mute engages with `fan_raw 0x02`.
+
+What made it hard to see is worth remembering. From `sleep_raw = 0`, "selected a profile" and
+"ignored" are the same observation, and byte 17 in the combined frame *does* act, but only to
+cancel. Every probe from a zero start therefore looked like silence. Setting a profile on the
+A/C's own remote first, then commanding a different one, is what separated the two cases.
+
+**Both Matter builds call the same two builders** (`matter_drivers.cpp` 830/855,
+`app_main.cpp` 237/243), so their ep4 Quiet and ep6 Sleep are fixed by this driver change.
+Neither image has been rebuilt to confirm it on hardware yet.
