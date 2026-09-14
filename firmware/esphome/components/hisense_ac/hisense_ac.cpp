@@ -97,7 +97,10 @@ void HisenseAC::loop() {
     if (fan != HISENSE_FAN_NOCHANGE)
       this->cmd_.fan = fan;
     this->cmd_.mode = state.mode;
-    this->cmd_.setpoint = state.setpoint_c;
+    // Validated in the wire unit: a raw copy dropped the F flag and let an out-of-range report
+    // poison the shadow, which silently killed every later Cool/Heat/Auto frame (#117).
+    if (!esphome_sync_shadow_setpoint(state.setpoint_c, state.temp_unit_f, &this->cmd_))
+      ESP_LOGD(TAG, "status setpoint %d C out of command range, shadow kept", state.setpoint_c);
     this->cmd_.vswing = state.vswing_on ? HISENSE_SWING_SWING : HISENSE_SWING_OFF;
     this->cmd_.hswing = state.hswing_on ? HISENSE_SWING_SWING : HISENSE_SWING_OFF;
   }

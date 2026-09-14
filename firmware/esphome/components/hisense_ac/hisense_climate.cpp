@@ -131,8 +131,10 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   }
 
   if (call.get_target_temperature().has_value()) {
-    int wanted = matter_clamp_setpoint_c((int) lroundf(*call.get_target_temperature()));
-    cmd.setpoint = (int8_t) wanted;
+    // The A/C reads byte 19 in its panel's unit, so an F panel needs the value in F (#117).
+    const HisenseState &st = this->parent_->last_state();
+    int wanted = esphome_setpoint_to_cmd((int) lroundf(*call.get_target_temperature()),
+                                         st.valid && st.temp_unit_f, &cmd);
     this->target_temperature = (float) wanted;
     send_combined = true;
   }
