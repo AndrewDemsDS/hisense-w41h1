@@ -26,7 +26,7 @@ What each step has been run against. "Simulator" means `virtual_ac.py`, not an A
 | Step | amebaz2 | esp32 (C3) | esp32 (classic) | esphome |
 |---|---|---|---|---|
 | Host QA (`dev.sh test`) | CI, every push | CI, every push | CI, every push | CI, every push (plus `esphome config`) |
-| `dev.sh build` on a real toolchain | yes, 2026-09-14 (v10332) | pending | untested | yes, C3, 2026-09-14 |
+| `dev.sh build` on a real toolchain | yes, 2026-09-14 (v10332) | yes, 2026-09-14 (app 6% partition free; `busmon` too) | untested | yes, C3, 2026-09-14 |
 | `busmon` against the real bus | n/a | untested | hardware (2026-07-12) | n/a |
 | Matter app against `virtual_ac.py` | n/a | simulator (2026-08-07) | untested | n/a |
 | Node on a live A/C, USB-powered (stage 2) | hardware | untested on these pins | hardware | hardware |
