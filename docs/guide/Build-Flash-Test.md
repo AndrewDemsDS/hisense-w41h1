@@ -26,15 +26,27 @@ What each step has been run against. "Simulator" means `virtual_ac.py`, not an A
 | Step | amebaz2 | esp32 (C3) | esp32 (classic) | esphome |
 |---|---|---|---|---|
 | Host QA (`dev.sh test`) | CI, every push | CI, every push | CI, every push | CI, every push (plus `esphome config`) |
+| `dev.sh build` on a real toolchain | yes, 2026-09-14 (v10332) | pending | untested | yes, C3, 2026-09-14 |
 | `busmon` against the real bus | n/a | untested | hardware (2026-07-12) | n/a |
 | Matter app against `virtual_ac.py` | n/a | simulator (2026-08-07) | untested | n/a |
 | Node on a live A/C, USB-powered (stage 2) | hardware | untested on these pins | hardware | hardware |
 | Powered from the connector (stage 3) | hardware | untested | see [ESP32 Replacement Build](ESP32-Replacement-Build) | outstanding |
-| `dev.sh` wrapper itself | shellcheck + dry runs | shellcheck + dry runs | shellcheck + dry runs | shellcheck + dry runs |
+| `dev.sh` flash / bench on hardware | n/a (clip) | untested | untested | untested |
 
-The last row matters: the underlying commands are proven, but the wrapper is new and has not yet
-been walked end to end on real hardware for any target. If a step fails, the printed `$ ...`
-command is the thing to debug.
+Builds have been run through the wrapper; nothing has yet been flashed or benched through it on a
+real board. If a step fails, the printed `$ ...` command is the thing to debug.
+
+Two build failures seen while verifying, both with misleading symptoms:
+
+- **`No module named 'matter'` in AmebaZ2 codegen, zero ninja steps.** The connectedhomeip
+  pigweed venv is dead, usually because the host Python was upgraded underneath it. `ota-release.sh`
+  now stops earlier with that diagnosis. Rebuild the venv with a Python the SDK supports first on
+  `PATH` (3.11 worked): `cd <sdk>/connectedhomeip && rm -rf .environment && source scripts/bootstrap.sh`.
+- **`make: *** [Makefile:49: is_matter] Error 2` with no visible cause.** The console shows only
+  the tail of that step; the full output is in `/tmp/ota-ismatter.log`. Once it held
+  `Segmentation fault` from the Realtek `arm-none-eabi-gcc` driver, crashing in its own license
+  ("visa") check before compiling. An unchanged re-run passed, and the crash could not be
+  reproduced on demand, so treat it as intermittent: re-run before debugging further.
 
 ## The guided flow
 
