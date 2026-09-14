@@ -5,8 +5,8 @@ directly with a **CH341A SPI programmer + SOIC-8 clip**.
 
 > **First install?** This page is for **recovery / brick-restore and clean reflash** of a unit you've
 > already converted. If you're converting a brand-new **stock** module for the first time, start at
-> [Installing the Custom Firmware](Installing-Custom-Firmware). It covers both the no-clip Matter-OTA
-> path and the CH341A clip path. Come back here when you need to un-brick or restore stock.
+> [Installing the Custom Firmware](Installing-Custom-Firmware), which covers the CH341A clip
+> install. Come back here when you need to un-brick or restore stock.
 
 > **Safety first.** A bad flash can brick the module. Before writing anything, keep a full stock dump
 > (`dumps/w41h1_dump1.bin`) as your recovery net, and never delete it. `dumps/` is local-only /

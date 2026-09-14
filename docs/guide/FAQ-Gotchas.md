@@ -59,7 +59,7 @@ mandatory full clean either way. (`firmware/docs/10-firmware-ota-procedure.md` Â
 ## What is "77"?
 
 Press the remote's swing button **6 times** â†’ the display shows **"77"**: the module resets its
-Wi-Fi and opens the Matter commissioning window. Use it before commissioning or converting a unit.
+Wi-Fi and opens the Matter commissioning window. Use it before commissioning a unit.
 ([Commissioning & HA Setup](Commissioning-and-HA-Setup))
 
 ## HA shows a duplicate Power switch and split fan/mode tiles. How do I clean it up?

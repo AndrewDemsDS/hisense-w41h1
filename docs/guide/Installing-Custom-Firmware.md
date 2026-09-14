@@ -37,7 +37,8 @@ avoid it:
 - **`firmware/flasher/ch341dump.py`**: back up the whole chip first. Dump before every write; that
   dump is your only way back to stock.
 
-Write the `flash_rac-integrated-*.bin` image, unclip, power-cycle. Full detail lives in
+Write the `flash_rac-integrated-*.bin` image (download it from a tagged GitHub Release, or build it
+yourself: [Build, Flash & Test](Build-Flash-Test#amebaz2-stock-module)), unclip, power-cycle. Full detail lives in
 **`firmware/docs/10-firmware-ota-procedure.md`** and **[Recovery & Reflash](Recovery-and-Reflash)**.
 
 > ⚠ Power the clip at **3.3 V, never 5 V**. ⚠ Keep the A/C **unplugged** while clipped. In-circuit

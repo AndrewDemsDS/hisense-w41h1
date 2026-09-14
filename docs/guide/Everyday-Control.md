@@ -12,8 +12,9 @@ HA's Matter integration presents the raw W41H1 as **several** entities on one de
 - a redundant device-mandated **Power** switch,
 - unnamed **On/Off switches** for the special modes, plus a sleep select.
 
-Usable, but split across tiles. HVAC modes: off / cool / heat / dry / fan-only (Auto needs a
-firmware FeatureMap bit). Setpoint is only honored in **cool/heat**. A temp change in dry / fan /
+Usable, but split across tiles. HVAC modes: off / cool / heat / auto / dry / fan-only (the firmware
+advertises Heat, Cool and Auto in the Thermostat FeatureMap; dry and fan-only need the companion
+integration below). Setpoint is only honored in **cool/heat**. A temp change in dry / fan /
 auto / off is a no-op.
 
 ## The unified climate integration (recommended)
@@ -74,4 +75,6 @@ features:
 The full ~200-line native (no-JS) layout with the link/health chip and the guard rationale is in
 `firmware/docs/05-ha-control-and-native-ui.md`. Point `entity` at your unit, one card per A/C.
 
-> Don't place the ep2 Humidity / ep3 Temperature tiles; they report NULL (known gap).
+> Outdoor temperature (ep2) and coil temperature (ep8) are safe to add as tiles on the AmebaZ2
+> build. On the ESP32 build those two currently read null in matter-server (known issue, see
+> [ESP32 Replacement Build](ESP32-Replacement-Build#status--remaining-work)).

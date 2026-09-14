@@ -24,8 +24,9 @@ and `reverse-engineering/hardware/pinouts.md`.
 
 ## A/C bus (RS-485)
 
-- The module talks to the A/C mainboard over **UART0** at **9600 8N1**, half-duplex, no DE/RE
-  handshake in the driver. On the SoC: **TX = PA_14, RX = PA_13**; the log console is on PA_16.
+- The module talks to the A/C mainboard over **UART0** at **9600 8N1**, half-duplex. On the SoC:
+  **TX = PA_14, RX = PA_13, DE = PA_17** (the driver raises DE around every transmit, as the stock
+  firmware does); the log console is on PA_16. See [Protocol Overview](Protocol-Overview#physical-layer).
 - On the UM3352E transceiver, bus **A/B are pins 6/7** to the mainboard; **RO (pin 1)** is received
   bytes (A/C → dongle) and **DI (pin 4)** is transmitted bytes (dongle → A/C) at logic level. Both
   are handy sniff points. Bus logic is likely 5 V; level-shift to 3.3 V before a 3.3 V-only
@@ -61,5 +62,5 @@ is wireless (OTA). See [Recovery & Reflash](Recovery-and-Reflash).
 ## Ready to flash?
 
 Once you can see the flash chip and have the clip wired, follow
-[Installing the Custom Firmware](Installing-Custom-Firmware). It covers both the no-clip Matter-OTA
-path and the CH341A path end to end.
+[Installing the Custom Firmware](Installing-Custom-Firmware). It covers the CH341A path end to end;
+after that first write, updates go over Matter OTA.
