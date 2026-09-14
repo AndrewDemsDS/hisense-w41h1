@@ -44,6 +44,8 @@ load_env() {
   : "${SDK_ROOT:?}" "${GCC_RELEASE:?}" "${CHIP_CONFIG_H:?}" "${EXAMPLE_DIR:?}" "${OTA_TOOL:?}"
   : "${VID:?}" "${PID:?}"
 }
+# shellcheck source=ota-guards.sh
+. "$HERE/ota-guards.sh"
 
 # ---- version helpers (unified semver, issue #77) ---------------------------
 # Version source of truth is GIT-TRACKED firmware/src/version.txt, now holding a SEMVER
@@ -495,6 +497,10 @@ package() {
     [ "${HISENSE_FLAVOUR:-release}" != "debug" ] || \
       die "flavour is debug but the built image has NO console -- rebuild with 'build --debug' first"
   fi
+  guard_functional_delta 'amebaz2-v*' firmware/src
+  # Clear this version's old outputs first: a package that dies half way must not leave an
+  # older build's .ota/.json for stage to ship (stage's guard_fresh refuses them too).
+  rm -f "$ota" "${ota%.ota}.json" "$clip" "$fwarch"
   # otaUrl (#79): default to a LOCAL file:// (staged into --ota-provider-dir). If OTA_RELEASE_BASE
   # is set, point at the GitHub release asset instead -- python-matter-server's OTA provider
   # downloads an http(s):// otaUrl (checksum-verified) then re-serves it over BDX, so the big .ota
@@ -533,22 +539,13 @@ stage() {
   local src_json="$REPO/firmware/built-images/rac-v$v$sfx.json"
   [ -f "$src_ota" ] || die "no $src_ota -- run 'package' for this flavour first"
   say "stage v$v${sfx:+ ($HISENSE_FLAVOUR)} on $PI_HOST:$PI_OTA_DIR + restart matter-server"
+  guard_fresh "$GCC_RELEASE/application_is/Debug/bin/firmware_is.bin" "$src_ota" "$src_json"
   # Upload under the manifest's OWN names: the .json's otaUrl already references
-  # rac-v$v$sfx.ota, so renaming on upload would break the reference.
-  scp -o BatchMode=yes -i "$PI_SSH_KEY" "$src_ota" "$src_json" \
-    "$PI_HOST:$PI_OTA_DIR/" >/dev/null
-  # Then remove any OTHER flavour's manifest at this same version int. Both flavours share
-  # one version by design (#77), so leaving both on the provider gives it two candidates it
-  # cannot disambiguate, and it may serve the one you did not build.
-  local other=""; [ -n "$sfx" ] && other="rac-v$v.json" || other="rac-v$v-debug.json"
-  ssh -o BatchMode=yes -i "$PI_SSH_KEY" "$PI_HOST" \
-    "rm -f $PI_OTA_DIR/$other 2>/dev/null" >/dev/null 2>&1 || true
-  # cache hygiene: prune the ephemeral OTA-provider junk that piles up per attempt
-  # (KVS + per-run logs). Leave .ota/.json manifests (needed for rollback images).
-  ssh -o BatchMode=yes -i "$PI_SSH_KEY" "$PI_HOST" \
-    "rm -f $PI_OTA_DIR/chip_kvs_ota_provider_* $PI_OTA_DIR/ota_provider_*.log 2>/dev/null; \
-     docker restart matter-server >/dev/null 2>&1"   # restart => reload manifests (loaded once at init)
-  say "  staged + provider junk pruned + matter-server restarted (manifest cache reloaded)"
+  # rac-v$v$sfx.ota, so renaming on upload would break the reference. pi_stage installs through a
+  # root container (the provider dir is root-owned) and archives every other manifest for this
+  # pid, which also covers the OTHER flavour at this same version int (#77): two candidates at
+  # one version is a coin toss for the provider. Stock-revert manifests stay active.
+  pi_stage "$src_json" "$src_ota"
 }
 
 # ---- flash (update_node with retries + rollback detection) -----------------
@@ -560,7 +557,10 @@ stage() {
 # bare grep once 'confirmed' node 14's flash with node 35's earlier line. An unreadable log
 # (PI_* unset) falls back to the availability transition alone, loudly.
 check_subscription_log() {
-  local node="$1"
+  local node="$1" since="${2:-}"
+  # Only lines logged AFTER the flash started count (Pi clock, epoch): a pre-OTA line once
+  # "confirmed" a flash whose update had not even begun. No start time: fall back to 15m.
+  local window="${since:-15m}"
   if [ -z "${PI_HOST:-}" ] || [ -z "${PI_SSH_KEY:-}" ]; then
     say "  PI_HOST/PI_SSH_KEY unset -- cannot read the matter-server log; node availability stands as the subscription assertion (#64)"
     return 0
@@ -575,7 +575,7 @@ check_subscription_log() {
   local line=""
   for _ in 1 2 3 4 5 6; do
     if ! line="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -i "$PI_SSH_KEY" "$PI_HOST" \
-        "docker logs --since 15m matter-server 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E '<Node:$node> (Re-)?Subscription succeeded' | tail -1 || true" 2>/dev/null)"; then
+        "docker logs --since $window matter-server 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E '<Node:$node> (Re-)?Subscription succeeded' | tail -1 || true" 2>/dev/null)"; then
       say "  could not read the matter-server log on $PI_HOST -- node availability stands as the subscription assertion (#64)"
       return 0
     fi
@@ -591,13 +591,17 @@ check_subscription_log() {
     # re-interview without logging a fresh '(Re-)Subscription succeeded' line (seen on the 2026-07-23
     # reject flip), so a missing line here is not proof of a break. Warn, do not die: the primary
     # gate already passed, and a false die aborts a healthy flash mid-run.
-    say "  no fresh '(Re-)Subscription succeeded' for node $node in 15m -- availability after re-interview already asserted the subscription (#64); matter-server likely resumed it without a new line. OK."
+    say "  no fresh '(Re-)Subscription succeeded' for node $node since ${since:-15m ago} -- availability after re-interview already asserted the subscription (#64); matter-server likely resumed it without a new line. OK."
   fi
 }
 flash() {
   load_env
   : "${OTAENV_PY:?}" "${MS_WS:?}" "${NODE_ID:?}"
-  local v; v="$(cur_version)"
+  local v since; v="$(cur_version)"
+  say "pre-flight: tools + link to node $NODE_ID"
+  guard_tools
+  guard_link "$NODE_ID"
+  since="$(pi_now 2>/dev/null || true)"
   say "flash v$v to node $NODE_ID (retries; then verify the reported version changed)"
   if "$OTAENV_PY" - "$MS_WS" "$NODE_ID" "$v" <<'PY'
 import asyncio,json,sys,aiohttp
@@ -671,7 +675,7 @@ async def main():
     sys.exit(2)
 asyncio.run(main())
 PY
-  then echo "$v" > "$RELEASED_MARK"; say "recorded on-device version $v"; check_subscription_log "$NODE_ID"
+  then echo "$v" > "$RELEASED_MARK"; say "recorded on-device version $v"; check_subscription_log "$NODE_ID" "$since"
   else die "flash verification failed for v$v -- version not sustained (rollback/boot crash, docs/10 §7,§11) or the subscription gate failed (#64, docs/10 §16); see the [flash] lines above"; fi
 }
 

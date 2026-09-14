@@ -117,6 +117,8 @@ load_env() {
   . "$ENVF"
   : "${VID:?}" "${PID:?}"
 }
+# shellcheck source=ota-guards.sh
+. "$HERE/ota-guards.sh"
 
 # ---- build (issue #82: archive-before-overwrite, then archive the fresh image) --------------
 build() {
@@ -231,6 +233,17 @@ package() {
   : "${OTA_IMAGE_TOOL:?set OTA_IMAGE_TOOL to the connectedhomeip src/app/ota_image_tool.py path}"
   local ota="$IMG/esp32-v$int.ota" payload
   local otaurl="file:///esp32-v$int.ota"
+  # Pre-flight. The flavour is read from the image bytes, the only place it can be read: nothing
+  # on the wire reports a running node's flavour, so ESP32_NODE_FLAVOUR (ota-release.env) records
+  # what the target node runs. Then clear this int's old outputs, so a package that dies half way
+  # cannot leave an older build's .ota/.json for stage to ship.
+  local want="${ESP32_FLAVOUR:-debug}"
+  if [ -n "${ESP32_NODE_FLAVOUR:-}" ] && [ "$ESP32_NODE_FLAVOUR" != "$want" ]; then
+    die "node $ESP32_NODE_ID runs the $ESP32_NODE_FLAVOUR flavour but ESP32_FLAVOUR is $want -- rebuild with ESP32_FLAVOUR=$ESP32_NODE_FLAVOUR"
+  fi
+  guard_flavour "$NEW_BIN" "diagnostic console listening" "$want"
+  guard_functional_delta 'esp32-v*' firmware/esp32-matter/main firmware/esp32-matter/components firmware/src/rs485-driver
+  rm -f "$ota" "$IMG/esp32-v$int.json" "$IMG/esp32-v$int.patch"
   [ -n "${OTA_RELEASE_BASE:-}" ] && otaurl="${OTA_RELEASE_BASE%/}/esp32-v$semver/esp32-v$int.ota"
 
   if (( full == 1 || rel == 0 )); then
@@ -239,6 +252,8 @@ package() {
     payload="$NEW_BIN"
   else
     : "${DELTA_PATCH_GEN:?set DELTA_PATCH_GEN to esp_delta_ota_patch_gen.py}" "${IDF_PYTHON:?set IDF_PYTHON to the IDF python env (has detools+esptool)}"
+    "$IDF_PYTHON" -c 'import detools' 2>/dev/null \
+      || die "IDF_PYTHON ($IDF_PYTHON) cannot import detools -- $IDF_PYTHON -m pip install detools"
     local base; base="$(int_to_semver_bin "$rel")" || die "delta base for int $rel not in built-images/ (#82)"
     payload="$IMG/esp32-v$int.patch"
     say "delta patch vs base $(basename "$base") -> $(basename "$payload")"
@@ -268,12 +283,10 @@ stage() {
   : "${PI_HOST:?}" "${PI_OTA_DIR:?}" "${PI_SSH_KEY:?}"
   local int; int="$(cur_int)"
   say "stage esp32-v$int on $PI_HOST:$PI_OTA_DIR + restart matter-server"
-  scp -o BatchMode=yes -i "$PI_SSH_KEY" \
-    "$IMG/esp32-v$int.ota" "$IMG/esp32-v$int.json" "$PI_HOST:$PI_OTA_DIR/" >/dev/null
-  ssh -o BatchMode=yes -i "$PI_SSH_KEY" "$PI_HOST" \
-    "rm -f $PI_OTA_DIR/chip_kvs_ota_provider_* $PI_OTA_DIR/ota_provider_*.log 2>/dev/null; \
-     docker restart matter-server >/dev/null 2>&1"
-  say "  staged + provider junk pruned + matter-server restarted"
+  guard_fresh "$NEW_BIN" "$IMG/esp32-v$int.ota" "$IMG/esp32-v$int.json"
+  # The provider dir is root-owned (matter-server runs as root), so a plain scp is refused:
+  # pi_stage installs through a root container and archives this product's other manifests.
+  pi_stage "$IMG/esp32-v$int.json" "$IMG/esp32-v$int.ota"
 }
 
 # ---- flash (update_node retries + rollback detection; mirror of ota-release.sh flash) -------
@@ -283,7 +296,10 @@ stage() {
 # this box (same ssh pattern stage() uses). An unreadable log (PI_* unset) falls back to the
 # availability transition alone, loudly. Mirror of ota-release.sh check_subscription_log.
 check_subscription_log() {
-  local node="$1"
+  local node="$1" since="${2:-}"
+  # Only lines logged AFTER the flash started count (Pi clock, epoch): a pre-OTA line once
+  # "confirmed" a flash whose update had not even begun. No start time: fall back to 15m.
+  local window="${since:-15m}"
   if [ -z "${PI_HOST:-}" ] || [ -z "${PI_SSH_KEY:-}" ]; then
     say "  PI_HOST/PI_SSH_KEY unset -- cannot read the matter-server log; node availability stands as the subscription assertion (#64)"
     return 0
@@ -300,7 +316,7 @@ check_subscription_log() {
   local line=""
   for _ in 1 2 3 4 5 6; do
     if ! line="$(ssh -o BatchMode=yes -o ConnectTimeout=10 -i "$PI_SSH_KEY" "$PI_HOST" \
-        "docker logs --since 15m matter-server 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E '<Node:$node> (Re-)?Subscription succeeded' | tail -1 || true" 2>/dev/null)"; then
+        "docker logs --since $window matter-server 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E '<Node:$node> (Re-)?Subscription succeeded' | tail -1 || true" 2>/dev/null)"; then
       say "  could not read the matter-server log on $PI_HOST -- node availability stands as the subscription assertion (#64)"
       return 0
     fi
@@ -316,13 +332,17 @@ check_subscription_log() {
     # re-interview without logging a fresh '(Re-)Subscription succeeded' line (seen on the 2026-07-23
     # reject flip), so a missing line here is not proof of a break. Warn, do not die: the primary
     # gate already passed, and a false die aborts a healthy flash mid-run.
-    say "  no fresh '(Re-)Subscription succeeded' for node $node in 15m -- availability after re-interview already asserted the subscription (#64); matter-server likely resumed it without a new line. OK."
+    say "  no fresh '(Re-)Subscription succeeded' for node $node since ${since:-15m ago} -- availability after re-interview already asserted the subscription (#64); matter-server likely resumed it without a new line. OK."
   fi
 }
 flash() {
   load_env
   : "${OTAENV_PY:?}" "${MS_WS:?}" "${ESP32_NODE_ID:?set ESP32_NODE_ID in ota-release.env (the ESP32 node, e.g. 28)}"
-  local int semver; int="$(cur_int)"; semver="$(cur_semver)"
+  local int semver since; int="$(cur_int)"; semver="$(cur_semver)"
+  say "pre-flight: tools + link to node $ESP32_NODE_ID"
+  guard_tools
+  guard_link "$ESP32_NODE_ID"
+  since="$(pi_now 2>/dev/null || true)"
   say "flash esp32-v$int ($semver) to node $ESP32_NODE_ID (retries; verify the reported version changed)"
   # update_node selects the OTA by the INT (V); but VERIFY by the STRING (0/40/10), NOT the int
   # (0/40/9): this ESP32 firmware leaves the softwareVersion INT unwired (reads 0), so checking the
@@ -394,7 +414,7 @@ async def main():
     sys.exit(2)
 asyncio.run(main())
 PY
-  then echo "$int" > "$(released_mark)"; say "recorded on-device version $int ($(idf_target))"; check_subscription_log "$ESP32_NODE_ID"
+  then echo "$int" > "$(released_mark)"; say "recorded on-device version $int ($(idf_target))"; check_subscription_log "$ESP32_NODE_ID" "$since"
   else die "flash verification failed for v$int -- version string not sustained or the subscription gate failed (#64); see the [flash] lines above"; fi
 }
 
