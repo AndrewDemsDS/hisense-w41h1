@@ -165,7 +165,16 @@ build() {
   # catch. So: accept either spelling, then export the HISENSE_* names the build actually reads.
   : "${HISENSE_BREAKGLASS_TOKEN:=${BREAKGLASS_TOKEN:-}}"
   : "${HISENSE_BREAKGLASS_PORT:=${BREAKGLASS_PORT:-}}"
-  export HISENSE_OTA_URL HISENSE_BREAKGLASS_TOKEN HISENSE_BREAKGLASS_PORT
+  # Export only the ones that actually carry a value. CMakeLists.txt gates on
+  # `DEFINED ENV{HISENSE_*}`, and an exported-but-EMPTY var satisfies DEFINED, so exporting
+  # unconditionally hands the compiler -DHISENSE_BREAKGLASS_PORT= with nothing after the `=`.
+  # app_main.cpp then expands htons(HISENSE_BREAKGLASS_PORT) to htons() and the build dies on
+  # "too few arguments to __builtin_bswap16", suppressing the #ifndef default of 2324. Unset
+  # instead, so an absent credential means absent, not empty.
+  for _v in HISENSE_OTA_URL HISENSE_BREAKGLASS_TOKEN HISENSE_BREAKGLASS_PORT; do
+    if [ -n "${!_v:-}" ]; then export "${_v?}"; else unset "$_v"; fi
+  done
+  unset _v
 
   if [ "${ESP32_ALLOW_NO_RECOVERY:-0}" != "1" ]; then
     [ -n "${HISENSE_OTA_URL:-}" ] \
