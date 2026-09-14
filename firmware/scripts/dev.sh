@@ -95,18 +95,30 @@ esp_env() {
   command -v idf.py >/dev/null 2>&1 && [ "${1:-}" = "idf-only" ] && return 0
   [ -f "$IDF_PATH/export.sh" ] || die "no ESP-IDF at $IDF_PATH (set IDF_PATH, or: dev.sh fetch esp32)"
   say "sourcing ESP-IDF ($IDF_PATH)"
+  # Vendor env scripts are not written for `set -eu`: sourcing esp-matter's export.sh under -u
+  # kills this shell with no message (verified). Relax both flags around each source, same as
+  # ota-release.sh does for activate.sh, and fail on a real error by checking the result instead.
+  set +eu
   # shellcheck disable=SC1091
   . "$IDF_PATH/export.sh" >/dev/null
+  set -eu
+  command -v idf.py >/dev/null 2>&1 || die "sourcing $IDF_PATH/export.sh did not put idf.py on PATH"
   [ "${1:-}" = "idf-only" ] && return 0
   [ -f "$ESP_MATTER_PATH/export.sh" ] || die "no esp-matter at $ESP_MATTER_PATH (set ESP_MATTER_PATH, or: dev.sh fetch esp32)"
   say "sourcing esp-matter ($ESP_MATTER_PATH)"
+  export ESP_MATTER_PATH
+  set +eu
   # shellcheck disable=SC1091
   . "$ESP_MATTER_PATH/export.sh" >/dev/null
+  set -eu
+  [ -n "${ZAP_INSTALL_PATH:-}" ] || die "sourcing $ESP_MATTER_PATH/export.sh did not set ZAP_INSTALL_PATH"
 }
 
 # idf.py set-target wipes sdkconfig + build/, so only run it when the target actually changes.
 ensure_target() {  # $1 = project dir
-  local cur; cur=$(sed -n 's/^CONFIG_IDF_TARGET="\(.*\)"/\1/p' "$1/sdkconfig" 2>/dev/null | head -1)
+  # A fresh checkout has no sdkconfig; under pipefail sed's exit 2 would kill the script silently.
+  local cur=""
+  [ -f "$1/sdkconfig" ] && cur=$(sed -n 's/^CONFIG_IDF_TARGET="\(.*\)"/\1/p' "$1/sdkconfig" | head -1)
   if [ "$cur" != "$IDF_TGT" ]; then
     [ -n "$cur" ] && warn "$1 is configured for $cur; switching to $IDF_TGT wipes its sdkconfig and build/"
     (cd "$1" && run idf.py set-target "$IDF_TGT")
