@@ -84,7 +84,14 @@ firmware/scripts/dev.sh flash esp32 --board c3 --port /dev/ttyACM0
 
 - **Where things live.** ESP-IDF defaults to `~/esp/esp-idf` and esp-matter to `~/esp/esp-matter`;
   set `IDF_PATH` / `ESP_MATTER_PATH` to use existing checkouts. `fetch` follows esp-matter's own
-  documented procedure (shallow submodules, `checkout_submodules.py --platform esp32 linux`).
+  documented procedure (shallow submodules, `checkout_submodules.py --platform esp32 linux`), with
+  `install.sh --no-host-tool`: chip-tool and the other host tools are not needed to build firmware.
+- **Python version.** esp-matter's install does not resolve on Python 3.14. `dev.sh` uses
+  `ESP_PYTHON` if set, otherwise on a 3.14+ host a uv-managed 3.12 (`uv python install 3.12`), for
+  both the ESP-IDF env and the esp-matter venv; they must share one interpreter. `dev.sh doctor
+  esp32` checks that. After a failed install, move
+  `esp-matter/connectedhomeip/connectedhomeip/.environment` aside before retrying: a half-built
+  venv fails the next run with `pw: command not found`.
 - **Where `idf.py` runs.** In `firmware/esp32-matter/` for the Matter app and in
   `firmware/esp32-matter/smoketest/` for `busmon`. Each has its own `sdkconfig` and `build/`.
   `dev.sh` only calls `idf.py set-target` when the configured target differs, because that call
