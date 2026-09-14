@@ -176,6 +176,9 @@ comes up. Envelope `[7]/[8]` is now learned from the A/C's DevType reply rather 
 . $IDF_PATH/export.sh && . $ESP_MATTER_PATH/export.sh
 idf.py set-target esp32 && idf.py build flash monitor   # classic ESP32-D0WDQ6 (the board on hand); esp32c3/s3 also work
 ```
+Run it from this directory (`firmware/esp32-matter/`); `smoketest/` is a separate IDF project.
+`firmware/scripts/dev.sh` wraps fetch, build, erase, flash and the `virtual_ac.py` bench for
+either board: see `docs/guide/Build-Flash-Test.md`.
 
 ## Status
 **Full functional + structural parity with the AmebaZ2 build, commissioned and verified in HA.**

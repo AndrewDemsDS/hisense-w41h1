@@ -35,7 +35,8 @@ static void on_status(const HisenseState *st)
 
 extern "C" void app_main(void)
 {
-    ESP_LOGI(TAG, "=== Hisense RS-485 bus monitor (ESP32-D0WDQ6, TX=19 RX=18 DE=4) ===");
+    // Pins come from PinNames.h per build target, so name the target rather than one pin set.
+    ESP_LOGI(TAG, "=== Hisense RS-485 bus monitor (" CONFIG_IDF_TARGET ", pins per PinNames.h) ===");
     ESP_LOGI(TAG, "starting driver -> DevType handshake + ~1Hz poll of the A/C...");
     if (hisense_init(on_status) != pdPASS) {
         ESP_LOGE(TAG, "hisense_init FAILED");
