@@ -168,6 +168,54 @@ static inline uint8_t hisense_fan_raw_to_esphome_index(uint8_t raw)
     return hisense_fan_raw_to_speed(raw);   /* 0 for auto/unknown, else 1..6 */
 }
 
+/* ---- Setpoint unit (#117) ---------------------------------------------------
+ * ESPHome always speaks Celsius, but the A/C reads and reports the setpoint byte in its
+ * PANEL's unit. The Matter builds learned this on hardware 2026-07-19 (Celsius 23 sent to an
+ * F panel made it target 23 F); the ESPHome glue shipped without it and hit the same thing.
+ *
+ * Clamp in Celsius, then convert, and tell the builder which unit it holds so it applies the
+ * matching range check. Returns the clamped Celsius value for the entity to publish. */
+static inline int esphome_setpoint_to_cmd(int wanted_c, bool panel_f, HisenseCommand *cmd)
+{
+    int8_t c = (int8_t) matter_clamp_setpoint_c(wanted_c);
+    cmd->fahrenheit = panel_f;
+    cmd->setpoint   = panel_f ? hisense_c_to_f(c) : c;
+    return c;
+}
+
+/* Status -> command shadow, validated in the wire unit. Copying setpoint_c verbatim both
+ * dropped the unit and let an out-of-range report (a 24 F panel decodes to -4 C) poison the
+ * shadow, after which hisense_build_command() rejected every Cool/Heat/Auto frame while
+ * Fan-only, which strips the setpoint, still went through. Returns false and leaves the
+ * shadow alone when the report is outside what the builder accepts. */
+static inline bool esphome_sync_shadow_setpoint(int8_t setpoint_c, bool temp_unit_f, HisenseCommand *cmd)
+{
+    int8_t wire;
+    if (!hisense_shadow_setpoint_from_status(setpoint_c, temp_unit_f, &wire)) return false;
+    cmd->setpoint   = wire;
+    cmd->fahrenheit = temp_unit_f;
+    return true;
+}
+
+/* ---- Eco / turbo shadow --------------------------------------------------------
+ * Ported from the esp32 Matter sync (app_main.cpp). The shadow's feature byte rides every
+ * combined frame, so it must track what the A/C reports; otherwise a Turbo set from HA is
+ * re-asserted on each later mode/setpoint/fan change after the remote cleared it. Eco wins
+ * when both flags read set, matching that sync. */
+static inline HisenseFeature hisense_feature_from_status(bool eco_on, bool turbo_on)
+{
+    if (eco_on)   return HISENSE_FEATURE_ECO;
+    if (turbo_on) return HISENSE_FEATURE_TURBO;
+    return HISENSE_FEATURE_NONE;
+}
+
+/* ECO_OFF (byte33 0x10) is a one-shot clear, not a state: after it is sent the shadow goes
+ * back to neutral, as the Matter apply_eco() does. Left in place it rode every later frame. */
+static inline HisenseFeature esphome_feature_after_send(HisenseFeature sent)
+{
+    return sent == HISENSE_FEATURE_ECO_OFF ? HISENSE_FEATURE_NONE : sent;
+}
+
 #ifdef __cplusplus
 }
 #endif

@@ -168,6 +168,79 @@ int main() {
     CHECK(matter_clamp_setpoint_c(40) == 32, "above range clamps to 32");
     CHECK(matter_clamp_setpoint_c(22) == 22, "in range unchanged");
 
+    // ---- #117: the setpoint travels in the PANEL's unit ----------------------------------
+    // ESPHome is always Celsius, but the A/C reads byte 19 in its display unit. With the panel
+    // in F, the glue sent Celsius 24 verbatim and the A/C targeted 24 F, the same failure the
+    // Matter builds hit on hardware 2026-07-19 (fixed there in 5164c71, never ported here).
+    printf("[setpoint unit, #117]\n");
+    {
+        HisenseCommand c = base;
+        CHECK(esphome_setpoint_to_cmd(24, false, &c) == 24 && c.setpoint == 24 && !c.fahrenheit,
+              "C panel: 24 C -> wire 24, unit C");
+        c = base;
+        // Home Assistant in F sends 75 F as 23.9 C, which the glue rounds to 24.
+        CHECK(esphome_setpoint_to_cmd(24, true, &c) == 24 && c.setpoint == 75 && c.fahrenheit,
+              "F panel: 24 C -> wire 75 F, unit F");
+        CHECK(cmd_byte(c, 19) == 75 * 2 + 1, "F panel: byte19 carries 75 F");
+        c = base;
+        CHECK(esphome_setpoint_to_cmd(40, true, &c) == 32 && c.setpoint == 90,
+              "F panel: clamp in C first, then convert (40 C -> 32 C -> 90 F)");
+    }
+
+    // ---- #117: shadow sync must validate in the wire unit --------------------------------
+    // The hub copied state.setpoint_c straight into the shadow. Once the A/C held 24 F (from
+    // the bug above) it reported -4 C, and every later Cool/Heat/Auto frame failed the builder's
+    // range check and was dropped. Fan-only strips the setpoint so it still built: that is the
+    // reported "stuck on Fan only", and the dropped fan change reverting to Auto.
+    printf("[shadow sync, #117]\n");
+    {
+        uint8_t buf[64];
+        HisenseCommand poisoned = base;
+        poisoned.setpoint = hisense_f_to_c(24);   // what the old sync copied in
+        CHECK(poisoned.setpoint == -4, "24 F panel reports -4 C");
+        CHECK(hisense_build_command(&poisoned, buf, sizeof(buf)) == 0,
+              "repro: poisoned shadow drops the COOL frame");
+        poisoned.mode = HISENSE_MODE_FAN;
+        CHECK(hisense_build_command(&poisoned, buf, sizeof(buf)) != 0,
+              "repro: FAN_ONLY still builds, so only fan-only is reachable");
+
+        HisenseCommand s = base;
+        s.setpoint = 26;
+        CHECK(!esphome_sync_shadow_setpoint(hisense_f_to_c(24), true, &s) && s.setpoint == 26 &&
+                  !s.fahrenheit,
+              "out-of-range report leaves the last good shadow alone");
+        CHECK(hisense_build_command(&s, buf, sizeof(buf)) != 0, "COOL still builds after it");
+
+        s = base;
+        CHECK(esphome_sync_shadow_setpoint(24, true, &s) && s.setpoint == 75 && s.fahrenheit,
+              "F panel 24 C report -> shadow 75 F");
+        CHECK(hisense_build_command(&s, buf, sizeof(buf)) != 0, "F shadow builds");
+        CHECK(esphome_sync_shadow_setpoint(22, false, &s) && s.setpoint == 22 && !s.fahrenheit,
+              "panel back to C -> shadow 22 C, unit C");
+    }
+
+    // ---- eco/turbo shadow sync (port of the esp32 Matter sync, app_main.cpp) --------------
+    // The hub never synced cmd.feature from status, so a Turbo set from HA kept re-asserting
+    // on every later mode/setpoint/fan frame even after the remote turned it off, and a cleared
+    // Eco left the one-shot ECO_OFF byte (0x10) riding every frame.
+    printf("[feature sync]\n");
+    CHECK(hisense_feature_from_status(false, false) == HISENSE_FEATURE_NONE, "neither -> NONE");
+    CHECK(hisense_feature_from_status(true, false) == HISENSE_FEATURE_ECO, "eco -> ECO");
+    CHECK(hisense_feature_from_status(false, true) == HISENSE_FEATURE_TURBO, "turbo -> TURBO");
+    CHECK(hisense_feature_from_status(true, true) == HISENSE_FEATURE_ECO,
+          "both reported -> ECO (same precedence as the Matter sync)");
+    {
+        HisenseCommand c = base;
+        c.feature = HISENSE_FEATURE_TURBO;   // set from HA earlier
+        c.feature = hisense_feature_from_status(false, false);   // remote turned it off
+        CHECK(cmd_byte(c, 33) == 0x04, "synced shadow no longer re-asserts turbo (byte33 0x04)");
+        CHECK(esphome_feature_after_send(HISENSE_FEATURE_ECO_OFF) == HISENSE_FEATURE_NONE,
+              "ECO_OFF is one-shot: shadow returns to NONE after the send");
+        CHECK(esphome_feature_after_send(HISENSE_FEATURE_ECO) == HISENSE_FEATURE_ECO, "ECO kept");
+        CHECK(esphome_feature_after_send(HISENSE_FEATURE_TURBO) == HISENSE_FEATURE_TURBO,
+              "TURBO kept");
+    }
+
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

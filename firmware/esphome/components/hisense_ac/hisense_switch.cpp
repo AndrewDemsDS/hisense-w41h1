@@ -30,6 +30,7 @@ void HisenseSwitch::write_state(bool state) {
       // clears turbo instead).
       cmd.feature = state ? HISENSE_FEATURE_ECO : HISENSE_FEATURE_ECO_OFF;
       this->parent_->send_command();
+      cmd.feature = esphome_feature_after_send(cmd.feature);   // ECO_OFF is one-shot
       break;
     case SWITCH_TURBO:
       cmd.feature = state ? HISENSE_FEATURE_TURBO : HISENSE_FEATURE_NONE;
