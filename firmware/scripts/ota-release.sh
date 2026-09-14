@@ -35,6 +35,12 @@ die() { printf '\033[1;31m[ota-release] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 activate_chip_env() {
   # shellcheck disable=SC1091
   set +u; source "$SDK_ROOT/connectedhomeip/scripts/activate.sh" >/dev/null 2>&1 || die "activate.sh failed"; set -u
+  # activate.sh can print "Error during activate" and still return 0. The known case is a host
+  # Python upgrade: the pigweed venv's python3 is a symlink to the old interpreter, the venv is
+  # dead, and the build carries on with system python until codegen dies on
+  # "No module named 'matter'" far from the cause. Check the one import the build needs.
+  python3 -c 'import matter.idl' 2>/dev/null \
+    || die "CHIP python env is broken ($(command -v python3) cannot import matter.idl). Usual cause: the host python was upgraded under the pigweed venv. Rebuild it: cd \$SDK_ROOT/connectedhomeip && rm -rf .environment && source scripts/bootstrap.sh (with a python3 the SDK supports first on PATH)"
 }
 
 load_env() {

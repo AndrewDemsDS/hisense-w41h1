@@ -188,9 +188,16 @@ fetch() {
       (cd "$ESP_MATTER_PATH" && run ./install.sh)
       ;;
     esphome)
-      command -v pipx >/dev/null 2>&1 || die "install pipx first (or: pip install esphome==$ESPHOME_PIN in a venv)"
-      ask "pipx install esphome==$ESPHOME_PIN?" || return 0
-      run pipx install --force "esphome==$ESPHOME_PIN"
+      # Either isolated installer works; esptool comes along as an esphome dependency either way.
+      if command -v uv >/dev/null 2>&1; then
+        ask "uv tool install esphome==$ESPHOME_PIN?" || return 0
+        run uv tool install --force "esphome==$ESPHOME_PIN"
+      elif command -v pipx >/dev/null 2>&1; then
+        ask "pipx install esphome==$ESPHOME_PIN?" || return 0
+        run pipx install --force "esphome==$ESPHOME_PIN"
+      else
+        die "install uv or pipx first (or: pip install esphome==$ESPHOME_PIN in a venv)"
+      fi
       [ -f "$ESPHOME_DIR/secrets.yaml" ] || run cp "$ESPHOME_DIR/secrets.yaml.example" "$ESPHOME_DIR/secrets.yaml"
       say "now fill in $ESPHOME_DIR/secrets.yaml (it is gitignored)"
       ;;
