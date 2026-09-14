@@ -10,6 +10,7 @@
 - [FAQ & Gotchas](FAQ-Gotchas)
 
 **Developer**
+- [Build, Flash & Test](Build-Flash-Test)
 - [Repo Map & Build Pipeline](Repo-Map-and-Build-Pipeline)
 - [Protocol Overview](Protocol-Overview)
 - [Testing & QA](Testing-and-QA)

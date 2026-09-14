@@ -59,6 +59,33 @@ status frame and applies command frames to its state. Beyond the round-trip self
 loopback or the DI/RO tap for on-hardware cross-checks), or a TCP socket (`--connect`, for
 Renode). Develop against it before touching the real bus.
 
+Needs `pyserial` for `--port`. It prints `# virtual A/C up. initial: {...}`, then one line per
+handshake frame it echoes (`[0x0A] handshake poll -> echoed slave reply`) and a `[state] {...}`
+line whenever a command changes its state. Status polls are answered silently.
+
+## On-target bench: `smoketest/` against the simulator
+
+`firmware/esp32-matter/smoketest/` is **not** a codec test (the golden vectors run on the host).
+It builds `busmon`: the real driver plus the ESP-IDF HAL, doing the handshake, the ~1 Hz poll,
+frame reassembly and the status parse, and logging each decoded frame. It needs something
+answering on the bus, either the real A/C through an A/B tap or `virtual_ac.py` on a USB adapter:
+
+| Adapter | Wiring | Covers |
+|---|---|---|
+| USB-TTL, 3.3 V | board TX to adapter RX, board RX to adapter TX, GND to GND, no transceiver | HAL UART, framing, parse |
+| USB-RS485 | board's transceiver A to A, B to B, GND to GND | the above plus DE timing |
+
+Board pins: ESP32-C3 TX 5 / RX 6 / DE 10, classic ESP32 TX 19 / RX 18 / DE 4.
+
+```
+firmware/scripts/dev.sh bench esp32 --board c3 --port <board> --sim-port <adapter>
+```
+
+A pass is `busmon` logging `A/C #N: power=1 mode=... set=24C indoor=25C ...` about once a second
+with `frames` and `RX` climbing. `RX=0` while `TX` climbs is wiring: swapped TX/RX, no common
+ground, or DE not reaching the transceiver. The step-by-step version, with what is
+hardware-verified and what is not, is [Build, Flash and Test](Build-Flash-Test#bench-stage-no-ac).
+
 ## Layer 4 extras
 
 - **4b: chip-tool / CSA Test Harness** (needs a device): because the image uses CHIP default

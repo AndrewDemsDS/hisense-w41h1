@@ -54,7 +54,7 @@ reverse-engineered + sniff-validated, see [`reverse-engineering/docs/03`](revers
 |---|---|
 | `firmware/src/rs485-driver/` | the bus driver (`hisense_rs485.{h,cpp}`) + pure `matter_aircon_map.h` + `power_estimate.h`: **our code (MIT)** |
 | `firmware/src/sdk-edits/` | the Matter integration: `matter_drivers.cpp` glue, the `.zap`, the `0xFFF1FC00` mfg-cluster def, and `core-patches/`: plus `README.md` documenting every in-place SDK edit |
-| `firmware/scripts/` | `ota-release.sh` (build/package/flash/OTA), `gen-creds.sh`, Matter helpers |
+| `firmware/scripts/` | `dev.sh` (guided build/flash/test for every target), `ota-release.sh` (build/package/flash/OTA), `esp32-release.sh`, `gen-creds.sh`, Matter helpers |
 | `firmware/flasher/` | pyusb CH341A flasher (per-sector verify + retry, use this, **not flashrom**) |
 | `firmware/test/` | no-hardware QA, host codec + Matter-map tests + `virtual_ac.py` simulator |
 | `firmware/docs/` | wiring plan, attestation, QA strategy, energy monitoring, the OTA/build procedure (`10-firmware-ota-procedure.md`), and the three-way path comparison (`13-path-comparison.md`) |
@@ -64,6 +64,11 @@ reverse-engineered + sniff-validated, see [`reverse-engineering/docs/03`](revers
 | `dumps/` | ⚠️ **local-only, gitignored**: raw flash (Wi-Fi creds + device RSA key + vendor blob). Never published. |
 
 ## Quickstart
+
+This is the AmebaZ2 path by hand. For any target (AmebaZ2, ESP32, ESPHome), the guided version is
+`firmware/scripts/dev.sh walk <target>`; see
+[Build, Flash and Test](docs/guide/Build-Flash-Test.md), including which steps are
+hardware-verified.
 
 ### 1. Prerequisites
 - Linux with the `arm-none-eabi` toolchain and Python 3.
