@@ -5,17 +5,12 @@ doc.
 
 ## The OTA "finished successfully" but the device is still on the old version. Did it roll back?
 
-Usually the **AmebaZ2 serial trap**, not a real rollback. The bootloader picks the boot slot
-by the image's `FWHS.header.serial`, **not** the Matter `softwareVersion`; if the serial isn't
-bumped, the update applies then reverts, looking like a rollback. **The script handles it**
-(`serial = SERIAL_BASE + version`, log-verified), so this only bites if you hand-build. Always use
-`ota-release.sh`. (`firmware/docs/10-firmware-ota-procedure.md` §11)
+On **AmebaZ2**, usually the serial trap: the bootloader picks the slot by `FWHS.header.serial`,
+not `softwareVersion`. `ota-release.sh build` sets it, so it only bites a hand-built image.
+([OTA Updates](OTA-Updates#the-ota-serial-trap-the-script-handles-it))
 
-On **ESP32** the same symptom has a different cause: a device built with
-`CONFIG_ENABLE_DELTA_OTA=y` **rejects a full image**. It transfers the whole thing, the provider
-says "finished", and the device stays on the old build. It accepts only a delta patch built
-against the **exact binary it is running**, whose SHA it verifies before applying. See
-[OTA Updates](OTA-Updates#esp32-delta-ota).
+On **ESP32**, a delta-OTA device rejects a full image and silently stays put.
+([OTA Updates](OTA-Updates#esp32-delta-ota))
 
 ## The OTA errors "Target node did not process the update file". Is it broken?
 
@@ -43,18 +38,14 @@ matter-server. ([Commissioning & HA Setup](Commissioning-and-HA-Setup))
 
 ## Why must endpoints stay contiguous?
 
-Keep endpoints `{0,1,2,…}` with no gaps and **renumber** to close a hole rather than leave one. A gap
-was one of three confounded factors in a boot-crash/rollback, never isolated, so contiguity is
-treated as a **zero-cost precaution**, and `lint` blocks a non-contiguous `.zap`. (`firmware/docs/10-firmware-ota-procedure.md` §3)
+A gap was one of three confounded factors in a boot-crash, never isolated, so contiguity is a
+zero-cost precaution that `lint` enforces. Renumber to close a hole.
+([Repo Map](Repo-Map-and-Build-Pipeline#the-three-build-traps-summary-docs10-is-canonical))
 
-## My build finished in ~90-110 seconds. Good?
+## My build finished in ~110 seconds. Good?
 
-Yes, if it compiled the core. Since the build runs `-j$(nproc)`, a genuine full build is now
-**~110 s** (it used to be ~20-30 min serial), so fast alone no longer means stale. Judge it by
-**activity, not wall-clock**: a genuine build shows ninja compiling the core (hundreds of
-`[N/353] c++ …` lines) and rebuilds `libCHIP.a` fresh. A build that finishes fast with only
-~900 ninja/ar lines and no fresh `libCHIP.a` is the stale one. `ota-release.sh build` does the
-mandatory full clean either way. (`firmware/docs/10-firmware-ota-procedure.md` §4)
+Yes, if ninja compiled the core (hundreds of `[N/353] c++` lines) and rebuilt `libCHIP.a`. Judge by
+activity, not wall-clock. ([Repo Map](Repo-Map-and-Build-Pipeline#the-three-build-traps-summary-docs10-is-canonical))
 
 ## What is "77"?
 

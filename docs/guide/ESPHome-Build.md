@@ -86,15 +86,11 @@ boards. Never erase a board that is already running: that throws away its Wi-Fi 
 
 ## Bring it up in stages
 
-Same three stages as the Matter track, for the same reason: never leave the A/C in an unknown
-state.
-
-1. **Bench, no A/C.** Run the host tests (`firmware/test/run_tests.sh`, which includes the ESPHome
-   mapping test), then drive the firmware against `firmware/test/virtual_ac.py` over a USB-TTL
-   adapter. Watch the `AC bus link` sensor go on and the climate entity populate.
-2. **Real bus, USB-powered.** Tap **A and B only**, mind the ground-loop warning, and confirm the
-   decoded status: indoor temperature, mode, compressor Hz. This proves the read direction.
-3. **Full integration.** Power from the connector's 5 V rail and close the unit up.
+Use the same three stages as the Matter track
+([ESP32 Replacement Build](ESP32-Replacement-Build#staged-bring-up-never-leave-the-ac-in-an-unknown-state)),
+with `dev.sh test esphome` and `dev.sh bench esphome` for stage 1. What passing looks like on this
+firmware: in stage 1 the `AC bus link` sensor turns on and the climate entity populates; in stage 2
+the decoded indoor temperature, mode and compressor Hz match the unit.
 
 `firmware/test/hil_esphome_actuation.py` drives a real node over the API and checks two things per
 control: that the command lands, and that nothing else moved. It snapshots and restores the unit's

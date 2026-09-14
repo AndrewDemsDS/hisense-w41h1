@@ -1,7 +1,8 @@
 # ESP32 Replacement Build
 
 The second firmware track: an **ESP32 + RS-485 transceiver** that replaces the AmebaZ2 module,
-reusing the driver unchanged. Source + full detail: `firmware/esp32-matter/README.md`.
+reusing the driver unchanged. This page is the full user-facing description; the source
+directory's `firmware/esp32-matter/README.md` holds only code-level notes.
 
 ← back to [Home](Home) · siblings: [Repo Map and Build Pipeline](Repo-Map-and-Build-Pipeline) ·
 [Protocol Overview](Protocol-Overview) · [Testing and QA](Testing-and-QA)
@@ -114,12 +115,9 @@ The A/C connector pinout:
   it out (RTCWDT resets, flash-read errors). A/C GND/5V only join at stage 3 (powered from the
   connector, no laptop).
 
-A few more traps. The bus task's `xTaskCreate` stack `1024` is *words* on AmebaZ2 (4 KB) but *bytes*
-on ESP-IDF (1 KB), a `printf` overflow crash-loop fixed via `-DHISENSE_BUS_TASK_STACK=4096`
-(driver unchanged). The envelope `seqHi/Lo` bytes are the A/C's **device-type**, read from its DevType
-reply rather than hardcoded (see [Protocol Overview](Protocol-Overview#the-seqhilo-bytes-are-a-device-type-not-a-session-token)). "77" recommission is CHIP-specific:
-reimplement against esp-matter's `CommissioningWindowManager` (the *mapping* stays; the glue is
-new).
+Code-level traps (the ESP-IDF task stack unit, DE-release timing, why a new board's NVS breaks
+commissioning) are in `firmware/esp32-matter/README.md`. The envelope device-type bytes are
+explained in [Protocol Overview](Protocol-Overview#the-seqhilo-bytes-are-a-device-type-not-a-session-token).
 
 ## Staged bring-up (never leave the A/C in an unknown state)
 

@@ -11,9 +11,10 @@ Assistant, **zero cloud**.
 > the stock dump).
 
 **📖 Documentation: [andrewdemsds.github.io/hisense-w41h1](https://andrewdemsds.github.io/hisense-w41h1/)**,
-wiring, flashing, commissioning, everyday control, OTA, recovery, and the reverse-engineering
-write-ups, all searchable in one place. The site is generated from the same guides in the repo
-under [`firmware/docs/`](firmware/docs/) and [`reverse-engineering/docs/`](reverse-engineering/docs/).
+wiring, flashing, commissioning, everyday control, OTA, recovery, building from source, and the
+reverse-engineering write-ups, all searchable in one place. The site is generated from
+[`docs/guide/`](docs/guide/), [`firmware/docs/`](firmware/docs/) and
+[`reverse-engineering/docs/`](reverse-engineering/docs/); this README only points into it.
 
 ## What you get
 
@@ -23,6 +24,8 @@ under [`firmware/docs/`](firmware/docs/) and [`reverse-engineering/docs/`](rever
   swing, and Eco / Quiet / Turbo / Sleep special modes.
 - **Energy monitoring**: live power (W) + voltage, derived from the bus current proxy.
 - **OTA updates over Wi-Fi**: after the first CH341 flash, everything else is wireless.
+- **Three firmwares, one driver**: the stock AmebaZ2 module, an ESP32 replacement board running
+  Matter, or the same ESP32 running ESPHome for Home Assistant only.
 
 ## How it works
 
@@ -38,103 +41,28 @@ The module runs the Realtek AmebaZ2 Matter `room_air_conditioner` example with *
 driver** bridging Matter attributes ↔ the A/C's internal RS-485 bus (protocol
 reverse-engineered + sniff-validated, see [`reverse-engineering/docs/03`](reverse-engineering/docs/03-rs485-ac-protocol.md)).
 
-## Hardware
+## Get started
 
-| | |
+| I want to | Read |
 |---|---|
-| SoC | Realtek RTL8710C (AmebaZ2), secure boot **OFF** |
-| Flash | GD25Q32 4 MB (JEDEC `c84016`) |
-| A/C bus | UART0 **TX=PA_14 RX=PA_13** @ 9600 8N1 (no DE/RE); log console PA_16 |
-| Module port | 4-pin: **5 V · GND · RS-485 A · B** (power from the A/C, bench power browns out the radio) |
-| First flash | CH341A SPI programmer + SOIC-8 clip on the GD25Q32 (then OTA forever after) |
+| know the hardware and the 4-pin port | [Hardware & Wiring](docs/guide/Hardware-and-Wiring.md) |
+| flash a stock module (CH341A clip, once) | [Installing the Firmware](docs/guide/Installing-Custom-Firmware.md), prebuilt images on [Releases](https://github.com/AndrewDemsDS/hisense-w41h1/releases) |
+| commission it into Home Assistant | [Commissioning & HA Setup](docs/guide/Commissioning-and-HA-Setup.md) |
+| update over the air | [OTA Updates](docs/guide/OTA-Updates.md) |
+| un-brick or go back to stock | [Recovery & Reflash](docs/guide/Recovery-and-Reflash.md) |
+| build any of the three firmwares from source | [Build, Flash & Test](docs/guide/Build-Flash-Test.md) (`firmware/scripts/dev.sh walk <target>`) |
+| find my way around the repo and the SDK overlay model | [Repo Map & Build Pipeline](docs/guide/Repo-Map-and-Build-Pipeline.md) |
 
-## Repository layout
-
-| Path | What |
-|---|---|
-| `firmware/src/rs485-driver/` | the bus driver (`hisense_rs485.{h,cpp}`) + pure `matter_aircon_map.h` + `power_estimate.h`: **our code (MIT)** |
-| `firmware/src/sdk-edits/` | the Matter integration: `matter_drivers.cpp` glue, the `.zap`, the `0xFFF1FC00` mfg-cluster def, plus `README.md` documenting every in-place SDK edit |
-| `firmware/scripts/` | `dev.sh` (guided build/flash/test for every target), `ota-release.sh` (build/package/flash/OTA), `esp32-release.sh`, `gen-creds.sh`, Matter helpers |
-| `firmware/flasher/` | pyusb CH341A flasher (per-sector verify + retry, use this, **not flashrom**) |
-| `firmware/test/` | no-hardware QA, host codec + Matter-map tests + `virtual_ac.py` simulator |
-| `firmware/docs/` | wiring plan, attestation, QA strategy, energy monitoring, the OTA/build procedure (`10-firmware-ota-procedure.md`), and the three-way path comparison (`13-path-comparison.md`) |
-| `firmware/esphome/` | the ESPHome firmware for the ESP32 board: the `hisense_ac` component over the same driver, no Matter stack (`firmware/docs/15-esphome-path.md`) |
-| `reverse-engineering/` | protocol/hardware/cloud/OTA RE, `tools/` (sniffer, decoders) |
-| `patches/` | your delta to the two SDKs (`git apply`-able; base commits in [`NOTICE.md`](NOTICE.md)) |
-| `dumps/` | ⚠️ **local-only, gitignored**: raw flash (Wi-Fi creds + device RSA key + vendor blob). Never published. |
-
-## Quickstart
-
-This is the AmebaZ2 path by hand. For any target (AmebaZ2, ESP32, ESPHome), the guided version is
-`firmware/scripts/dev.sh walk <target>`; see
-[Build, Flash and Test](docs/guide/Build-Flash-Test.md), including which steps are
-hardware-verified.
-
-### 1. Prerequisites
-- Linux with the `arm-none-eabi` toolchain and Python 3.
-- The **Realtek AmebaZ2 SDK** + its **Matter component**, and **connectedhomeip**, at the commits
-  pinned in [`NOTICE.md`](NOTICE.md). **These are not included** (Realtek's is proprietary).
-- A **CH341A** programmer + SOIC-8 clip (first flash only).
-- `python-matter-server` run with `--enable-test-net-dcl` (test attestation) + Home Assistant.
-
-### 2. Set up the build tree (two steps, in order)
-```bash
-firmware/setup.sh           # 1) fetch the 3 SDKs into ~/ameba-dev + check out the pinned commits
-scripts/setup.sh            # 2) apply patches/ + the Matter-overlay edits, copy our source in
-```
-Pins live in [`versions.env`](versions.env); full provenance + licensing in [`UPSTREAM.md`](UPSTREAM.md).
-Clone with `--recurse-submodules` to also get the HA companion integration under `integrations/`.
-
-### 3. (optional) Your own commissioning credentials
-```bash
-firmware/scripts/gen-creds.sh   # unique discriminator + passcode (don't ship the shared test code)
-```
-
-### 4. Build
-```bash
-firmware/scripts/ota-release.sh build     # → firmware_is.bin (+ clip image + .ota)
-```
-
-### 5. First flash (CH341, once)
-Download a prebuilt image from the [Releases](https://github.com/AndrewDemsDS/hisense-w41h1/releases)
-(each `amebaz2-vX.Y.Z` / `esp32-vX.Y.Z` tag attaches the built binaries + `SHA256SUMS`), or build your
-own from step 4. Then:
-```bash
-python3 firmware/flasher/ch341flash.py firmware/built-images/flash_rac-integrated-vN.bin
-```
-Writing only `0x0–0x140000` preserves the Matter commissioning KV → no re-commission on updates.
-
-### 6. Commission
-Open the pairing window (remote **Horizon Airflow × 6 → display "77"**), then commission into
-`python-matter-server` (your code from step 3, or the SDK test code `34970112332`). Add the Matter
-integration in HA and control the A/C.
-
-### 7. Updates: OTA, no clip
-```bash
-firmware/scripts/ota-release.sh release --bump --flash
-```
-
-> **⚠️ No remote way back to stock (yet).** Once a module has been OTA-flashed to this custom
-> firmware, there is currently **no way to revert it to the stock ConnectLife firmware over the
-> air**. The only supported recovery path is a whole-chip CH341A write of the stock recovery image
-> (`built-images/flash_rac-stock-v1.bin`, see [`firmware/docs/10`](firmware/docs/10-firmware-ota-procedure.md)),
-> which needs a dump of the stock firmware taken **before** flashing, plus physical access with a
-> SOIC-8 clip. Making stock revert (and remote dump capture) possible is tracked in the
+> **⚠️ No remote way back to stock (yet).** Once a module runs this firmware, the only supported
+> return to stock ConnectLife firmware is a whole-chip CH341A write, which needs a dump of the stock
+> flash taken **before** you first flashed. Take that dump. Remote revert is tracked in the
 > [issues](https://github.com/AndrewDemsDS/hisense-w41h1/issues).
-
-> **⚠️ AmebaZ2 OTA serial gotcha (this cost a whole debugging session):** the bootloader A/B-selects
-> the fw1/fw2 slot by the image **`FWHS.header.serial`** (`amebaz2_firmware_is.json`), **not** the
-> Matter software version. Every OTA build must **bump the serial** or the device applies the update
-> then silently reverts on reboot. `ota-release.sh` does this for you (`serial = base + version`).
 
 ## Releases & CI
 
-A host-only lint gate (codec + Matter-map + virtual-AC + `.zap` contiguity + version) runs on every
-push/PR. Pushing a signed tag builds and publishes a GitHub Release with the firmware attached:
-`amebaz2-vX.Y.Z` (version from `firmware/src/version.txt`) and `esp32-vX.Y.Z` (from
-`firmware/esp32-matter/CMakeLists.txt` `PROJECT_VER`). Both release builds run on a self-hosted
-`sdk-builder` runner that holds the Realtek SDK + ESP-IDF/esp-matter; see the wiki's build-pipeline
-page for the runner setup.
+A host-only QA gate runs on every push and PR. Pushing a signed `amebaz2-vX.Y.Z` or `esp32-vX.Y.Z`
+tag builds and publishes a GitHub Release with the firmware and `SHA256SUMS` attached. Details:
+[Repo Map & Build Pipeline](docs/guide/Repo-Map-and-Build-Pipeline.md#continuous-integration--releases-github-actions).
 
 ## Attestation & credentials
 

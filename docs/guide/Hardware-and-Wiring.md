@@ -47,17 +47,13 @@ anything.
 
 ## Flash access (first flash / recovery)
 
-The GD25Q32 is fully dumpable and writable with a **CH341A programmer + SOIC-8 clip** (pin 1 = dot
-corner). In-circuit reads often fail because the SoC back-powers/contends the bus. Lift the flash
-or hold the SoC in reset if you see `0xFF`/no-device. After the first CH341A flash, everything else
-is wireless (OTA). See [Recovery & Reflash](Recovery-and-Reflash).
+The GD25Q32 is fully dumpable and writable with a **CH341A programmer + SOIC-8 clip**. After the
+first CH341A flash, everything else is wireless (OTA). Clip wiring, the in-circuit read problem and
+the CH341A voltage warning are in [Recovery & Reflash](Recovery-and-Reflash#use-the-clip-tooling-not-flashrom).
 
 ![Module label](images/module-internal-back.png)
 
 *The board's underside carries the model marking (FCC ID 2AGCCAEH-W41H1, public record).*
-
-> ⚠️ The common black CH341A drives SPI at ~5 V even in "3.3 V" mode, a hazard for 3.3 V flash.
-> Use a 3.3 V-modded board or a level adapter.
 
 ## Ready to flash?
 
