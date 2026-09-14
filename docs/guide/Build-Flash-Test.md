@@ -88,7 +88,7 @@ firmware/scripts/dev.sh flash esp32 --board c3 --port /dev/ttyACM0
 ## ESPHome
 
 ```
-firmware/scripts/dev.sh fetch esphome      # pipx install esphome==2026.7.4, creates secrets.yaml
+firmware/scripts/dev.sh fetch esphome      # esphome==2026.7.4 via uv (or pipx), creates secrets.yaml
 firmware/scripts/dev.sh test esphome       # host QA + esphome config
 firmware/scripts/dev.sh flash esphome --board c3 --port /dev/ttyACM0
 ```
