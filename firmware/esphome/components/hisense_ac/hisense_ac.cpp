@@ -18,6 +18,12 @@ void HisenseAC::status_trampoline(const HisenseState *state) {
 void HisenseAC::link_trampoline(bool link_up) {
   if (HisenseAC::instance_ == nullptr)
     return;
+  if (!link_up) {
+    // Drop any undrained pre-loss frame, or loop() would publish those stale values (and flip
+    // link_up_ back to true) until real data returns. Port of the Matter fix 0d3b9ff.
+    LockGuard guard(HisenseAC::instance_->lock_);
+    HisenseAC::instance_->pending_valid_ = false;
+  }
   HisenseAC::instance_->link_up_ = link_up;
   HisenseAC::instance_->link_dirty_ = true;
 }
@@ -103,6 +109,9 @@ void HisenseAC::loop() {
       ESP_LOGD(TAG, "status setpoint %d C out of command range, shadow kept", state.setpoint_c);
     this->cmd_.vswing = state.vswing_on ? HISENSE_SWING_SWING : HISENSE_SWING_OFF;
     this->cmd_.hswing = state.hswing_on ? HISENSE_SWING_SWING : HISENSE_SWING_OFF;
+    // Without this a Turbo/Eco set from HA re-asserted on every later combined frame, even
+    // after the remote cleared it. Ported from the esp32 Matter sync.
+    this->cmd_.feature = hisense_feature_from_status(state.eco_on, state.turbo_on);
   }
 
   if (this->climate_ != nullptr)

@@ -197,6 +197,25 @@ static inline bool esphome_sync_shadow_setpoint(int8_t setpoint_c, bool temp_uni
     return true;
 }
 
+/* ---- Eco / turbo shadow --------------------------------------------------------
+ * Ported from the esp32 Matter sync (app_main.cpp). The shadow's feature byte rides every
+ * combined frame, so it must track what the A/C reports; otherwise a Turbo set from HA is
+ * re-asserted on each later mode/setpoint/fan change after the remote cleared it. Eco wins
+ * when both flags read set, matching that sync. */
+static inline HisenseFeature hisense_feature_from_status(bool eco_on, bool turbo_on)
+{
+    if (eco_on)   return HISENSE_FEATURE_ECO;
+    if (turbo_on) return HISENSE_FEATURE_TURBO;
+    return HISENSE_FEATURE_NONE;
+}
+
+/* ECO_OFF (byte33 0x10) is a one-shot clear, not a state: after it is sent the shadow goes
+ * back to neutral, as the Matter apply_eco() does. Left in place it rode every later frame. */
+static inline HisenseFeature esphome_feature_after_send(HisenseFeature sent)
+{
+    return sent == HISENSE_FEATURE_ECO_OFF ? HISENSE_FEATURE_NONE : sent;
+}
+
 #ifdef __cplusplus
 }
 #endif

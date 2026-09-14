@@ -219,6 +219,28 @@ int main() {
               "panel back to C -> shadow 22 C, unit C");
     }
 
+    // ---- eco/turbo shadow sync (port of the esp32 Matter sync, app_main.cpp) --------------
+    // The hub never synced cmd.feature from status, so a Turbo set from HA kept re-asserting
+    // on every later mode/setpoint/fan frame even after the remote turned it off, and a cleared
+    // Eco left the one-shot ECO_OFF byte (0x10) riding every frame.
+    printf("[feature sync]\n");
+    CHECK(hisense_feature_from_status(false, false) == HISENSE_FEATURE_NONE, "neither -> NONE");
+    CHECK(hisense_feature_from_status(true, false) == HISENSE_FEATURE_ECO, "eco -> ECO");
+    CHECK(hisense_feature_from_status(false, true) == HISENSE_FEATURE_TURBO, "turbo -> TURBO");
+    CHECK(hisense_feature_from_status(true, true) == HISENSE_FEATURE_ECO,
+          "both reported -> ECO (same precedence as the Matter sync)");
+    {
+        HisenseCommand c = base;
+        c.feature = HISENSE_FEATURE_TURBO;   // set from HA earlier
+        c.feature = hisense_feature_from_status(false, false);   // remote turned it off
+        CHECK(cmd_byte(c, 33) == 0x04, "synced shadow no longer re-asserts turbo (byte33 0x04)");
+        CHECK(esphome_feature_after_send(HISENSE_FEATURE_ECO_OFF) == HISENSE_FEATURE_NONE,
+              "ECO_OFF is one-shot: shadow returns to NONE after the send");
+        CHECK(esphome_feature_after_send(HISENSE_FEATURE_ECO) == HISENSE_FEATURE_ECO, "ECO kept");
+        CHECK(esphome_feature_after_send(HISENSE_FEATURE_TURBO) == HISENSE_FEATURE_TURBO,
+              "TURBO kept");
+    }
+
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
