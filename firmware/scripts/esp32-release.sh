@@ -172,7 +172,7 @@ build() {
   # "too few arguments to __builtin_bswap16", suppressing the #ifndef default of 2324. Unset
   # instead, so an absent credential means absent, not empty.
   for _v in HISENSE_OTA_URL HISENSE_BREAKGLASS_TOKEN HISENSE_BREAKGLASS_PORT; do
-    if [ -n "${!_v:-}" ]; then export "$_v"; else unset "$_v"; fi
+    if [ -n "${!_v:-}" ]; then export "${_v?}"; else unset "$_v"; fi
   done
   unset _v
 
