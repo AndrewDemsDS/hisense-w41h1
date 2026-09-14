@@ -16,6 +16,8 @@
 #   dev.sh monitor <target> --port P         # serial monitor only
 #   dev.sh bench   <target> --port P --sim-port S   # busmon/app vs virtual_ac.py over a USB adapter
 #   dev.sh next    <target>                  # print the staged bring-up and its safety warnings
+#   dev.sh ota     <target> <step> [args]    # Matter OTA (amebaz2|esp32): preflight | package | stage
+#                                            # | flash | release [...], guarded by ota-guards.sh
 #
 # Targets: amebaz2 | esp32 | esphome. Board (esp32/esphome): --board c3 (ESP32-C3 SuperMini,
 # default) or --board classic (ESP32-D0WDQ6). Env: IDF_PATH / ESP_MATTER_PATH (esp32; defaults
@@ -40,7 +42,7 @@ ok()   { printf '  \033[32mok\033[0m    %s\n' "$*"; }
 bad()  { printf '  \033[31mMISS\033[0m  %s\n' "$*"; DOCTOR_FAIL=1; }
 ask()  { local a; read -r -p "$1 [y/N] " a; [[ "$a" =~ ^[Yy]$ ]]; }
 
-usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 # ---- argument parsing ---------------------------------------------------------------------
 cmd="${1:-}"; target="${2:-}"
@@ -48,6 +50,32 @@ cmd="${1:-}"; target="${2:-}"
 [ "$cmd" = "-h" ] || [ "$cmd" = "--help" ] || [ "$cmd" = "help" ] && usage 0
 case "$target" in amebaz2|esp32|esphome) ;; *) die "target must be amebaz2, esp32 or esphome (got '${target}')";; esac
 shift 2
+# `ota` hands everything after the step straight to the release script, so parse it before the
+# dev.sh option loop (release flags like --flash are not dev.sh options).
+if [ "$cmd" = ota ]; then
+  step="${1:-}"; shift || true
+  case "$target" in
+    amebaz2) rel="$HERE/ota-release.sh" ;;
+    esp32)   rel="$HERE/esp32-release.sh" ;;
+    *) die "ota is Matter-only (amebaz2 or esp32); ESPHome updates go through esphome run" ;;
+  esac
+  case "$step" in
+    preflight)
+      # Read-only: tools, link and guard self-test, before anything is built or staged.
+      run bash "$REPO/firmware/test/run_tests.sh" >/dev/null && ok "host QA incl. OTA guard tests"
+      # shellcheck disable=SC1090,SC1091
+      ( ENVF="$HERE/ota-release.env"; set -a; . "$ENVF"; set +a
+        say() { printf '\033[1;36m[dev]\033[0m %s\n' "$*"; }
+        # shellcheck source=ota-guards.sh
+        . "$HERE/ota-guards.sh"
+        node="$NODE_ID"; [ "$target" = esp32 ] && node="${ESP32_NODE_ID:?}"
+        guard_tools; guard_link "$node"
+        say "Pi clock reachable: $(pi_now)" ) ;;
+    package|stage|flash|release|build|publish|tag) exec bash "$rel" "$step" "$@" ;;
+    *) die "ota step must be preflight, build, package, stage, flash, release, tag or publish" ;;
+  esac
+  exit 0
+fi
 BOARD="c3"; PORT=""; SIM_PORT=""
 while [ $# -gt 0 ]; do
   case "$1" in

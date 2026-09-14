@@ -63,4 +63,8 @@ echo "== Layer 4: AmebaZ2 image signing chain (#75) =="
 python3 ./test_image_chain.py
 
 echo
+echo "== Layer 5: OTA pre-flight + staging guards =="
+python3 ./test_ota_guards.py
+
+echo
 echo "ALL QA LAYERS PASSED"
