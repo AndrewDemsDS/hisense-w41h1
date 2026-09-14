@@ -69,6 +69,27 @@ need_port() { [ -n "$PORT" ] || die "$cmd needs --port <serial device> (e.g. /de
 : "${ESP_MATTER_PATH:=$HOME/esp/esp-matter}"
 : "${ESPHOME:=esphome}"
 
+# ESP-IDF picks its python env from whichever python3 is first on PATH, and esp-matter's pigweed
+# venv is built from it too. The connectedhomeip constraints predate python 3.14: on 3.14 the
+# esp-matter install fails dependency resolution (pydantic-settings vs the pinned attrs). esp-matter's
+# own CI uses 3.12. ESP_PYTHON=/path/to/python3.12 selects the interpreter; unset on a 3.14+ host,
+# a uv-managed 3.12 is used when available. Both envs must come from the same interpreter.
+esp_python() {
+  [ "$target" = esp32 ] || return 0
+  local py="${ESP_PYTHON:-}"
+  if [ -z "$py" ] && python3 -c 'import sys; sys.exit(sys.version_info < (3, 14))' 2>/dev/null; then
+    py="$(uv python find 3.12 2>/dev/null || true)"
+    [ -n "$py" ] || { warn "host python3 is 3.14+, which the esp-matter install cannot resolve; install one: uv python install 3.12"; return 0; }
+  fi
+  [ -n "$py" ] || return 0
+  [ -x "$py" ] || die "ESP_PYTHON=$py is not executable"
+  local shim; shim="$(mktemp -d "${TMPDIR:-/tmp}/dev-esp-python.XXXXXX")" || die "mktemp failed"
+  ln -s "$py" "$shim/python3"; ln -s "$py" "$shim/python"
+  PATH="$shim:$PATH"; export PATH
+  say "ESP python: $("$py" --version 2>&1) ($py)"
+}
+esp_python
+
 # Source IDF (+ esp-matter unless $1=idf-only) into THIS shell. export.sh is noisy; keep the tail.
 esp_env() {
   command -v idf.py >/dev/null 2>&1 && [ "${1:-}" = "idf-only" ] && return 0
@@ -136,6 +157,19 @@ doctor() {
     esp32)
       git_head_is "$IDF_PATH" "$IDF_PIN" "ESP-IDF"
       git_head_is "$ESP_MATTER_PATH" "$ESP_MATTER_PIN" "esp-matter"
+      local pyv venv; pyv=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)
+      if ls -d "$HOME/.espressif/python_env/"idf*_py"$pyv"_env >/dev/null 2>&1; then
+        ok "ESP-IDF python env for python $pyv"
+      else
+        bad "no ESP-IDF python env for python $pyv (dev.sh fetch esp32)"
+      fi
+      venv="$ESP_MATTER_PATH/connectedhomeip/connectedhomeip/.environment/pigweed-venv/bin/python3"
+      if [ -x "$venv" ] && "$venv" -c 'import sys' 2>/dev/null; then
+        local vv; vv=$("$venv" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+        if [ "$vv" = "$pyv" ]; then ok "esp-matter venv python $vv"; else bad "esp-matter venv is python $vv, ESP python is $pyv (rebuild: dev.sh fetch esp32)"; fi
+      else
+        bad "esp-matter pigweed venv missing or dead (dev.sh fetch esp32)"
+      fi
       ;;
     esphome)
       if command -v "$ESPHOME" >/dev/null 2>&1; then
@@ -185,7 +219,9 @@ fetch() {
       run git -C "$ESP_MATTER_PATH" submodule update --init --depth 1
       (cd "$ESP_MATTER_PATH/connectedhomeip/connectedhomeip" \
         && run ./scripts/checkout_submodules.py --platform esp32 linux --shallow)
-      (cd "$ESP_MATTER_PATH" && run ./install.sh)
+      # --no-host-tool: skip chip-tool & co. The firmware build does not need them, and building
+      # them wants gdbus-codegen from the host's glib development package.
+      (cd "$ESP_MATTER_PATH" && run ./install.sh --no-host-tool)
       ;;
     esphome)
       # Either isolated installer works; esptool comes along as an esphome dependency either way.
