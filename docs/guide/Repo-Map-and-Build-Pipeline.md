@@ -75,7 +75,8 @@ once went missing from `ota-release`, and mapping edits never reached a rebuild.
 
 Canonical entry point: `firmware/scripts/ota-release.sh`. Its env comes from
 `ota-release.env` (gitignored; copy `.env.example`), which keeps real hostnames and paths
-out of git. The README's `./build-rac.sh` is stale; trust the script.
+out of git. For a guided first build on any target, `firmware/scripts/dev.sh walk <target>` wraps
+this script (see [Build, Flash and Test](Build-Flash-Test)).
 
 ```
 ota-release.sh lint                        # host tests + .zap contiguity + version check (the git hook)
@@ -126,17 +127,20 @@ Three things to keep straight:
 
 ## Hooks
 
-A git **pre-commit hook** (repo `core.hooksPath = firmware/.githooks`) runs `lint` when
-`firmware/src`, `firmware/test`, or the `.zap` is staged (bypass: `--no-verify`).
+Hooks are opt-in per clone: `git config core.hooksPath firmware/.githooks`. The **pre-commit hook**
+runs `ota-release.sh lint` when `firmware/src`, `firmware/test`, or the `.zap` is staged,
+`esp32-lint.sh` when `firmware/esp32-matter/` is staged, and `stop-slop.sh` on staged markdown
+(bypass: `--no-verify`).
 
 ## Continuous integration & releases (GitHub Actions)
 
 `.github/workflows/` mirrors the local gate and automates release builds:
 
-- **`qa.yaml`** runs `ota-release.sh lint` (host codec/map tests, `.zap` contiguity, version
-  sanity) on every push/PR, plus a PR-only check that `firmware/src/version.txt` strictly
-  increases. It is hardware-free, so it runs on a GitHub-hosted runner: the same gate as the
-  pre-commit hook, so CI and local never drift.
+- **`qa.yaml`** runs on every push/PR: shellcheck, ruff, `esp32-lint.sh` (ESP32 version
+  consistency), `ota-release.sh lint` (host codec/map tests, `.zap` contiguity, version sanity),
+  `esphome config` on `w41h1.yaml`, and a check that `firmware/src/version.txt` strictly increases
+  when firmware changed. It is hardware-free, so it runs on a GitHub-hosted runner, using the same
+  commands as the pre-commit hook so CI and local never drift.
 - **`esp32-release.yaml`** builds the ESP32 firmware on an `esp32-vX.Y.Z` tag and attaches the
   images to a GitHub Release. It runs on the same **self-hosted** `sdk-builder` runner and reuses
   that host's installed ESP-IDF + esp-matter (via `IDF_EXPORT` / `ESP_MATTER_EXPORT` in the runner
@@ -165,11 +169,9 @@ Do not restate it; the summary:
    of `[N/353] c++ …` lines) and rebuilds `libCHIP.a` fresh. The ameba make now runs
    `-j$(nproc)`, so a genuine full build is ~110 s; the old "under 2 min = fake" rule is retired
    (it false-flags good parallel builds). `ota-release.sh build` cleans correctly.
-2. **OTA serial (cost a whole session).** AmebaZ2's bootloader A/B-selects the boot slot by
-   the image's `FWHS.header.serial`, **not** the Matter `softwareVersion`. `build` sets
-   `serial = SERIAL_BASE + softwareVersion` and log-verifies it. Forget it → the OTA
-   transfers, applies, "finishes", and the device stays on the old version (looks like a
-   rollback).
+2. **OTA serial.** The bootloader selects the slot by `FWHS.header.serial`, not
+   `softwareVersion`; `build` sets and verifies it. See
+   [OTA Updates](OTA-Updates#the-ota-serial-trap-the-script-handles-it).
 3. **Non-contiguous endpoints.** Endpoints should stay `{0,1,2,…}` with no gaps (treated as
    a zero-cost precaution; whether the gap is a proven crash cause is *unconfirmed*, it was
    confounded with the serial bug). To remove an endpoint, **renumber** to close the hole.
@@ -177,12 +179,11 @@ Do not restate it; the summary:
 
 ### Versioning (get it wrong → the provider won't serve)
 
-Matter OTA is keyed on `softwareVersion`; the built version must be **strictly greater**
-than what's running (convention: running + 1). Bump **both**
-`CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION` (int) and `…_STRING` in
-`connectedhomeip/src/include/platform/CHIPDeviceConfig.h`; `--bump` does it. Lint compares
-against `built-images/.released-version` (last version *confirmed booted*). Don't reuse a
-rolled-back number. Details in docs/10 §1 + §9.
+The source of truth is the semver in `firmware/src/version.txt`; the Matter int is
+`MAJOR*10000 + MINOR*100 + PATCH`, and ESP32 mirrors the scheme from `PROJECT_VER`. The serving
+rules (strictly greater, never reuse a rolled-back number, what `--bump` and `lint` do) are in
+[OTA Updates](OTA-Updates#version-rule-get-this-wrong--the-provider-wont-serve); the full detail is
+docs/10 §1 and §9.
 
 ## Editing the data model
 

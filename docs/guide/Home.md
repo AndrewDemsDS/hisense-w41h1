@@ -17,8 +17,8 @@ every byte offset are hardware-confirmed against a real unit.
 ## Status
 
 - **AmebaZ2 module (primary track):** the custom Matter `room_air_conditioner` firmware runs on
-  hardware. You convert a module by clip-flashing or over the air (no disassembly). Updates ship
-  over Matter OTA.
+  hardware. You convert a stock module once with a CH341A clip; every update after that ships over
+  Matter OTA.
 - **ESP32 + RS-485 (replacement track):** when the original module dies, an ESP32 board replaces the
   dongle on the same 4-pin bus. The esp-matter node runs a live unit in Home Assistant, commissioned
   and updated over Matter OTA the same as the AmebaZ2 track.
@@ -39,7 +39,7 @@ flowchart LR
 
 | Page | What |
 |---|---|
-| **[Installing the Custom Firmware](Installing-Custom-Firmware)** | **the two ways to flash a stock module: OTA (recommended) or CH341A clip** |
+| **[Installing the Custom Firmware](Installing-Custom-Firmware)** | **flash a stock module with a CH341A clip** |
 | [Hardware & Wiring](Hardware-and-Wiring) | the module, SoC/flash/transceiver, the A/C 4-pin port, the RS-485 bus |
 | [Commissioning & HA Setup](Commissioning-and-HA-Setup) | commission into HA via matter-server, the cross-VLAN mDNS fix, re-interview after an OTA |
 | [Everyday Control](Everyday-Control) | what entities appear, the unified climate integration, special modes, the dashboard card |
@@ -51,6 +51,7 @@ flowchart LR
 
 | Page | What |
 |---|---|
+| **[Build, Flash & Test](Build-Flash-Test)** | **start here to build from source: `dev.sh`, one section per target, bench testing without an A/C** |
 | [Repo Map & Build Pipeline](Repo-Map-and-Build-Pipeline) | where code lives, the SDK-outside-the-repo model, build/flash pipeline |
 | [Protocol Overview](Protocol-Overview) | the RS-485 A/C protocol, framing, the Matter↔Hisense mapping |
 | [Testing & QA](Testing-and-QA) | no-hardware host tests, the virtual A/C simulator, the HIL gate |
@@ -59,6 +60,6 @@ flowchart LR
 
 ---
 
-This wiki is the guide. Read it first. The `firmware/docs/` and `reverse-engineering/docs/` files in
+This guide is the place to start. The `firmware/docs/` and `reverse-engineering/docs/` files in
 the repository hold the deep reference: design rationale, byte-level protocol, HIL notes. Each page
 links to the one it draws from.

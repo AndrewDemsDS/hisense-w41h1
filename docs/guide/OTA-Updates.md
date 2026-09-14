@@ -41,8 +41,10 @@ widespread `python-matter-server` behavior, not a fault in the image.
 
 - The new build's version must be **strictly greater** than what's running, or the provider declines
   to serve it. Convention: **new = running + 1**.
-- `--bump` edits both the int and string in `CHIPDeviceConfig.h`. Lint compares against
-  `built-images/.released-version` (the version last **confirmed booted**), so it can't be fooled.
+- `--bump` increments the semver in `firmware/src/version.txt` (git-tracked, commit it) and derives
+  the int and string in the SDK's `CHIPDeviceConfig.h` from it; never hand-edit that header. Lint
+  compares against `built-images/.released-version` (the version last **confirmed booted**), so it
+  can't be fooled. ESP32 keeps one marker per chip, `.released-version-<target>`.
 - **Don't reuse a rolled-back version number.** Matter-server and the device cache by version. If
   v14 rolls back, the next attempt is v15, not v14 again.
 
@@ -64,6 +66,10 @@ reload the Matter integration in HA. See [Commissioning & HA Setup](Commissionin
 
 ## ESP32 delta OTA
 
+`firmware/scripts/esp32-release.sh release [--flash]` does everything in this section for you:
+it refuses to build until the deployed base is archived, builds the patch against it, wraps it and
+stages it. The manual steps below are what it runs, for when you need to debug one.
+
 Prefer a **delta (differential) patch** over a full image. It is ~50× smaller (86 KB against
 1.6 MB on our build), so it spends far less time on a lossy link, which is where OTA fails.
 
@@ -75,6 +81,7 @@ wrong base is refused and the device stays put.
 ```sh
 # 1. patch: base = the EXACT running .bin, new = your build
 #    needs detools + esptool -> run it with the IDF python env
+#    --chip must match the build target: esp32 (classic) or esp32c3 (SuperMini)
 esp_delta_ota_patch_gen.py create_patch --chip esp32 \
   --base_binary <exact-running.bin> \
   --new_binary build/hisense_ac_matter.bin \

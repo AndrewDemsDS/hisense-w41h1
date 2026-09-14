@@ -59,11 +59,22 @@ DE timing that took a multi-day debug to find stays exactly as validated. Pins a
 
 ## Flash it
 
+The guided way, from the repo root (details in [Build, Flash & Test](Build-Flash-Test#esphome)):
+
+```bash
+firmware/scripts/dev.sh fetch esphome                            # esphome==2026.7.4 + secrets.yaml
+firmware/scripts/dev.sh erase esphome --port /dev/ttyACM0        # factory-fresh board only
+firmware/scripts/dev.sh flash esphome --board c3 --port /dev/ttyACM0
+```
+
+By hand:
+
 ```bash
 pip install esphome                       # tested against 2026.7.4
 cd firmware/esphome
 cp secrets.yaml.example secrets.yaml      # Wi-Fi credentials + an API encryption key
-esphome run w41h1.yaml                    # build, flash, then follow the logs
+esphome run w41h1.yaml                    # classic ESP32 defaults: build, flash, follow the logs
+esphome -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 run w41h1.yaml   # C3 SuperMini
 esphome logs w41h1.yaml                   # logs only, later
 ```
 
@@ -71,19 +82,15 @@ Home Assistant discovers the node over mDNS and adopts it with the API key from 
 
 On a factory-fresh board, erase first (`esptool.py erase_flash`, then `esphome run w41h1.yaml
 --device <port>`). A stale vendor Wi-Fi config left in NVS is a documented time sink on these
-boards.
+boards. Never erase a board that is already running: that throws away its Wi-Fi settings.
 
 ## Bring it up in stages
 
-Same three stages as the Matter track, for the same reason: never leave the A/C in an unknown
-state.
-
-1. **Bench, no A/C.** Run the host tests (`firmware/test/run_tests.sh`, which includes the ESPHome
-   mapping test), then drive the firmware against `firmware/test/virtual_ac.py` over a USB-TTL
-   adapter. Watch the `AC bus link` sensor go on and the climate entity populate.
-2. **Real bus, USB-powered.** Tap **A and B only**, mind the ground-loop warning, and confirm the
-   decoded status: indoor temperature, mode, compressor Hz. This proves the read direction.
-3. **Full integration.** Power from the connector's 5 V rail and close the unit up.
+Use the same three stages as the Matter track
+([ESP32 Replacement Build](ESP32-Replacement-Build#staged-bring-up-never-leave-the-ac-in-an-unknown-state)),
+with `dev.sh test esphome` and `dev.sh bench esphome` for stage 1. What passing looks like on this
+firmware: in stage 1 the `AC bus link` sensor turns on and the climate entity populates; in stage 2
+the decoded indoor temperature, mode and compressor Hz match the unit.
 
 `firmware/test/hil_esphome_actuation.py` drives a real node over the API and checks two things per
 control: that the command lands, and that nothing else moved. It snapshots and restores the unit's

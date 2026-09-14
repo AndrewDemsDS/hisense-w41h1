@@ -66,74 +66,24 @@ line whenever a command changes its state. Status polls are answered silently.
 ## On-target bench: `smoketest/` against the simulator
 
 `firmware/esp32-matter/smoketest/` is **not** a codec test (the golden vectors run on the host).
-It builds `busmon`: the real driver plus the ESP-IDF HAL, doing the handshake, the ~1 Hz poll,
-frame reassembly and the status parse, and logging each decoded frame. It needs something
-answering on the bus, either the real A/C through an A/B tap or `virtual_ac.py` on a USB adapter:
+It builds `busmon`, the real driver plus the ESP-IDF HAL, logging each decoded status frame. Run it
+against `virtual_ac.py` on a USB adapter with `dev.sh bench esp32`. Wiring, passing output and the
+failure signatures live in one place: [Build, Flash and Test](Build-Flash-Test#bench-stage-no-ac).
 
-| Adapter | Wiring | Covers |
-|---|---|---|
-| USB-TTL, 3.3 V | board TX to adapter RX, board RX to adapter TX, GND to GND, no transceiver | HAL UART, framing, parse |
-| USB-RS485 | board's transceiver A to A, B to B, GND to GND | the above plus DE timing |
+## Beyond the host tests
 
-Board pins: ESP32-C3 TX 5 / RX 6 / DE 10, classic ESP32 TX 19 / RX 18 / DE 4.
+The rest of the pyramid is described once, in `firmware/docs/04-qa-strategy.md`. What each part is
+for, in short:
 
-```
-firmware/scripts/dev.sh bench esp32 --board c3 --port <board> --sim-port <adapter>
-```
-
-A pass is `busmon` logging `A/C #N: power=1 mode=... set=24C indoor=25C ...` about once a second
-with `frames` and `RX` climbing. `RX=0` while `TX` climbs is wiring: swapped TX/RX, no common
-ground, or DE not reaching the transceiver. The step-by-step version, with what is
-hardware-verified and what is not, is [Build, Flash and Test](Build-Flash-Test#bench-stage-no-ac).
-
-## Layer 4 extras
-
-- **4b: chip-tool / CSA Test Harness** (needs a device): because the image uses CHIP default
-  test creds (`0xFFF1`), chip-tool commissions/controls it out of the box.
-- **4c: OTA conversion sim** (built, no chip): `firmware/test/sim_ota_convert.sh` runs CHIP's
-  Linux `chip-ota-requestor-app` + `chip-ota-provider-app` + `chip-tool` on loopback,
-  commissions both, serves our `.ota`, and asserts the real OTA sequence
-  (`QueryImage → UpdateAvailable → BDX → ApplyUpdateRequest`). Validates the `.ota` packaging +
-  OTA transport with zero hardware; it does **not** exercise the AmebaZ2 image processor / real
-  boot.
-
-## Renode (Layer 3): scaffold, not runnable as-is
-
-`firmware/test/renode/`
-is a **spike, NOT runnable as-is**: `hisense_qa.resc` references a `driver_test.elf` that
-isn't built or committed, and RTL8710C is not a built-in Renode platform. What's there: an
-`rtl8710c.repl` platform (Cortex-M33 + the linked memory map + UART0 @ `0x40003000`) and a run
-script that bridges UART0 to `virtual_ac.py` over TCP. The recommended first target is a
-**minimal bare-metal driver-test ELF** (links `hisense_rs485.cpp` + a startup + a thin UART
-shim), *not* booting the full Matter image (that needs ROM/XIP/PMU/BLE modeled, a multi-day job).
-Until then, use Layers 1–2 + the OTA sim for turnkey no-hardware coverage. See
-`firmware/test/renode/README.md`.
-
-## HIL gate: the thin top
-
-Layer 5 is the only layer covering RF, real bus timing, and the physical unit: flash via the
-CH341A clip, commission in Home Assistant, then use the **DI-tap sniffer**
-(`decode_ac_frames.py --port <tap>`) as the hardware assertion. It confirms the firmware puts
-the *correct bytes on the wire* for each Matter action against the real A/C.
-
-**HIL-gate philosophy:** there is usually **no chip access in-session**, so do all
-chip-independent work and defer flash/commission. Layers 1–4 run without the A/C or chip
-precisely because the reverse-engineering already produced the two hardest RE-driver-QA assets:
-a **validated codec** and a **golden corpus of real frames**.
-
-## Standing rule: glue code is host-untestable as written
-
-`matter_drivers.cpp` needs CHIP headers to compile, so it can't run in Layer 1: echo-suppression,
-shadow-sync hold-off, and the re-entrant `Set()`-callback loop have **zero** host coverage. This
-is how the downlink→readback→uplink feedback-loop bug slipped review and had to be caught
-on hardware. So for new glue code:
-
-1. Extract any glue **decision** ("is this write my own echo?", "should the shadow sync?") into
-   a pure function in `matter_aircon_map.h` and unit-test it there.
-2. Add **fixpoint/idempotence** tests on map pairs
-   (`hisense_mode_to_matter(matter_mode_to_hisense(m))==m`, etc.); they guard the whole
-   feedback-loop bug class.
-3. Test a real **combined multi-field** command frame and a **doubled-`0xF4`** stuffing
-   round-trip (a frame whose checksum never contains `0xF4` never exercises the stuff path).
-
-Specific findings that motivated this are tracked in the project's issue tracker.
+- **Layer 3, Renode** (`firmware/test/renode/`): a scaffold, **not runnable as-is**. The planned
+  first target is a bare-metal driver-test ELF, not the full Matter image.
+- **Layer 4b, chip-tool / CSA Test Harness**: needs a device; the test credentials let chip-tool
+  commission it out of the box.
+- **Layer 4c, OTA conversion sim** (`firmware/test/sim_ota_convert.sh`): proves the `.ota`
+  packaging and the OTA transport on loopback, with no hardware and no real boot.
+- **Layer 5, HIL**: the only layer covering RF, real bus timing and the physical unit. The DI-tap
+  sniffer (`decode_ac_frames.py --port <tap>`) is the hardware assertion; the scripted HIL checks
+  (`hil_display_actuation.py`, `hil_esphome_actuation.py`) stay out of `run_tests.sh` on purpose.
+- **Standing rule for glue code**: `matter_drivers.cpp` cannot run on the host, so any glue
+  *decision* goes into a pure, tested function in `matter_aircon_map.h`. The three concrete test
+  requirements that follow from it are in docs/04.
