@@ -18,7 +18,7 @@ SDKs you fetch yourself. It does **not** contain the SDKs.
 |---|---|
 | `firmware/src/rs485-driver/` | The A/C bus driver: `hisense_rs485.{h,cpp}`, the pure host-testable `matter_aircon_map.h`, `power_estimate.h`, and `INTEGRATION.md` (design ref + provenance). **Our code (MIT).** |
 | `firmware/src/sdk-edits/` | Capture of the Matter integration: `matter_drivers.cpp` glue, the `.zap`, the `0xFFF1FC00` mfg-cluster XML, and a `README.md` documenting every in-place SDK edit. |
-| `firmware/scripts/` | `dev.sh` (guided build/flash/test entry point for all three targets, see [Build, Flash and Test](Build-Flash-Test)), `ota-release.sh` (build/package/flash/OTA), `esp32-release.sh`, `sync-files.sh`, `gen-creds.sh`, Matter helpers. |
+| `firmware/scripts/` | `dev.py` (guided build/flash/test entry point for all three targets, see [Build, Flash and Test](Build-Flash-Test)), `ota-release.sh` (build/package/flash/OTA), `esp32-release.sh`, `sync-files.sh`, `gen-creds.sh`, Matter helpers. |
 | `firmware/flasher/` | pyusb CH341A flasher (per-sector verify + retry; use this, **not** flashrom). See [Installing the Custom Firmware](Installing-Custom-Firmware) for the two install paths (CH341A clip vs. OTA). |
 | `firmware/test/` | No-hardware QA: host codec + Matter-map tests + `virtual_ac.py`. See [Testing and QA](Testing-and-QA). |
 | `firmware/docs/` | Wiring plan, attestation, QA strategy, energy monitoring, and the canonical OTA/build procedure (`10-firmware-ota-procedure.md`). |
@@ -73,10 +73,11 @@ once went missing from `ota-release`, and mapping edits never reached a rebuild.
 
 ## Build + ship: use the script
 
-Canonical entry point: `firmware/scripts/ota-release.sh`. Its env comes from
-`ota-release.env` (gitignored; copy `.env.example`), which keeps real hostnames and paths
-out of git. For a guided first build on any target, `firmware/scripts/dev.sh walk <target>` wraps
-this script (see [Build, Flash and Test](Build-Flash-Test)).
+The entry point for every target is `python3 firmware/scripts/dev.py` (see the
+[User Guide](User-Guide)). For AmebaZ2 it drives the engine `firmware/scripts/ota-release.sh`
+(`dev.py test|build amebaz2`, `dev.py ota amebaz2 <stage>`), whose env comes from
+`ota-release.env` (gitignored; copy `.env.example`), which keeps real hostnames and paths out of
+git. The engine's stages:
 
 ```
 ota-release.sh lint                        # host tests + .zap contiguity + version check (the git hook)
@@ -90,7 +91,7 @@ ota-release.sh release [--bump] [--flash]  # build + package + stage (+ flash)
 The one command, day to day:
 
 ```
-firmware/scripts/ota-release.sh release --bump --flash
+python3 firmware/scripts/dev.py ota amebaz2 release --bump --flash
 ```
 
 ## Build flavours: release and debug

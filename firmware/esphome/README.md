@@ -22,7 +22,7 @@ esphome run w41h1.yaml                    # classic ESP32 defaults: build, flash
 esphome -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 run w41h1.yaml   # C3
 ```
 
-Or `firmware/scripts/dev.sh flash esphome --board c3 --port <port>` from the repo root.
+Or `firmware/scripts/dev.py flash esphome --board c3 --port <port>` from the repo root.
 
 ## Layout
 

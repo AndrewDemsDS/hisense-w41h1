@@ -67,7 +67,7 @@ line whenever a command changes its state. Status polls are answered silently.
 
 `firmware/esp32-matter/smoketest/` is **not** a codec test (the golden vectors run on the host).
 It builds `busmon`, the real driver plus the ESP-IDF HAL, logging each decoded status frame. Run it
-against `virtual_ac.py` on a USB adapter with `dev.sh bench esp32`. Wiring, passing output and the
+against `virtual_ac.py` on a USB adapter with `dev.py bench esp32`. Wiring, passing output and the
 failure signatures live in one place: [Build, Flash and Test](Build-Flash-Test#bench-stage-no-ac).
 
 ## Beyond the host tests

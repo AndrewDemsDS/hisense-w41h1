@@ -1,8 +1,11 @@
 ### [Home](Home)
 
 **Operator**
-- [Installing the Firmware](Installing-Custom-Firmware)
+- [User Guide](User-Guide)
 - [Hardware & Wiring](Hardware-and-Wiring)
+- [ESPHome Build](ESPHome-Build)
+- [ESP32 Replacement Build](ESP32-Replacement-Build)
+- [Installing the Firmware (AmebaZ2)](Installing-Custom-Firmware)
 - [Commissioning & HA Setup](Commissioning-and-HA-Setup)
 - [Everyday Control](Everyday-Control)
 - [OTA Updates](OTA-Updates)
@@ -14,5 +17,3 @@
 - [Repo Map & Build Pipeline](Repo-Map-and-Build-Pipeline)
 - [Protocol Overview](Protocol-Overview)
 - [Testing & QA](Testing-and-QA)
-- [ESP32 Replacement Build](ESP32-Replacement-Build)
-- [ESPHome Build](ESPHome-Build)
