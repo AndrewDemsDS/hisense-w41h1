@@ -28,7 +28,8 @@ What each step has been run against. "Simulator" means `virtual_ac.py`, not an A
 | Step | esphome | esp32 (C3) | esp32 (classic) | amebaz2 |
 |---|---|---|---|---|
 | Host QA (`dev.py test`) | CI, every push (plus `esphome config`) | CI, every push | CI, every push | CI, every push |
-| `dev.py build` on a real toolchain | yes, C3, 2026-09-14 | yes, 2026-09-14 (app 6% partition free; `busmon` too) | untested | yes, 2026-09-14 (v10332) |
+| `dev.py build` on a real toolchain | yes, C3, 2026-09-14 | yes, 2026-09-14 (app 6% partition free; `busmon` too) | yes, 2026-09-15 (app 19% partition free) | yes, 2026-09-14 (v10332) |
+| Fresh clone on clean Ubuntu 24.04: `doctor`, `fetch`, `test`, `build` | yes, both boards, 2026-09-15 | yes, 2026-09-15 | yes, 2026-09-15 | untested |
 | `busmon` against the real bus | n/a | untested | hardware (2026-07-12) | n/a |
 | Matter app against `virtual_ac.py` | n/a | simulator (2026-08-07) | untested | n/a |
 | Node on a live A/C, USB-powered (stage 2) | hardware | untested on these pins | hardware | hardware |
@@ -89,6 +90,11 @@ python3 firmware/scripts/dev.py build esp32 --board c3
 python3 firmware/scripts/dev.py flash esp32 --board c3 --port /dev/ttyACM0
 ```
 
+- **Host packages first.** `fetch` checks the host prerequisites before cloning anything, and
+  `doctor esp32` reports them: without `libusb-1.0` ESP-IDF's `install.sh` fails only after
+  downloading every toolchain, and without `curl` and glib esp-matter's install fails in
+  connectedhomeip's bootstrap. Both print the one `apt install` line that fixes them (the list is in
+  the [User Guide](User-Guide#what-you-need)).
 - **Where things live.** ESP-IDF defaults to `~/esp/esp-idf` and esp-matter to `~/esp/esp-matter`;
   set `IDF_PATH` / `ESP_MATTER_PATH` to use existing checkouts. `fetch` follows esp-matter's own
   documented procedure (shallow submodules, `checkout_submodules.py --platform esp32 linux`).
