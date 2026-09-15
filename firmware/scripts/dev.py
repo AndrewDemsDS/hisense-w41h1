@@ -4,12 +4,12 @@
 It WRAPS the real scripts (ota-release.sh, esp32-release.sh, esp32-lint.sh, ota-guards.sh,
 run_tests.sh, firmware/setup.sh, scripts/setup.sh) and never re-implements them: this is the map,
 those are the territory. Every command prints what it is about to run before running it. Run it as
-`python3 firmware/scripts/dev.py <cmd> <target> [opts]`; `dev.sh` is a thin shim that calls this.
+`python3 firmware/scripts/dev.py <cmd> <target> [opts]`.
 
 Why Python and not bash: portability (no bashisms, runs the same on any box with python3), and the
 env handling is explicit. ESP-IDF's export.sh can only be *sourced* into a shell, so we source it
 once in a subprocess, capture the resulting environment with `env -0`, and hand that dict to every
-later idf.py call -- the same effect as dev.sh's esp_env(), without carrying a mutated shell around.
+later idf.py call -- the effect of sourcing export.sh, without carrying a mutated shell around.
 
 Commands:
   walk    <target>                       guided: doctor -> test -> build -> flash -> next (y/N each)
@@ -69,7 +69,7 @@ def ask(q):
 
 
 def run(args, env=None, cwd=None, check=True):
-    """Print the command (dev.sh's `run`) then execute it, streaming output."""
+    """Print the command then execute it, streaming output."""
     shown = " ".join(str(a) for a in args)
     print(f"{C['grey']}  $ {shown}{C['off']}")
     r = subprocess.run([str(a) for a in args], env=env, cwd=str(cwd) if cwd else None)
@@ -113,7 +113,7 @@ _esp_env_cache = {}
 def esp_env(idf_only=False):
     """The environment after sourcing ESP-IDF (+ esp-matter unless idf_only). Cached per mode.
 
-    Mirrors dev.sh esp_env(): if idf.py is already on PATH and idf_only, keep the current env.
+    If idf.py is already on PATH and idf_only, keep the current env.
     """
     key = "idf" if idf_only else "full"
     if key in _esp_env_cache:
@@ -563,7 +563,7 @@ def main(argv):
     if not fn:
         usage(1)
     result = fn(ctx)
-    # doctor returns False on gaps -> non-zero exit, like dev.sh.
+    # doctor returns False on gaps -> non-zero exit.
     if cmd == "doctor" and result is False:
         sys.exit(1)
 

@@ -6,8 +6,7 @@ are new here, you almost never call these directly: start at the one entry point
 ## Start here: `dev.py` (the all-in-one)
 
 `python3 firmware/scripts/dev.py <cmd> <target>` is the single front door. It wraps everything else,
-prints each command before it runs it, and guides you through the safe order. `dev.sh` is a thin
-shim that calls `dev.py`, so the name in older docs still works.
+prints each command before it runs it, and guides you through the safe order.
 
 ```
 dev.py doctor  esp32                 # check tools + SDK pins (read-only)
