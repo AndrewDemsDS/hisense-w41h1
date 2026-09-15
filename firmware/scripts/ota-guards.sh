@@ -92,3 +92,23 @@ pi_stage() {  # $1 local manifest (.json) to keep active  $2... other files to i
     || die "matter-server did not reopen :5580 within 3 min of the restart"
   say "  matter-server is serving again"
 }
+
+# Persistent HTTP OTA mirror on the Pi. The break-glass path (Identify=88 / :2324) fetches a FULL
+# image over plain HTTP from a compile-time URL, and losing the deployed image once already stranded
+# node 80 (its exact build was never archived). So every stage also copies the raw .bin into a
+# persistent, user-owned docroot ($PI_HTTP_DIR, served by the restart=always `ota-http` container),
+# keeping a per-target/version/flavour archive AND repointing the stable current-image path that
+# deployed nodes actually GET. This is what makes a deployed image always retrievable from the Pi.
+# The current-image basename is compile-time in the firmware (esp32-ota.bin serves the C3, rac-ota.bin
+# the AmebaZ2), so it must not be renamed for existing nodes.
+#   $1 raw .bin  $2 current-image basename nodes fetch  $3 archive basename
+pi_http_publish() {
+  [ -n "${PI_HTTP_DIR:-}" ] || { say "  PI_HTTP_DIR unset -- skipping the HTTP OTA mirror"; return 0; }
+  local bin="$1" cur="$2" arch="$3" tmp="/tmp/ota-http.$$"
+  [ -f "$bin" ] || die "pi_http_publish: no $bin"
+  pi_ssh "mkdir -p $tmp $PI_HTTP_DIR/archive" || die "cannot reach $PI_HOST"
+  scp -o BatchMode=yes -i "$PI_SSH_KEY" "$bin" "$PI_HOST:$tmp/$arch" >/dev/null || die "scp of $arch failed"
+  pi_ssh "install -m0644 $tmp/$arch $PI_HTTP_DIR/archive/$arch && cp $PI_HTTP_DIR/archive/$arch $PI_HTTP_DIR/$cur && rm -rf $tmp" \
+    || die "HTTP OTA mirror install failed on $PI_HOST"
+  say "  HTTP OTA mirror: archived $arch and repointed $cur (served by ota-http on the Pi)"
+}

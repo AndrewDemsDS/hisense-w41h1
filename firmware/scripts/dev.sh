@@ -16,8 +16,8 @@
 #   dev.sh monitor <target> --port P         # serial monitor only
 #   dev.sh bench   <target> --port P --sim-port S   # busmon/app vs virtual_ac.py over a USB adapter
 #   dev.sh next    <target>                  # print the staged bring-up and its safety warnings
-#   dev.sh ota     <target> <step> [args]    # Matter OTA (amebaz2|esp32): preflight | package | stage
-#                                            # | flash | release [...], guarded by ota-guards.sh
+#   dev.sh ota     <target> <step> [args]    # Matter OTA (amebaz2|esp32): preflight | verify |
+#                                            # package | stage | flash | release [...], ota-guards.sh
 #
 # Targets: amebaz2 | esp32 | esphome. Board (esp32/esphome): --board c3 (ESP32-C3 SuperMini,
 # default) or --board classic (ESP32-D0WDQ6). Env: IDF_PATH / ESP_MATTER_PATH (esp32; defaults
@@ -71,8 +71,44 @@ if [ "$cmd" = ota ]; then
         node="$NODE_ID"; [ "$target" = esp32 ] && node="${ESP32_NODE_ID:?}"
         guard_tools; guard_link "$node"
         say "Pi clock reachable: $(pi_now)" ) ;;
+    verify)
+      # Read-only: report the LIVE on-device version + link, and pass iff it matches the tree.
+      # shellcheck disable=SC1090,SC1091
+      ( ENVF="$HERE/ota-release.env"; set -a; . "$ENVF"; set +a
+        say() { printf '\033[1;36m[dev]\033[0m %s\n' "$*"; }
+        # shellcheck source=ota-guards.sh
+        . "$HERE/ota-guards.sh"
+        if [ "$target" = esp32 ]; then
+          node="${ESP32_NODE_ID:?}"; attr="0/40/10"
+          want="$(sed -n 's/^set(PROJECT_VER "\(.*\)").*/\1/p' "$ESP/CMakeLists.txt")"
+        else
+          node="${NODE_ID:?}"; attr="0/40/9"; want="$(cat "$REPO/firmware/src/version.txt")"
+        fi
+        got="$("$OTAENV_PY" - "$MS_WS" "$node" "$attr" <<'PY'
+import asyncio,json,sys,aiohttp
+U,N,A=sys.argv[1],int(sys.argv[2]),sys.argv[3]
+async def m():
+  async with aiohttp.ClientSession() as s:
+    async with s.ws_connect(U) as ws:
+      await ws.receive(timeout=10)
+      await ws.send_json({"message_id":"v","command":"read_attribute","args":{"node_id":N,"attribute_path":A}})
+      while True:
+        d=json.loads((await ws.receive(timeout=40)).data)
+        if d.get("message_id")=="v":
+          r=d.get("result"); print(r.get(A) if isinstance(r,dict) else r); return
+asyncio.run(m())
+PY
+)"
+        rssi="$("$OTAENV_PY" "$HERE/ota_guards.py" link "$MS_WS" "$node" -200 2>/dev/null || true)"
+        say "node $node live version: $got   (tree: $want)"
+        say "link: $rssi"
+        if [ "$got" = "$want" ] || [ "$got" = "$(bash "$rel" verint 2>/dev/null)" ]; then
+          ok "node $node is running $got"
+        else
+          die "node $node reports $got, expected $want"
+        fi ) ;;
     package|stage|flash|release|build|publish|tag) exec bash "$rel" "$step" "$@" ;;
-    *) die "ota step must be preflight, build, package, stage, flash, release, tag or publish" ;;
+    *) die "ota step must be preflight, verify, package, stage, flash, release, build, publish or tag" ;;
   esac
   exit 0
 fi

@@ -287,6 +287,11 @@ stage() {
   # The provider dir is root-owned (matter-server runs as root), so a plain scp is refused:
   # pi_stage installs through a root container and archives this product's other manifests.
   pi_stage "$IMG/esp32-v$int.json" "$IMG/esp32-v$int.ota"
+  # Also mirror the RAW image to the persistent HTTP OTA server, so the break-glass full-image
+  # path always has the deployed bin and we never re-lose it (as happened to node 80). The archived
+  # full image is the delta base too; esp32-ota.bin is the compile-time URL C3 nodes fetch.
+  local flav="${ESP32_FLAVOUR:-debug}"
+  pi_http_publish "$NEW_BIN" "esp32-ota.bin" "$(idf_target)-v$int-$flav.bin"
 }
 
 # ---- flash (update_node retries + rollback detection; mirror of ota-release.sh flash) -------
