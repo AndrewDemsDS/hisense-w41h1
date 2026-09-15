@@ -205,6 +205,12 @@ class Ctx:
 # ESP-IDF v5.5 Linux prerequisites, verbatim from its get-started/linux-macos-setup guide.
 ESP_HOST_PKGS = ("git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build "
                  "ccache libffi-dev libssl-dev dfu-util libusb-1.0-0")
+# connectedhomeip's Linux prerequisites (docs/guides/BUILDING.md). esp-matter's install.sh sources
+# connectedhomeip's bootstrap.sh -p all,esp32, so the ESP32 Matter fetch needs these as well.
+CHIP_HOST_PKGS = ("git gcc g++ pkg-config cmake curl libssl-dev libdbus-1-dev libglib2.0-dev "
+                  "libavahi-client-dev ninja-build python3-venv python3-dev python3-pip unzip "
+                  "libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev default-jre")
+ESP32_HOST_PKGS = " ".join(dict.fromkeys(f"{ESP_HOST_PKGS} {CHIP_HOST_PKGS}".split()))
 
 
 def esp_host_gaps():
@@ -214,9 +220,14 @@ def esp_host_gaps():
     openocd-esp32 cannot load libusb-1.0.so.0. cmake and ninja are install=on_request on Linux in
     ESP-IDF's tools.json, so idf.py expects system ones. The venv module is a separate Debian package.
     """
-    gaps = [f"{t} not on PATH" for t in ("cmake", "ninja") if not have(t)]
+    # curl: pigweed's pw_env_setup (run by esp-matter's install.sh) shells out to it.
+    gaps = [f"{t} not on PATH" for t in ("cmake", "ninja", "curl") if not have(t)]
     if not ctypes.util.find_library("usb-1.0"):
         gaps.append("libusb-1.0 shared library not found")
+    # pgi, from connectedhomeip's requirements.all.txt, loads glib while pip builds it; without the
+    # library the whole esp-matter install.sh fails at "Installing pip requirements for all".
+    if not ctypes.util.find_library("glib-2.0"):
+        gaps.append("glib-2.0 shared library not found")
     with tempfile.TemporaryDirectory() as d:
         if subprocess.run([sys.executable, "-m", "venv", d],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
@@ -266,7 +277,7 @@ def doctor(ctx):
         host = esp_host_gaps()
         gaps += host
         if host:
-            gaps.append(f"ESP-IDF host packages (Debian/Ubuntu): sudo apt install {ESP_HOST_PKGS}")
+            gaps.append(f"ESP-IDF + Matter host packages (Debian/Ubuntu): sudo apt install {ESP32_HOST_PKGS}")
         git_head_is(idf_path, v.get("IDF_PIN", ""), "ESP-IDF", gaps)
         # The checkout alone is not an install: a failed install.sh leaves the right commit with no
         # Python env, which then fails at the first build. export.sh prints an ERROR in that state
@@ -320,7 +331,7 @@ def fetch(ctx):
         host = esp_host_gaps()
         if host:
             die("fix these before the multi-GB fetch (install.sh fails on them only at the very end): "
-                + "; ".join(host) + f". Debian/Ubuntu: sudo apt install {ESP_HOST_PKGS}")
+                + "; ".join(host) + f". Debian/Ubuntu: sudo apt install {ESP32_HOST_PKGS}")
         if not ask("fetch?"):
             return
         if not Path(idf_path).is_dir():
