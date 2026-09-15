@@ -35,7 +35,7 @@ is still missing for your target.
 | For | Install | Disk |
 |---|---|---|
 | everything | `sudo apt install git python3 g++` (`g++` builds the host tests that `test` runs) | |
-| `esphome` | `sudo apt install pipx` (`fetch` installs the pinned ESPHome with it) | about 2 GB for ESPHome's toolchain |
+| `esphome` | `sudo apt install pipx` (`fetch` installs the pinned ESPHome with it) | about 5 GB: ESPHome downloads its own ESP-IDF into `~/.cache/esphome`, so the first build takes several minutes |
 | `esp32` | ESP-IDF's prerequisites: `sudo apt install git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0` | about 10 GB for ESP-IDF and esp-matter |
 | `amebaz2` | `sudo` rights: `fetch` installs its own host packages. A CH341A programmer and SOIC-8 clip for the first install | about 30 GB for the Realtek SDKs and connectedhomeip |
 
