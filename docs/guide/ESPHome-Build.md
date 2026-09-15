@@ -1,6 +1,6 @@
 # ESPHome Build
 
-The third firmware track: the **same ESP32 board and wiring as the Matter replacement build**, but
+The recommended firmware: the **same ESP32 board and wiring as the Matter replacement build**, but
 running ESPHome instead of a Matter stack. The A/C arrives in Home Assistant as a native `climate`
 device over the ESPHome API, with no commissioning and no `matter-server`. Source and full
 rationale: `firmware/esphome/README.md` and `firmware/docs/15-esphome-path.md`.
@@ -62,9 +62,9 @@ DE timing that took a multi-day debug to find stays exactly as validated. Pins a
 The guided way, from the repo root (details in [Build, Flash & Test](Build-Flash-Test#esphome)):
 
 ```bash
-firmware/scripts/dev.sh fetch esphome                            # esphome==2026.7.4 + secrets.yaml
-firmware/scripts/dev.sh erase esphome --port /dev/ttyACM0        # factory-fresh board only
-firmware/scripts/dev.sh flash esphome --board c3 --port /dev/ttyACM0
+python3 firmware/scripts/dev.py fetch esphome                            # esphome==2026.7.4 + secrets.yaml
+python3 firmware/scripts/dev.py erase esphome --port /dev/ttyACM0        # factory-fresh board only
+python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
 ```
 
 By hand:
@@ -88,7 +88,7 @@ boards. Never erase a board that is already running: that throws away its Wi-Fi 
 
 Use the same three stages as the Matter track
 ([ESP32 Replacement Build](ESP32-Replacement-Build#staged-bring-up-never-leave-the-ac-in-an-unknown-state)),
-with `dev.sh test esphome` and `dev.sh bench esphome` for stage 1. What passing looks like on this
+with `dev.py test esphome` and `dev.py bench esphome` for stage 1. What passing looks like on this
 firmware: in stage 1 the `AC bus link` sensor turns on and the climate entity populates; in stage 2
 the decoded indoor temperature, mode and compressor Hz match the unit.
 

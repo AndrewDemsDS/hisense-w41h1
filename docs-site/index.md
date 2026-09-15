@@ -12,11 +12,16 @@ Run a **Hisense air conditioner entirely locally** through Home Assistant, with 
 account and no cloud dependency, by replacing the firmware on its `AEH-W41H1` Wi-Fi module
 (Realtek **RTL8710C / AmebaZ2**) with a custom **Matter** build.
 
-Two hardware paths are documented and both are running on real units:
+Three firmwares are documented, all running on real units. In order of preference:
 
-- **AmebaZ2**: reflash the stock W41H1 module in place. No added hardware.
-- **ESP32**: drop an ESP32 plus an RS-485 transceiver into the module bay. Useful when the W41H1
-  is dead or unobtainable, which is common.
+1. **ESPHome** (recommended): drop an ESP32 plus an RS-485 transceiver into the module bay and the
+   A/C appears natively in Home Assistant. No commissioning, no matter-server.
+2. **ESP32 with Matter**: the same board running Matter, for controllers beyond Home Assistant.
+3. **AmebaZ2**: reflash the stock W41H1 module in place with Matter. No added hardware, but a
+   one-time clip write.
+
+One script, `python3 firmware/scripts/dev.py`, builds, flashes, tests and updates all three.
+Start with the **[User Guide](guide/User-Guide.html)**.
 
 Everything below is written from a working system, not a plan. The RS-485 protocol was
 reverse-engineered from the stock firmware and validated against live hardware.
@@ -30,9 +35,12 @@ without opening anything.
 
 | | |
 |---|---|
+| [User guide](guide/User-Guide.html) | pick a firmware, then `dev.py` from clone to running node |
 | [Hardware and wiring](guide/Hardware-and-Wiring.html) | pinout, the 4-pin module port, RS-485 A/B |
-| [Installing the custom firmware](guide/Installing-Custom-Firmware.html) | flashing the module over a CH341A SPI clip |
-| [Commissioning and Home Assistant](guide/Commissioning-and-HA-Setup.html) | pairing into python-matter-server and HA |
+| [ESPHome build](guide/ESPHome-Build.html) | recommended: ESP32, native to Home Assistant |
+| [ESP32 Matter build](guide/ESP32-Replacement-Build.html) | the same ESP32 board running Matter |
+| [Installing on the AmebaZ2 module](guide/Installing-Custom-Firmware.html) | flashing the stock module over a CH341A SPI clip |
+| [Commissioning and Home Assistant](guide/Commissioning-and-HA-Setup.html) | pairing a Matter build into python-matter-server and HA |
 | [Everyday control](guide/Everyday-Control.html) | modes, fan, swing, Eco / Quiet / Turbo / Sleep |
 | [OTA updates](guide/OTA-Updates.html) | Matter OTA, the break-glass HTTP path, and the serial trap |
 | [Recovery and reflash](guide/Recovery-and-Reflash.html) | getting back from a bad flash |
@@ -40,11 +48,12 @@ without opening anything.
 
 ## Choosing a path
 
-[ESP32 vs AmebaZ2](firmware/13-path-comparison.html) compares the three firmware tracks on cost,
+If Home Assistant is your only controller, use the [ESPHome build](guide/ESPHome-Build.html). If
+anything else (Apple Home, Google Home, Alexa) must see the A/C, use Matter on the ESP32, or on the
+stock AmebaZ2 module if you want to keep the original hardware.
+[The path comparison](firmware/13-path-comparison.html) sets the three tracks side by side on cost,
 toolchain, reproducibility, OTA mechanics, flash headroom and diagnostics, with figures measured on
-this project's own hardware rather than taken from datasheets. On an ESP32 board the choice is
-Matter or the [ESPHome build](guide/ESPHome-Build.html), which drops the Matter stack and exposes
-the A/C natively to Home Assistant.
+this project's own hardware rather than taken from datasheets.
 
 ## Reverse engineering
 

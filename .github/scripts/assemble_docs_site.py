@@ -32,15 +32,18 @@ SOURCES = [
 
 # Guide pages read in a deliberate order rather than alphabetically: a newcomer needs wiring before
 # flashing before commissioning. Anything unlisted sorts after these, alphabetically.
+# The firmware pages follow the preferred variant: ESPHome, then ESP32 Matter, then AmebaZ2.
 GUIDE_ORDER = [
+    "User-Guide",
     "Hardware-and-Wiring",
+    "ESPHome-Build",
+    "ESP32-Replacement-Build",
     "Installing-Custom-Firmware",
     "Commissioning-and-HA-Setup",
     "Everyday-Control",
     "OTA-Updates",
     "Recovery-and-Reflash",
-    "ESP32-Replacement-Build",
-    "ESPHome-Build",
+    "Build-Flash-Test",
     "FAQ-Gotchas",
 ]
 

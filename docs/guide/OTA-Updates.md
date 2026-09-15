@@ -1,8 +1,8 @@
 # OTA Updates
 
 After the first CH341A flash, every firmware update ships **wirelessly over Matter OTA**, no clip.
-The whole pipeline is one script; don't hand-build (the manual path has traps that ship a
-rolling-back image).
+The whole pipeline is one command through `firmware/scripts/dev.py`; don't hand-build (the manual
+path has traps that ship a rolling-back image).
 
 > This page is for **updating an already-custom unit**. To convert a still-stock module to custom
 > firmware in the first place, see [Installing the Custom Firmware](Installing-Custom-Firmware).
@@ -12,10 +12,14 @@ Deep reference: `firmware/docs/10-firmware-ota-procedure.md`.
 ## The one command
 
 ```
-firmware/scripts/ota-release.sh release --bump --flash
+python3 firmware/scripts/dev.py ota amebaz2 preflight               # host tests, tools, link quality
+python3 firmware/scripts/dev.py ota amebaz2 release --bump --flash  # build, package, stage, flash
+python3 firmware/scripts/dev.py ota amebaz2 verify                  # the version the node reports
 ```
 
-This runs **build → package → stage → flash** end to end:
+`dev.py ota <target> <step>` hands the step and its arguments to the release script
+(`ota-release.sh` for `amebaz2`, `esp32-release.sh` for `esp32`), wrapped in the OTA guards.
+`release` runs **build → package → stage → flash** end to end:
 
 | Stage | What it does |
 |---|---|
@@ -24,8 +28,8 @@ This runs **build → package → stage → flash** end to end:
 | `stage` | scp `.ota` + manifest to your Home Assistant host and **restart matter-server** (it only loads manifests at init). |
 | `flash` | `update_node` with retries, then verify the device's *reported* version changed. |
 
-Individual stages exist too (`lint`, `build`, `package`, `stage`, `flash`). Run
-`ota-release.sh` with one of them. `lint` is the fast offline check the git pre-commit hook runs.
+Individual stages exist too: `dev.py ota amebaz2 build|package|stage|flash`. The offline check
+the git pre-commit hook runs is `dev.py test amebaz2`.
 Environment-specific paths/hosts live in `ota-release.env` (gitignored; copy from `.env.example`).
 
 ## OTA is flaky by design: retry
@@ -53,7 +57,8 @@ widespread `python-matter-server` behavior, not a fault in the image.
 AmebaZ2's bootloader A/B-selects the boot slot by the image's **`FWHS.header.serial`**, **not** the
 Matter `softwareVersion`. If the serial isn't bumped, an OTA transfers, applies, "finishes
 successfully", and the device reverts to the old version on reboot (looks like a
-rollback). This cost a whole debugging session. `ota-release.sh build` sets
+rollback). This cost a whole debugging session. The build step (`ota-release.sh build`, which
+`dev.py build amebaz2` and `dev.py ota amebaz2 release` both run) sets
 `serial = SERIAL_BASE + softwareVersion` and log-verifies it, so **you never touch it, as long as
 you use the script and don't hand-build.** The gory detail is in
 `firmware/docs/10-firmware-ota-procedure.md` (§11).
@@ -66,7 +71,8 @@ reload the Matter integration in HA. See [Commissioning & HA Setup](Commissionin
 
 ## ESP32 delta OTA
 
-`firmware/scripts/esp32-release.sh release [--flash]` does everything in this section for you:
+`python3 firmware/scripts/dev.py ota esp32 release [--flash]` (which runs `esp32-release.sh`) does
+everything in this section for you:
 it refuses to build until the deployed base is archived, builds the patch against it, wraps it and
 stages it. The manual steps below are what it runs, for when you need to debug one.
 

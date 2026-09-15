@@ -103,7 +103,7 @@ The A/C connector pinout:
   and a DE that drifts high parks a second driver on the A/C's bus. It shows up as intermittent bus
   corruption, not as an obvious wiring fault. If firmware and wiring disagree on the DE pin,
   `busstats` shows tx_bytes climbing with rx_bytes pinned at 0.
-- **⚠️ Brand-new board: erase flash before the first commission** (`dev.sh erase esp32 --port P`,
+- **⚠️ Brand-new board: erase flash before the first commission** (`dev.py erase esp32 --port P`,
   or `idf.py -p P erase-flash`). A vendor test image can leave a Wi-Fi config in NVS that makes
   every commissioning attempt fail with `CHIP Error 0x000000AC`. Never erase a commissioned node.
 - **⚠️ Never use GPIO16/17 for UART on a WROVER/D0WDQ6 module**: they're bonded to the PSRAM
@@ -121,8 +121,8 @@ explained in [Protocol Overview](Protocol-Overview#the-seqhilo-bytes-are-a-devic
 
 ## Staged bring-up (never leave the A/C in an unknown state)
 
-1. **Bench, no A/C**: run the host tests (`dev.sh test esp32`), then flash `smoketest/` (the
-   `busmon` bus monitor) and drive it with `virtual_ac.py` on a USB adapter (`dev.sh bench esp32`,
+1. **Bench, no A/C**: run the host tests (`dev.py test esp32`), then flash `smoketest/` (the
+   `busmon` bus monitor) and drive it with `virtual_ac.py` on a USB adapter (`dev.py bench esp32`,
    wiring and passing output in [Build, Flash & Test](Build-Flash-Test#bench-stage-no-ac)).
 2. **Real bus, USB-powered**: remove the module, tap **A/B only** (ground-loop warning), poll
    with `busmon` (~1 Hz). The mainboard replies with valid, checksum-passing status frames that
@@ -139,7 +139,7 @@ The guided way, with ESP-IDF v5.5.4 and esp-matter fetched at the pinned version
 them ([Build, Flash & Test](Build-Flash-Test#esp32-esp-matter) has the detail):
 
 ```
-firmware/scripts/dev.sh walk esp32 --board c3        # or --board classic
+python3 firmware/scripts/dev.py walk esp32 --board c3        # or --board classic
 ```
 
 By hand, from `firmware/esp32-matter/`:
@@ -149,8 +149,8 @@ By hand, from `firmware/esp32-matter/`:
 idf.py set-target esp32c3 && idf.py build flash monitor   # esp32 for the classic board
 ```
 
-That is a development build. Images that go out over OTA come from `esp32-release.sh`, which
-archives the delta base first ([OTA Updates](OTA-Updates#esp32-delta-ota)).
+That is a development build. Images that go out over OTA come from `dev.py ota esp32 release`
+(which runs `esp32-release.sh`), which archives the delta base first ([OTA Updates](OTA-Updates#esp32-delta-ota)).
 
 ## Status & remaining work
 

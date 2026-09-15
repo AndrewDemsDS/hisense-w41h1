@@ -33,7 +33,7 @@ From this directory:
 idf.py set-target esp32c3 && idf.py build flash monitor   # esp32 for the classic ESP32-D0WDQ6
 ```
 
-Or `firmware/scripts/dev.sh build esp32 --board c3` from the repo root. Images that ship over OTA
+Or `firmware/scripts/dev.py build esp32 --board c3` from the repo root. Images that ship over OTA
 come from `firmware/scripts/esp32-release.sh`, never from a plain `idf.py build`.
 
 ## Why a brand-new board must be erased first

@@ -24,8 +24,10 @@ reverse-engineering write-ups, all searchable in one place. The site is generate
   swing, and Eco / Quiet / Turbo / Sleep special modes.
 - **Energy monitoring**: live power (W) + voltage, derived from the bus current proxy.
 - **OTA updates over Wi-Fi**: after the first CH341 flash, everything else is wireless.
-- **Three firmwares, one driver**: the stock AmebaZ2 module, an ESP32 replacement board running
-  Matter, or the same ESP32 running ESPHome for Home Assistant only.
+- **Three firmwares, one driver**, in order of preference: an ESP32 board running ESPHome (Home
+  Assistant only), the same ESP32 running Matter, or the stock AmebaZ2 module running Matter.
+- **One script for all of it**: `python3 firmware/scripts/dev.py` checks tools, fetches SDKs,
+  tests, builds, flashes and ships OTA updates for every target.
 
 ## How it works
 
@@ -43,14 +45,21 @@ reverse-engineered + sniff-validated, see [`reverse-engineering/docs/03`](revers
 
 ## Get started
 
+```
+python3 firmware/scripts/dev.py walk esphome   # or esp32, or amebaz2; asks before every step
+```
+
 | I want to | Read |
 |---|---|
+| pick a firmware and go from clone to running node | [User Guide](docs/guide/User-Guide.md) |
 | know the hardware and the 4-pin port | [Hardware & Wiring](docs/guide/Hardware-and-Wiring.md) |
-| flash a stock module (CH341A clip, once) | [Installing the Firmware](docs/guide/Installing-Custom-Firmware.md), prebuilt images on [Releases](https://github.com/AndrewDemsDS/hisense-w41h1/releases) |
-| commission it into Home Assistant | [Commissioning & HA Setup](docs/guide/Commissioning-and-HA-Setup.md) |
-| update over the air | [OTA Updates](docs/guide/OTA-Updates.md) |
+| 1. run ESPHome on an ESP32 (recommended, Home Assistant only) | [ESPHome Build](docs/guide/ESPHome-Build.md) |
+| 2. run Matter on an ESP32 | [ESP32 Replacement Build](docs/guide/ESP32-Replacement-Build.md) |
+| 3. flash a stock AmebaZ2 module (CH341A clip, once) | [Installing the Firmware](docs/guide/Installing-Custom-Firmware.md), prebuilt images on [Releases](https://github.com/AndrewDemsDS/hisense-w41h1/releases) |
+| commission a Matter build into Home Assistant | [Commissioning & HA Setup](docs/guide/Commissioning-and-HA-Setup.md) |
+| update over the air | [OTA Updates](docs/guide/OTA-Updates.md) (`dev.py ota <target> release`) |
 | un-brick or go back to stock | [Recovery & Reflash](docs/guide/Recovery-and-Reflash.md) |
-| build any of the three firmwares from source | [Build, Flash & Test](docs/guide/Build-Flash-Test.md) (`firmware/scripts/dev.sh walk <target>`) |
+| the detail behind each `dev.py` step | [Build, Flash & Test](docs/guide/Build-Flash-Test.md) |
 | find my way around the repo and the SDK overlay model | [Repo Map & Build Pipeline](docs/guide/Repo-Map-and-Build-Pipeline.md) |
 
 > **⚠️ No remote way back to stock (yet).** Once a module runs this firmware, the only supported
