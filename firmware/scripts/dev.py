@@ -34,6 +34,8 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+import ctypes.util
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -200,6 +202,28 @@ class Ctx:
 
 
 # ---- doctor ----------------------------------------------------------------------------------
+# ESP-IDF v5.5 Linux prerequisites, verbatim from its get-started/linux-macos-setup guide.
+ESP_HOST_PKGS = ("git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build "
+                 "ccache libffi-dev libssl-dev dfu-util libusb-1.0-0")
+
+
+def esp_host_gaps():
+    """The ESP-IDF host prerequisites that break a fresh machine, each checked the way it fails.
+
+    Found on a clean ubuntu:24.04: install.sh aborts after downloading every toolchain because
+    openocd-esp32 cannot load libusb-1.0.so.0. cmake and ninja are install=on_request on Linux in
+    ESP-IDF's tools.json, so idf.py expects system ones. The venv module is a separate Debian package.
+    """
+    gaps = [f"{t} not on PATH" for t in ("cmake", "ninja") if not have(t)]
+    if not ctypes.util.find_library("usb-1.0"):
+        gaps.append("libusb-1.0 shared library not found")
+    with tempfile.TemporaryDirectory() as d:
+        if subprocess.run([sys.executable, "-m", "venv", d],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            gaps.append("python3 cannot create a venv (python3-venv)")
+    return gaps
+
+
 def git_head_is(dirpath, want, label, gaps):
     d = Path(dirpath)
     if not (d / ".git").exists():
@@ -239,7 +263,19 @@ def doctor(ctx):
     elif ctx.target == "esp32":
         idf_path = os.environ.get("IDF_PATH", str(Path.home() / "esp/esp-idf"))
         matter_path = os.environ.get("ESP_MATTER_PATH", str(Path.home() / "esp/esp-matter"))
+        host = esp_host_gaps()
+        gaps += host
+        if host:
+            gaps.append(f"ESP-IDF host packages (Debian/Ubuntu): sudo apt install {ESP_HOST_PKGS}")
         git_head_is(idf_path, v.get("IDF_PIN", ""), "ESP-IDF", gaps)
+        # The checkout alone is not an install: a failed install.sh leaves the right commit with no
+        # Python env, which then fails at the first build. export.sh prints an ERROR in that state
+        # but still returns 0 when sourced, so check for what a working export provides: idf.py.
+        if Path(idf_path, "export.sh").is_file() and subprocess.run(
+                ["bash", "-c", f'. "{idf_path}/export.sh" && command -v idf.py'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            gaps.append(f"ESP-IDF tools are not installed: {idf_path}/export.sh fails "
+                        "(fix the host packages, then run dev.py fetch esp32 again)")
         git_head_is(matter_path, v.get("ESP_MATTER_PIN", ""), "esp-matter", gaps)
     elif ctx.target == "esphome":
         cmd = ctx.esphome_cmd()
@@ -281,6 +317,10 @@ def fetch(ctx):
         idf_path = os.environ.get("IDF_PATH", str(Path.home() / "esp/esp-idf"))
         matter_path = os.environ.get("ESP_MATTER_PATH", str(Path.home() / "esp/esp-matter"))
         say(f"ESP32: ESP-IDF {v.get('IDF_PIN')} -> {idf_path}, esp-matter {v.get('ESP_MATTER_PIN','')[:12]} -> {matter_path} (several GB)")
+        host = esp_host_gaps()
+        if host:
+            die("fix these before the multi-GB fetch (install.sh fails on them only at the very end): "
+                + "; ".join(host) + f". Debian/Ubuntu: sudo apt install {ESP_HOST_PKGS}")
         if not ask("fetch?"):
             return
         if not Path(idf_path).is_dir():
