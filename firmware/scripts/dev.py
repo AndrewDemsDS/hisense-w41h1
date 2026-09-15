@@ -44,6 +44,11 @@ TEST = REPO / "firmware/test"
 ENVF = HERE / "ota-release.env"
 ESPHOME_PIN = "2026.7.4"   # CI's `esphome config` pin (.github/workflows/qa.yaml); keep in step
 
+# Line-buffer stdout so our own lines stay in order with the stderr warnings and with the output
+# of the tools we run. Without it, piping or logging dev.py (tee, CI) shows "doctor found gaps
+# (above)" before the gap list, and a `$ cmd` line after the command's own output.
+sys.stdout.reconfigure(line_buffering=True)
+
 C = {"cyan": "\033[1;36m", "yellow": "\033[1;33m", "red": "\033[1;31m",
      "grey": "\033[1;90m", "green": "\033[32m", "off": "\033[0m"}
 
@@ -174,7 +179,14 @@ class Ctx:
             die(f"{cmd} needs --port <serial device> (e.g. /dev/ttyACM0)")
 
     def esphome_cmd(self):
-        return os.environ.get("ESPHOME", "esphome")
+        if "ESPHOME" in os.environ:
+            return os.environ["ESPHOME"]
+        if have("esphome"):
+            return "esphome"
+        # `pipx install` puts the app in ~/.local/bin (or PIPX_BIN_DIR), which a fresh Ubuntu shell
+        # does not have on PATH until the next login. Use it there instead of reporting it missing.
+        pipx_bin = Path(os.environ.get("PIPX_BIN_DIR", str(Path.home() / ".local/bin"))) / "esphome"
+        return str(pipx_bin) if pipx_bin.is_file() and os.access(pipx_bin, os.X_OK) else "esphome"
 
     def esphome_run(self, sub, *args):
         cmd = self.esphome_cmd()
@@ -212,7 +224,8 @@ def have_tool(tool, gaps, note=""):
 def doctor(ctx):
     gaps = []
     say(f"doctor: {ctx.target}")
-    have_tool("git", gaps); have_tool("python3", gaps); have_tool("g++", gaps, "needed by run_tests.sh")
+    have_tool("git", gaps); have_tool("python3", gaps)
+    have_tool("g++", gaps, "the host tests compile C++: sudo apt install g++, or pacman -S gcc")
     v = ctx.versions
     if ctx.target == "amebaz2":
         sdk = os.path.realpath(REPO / "sdk") if (REPO / "sdk").exists() else ""
@@ -235,7 +248,9 @@ def doctor(ctx):
             ver = ver[-1] if ver else "?"
             ok(f"esphome {ver}") if ver == ESPHOME_PIN else gaps.append(f"esphome is {ver}, CI pins {ESPHOME_PIN}")
         else:
-            gaps.append("esphome not on PATH (dev.py fetch esphome)")
+            gaps.append("esphome not installed (dev.py fetch esphome)")
+            if not have("pipx"):
+                gaps.append("pipx not on PATH (fetch esphome needs it: sudo apt install pipx)")
         ok("secrets.yaml") if (ESPHOME_DIR / "secrets.yaml").is_file() else gaps.append("secrets.yaml (cp secrets.yaml.example)")
     for g in gaps:
         print(f"  {C['red']}MISS{C['off']}  {g}")
@@ -258,7 +273,10 @@ def fetch(ctx):
         run(["bash", REPO / "firmware/setup.sh", root])
         if not (REPO / "sdk").exists():
             run(["ln", "-s", root, REPO / "sdk"])
-        run(["bash", REPO / "scripts/setup.sh"])
+        # scripts/setup.sh refuses to run without these two (`: "${AMEBA_SDK:?}"`), so a bare call
+        # stopped the fetch at its last step, after the multi-GB clone had finished.
+        run(["bash", REPO / "scripts/setup.sh"],
+            env=dict(os.environ, AMEBA_SDK=f"{root}/ameba-rtos-z2", CHIP_SDK=f"{root}/connectedhomeip"))
     elif ctx.target == "esp32":
         idf_path = os.environ.get("IDF_PATH", str(Path.home() / "esp/esp-idf"))
         matter_path = os.environ.get("ESP_MATTER_PATH", str(Path.home() / "esp/esp-matter"))
@@ -287,13 +305,17 @@ def fetch(ctx):
         run(["./install.sh"], cwd=matter_path)
     elif ctx.target == "esphome":
         if not have("pipx"):
-            die(f"install pipx first (or: pip install esphome=={ESPHOME_PIN} in a venv)")
+            die(f"install pipx first (Debian/Ubuntu: sudo apt install pipx; Arch: sudo pacman -S "
+                f"python-pipx), or pip install esphome=={ESPHOME_PIN} in a venv and set ESPHOME=")
         if not ask(f"pipx install esphome=={ESPHOME_PIN}?"):
             return
         run(["pipx", "install", "--force", f"esphome=={ESPHOME_PIN}"])
+        if not have("esphome"):
+            say("pipx put esphome in ~/.local/bin, which is not on this shell's PATH. dev.py finds it")
+            say("there anyway; to run esphome by hand, run `pipx ensurepath` and open a new terminal.")
         if not (ESPHOME_DIR / "secrets.yaml").is_file():
             run(["cp", ESPHOME_DIR / "secrets.yaml.example", ESPHOME_DIR / "secrets.yaml"])
-        say(f"now fill in {ESPHOME_DIR}/secrets.yaml (it is gitignored)")
+        say(f"now fill in {ESPHOME_DIR}/secrets.yaml (it is gitignored): your Wi-Fi, and a new API key")
 
 
 # ---- test / build / flash / monitor ----------------------------------------------------------
@@ -375,7 +397,8 @@ def bench(ctx):
         die("bench needs --sim-port <USB-TTL or USB-RS485 adapter>")
     if subprocess.run([sys.executable, "-c", "import serial"],
                       stderr=subprocess.DEVNULL).returncode != 0:
-        die("virtual_ac.py needs pyserial (pip install pyserial)")
+        die(f"virtual_ac.py needs pyserial for {sys.executable} (Debian/Ubuntu: sudo apt install "
+            "python3-serial; Arch: sudo pacman -S python-pyserial)")
     say("bench wiring (no A/C, no mains):")
     say(f"  USB-TTL:    board TX GPIO{ctx.pins[0]} -> adapter RX, board RX GPIO{ctx.pins[1]} <- adapter TX, GND-GND (3.3 V adapter)")
     say("  USB-RS485:  transceiver A-A, B-B, GND-GND (board DI/RO/DE wired as for the A/C)")

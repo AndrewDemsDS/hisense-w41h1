@@ -52,8 +52,8 @@ cat <<EOF
 Next:
   1. (optional) firmware/scripts/gen-creds.sh   # your own commissioning code
   2. cp firmware/scripts/ota-release.env.example firmware/scripts/ota-release.env  # edit paths
-  3. firmware/scripts/ota-release.sh build       # -> firmware_is.bin + clip image + .ota
-  4. flash: python3 firmware/flasher/ch341flash.py firmware/built-images/flash_rac-integrated-vN.bin
+  3. python3 firmware/scripts/dev.py build amebaz2   # -> firmware_is.bin + clip image + .ota
+  4. python3 firmware/scripts/dev.py flash amebaz2   # prints the clip and OTA paths; read them first
 
 If any [!!]/[MANUAL] lines appeared above, resolve them (paths/flag names differ across SDK versions).
 The .zap cluster must be GUI-enabled on ep1 if codegen doesn't count the hand-added block -- see
