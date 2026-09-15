@@ -1,8 +1,35 @@
 # Commissioning & HA Setup
 
-Get a flashed W41H1 into Home Assistant over Matter, with **no cloud**. Commissioning is local
-(BLE + Wi-Fi) and runs through `python-matter-server` on your Home Assistant host (commonly a
-Raspberry Pi).
+Get a flashed unit into Home Assistant, with **no cloud**. The ESPHome build is *adopted* over the
+ESPHome API; the two Matter builds (ESP32 and AmebaZ2) are *commissioned* through
+`python-matter-server`.
+
+## ESPHome build: adopt it
+
+No commissioning, no matter-server, no pairing code.
+
+1. **Get it on Wi-Fi.** The node joins the network in `firmware/esphome/secrets.yaml`. If it cannot
+   (wrong password, different network), it opens a hotspot named **`hisense-ac-setup`** after about a
+   minute. Join it from a phone; the captive portal asks for your Wi-Fi and the node reboots onto it.
+2. **Add it in Home Assistant.** HA discovers the node over mDNS: Settings → Devices & Services shows
+   a discovered **ESPHome** device. Select **Configure** and paste the API encryption key, the
+   `hisense_ac__encryption_key` value from your `secrets.yaml`.
+3. **Not discovered?** Add it by hand: Settings → Devices & Services → **Add Integration** →
+   **ESPHome**, host `hisense-ac.local` or the node's IP address, port `6053`.
+
+The device appears as **Air Conditioner** with the climate entity and every switch, sensor and fault
+flag; see [Everyday Control](Everyday-Control#esphome-build). The API is plain TCP, so an A/C on a
+separate IoT VLAN only needs HA allowed to reach port 6053 and the node added by IP; the IPv6 mDNS
+problem below does not apply.
+
+To change the key later, edit `secrets.yaml`, re-flash (over the air is fine), then update the key in
+HA when it reports the node as needing re-authentication.
+
+## Matter builds: commission them
+
+Commissioning is local (BLE + Wi-Fi) and runs through `python-matter-server` on your Home Assistant
+host (commonly a Raspberry Pi). The steps are the same for the ESP32 Matter build and the AmebaZ2
+module.
 
 Depth: `reverse-engineering/docs/02-matter-local-control.md`.
 
@@ -75,6 +102,6 @@ Trust direction stays correct: the A/C is isolated on IoT; only the Matter contr
 ## Re-interview after a structure-changing OTA
 
 HA builds entities from the node structure at setup and caches it. After an OTA that adds or removes
-endpoints/clusters, the new entities don't appear until a **node re-interview**. `ota-release.sh
-flash` auto-calls `interview_node` on success; if entities still lag, reload the Matter integration
+endpoints/clusters, the new entities don't appear until a **node re-interview**. The OTA `flash`
+step (`dev.py ota <target> flash`, also run by `release --flash`) auto-calls `interview_node` on success; if entities still lag, reload the Matter integration
 (Settings → Devices & Services → **Matter** → ⋮ → **Reload**). See [OTA Updates](OTA-Updates).

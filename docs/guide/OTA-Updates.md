@@ -1,6 +1,30 @@
 # OTA Updates
 
-After the first CH341A flash, every firmware update ships **wirelessly over Matter OTA**, no clip.
+After the first flash, every firmware update ships **over Wi-Fi**. The ESPHome build uses ESPHome's
+own OTA and needs none of the Matter machinery below; the two Matter builds update over **Matter OTA**,
+no clip.
+
+## ESPHome updates
+
+From `firmware/esphome/`, with the same board overrides you first flashed with:
+
+```
+esphome run w41h1.yaml
+esphome -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 run w41h1.yaml
+```
+
+The first line is for the classic ESP32, the second for a C3 SuperMini. ESPHome builds the image,
+offers the node over the network as the upload target (pick it, or pass
+`--device hisense-ac.local` or the node's IP), uploads it and follows the logs. There is no version
+number to bump, no delta base to archive and no matter-server. Build from the same `secrets.yaml` as
+the first flash: a different API key locks Home Assistant out until you update the key there. The
+reference YAML sets no OTA password, so anything on the same network can push an image; add
+`password:` under `ota:` if the node shares a network you do not control.
+
+If a node stops answering after an update, reflash it over USB
+([Recovery & Reflash](Recovery-and-Reflash#esp32-boards-esphome-and-matter)).
+
+Everything below is about the two **Matter** builds.
 The whole pipeline is one command through `firmware/scripts/dev.py`; don't hand-build (the manual
 path has traps that ship a rolling-back image).
 

@@ -68,6 +68,6 @@ real hardware.
 
 ## What you get either way
 
-Local Matter control in Home Assistant with no cloud: mode, setpoint, six fan speeds, swing, and
+Local control in Home Assistant with no cloud, over ESPHome or Matter: mode, setpoint, fan speeds, swing, and
 the Eco / Quiet / Turbo / Sleep special modes, plus temperature and energy telemetry. See
 [everyday control](guide/Everyday-Control.html).

@@ -8,11 +8,11 @@
 # and in the wiki. Do not copy documentation in here by hand: it would fork the content and the
 # copies would drift.
 
-title: Hisense AEH-W41H1 de-cloud (RTL8710C / AmebaZ2 Matter firmware)
+title: Hisense AEH-W41H1 de-cloud
 description: >-
-  Replace the ConnectLife cloud on a Hisense AEH-W41H1 air-conditioner Wi-Fi module with custom
-  Matter firmware for local Home Assistant control. Reverse-engineered RS-485 protocol, AmebaZ2
-  and ESP32 builds, OTA, and full hardware documentation.
+  Replace the ConnectLife cloud on a Hisense AEH-W41H1 air conditioner with local Home Assistant
+  control: ESPHome or Matter firmware on an ESP32, or Matter on the stock AmebaZ2 module.
+  Reverse-engineered RS-485 protocol, OTA, and full hardware documentation.
 url: https://andrewdemsds.github.io
 baseurl: /hisense-w41h1
 

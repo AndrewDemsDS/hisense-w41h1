@@ -54,32 +54,42 @@ and the pins, so no file needs editing to switch boards.
 ## 1. ESPHome (recommended)
 
 ```
-python3 firmware/scripts/dev.py doctor  esphome                 # read-only: is esphome at the pinned version?
-python3 firmware/scripts/dev.py fetch   esphome                 # pipx install esphome==2026.7.4, create secrets.yaml
-python3 firmware/scripts/dev.py test    esphome                 # host tests + esphome config
-python3 firmware/scripts/dev.py build   esphome --board c3      # esphome compile
-python3 firmware/scripts/dev.py erase   esphome --port /dev/ttyACM0   # brand-new board only, asks you to type ERASE
-python3 firmware/scripts/dev.py flash   esphome --board c3 --port /dev/ttyACM0
+# read-only: is esphome at the pinned version?
+python3 firmware/scripts/dev.py doctor esphome
+# pipx install esphome==2026.7.4, create secrets.yaml
+python3 firmware/scripts/dev.py fetch esphome
+# host tests + esphome config
+python3 firmware/scripts/dev.py test esphome
+# esphome compile
+python3 firmware/scripts/dev.py build esphome --board c3
+# brand-new board only, asks you to type ERASE
+python3 firmware/scripts/dev.py erase esphome --port /dev/ttyACM0
+python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
 ```
 
 1. After `fetch`, fill in `firmware/esphome/secrets.yaml` (Wi-Fi and an API encryption key). It is
    gitignored.
 2. `flash` builds, writes the board over USB and follows the logs.
-3. Home Assistant discovers the node over mDNS; adopt it with the API key from `secrets.yaml`.
-4. Later updates go over Wi-Fi from ESPHome itself (`esphome run w41h1.yaml` in `firmware/esphome/`,
-   with the same `-s` board overrides). `dev.py ota` is Matter-only.
+3. Home Assistant discovers the node over mDNS; adopt it with the API key from `secrets.yaml`
+   ([Commissioning & HA Setup](Commissioning-and-HA-Setup#esphome-build-adopt-it)). If the node
+   cannot join Wi-Fi it opens a `hisense-ac-setup` hotspot to set it.
+4. Later updates go over Wi-Fi from ESPHome itself
+   ([OTA Updates](OTA-Updates#esphome-updates)). `dev.py ota` is Matter-only.
 
 More: [ESPHome Build](ESPHome-Build).
 
 ## 2. ESP32 with Matter
 
 ```
-python3 firmware/scripts/dev.py doctor  esp32
-python3 firmware/scripts/dev.py fetch   esp32                   # ESP-IDF + esp-matter at the pinned versions
-python3 firmware/scripts/dev.py test    esp32                   # host tests + esp32-lint
-python3 firmware/scripts/dev.py build   esp32 --board c3
-python3 firmware/scripts/dev.py erase   esp32 --port /dev/ttyACM0     # brand-new board only
-python3 firmware/scripts/dev.py flash   esp32 --board c3 --port /dev/ttyACM0
+python3 firmware/scripts/dev.py doctor esp32
+# ESP-IDF + esp-matter at the pinned versions
+python3 firmware/scripts/dev.py fetch esp32
+# host tests + esp32-lint
+python3 firmware/scripts/dev.py test esp32
+python3 firmware/scripts/dev.py build esp32 --board c3
+# brand-new board only
+python3 firmware/scripts/dev.py erase esp32 --port /dev/ttyACM0
+python3 firmware/scripts/dev.py flash esp32 --board c3 --port /dev/ttyACM0
 ```
 
 1. `IDF_PATH` and `ESP_MATTER_PATH` default to `~/esp/esp-idf` and `~/esp/esp-matter`; set them to
@@ -95,11 +105,15 @@ More: [ESP32 Replacement Build](ESP32-Replacement-Build).
 ## 3. AmebaZ2 (stock module)
 
 ```
-python3 firmware/scripts/dev.py doctor  amebaz2
-python3 firmware/scripts/dev.py fetch   amebaz2                 # firmware/setup.sh then scripts/setup.sh, ~15 GB
-python3 firmware/scripts/dev.py test    amebaz2                 # host tests + ota-release.sh lint
-python3 firmware/scripts/dev.py build   amebaz2                 # full clean, FWHS serial, verify
-python3 firmware/scripts/dev.py flash   amebaz2                 # prints the clip and OTA paths, writes nothing
+python3 firmware/scripts/dev.py doctor amebaz2
+# firmware/setup.sh then scripts/setup.sh, ~15 GB
+python3 firmware/scripts/dev.py fetch amebaz2
+# host tests + ota-release.sh lint
+python3 firmware/scripts/dev.py test amebaz2
+# full clean, FWHS serial, verify
+python3 firmware/scripts/dev.py build amebaz2
+# prints the clip and OTA paths, writes nothing
+python3 firmware/scripts/dev.py flash amebaz2
 ```
 
 The first install is a SOIC-8 clip write, which `dev.py` deliberately does not do for you. Dump the
@@ -111,10 +125,14 @@ images are on the GitHub Releases page if you would rather not build.
 Once a node is commissioned, updates never need a cable:
 
 ```
-python3 firmware/scripts/dev.py ota <amebaz2|esp32> preflight          # host tests + tools + link quality
-python3 firmware/scripts/dev.py ota amebaz2 release --bump --flash     # build, package, stage, flash
-python3 firmware/scripts/dev.py ota esp32   release --flash            # same, as a delta patch
-python3 firmware/scripts/dev.py ota <amebaz2|esp32> verify             # read the version the node is running
+# host tests + tools + link quality
+python3 firmware/scripts/dev.py ota <amebaz2|esp32> preflight
+# build, package, stage, flash
+python3 firmware/scripts/dev.py ota amebaz2 release --bump --flash
+# the same for ESP32, as a delta patch
+python3 firmware/scripts/dev.py ota esp32 release --flash
+# read the version the node is running
+python3 firmware/scripts/dev.py ota <amebaz2|esp32> verify
 ```
 
 The single steps (`build`, `package`, `stage`, `flash`) are available the same way. Extra arguments

@@ -45,7 +45,32 @@ RS-485 A/B pair** (white, yellow), **pin 4 = GND** (blue). A and B are interchan
 if the bus will not link, swap them. Confirm the colors against your own unit before you power
 anything.
 
-## Flash access (first flash / recovery)
+## Replacing the module with an ESP32
+
+The ESPHome build (recommended) and the ESP32 Matter build both drop the W41H1 entirely and plug an
+ESP32 into the same 4-pin port. Parts, about €5 in total:
+
+| Part | Pick | Notes |
+|---|---|---|
+| ESP32 board | **ESP32-C3 SuperMini** (small enough for the module bay), or a classic ESP32 dev board | powered from the port's 5 V |
+| RS-485 transceiver | a **3.3 V** part: MAX3485, SP3485 or SN65HVD75, or a 3.3 V auto-direction TTL to RS-485 module | **never a 5 V MAX485 module**: its RO pin drives 5 V into the ESP32 and kills the RX pin |
+| C3 only | a ~10 kΩ pulldown resistor on DE (GPIO10) | stops a floating DE from jamming the bus at power-up |
+| Wiring | a 4-pin lead to the A/C port, jumper wires | A and B are interchangeable; swap them if the bus will not link |
+
+![ESP32 wiring](images/esp32-wiring.png)
+
+*Classic ESP32 ↔ auto-direction RS-485 module ↔ A/C 4-pin bus. The C3 SuperMini uses TX 5 / RX 6 /
+DE 10.*
+
+Full pin tables for both boards, and the GPIO pins you must avoid, are in
+[ESP32 Replacement Build](ESP32-Replacement-Build#bom-5--wiring). Two rules protect the hardware
+while you work:
+
+- **While the board is on USB, connect only A and B** to the A/C. Joining the A/C's mains-earthed
+  GND to a laptop-earthed board browns it out. GND and 5 V go on once the laptop is unplugged.
+- Bench-test with no A/C first: [Build, Flash & Test](Build-Flash-Test#bench-stage-no-ac).
+
+## Flash access (AmebaZ2 first flash / recovery)
 
 The GD25Q32 is fully dumpable and writable with a **CH341A programmer + SOIC-8 clip**. After the
 first CH341A flash, everything else is wireless (OTA). Clip wiring, the in-circuit read problem and
@@ -57,6 +82,7 @@ the CH341A voltage warning are in [Recovery & Reflash](Recovery-and-Reflash#use-
 
 ## Ready to flash?
 
-Once you can see the flash chip and have the clip wired, follow
-[Installing the Custom Firmware](Installing-Custom-Firmware). It covers the CH341A path end to end;
-after that first write, updates go over Matter OTA.
+- **ESP32 board wired up:** follow the [User Guide](User-Guide), which starts with the ESPHome build.
+- **Keeping the stock module:** once you can see the flash chip and have the clip wired, follow
+  [Installing the Custom Firmware](Installing-Custom-Firmware). After that first write, updates go
+  over Matter OTA.

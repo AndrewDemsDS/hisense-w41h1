@@ -1,4 +1,7 @@
-# Installing the custom firmware
+# Installing on the AmebaZ2 Module
+
+> Building on an ESP32 board instead? That is the recommended route and needs no clip: start at the
+> [User Guide](User-Guide).
 
 You get the custom Matter firmware onto a **stock** AEH-W41H1 module by writing it to the module's
 SPI flash with a CH341A programmer. The result is an uncertified Matter A/C you commission into
