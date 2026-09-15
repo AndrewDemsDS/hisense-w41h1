@@ -67,7 +67,7 @@ advertises Heat, Cool and Auto in the Thermostat FeatureMap; dry and fan-only ne
 integration below). Setpoint is only honored in **cool/heat**. A temp change in dry / fan /
 auto / off is a no-op.
 
-## The unified climate integration (recommended)
+## The unified climate integration (recommended for Matter)
 
 `integrations/hisense-unified-ac` is a HACS custom integration that **merges those entities into one
 climate entity**, so you get a single Thermostat card with the special modes as presets. Details:
