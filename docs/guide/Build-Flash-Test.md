@@ -75,8 +75,10 @@ python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
 Fill in `firmware/esphome/secrets.yaml` (gitignored) before building. `w41h1.yaml` keeps the
 classic ESP32 defaults; `--board c3` overrides `board`, `tx_pin`, `rx_pin` and `de_pin` on the
 command line, so the YAML never needs editing to switch boards. `dev.py` uses the `esphome` on
-`PATH`; set `ESPHOME` to point at another install. Later updates go over the air with plain
-`esphome run w41h1.yaml` (`dev.py ota` is Matter-only).
+`PATH`; set `ESPHOME` to point at another install. Later updates go over the air with
+`esphome run`, passing the same board overrides you flashed with: a C3 node given the classic
+defaults receives an image for the wrong chip. Both command lines are in
+[OTA Updates](OTA-Updates#esphome-updates) (`dev.py ota` is Matter-only).
 
 ## ESP32 (esp-matter)
 

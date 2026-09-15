@@ -80,8 +80,10 @@ esphome logs w41h1.yaml                   # logs only, later
 
 Home Assistant discovers the node over mDNS and adopts it with the API key from `secrets.yaml`.
 
-On a factory-fresh board, erase first (`esptool.py erase_flash`, then `esphome run w41h1.yaml
---device <port>`). A stale vendor Wi-Fi config left in NVS is a documented time sink on these
+On a factory-fresh board, erase first: `dev.py erase esphome --port <port>`, then flash with
+`dev.py flash esphome --board <c3|classic> --port <port>`, so the board overrides are applied.
+By hand, that is `esptool.py erase_flash` followed by the matching `esphome run` line above with
+`--device <port>`. A stale vendor Wi-Fi config left in NVS is a documented time sink on these
 boards. Never erase a board that is already running: that throws away its Wi-Fi settings.
 
 ## Bring it up in stages

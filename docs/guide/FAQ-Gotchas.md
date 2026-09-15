@@ -1,7 +1,51 @@
 # FAQ & Gotchas
 
 The load-bearing traps, distilled for operator/future-you. Each answer links to the authoritative
-doc.
+doc. The ESPHome questions come first; the rest are about the Matter builds.
+
+## Which firmware should I use?
+
+**ESPHome**, if Home Assistant is your only controller: the smallest toolchain and no
+commissioning. **ESP32 with Matter** if Apple Home, Google Home or Alexa must see the A/C. **AmebaZ2**
+only if you want to keep the original module and are happy with a one-time clip write.
+([User Guide](User-Guide#pick-a-firmware))
+
+## ESPHome: the `AC bus link` sensor stays off.
+
+The node is running but hears nothing from the A/C. In order of likelihood:
+
+1. **A and B swapped.** Harmless; swap them.
+2. **TX and RX swapped** between the board and the transceiver (vendor labels on auto-direction
+   modules vary). Swap them.
+3. **Wrong pins for the board.** A C3 SuperMini flashed without `--board c3` uses the classic ESP32
+   pins. Re-flash with the right `--board`.
+4. **DE not reaching the transceiver**, or a floating DE on the C3 without its pulldown.
+
+Raise `logger: level:` to `DEBUG` to see every decoded frame, or prove the wiring with no A/C at all
+using `dev.py bench esphome`. ([Build, Flash & Test](Build-Flash-Test#bench-stage-no-ac))
+
+## ESPHome: Home Assistant can't find the node, or rejects it.
+
+- **Not discovered:** mDNS does not cross VLANs. Add it by hand (ESPHome integration, host = the
+  node's IP, port 6053).
+- **"Invalid encryption key" or it keeps asking to re-authenticate:** the key in HA must be the
+  `hisense_ac__encryption_key` from the `secrets.yaml` the node was built with. If you regenerated
+  it, re-flash, then update the key in HA.
+- **It never joined Wi-Fi:** look for the `hisense-ac-setup` hotspot and set Wi-Fi through its
+  captive portal.
+
+([Commissioning & HA Setup](Commissioning-and-HA-Setup#esphome-build-adopt-it))
+
+## ESPHome: how do I update it?
+
+Over the air, with `esphome run w41h1.yaml` from `firmware/esphome/` (same `-s` board overrides you
+flashed with). No version bump, delta base or matter-server involved.
+([OTA Updates](OTA-Updates#esphome-updates))
+
+## My ESP32 board won't flash or has stopped booting.
+
+Hold **BOOT** while plugging in USB to force download mode, then flash again. An ESP32 always
+recovers over USB. ([Recovery & Reflash](Recovery-and-Reflash#esp32-boards-esphome-and-matter))
 
 ## The OTA "finished successfully" but the device is still on the old version. Did it roll back?
 
@@ -73,11 +117,12 @@ plain device they only surface as auto-detected switches/select. ([Everyday Cont
 ## The module keeps browning out / the radio drops.
 
 Power it from the **A/C**, not a bench supply. The 5 V from the unit is what the radio expects.
-([Hardware & Wiring](Hardware-and-Wiring))
+On an ESP32 on USB, it is usually the ground loop: connect only A and B until the laptop is
+unplugged. ([Hardware & Wiring](Hardware-and-Wiring))
 
 ## I bricked a module. Now what?
 
-Reflash with the **CH341A clip** (not flashrom). Region write to repair (preserves commissioning),
+An ESP32 board recovers over USB (see above). A stock AmebaZ2 module: reflash with the **CH341A clip** (not flashrom). Region write to repair (preserves commissioning),
 or whole-chip write of `flash_rac-stock-v1.bin` for a clean restore. Keep `dumps/w41h1_dump1.bin` as
 the net. ([Recovery & Reflash](Recovery-and-Reflash))
 

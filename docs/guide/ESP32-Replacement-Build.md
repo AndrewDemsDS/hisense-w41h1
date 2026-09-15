@@ -1,4 +1,4 @@
-# ESP32 Replacement Build
+# ESP32 Matter Build
 
 The second firmware track: an **ESP32 + RS-485 transceiver** that replaces the AmebaZ2 module,
 reusing the driver unchanged. This page is the full user-facing description; the source

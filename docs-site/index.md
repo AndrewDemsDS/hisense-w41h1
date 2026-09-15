@@ -1,16 +1,16 @@
 ---
-title: Hisense AEH-W41H1 de-cloud with custom Matter firmware
+title: Home
 nav_order: 1
 description: >-
-  Replace the ConnectLife cloud on a Hisense AEH-W41H1 (Realtek RTL8710C / AmebaZ2) air-conditioner
-  Wi-Fi module with custom Matter firmware for local Home Assistant control. Zero cloud.
+  Run a Hisense air conditioner locally from Home Assistant with no ConnectLife cloud: ESPHome or
+  Matter firmware on an ESP32 in the module bay, or Matter on the stock AEH-W41H1 module.
 ---
 
 # Hisense AEH-W41H1: de-cloud your air conditioner
 
 Run a **Hisense air conditioner entirely locally** through Home Assistant, with no ConnectLife
-account and no cloud dependency, by replacing the firmware on its `AEH-W41H1` Wi-Fi module
-(Realtek **RTL8710C / AmebaZ2**) with a custom **Matter** build.
+account and no cloud dependency. The A/C's `AEH-W41H1` Wi-Fi module talks to the unit over an
+internal RS-485 bus; this project replaces what sits on that bus with firmware you control.
 
 Three firmwares are documented, all running on real units. In order of preference:
 
@@ -33,7 +33,7 @@ without opening anything.
 
 ## Start here
 
-| | |
+| Page | What it covers |
 |---|---|
 | [User guide](guide/User-Guide.html) | pick a firmware, then `dev.py` from clone to running node |
 | [Hardware and wiring](guide/Hardware-and-Wiring.html) | pinout, the 4-pin module port, RS-485 A/B |
