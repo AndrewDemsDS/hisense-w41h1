@@ -30,8 +30,10 @@ or --board classic (ESP32-D0WDQ6). Env: IDF_PATH / ESP_MATTER_PATH (esp32; defau
 ~/esp/esp-matter), ESPHOME (esphome command, default `esphome`).
 """
 
+import atexit
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -236,6 +238,17 @@ def esp_host_gaps():
     return gaps
 
 
+def py_minor(exe):
+    """'3.12' for a runnable interpreter, '' when it is missing or dead (e.g. a venv whose base
+    Python was upgraded away)."""
+    try:
+        return subprocess.run([str(exe), "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                              timeout=20).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
 def git_head_is(dirpath, want, label, gaps):
     d = Path(dirpath)
     if not (d / ".git").exists():
@@ -295,12 +308,34 @@ def doctor(ctx):
         # The checkout alone is not an install: a failed install.sh leaves the right commit with no
         # Python env, which then fails at the first build. export.sh prints an ERROR in that state
         # but still returns 0 when sourced, so check for what a working export provides: idf.py.
-        if Path(idf_path, "export.sh").is_file() and subprocess.run(
-                ["bash", "-c", f'. "{idf_path}/export.sh" && command -v idf.py'],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
-            gaps.append(f"ESP-IDF tools are not installed: {idf_path}/export.sh fails "
-                        "(fix the host packages, then run dev.py fetch esp32 again)")
+        # One probe: after export.sh, is idf.py there, and which Python env did ESP-IDF pick.
+        idf_env = ""
+        if Path(idf_path, "export.sh").is_file():
+            probe = subprocess.run(
+                ["bash", "-c", f'. "{idf_path}/export.sh" >/dev/null 2>&1; '
+                               'command -v idf.py >/dev/null && printf %s "$IDF_PYTHON_ENV_PATH"'],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            idf_env = probe.stdout.strip() if probe.returncode == 0 else ""
+            if not idf_env:
+                gaps.append(f"ESP-IDF tools are not installed: {idf_path}/export.sh fails "
+                            "(fix the host packages, then run dev.py fetch esp32 again)")
         git_head_is(matter_path, v.get("ESP_MATTER_PIN", ""), "esp-matter", gaps)
+        # ESP-IDF's env and esp-matter's pigweed venv must come from one interpreter. A venv left on
+        # another Python (a host upgrade, or a fetch under a different python3) breaks the next
+        # install or build far from the cause. Ported from the dev.sh doctor in #121.
+        pw_py = Path(matter_path, "connectedhomeip/connectedhomeip/.environment/pigweed-venv/bin/python3")
+        # is_symlink too: the dead-venv case is a python3 symlink to a removed interpreter, and
+        # Path.exists() follows the link and reports False for exactly that.
+        if idf_env and (pw_py.exists() or pw_py.is_symlink()):
+            idf_ver, pw_ver = py_minor(f"{idf_env}/bin/python"), py_minor(pw_py)
+            if not pw_ver:
+                gaps.append(f"esp-matter's pigweed venv is dead ({pw_py} does not run): move its "
+                            ".environment aside, then run dev.py fetch esp32")
+            elif idf_ver and pw_ver != idf_ver:
+                gaps.append(f"esp-matter's venv is Python {pw_ver} but ESP-IDF's env is {idf_ver}; they "
+                            "must match: move .environment aside, then run dev.py fetch esp32")
+            elif idf_ver:
+                ok(f"ESP-IDF env and esp-matter venv share Python {pw_ver}")
     elif ctx.target == "esphome":
         cmd = ctx.esphome_cmd()
         if have(cmd):
@@ -625,6 +660,37 @@ def usage(code):
     sys.exit(code)
 
 
+def use_esp_python():
+    """Put one Python first on PATH for the ESP-IDF and esp-matter environments (ported from dev.sh, #121).
+
+    ESP-IDF picks its Python env from the first python3 on PATH, and esp-matter's pigweed venv is
+    built from it too, so both must come from one interpreter. esp-matter's CI uses 3.12. On a
+    3.14 host ESP-IDF otherwise picks a py3.14 env that lacks esp-matter's codegen modules (seen:
+    `import lark` fails) while the pigweed venv is 3.12. Uses ESP_PYTHON when set, else a
+    uv-managed 3.12 on a 3.14+ host, and changes nothing otherwise.
+    """
+    py = os.environ.get("ESP_PYTHON", "")
+    if not py:
+        host = py_minor("python3")
+        if not host or tuple(int(x) for x in host.split(".")) < (3, 14):
+            return
+        found = subprocess.run(["uv", "python", "find", "3.12"], stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, text=True) if have("uv") else None
+        py = found.stdout.strip() if found and found.returncode == 0 else ""
+        if not py:
+            warn(f"host python3 is {host}; ESP-IDF and esp-matter need one interpreter esp-matter "
+                 "supports: uv python install 3.12, or set ESP_PYTHON=/path/to/python3.12")
+            return
+    if not (os.path.isfile(py) and os.access(py, os.X_OK)):
+        die(f"ESP_PYTHON={py} is not an executable file")
+    shim = tempfile.mkdtemp(prefix="dev-esp-python.")
+    atexit.register(shutil.rmtree, shim, True)
+    for name in ("python3", "python"):
+        os.symlink(py, os.path.join(shim, name))
+    os.environ["PATH"] = f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"
+    say(f"ESP python: {py_minor(py) or '?'} ({py})")
+
+
 def main(argv):
     if not argv:
         usage(1)
@@ -635,6 +701,8 @@ def main(argv):
     if target not in ("amebaz2", "esp32", "esphome"):
         die(f"target must be amebaz2, esp32 or esphome (got '{target}')")
     rest = argv[2:]
+    if target == "esp32":
+        use_esp_python()
 
     # `ota` forwards everything after the step to the release script, so parse it before the
     # option loop (release flags like --flash are not dev.py options).
