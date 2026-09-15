@@ -325,6 +325,27 @@ apply_build_info_determinism() {
   [ "$hit" = 1 ] && say "  build_info determinism already applied"
   return 0
 }
+
+apply_build_info_order() {
+  # The SDK's `all: build_info application_is ...` makes build_info (which writes ../inc/build_info.h)
+  # a SIBLING of the object compiles, so under make -j they race. atcmd_sys.c includes <build_info.h>,
+  # so the first build of a fresh SDK fails with "build_info.h: No such file or directory" -> make
+  # "[Makefile:49: is_matter] Error 2". An existing SDK never shows it: no clean target removes the
+  # header, so a stale one from an earlier build is always there. Every object rule already waits on
+  # `| prerequirement`, so making prerequirement depend on build_info orders the header first.
+  # Found building from a clean ubuntu:24.04 container. Idempotent.
+  local m hit=0
+  for m in "$SDK_ROOT/ameba-rtos-z2/project/realtek_amebaz2_v0_example/GCC-RELEASE/application.is.matter.mk" \
+           "$SDK_ROOT/ameba-rtos-z2/project/realtek_amebaz2_v0_example/GCC-RELEASE/application.is.mk"; do
+    [ -f "$m" ] || continue
+    grep -q '^prerequirement: build_info$' "$m" && { hit=1; continue; }
+    sed -i 's/^prerequirement:$/prerequirement: build_info/' "$m"
+    grep -q '^prerequirement: build_info$' "$m" || die "failed to order build_info before the objects in $m"
+    say "  ordered build_info before the object compiles in $(basename "$m")"
+  done
+  [ "$hit" = 1 ] && say "  build_info ordering already applied"
+  return 0
+}
 build() {
   load_env
   # --debug selects the bench flavour (#22): adds the :2323 console. Release is the default, so
@@ -356,6 +377,7 @@ build() {
   apply_example_task_stack  # init task stack: 8KB dies mid-init -> no downlink queue (idempotent)
   apply_mode_select_span_guard  # orphaned endpoint type pads the ModeSelect table (idempotent)
   apply_build_info_determinism  # .ver clock/username -> SOURCE_DATE_EPOCH + constant (idempotent)
+  apply_build_info_order  # build_info.h before the objects: fresh SDKs race under make -j (idempotent)
   # Reproducible-build path scrub (public release): rewrite the absolute build path baked into
   # __FILE__ / debug info so the compiled image carries generic /build/... paths instead of the
   # developer's $HOME (e.g. .../connectedhomeip/src/app/server/Server.cpp leaked the full path).
@@ -412,7 +434,7 @@ build() {
     CCMK=(CC="ccache \$(CROSS_COMPILE)gcc $PMAP" CXX="ccache \$(CROSS_COMPILE)g++ $PMAP")
     say "ccache ON (dir=$CCACHE_DIR, base_dir=$HOME, check=content): GN core via pw_command_launcher, make via CC prefix"
   else
-    say "ccache not installed (sudo pacman -S ccache) -- building without it (path-scrub still on via CC)"
+    say "ccache not installed (sudo apt install ccache, or sudo pacman -S ccache) -- building without it (path-scrub still on via CC)"
   fi
   local BSP="$SDK_ROOT/ameba-rtos-z2/component/soc/realtek/8710c/misc/bsp/lib/common/GCC"
   # MANDATORY full clean before EVERY build. The SDK's build cache otherwise reuses a

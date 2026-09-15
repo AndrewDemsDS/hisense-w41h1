@@ -29,14 +29,26 @@ warnings in [ESP32 Replacement Build](ESP32-Replacement-Build).
 
 ## What you need
 
-- `python3` and `git`. `dev.py` needs nothing else to start; `doctor` tells you what is missing for
-  your target.
-- For `esphome`: `pipx` (the fetch step installs the pinned ESPHome with it).
-- For `esp32`: about 5 GB of disk for ESP-IDF and esp-matter.
-- For `amebaz2`: about 15 GB for the Realtek SDKs, a CH341A programmer and SOIC-8 clip for the first
-  install, and `firmware/scripts/ota-release.env` filled in from `ota-release.env.example` for OTA.
+A Linux x86_64 machine. The package names below are for Debian and Ubuntu; `doctor` tells you what
+is still missing for your target.
 
-All commands below run from the repository root.
+| For | Install | Disk |
+|---|---|---|
+| everything | `sudo apt install git python3 g++` (`g++` builds the host tests that `test` runs) | |
+| `esphome` | `sudo apt install pipx` (`fetch` installs the pinned ESPHome with it) | about 5 GB: ESPHome downloads its own ESP-IDF into `~/.cache/esphome`, so the first build takes several minutes |
+| `esp32` | ESP-IDF's and connectedhomeip's prerequisites: `sudo apt install git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0 gcc g++ pkg-config curl libdbus-1-dev libglib2.0-dev libavahi-client-dev python3-dev unzip libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev` (`doctor esp32` checks the ones that fail the fetch) | about 16 GB for ESP-IDF, esp-matter and their toolchains |
+| `amebaz2` | `sudo` rights: `fetch` installs its own host packages. A CH341A programmer and SOIC-8 clip for the first install | about 25 GB for the Realtek SDKs and connectedhomeip |
+
+Then clone the repository with its submodule (the companion Home Assistant integration, which one
+of the host tests checks against):
+
+```
+git clone --recurse-submodules https://github.com/AndrewDemsDS/hisense-w41h1.git
+cd hisense-w41h1
+```
+
+All commands below run from the repository root. For OTA updates you also need
+`firmware/scripts/ota-release.env`, copied from `ota-release.env.example` and filled in.
 
 ## The short version
 

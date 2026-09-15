@@ -70,7 +70,7 @@ python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
 By hand:
 
 ```bash
-pip install esphome                       # tested against 2026.7.4
+pipx install esphome==2026.7.4            # the pinned version; plain pip is refused on recent distro Pythons
 cd firmware/esphome
 cp secrets.yaml.example secrets.yaml      # Wi-Fi credentials + an API encryption key
 esphome run w41h1.yaml                    # classic ESP32 defaults: build, flash, follow the logs

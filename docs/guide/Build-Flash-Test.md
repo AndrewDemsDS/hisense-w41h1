@@ -28,7 +28,8 @@ What each step has been run against. "Simulator" means `virtual_ac.py`, not an A
 | Step | esphome | esp32 (C3) | esp32 (classic) | amebaz2 |
 |---|---|---|---|---|
 | Host QA (`dev.py test`) | CI, every push (plus `esphome config`) | CI, every push | CI, every push | CI, every push |
-| `dev.py build` on a real toolchain | yes, C3, 2026-09-14 | yes, 2026-09-14 (app 6% partition free; `busmon` too) | untested | yes, 2026-09-14 (v10332) |
+| `dev.py build` on a real toolchain | yes, C3, 2026-09-14 | yes, 2026-09-14 (app 6% partition free; `busmon` too) | yes, 2026-09-15 (app 19% partition free) | yes, 2026-09-14 (v10332) |
+| Fresh clone on clean Ubuntu 24.04: `doctor`, `fetch`, `test`, `build` | yes, both boards, 2026-09-15 | yes, 2026-09-15 | yes, 2026-09-15 | yes, 2026-09-15 (serial verified) |
 | `busmon` against the real bus | n/a | untested | hardware (2026-07-12) | n/a |
 | Matter app against `virtual_ac.py` | n/a | simulator (2026-08-07) | untested | n/a |
 | Node on a live A/C, USB-powered (stage 2) | hardware | untested on these pins | hardware | hardware |
@@ -89,13 +90,22 @@ python3 firmware/scripts/dev.py build esp32 --board c3
 python3 firmware/scripts/dev.py flash esp32 --board c3 --port /dev/ttyACM0
 ```
 
+- **Host packages first.** `fetch` checks the host prerequisites before cloning anything, and
+  `doctor esp32` reports them: without `libusb-1.0` ESP-IDF's `install.sh` fails only after
+  downloading every toolchain, and without `curl` and glib esp-matter's install fails in
+  connectedhomeip's bootstrap. Both print the one `apt install` line that fixes them (the list is in
+  the [User Guide](User-Guide#what-you-need)).
 - **Where things live.** ESP-IDF defaults to `~/esp/esp-idf` and esp-matter to `~/esp/esp-matter`;
   set `IDF_PATH` / `ESP_MATTER_PATH` to use existing checkouts. `fetch` follows esp-matter's own
   documented procedure (shallow submodules, `checkout_submodules.py --platform esp32 linux`).
-- **Python version.** esp-matter's install does not resolve on Python 3.14. The ESP-IDF env and
-  the esp-matter venv must share one interpreter; `dev.py doctor esp32` checks that. After a failed
-  install, move `esp-matter/connectedhomeip/connectedhomeip/.environment` aside before retrying: a
-  half-built venv fails the next run with `pw: command not found`.
+- **Python version.** esp-matter's install does not resolve on Python 3.14, and the ESP-IDF env and
+  the esp-matter venv must share one interpreter. `fetch` runs esp-matter's `install.sh` inside the
+  ESP-IDF environment so its `pip install` lands in the IDF venv (a distro Python refuses it as
+  externally-managed).
+- **Running `fetch` again.** A second bootstrap of connectedhomeip's environment always fails in
+  pigweed's `activate.sh` with `pw: command not found`, even after a clean first install. `fetch`
+  therefore reuses an environment that is already bootstrapped (`install.sh --no-bootstrap`), so
+  re-running it after fixing a host package is safe.
 - **Where `idf.py` runs.** In `firmware/esp32-matter/` for the Matter app and in
   `firmware/esp32-matter/smoketest/` for `busmon`. Each has its own `sdkconfig` and `build/`.
   `dev.py` only calls `idf.py set-target` when the configured target differs, because that call
@@ -111,7 +121,7 @@ python3 firmware/scripts/dev.py flash esp32 --board c3 --port /dev/ttyACM0
 ## AmebaZ2 (stock module)
 
 ```
-python3 firmware/scripts/dev.py fetch amebaz2      # firmware/setup.sh then scripts/setup.sh, ~15 GB
+python3 firmware/scripts/dev.py fetch amebaz2      # firmware/setup.sh then scripts/setup.sh, ~25 GB
 python3 firmware/scripts/dev.py test amebaz2       # host QA + ota-release.sh lint
 python3 firmware/scripts/dev.py build amebaz2      # ota-release.sh build: full clean, FWHS serial, verify
 ```
@@ -129,7 +139,10 @@ Two AmebaZ2 build failures seen while verifying, both with misleading symptoms:
   now stops earlier with that diagnosis. Rebuild the venv with a Python the SDK supports first on
   `PATH` (3.11 worked): `cd <sdk>/connectedhomeip && rm -rf .environment && source scripts/bootstrap.sh`.
 - **`make: *** [Makefile:49: is_matter] Error 2` with no visible cause.** The console shows only
-  the tail of that step; the full output is in `/tmp/ota-ismatter.log`. Once it held
+  the tail of that step; the full output is in `/tmp/ota-ismatter.log`. On a fresh SDK it held
+  `build_info.h: No such file or directory`: the SDK's makefile generated that header in parallel with
+  the objects that include it, so the first build ever raced. `ota-release.sh build` now orders the
+  header first. Once it held
   `Segmentation fault` from the Realtek `arm-none-eabi-gcc` driver, crashing in its own license
   ("visa") check before compiling. An unchanged re-run passed, and the crash could not be
   reproduced on demand, so treat it as intermittent: re-run before debugging further.

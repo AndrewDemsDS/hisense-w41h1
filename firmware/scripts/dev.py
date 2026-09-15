@@ -34,6 +34,8 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+import ctypes.util
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -43,6 +45,11 @@ ESPHOME_DIR = REPO / "firmware/esphome"
 TEST = REPO / "firmware/test"
 ENVF = HERE / "ota-release.env"
 ESPHOME_PIN = "2026.7.4"   # CI's `esphome config` pin (.github/workflows/qa.yaml); keep in step
+
+# Line-buffer stdout so our own lines stay in order with the stderr warnings and with the output
+# of the tools we run. Without it, piping or logging dev.py (tee, CI) shows "doctor found gaps
+# (above)" before the gap list, and a `$ cmd` line after the command's own output.
+sys.stdout.reconfigure(line_buffering=True)
 
 C = {"cyan": "\033[1;36m", "yellow": "\033[1;33m", "red": "\033[1;31m",
      "grey": "\033[1;90m", "green": "\033[32m", "off": "\033[0m"}
@@ -174,7 +181,14 @@ class Ctx:
             die(f"{cmd} needs --port <serial device> (e.g. /dev/ttyACM0)")
 
     def esphome_cmd(self):
-        return os.environ.get("ESPHOME", "esphome")
+        if "ESPHOME" in os.environ:
+            return os.environ["ESPHOME"]
+        if have("esphome"):
+            return "esphome"
+        # `pipx install` puts the app in ~/.local/bin (or PIPX_BIN_DIR), which a fresh Ubuntu shell
+        # does not have on PATH until the next login. Use it there instead of reporting it missing.
+        pipx_bin = Path(os.environ.get("PIPX_BIN_DIR", str(Path.home() / ".local/bin"))) / "esphome"
+        return str(pipx_bin) if pipx_bin.is_file() and os.access(pipx_bin, os.X_OK) else "esphome"
 
     def esphome_run(self, sub, *args):
         cmd = self.esphome_cmd()
@@ -188,6 +202,40 @@ class Ctx:
 
 
 # ---- doctor ----------------------------------------------------------------------------------
+# ESP-IDF v5.5 Linux prerequisites, verbatim from its get-started/linux-macos-setup guide.
+ESP_HOST_PKGS = ("git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build "
+                 "ccache libffi-dev libssl-dev dfu-util libusb-1.0-0")
+# connectedhomeip's Linux prerequisites (docs/guides/BUILDING.md). esp-matter's install.sh sources
+# connectedhomeip's bootstrap.sh -p all,esp32, so the ESP32 Matter fetch needs these as well.
+# default-jre from that list is left out: a clean ubuntu:24.04 without Java fetched and built fine.
+CHIP_HOST_PKGS = ("git gcc g++ pkg-config cmake curl libssl-dev libdbus-1-dev libglib2.0-dev "
+                  "libavahi-client-dev ninja-build python3-venv python3-dev python3-pip unzip "
+                  "libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev")
+ESP32_HOST_PKGS = " ".join(dict.fromkeys(f"{ESP_HOST_PKGS} {CHIP_HOST_PKGS}".split()))
+
+
+def esp_host_gaps():
+    """The ESP-IDF host prerequisites that break a fresh machine, each checked the way it fails.
+
+    Found on a clean ubuntu:24.04: install.sh aborts after downloading every toolchain because
+    openocd-esp32 cannot load libusb-1.0.so.0. cmake and ninja are install=on_request on Linux in
+    ESP-IDF's tools.json, so idf.py expects system ones. The venv module is a separate Debian package.
+    """
+    # curl: pigweed's pw_env_setup (run by esp-matter's install.sh) shells out to it.
+    gaps = [f"{t} not on PATH" for t in ("cmake", "ninja", "curl") if not have(t)]
+    if not ctypes.util.find_library("usb-1.0"):
+        gaps.append("libusb-1.0 shared library not found")
+    # pgi, from connectedhomeip's requirements.all.txt, loads glib while pip builds it; without the
+    # library the whole esp-matter install.sh fails at "Installing pip requirements for all".
+    if not ctypes.util.find_library("glib-2.0"):
+        gaps.append("glib-2.0 shared library not found")
+    with tempfile.TemporaryDirectory() as d:
+        if subprocess.run([sys.executable, "-m", "venv", d],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            gaps.append("python3 cannot create a venv (python3-venv)")
+    return gaps
+
+
 def git_head_is(dirpath, want, label, gaps):
     d = Path(dirpath)
     if not (d / ".git").exists():
@@ -212,7 +260,8 @@ def have_tool(tool, gaps, note=""):
 def doctor(ctx):
     gaps = []
     say(f"doctor: {ctx.target}")
-    have_tool("git", gaps); have_tool("python3", gaps); have_tool("g++", gaps, "needed by run_tests.sh")
+    have_tool("git", gaps); have_tool("python3", gaps)
+    have_tool("g++", gaps, "the host tests compile C++: sudo apt install g++, or pacman -S gcc")
     v = ctx.versions
     if ctx.target == "amebaz2":
         sdk = os.path.realpath(REPO / "sdk") if (REPO / "sdk").exists() else ""
@@ -220,13 +269,37 @@ def doctor(ctx):
             ok(f"sdk symlink -> {sdk}")
             git_head_is(f"{sdk}/ameba-rtos-z2", v.get("AMEBA_Z2_PIN", ""), "ameba-rtos-z2", gaps)
             git_head_is(f"{sdk}/connectedhomeip", v.get("CHIP_PIN", ""), "connectedhomeip", gaps)
+            # scripts/setup.sh (our patches, the Matter-overlay edits) is the second half of fetch.
+            # Checkouts at the right pins without it build an unpatched SDK, which fails in codegen
+            # with "Unhandled server cluster: HISENSE_AIRCON_CLUSTER". Only patches/connectedhomeip.patch
+            # registers that cluster in zap_cluster_list.json; the cluster XML and ClusterId.h are no
+            # use as a marker, because ota-release.sh build copies those too.
+            reg = Path(f"{sdk}/connectedhomeip/src/app/zap_cluster_list.json")
+            if reg.is_file() and "HISENSE_AIRCON_CLUSTER" in reg.read_text(errors="replace"):
+                ok("scripts/setup.sh applied (Hisense cluster registered in connectedhomeip)")
+            else:
+                gaps.append("scripts/setup.sh has not run on this SDK (no patches, no Hisense cluster): "
+                            f"AMEBA_SDK={sdk}/ameba-rtos-z2 CHIP_SDK={sdk}/connectedhomeip "
+                            "bash scripts/setup.sh")
         else:
             gaps.append("no ./sdk symlink (dev.py fetch amebaz2)")
         ok("ota-release.env") if ENVF.is_file() else gaps.append("ota-release.env (cp ota-release.env.example)")
     elif ctx.target == "esp32":
         idf_path = os.environ.get("IDF_PATH", str(Path.home() / "esp/esp-idf"))
         matter_path = os.environ.get("ESP_MATTER_PATH", str(Path.home() / "esp/esp-matter"))
+        host = esp_host_gaps()
+        gaps += host
+        if host:
+            gaps.append(f"ESP-IDF + Matter host packages (Debian/Ubuntu): sudo apt install {ESP32_HOST_PKGS}")
         git_head_is(idf_path, v.get("IDF_PIN", ""), "ESP-IDF", gaps)
+        # The checkout alone is not an install: a failed install.sh leaves the right commit with no
+        # Python env, which then fails at the first build. export.sh prints an ERROR in that state
+        # but still returns 0 when sourced, so check for what a working export provides: idf.py.
+        if Path(idf_path, "export.sh").is_file() and subprocess.run(
+                ["bash", "-c", f'. "{idf_path}/export.sh" && command -v idf.py'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            gaps.append(f"ESP-IDF tools are not installed: {idf_path}/export.sh fails "
+                        "(fix the host packages, then run dev.py fetch esp32 again)")
         git_head_is(matter_path, v.get("ESP_MATTER_PIN", ""), "esp-matter", gaps)
     elif ctx.target == "esphome":
         cmd = ctx.esphome_cmd()
@@ -235,7 +308,9 @@ def doctor(ctx):
             ver = ver[-1] if ver else "?"
             ok(f"esphome {ver}") if ver == ESPHOME_PIN else gaps.append(f"esphome is {ver}, CI pins {ESPHOME_PIN}")
         else:
-            gaps.append("esphome not on PATH (dev.py fetch esphome)")
+            gaps.append("esphome not installed (dev.py fetch esphome)")
+            if not have("pipx"):
+                gaps.append("pipx not on PATH (fetch esphome needs it: sudo apt install pipx)")
         ok("secrets.yaml") if (ESPHOME_DIR / "secrets.yaml").is_file() else gaps.append("secrets.yaml (cp secrets.yaml.example)")
     for g in gaps:
         print(f"  {C['red']}MISS{C['off']}  {g}")
@@ -258,11 +333,18 @@ def fetch(ctx):
         run(["bash", REPO / "firmware/setup.sh", root])
         if not (REPO / "sdk").exists():
             run(["ln", "-s", root, REPO / "sdk"])
-        run(["bash", REPO / "scripts/setup.sh"])
+        # scripts/setup.sh refuses to run without these two (`: "${AMEBA_SDK:?}"`), so a bare call
+        # stopped the fetch at its last step, after the multi-GB clone had finished.
+        run(["bash", REPO / "scripts/setup.sh"],
+            env=dict(os.environ, AMEBA_SDK=f"{root}/ameba-rtos-z2", CHIP_SDK=f"{root}/connectedhomeip"))
     elif ctx.target == "esp32":
         idf_path = os.environ.get("IDF_PATH", str(Path.home() / "esp/esp-idf"))
         matter_path = os.environ.get("ESP_MATTER_PATH", str(Path.home() / "esp/esp-matter"))
         say(f"ESP32: ESP-IDF {v.get('IDF_PIN')} -> {idf_path}, esp-matter {v.get('ESP_MATTER_PIN','')[:12]} -> {matter_path} (several GB)")
+        host = esp_host_gaps()
+        if host:
+            die("fix these before the multi-GB fetch (install.sh fails on them only at the very end): "
+                + "; ".join(host) + f". Debian/Ubuntu: sudo apt install {ESP32_HOST_PKGS}")
         if not ask("fetch?"):
             return
         if not Path(idf_path).is_dir():
@@ -284,16 +366,33 @@ def fetch(ctx):
         run(["git", "-C", matter_path, "submodule", "update", "--init", "--depth", "1"])
         run(["./scripts/checkout_submodules.py", "--platform", "esp32", "linux", "--shallow"],
             env=env, cwd=f"{matter_path}/connectedhomeip/connectedhomeip")
-        run(["./install.sh"], cwd=matter_path)
+        # With the ESP-IDF env: install.sh ends in `python3 -m pip install -r requirements.txt`, which
+        # a distro Python (PEP 668, e.g. Ubuntu 24.04) refuses as externally-managed. esp-matter's
+        # docs source ESP-IDF's export.sh first so python3 is the IDF venv. --no-host-tool skips
+        # building chip-tool/chip-cert, which the firmware build does not use.
+        flags = ["--no-host-tool"]
+        # Re-running with connectedhomeip's environment already bootstrapped fails inside pigweed's
+        # activate.sh ("pw: command not found", exit 127), even after a clean first install.
+        # install.sh's --no-bootstrap exists for exactly that case and still installs esp-matter's
+        # Python requirements.
+        chip_env = Path(matter_path, "connectedhomeip/connectedhomeip/.environment")
+        if (chip_env / "activate.sh").is_file() and (chip_env / "cipd/packages/pigweed/gn").is_file():
+            say("connectedhomeip's environment is already bootstrapped; reusing it (--no-bootstrap)")
+            flags.append("--no-bootstrap")
+        run(["./install.sh", *flags], env=env, cwd=matter_path)
     elif ctx.target == "esphome":
         if not have("pipx"):
-            die(f"install pipx first (or: pip install esphome=={ESPHOME_PIN} in a venv)")
+            die(f"install pipx first (Debian/Ubuntu: sudo apt install pipx; Arch: sudo pacman -S "
+                f"python-pipx), or pip install esphome=={ESPHOME_PIN} in a venv and set ESPHOME=")
         if not ask(f"pipx install esphome=={ESPHOME_PIN}?"):
             return
         run(["pipx", "install", "--force", f"esphome=={ESPHOME_PIN}"])
+        if not have("esphome"):
+            say("pipx put esphome in ~/.local/bin, which is not on this shell's PATH. dev.py finds it")
+            say("there anyway; to run esphome by hand, run `pipx ensurepath` and open a new terminal.")
         if not (ESPHOME_DIR / "secrets.yaml").is_file():
             run(["cp", ESPHOME_DIR / "secrets.yaml.example", ESPHOME_DIR / "secrets.yaml"])
-        say(f"now fill in {ESPHOME_DIR}/secrets.yaml (it is gitignored)")
+        say(f"now fill in {ESPHOME_DIR}/secrets.yaml (it is gitignored): your Wi-Fi, and a new API key")
 
 
 # ---- test / build / flash / monitor ----------------------------------------------------------
@@ -375,7 +474,8 @@ def bench(ctx):
         die("bench needs --sim-port <USB-TTL or USB-RS485 adapter>")
     if subprocess.run([sys.executable, "-c", "import serial"],
                       stderr=subprocess.DEVNULL).returncode != 0:
-        die("virtual_ac.py needs pyserial (pip install pyserial)")
+        die(f"virtual_ac.py needs pyserial for {sys.executable} (Debian/Ubuntu: sudo apt install "
+            "python3-serial; Arch: sudo pacman -S python-pyserial)")
     say("bench wiring (no A/C, no mains):")
     say(f"  USB-TTL:    board TX GPIO{ctx.pins[0]} -> adapter RX, board RX GPIO{ctx.pins[1]} <- adapter TX, GND-GND (3.3 V adapter)")
     say("  USB-RS485:  transceiver A-A, B-B, GND-GND (board DI/RO/DE wired as for the A/C)")

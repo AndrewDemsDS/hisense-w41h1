@@ -25,7 +25,7 @@ against ESPHome 2026.7.4.
 | **Sourcing** | Available everywhere | Available everywhere | W41H1 is fragile (ESD) and hard to source in the EU |
 | **First flash** | USB, no disassembly of anything | USB, `esphome run` | CH341A SPI clip on the GD25Q32 |
 | **Reproducibility** | Not byte-reproducible | Not byte-reproducible, and nothing depends on it (no delta base to archive) | Byte-reproducible since 1.3.5 |
-| **MCU / toolchain** | ESP-IDF 5.5.4, open source, version-pinned in `dependencies.lock`, ~8.3 GB | `pip install esphome`; it fetches its own ESP-IDF, no esp-matter, no `sdk/` | Realtek AmebaZ2 SDK, proprietary, lives outside the repo, ~32 GB, not pinned |
+| **MCU / toolchain** | ESP-IDF 5.5.4, open source, version-pinned in `dependencies.lock`, ~8.3 GB | `pipx install esphome` (or `dev.py fetch esphome`); it fetches its own ESP-IDF, no esp-matter, no `sdk/` | Realtek AmebaZ2 SDK, proprietary, lives outside the repo, ~32 GB, not pinned |
 | **Transport** | Matter over Wi-Fi (2.4 GHz) | ESPHome native API, Home Assistant only | Matter over Wi-Fi (2.4 GHz) |
 | **OTA** | Delta, mandatory (a full image is rejected). 873 KB this release | Full image over ESPHome's own OTA, `esphome run` | Full image, 1.2 MB `.ota` |
 | **Flash budget** | 4 MB, app 1.66 MB in a 1.88 MB slot (~84 % used) | 4 MB, app 834 KB (45.5 % of the slot), 47.6 KB RAM | 4 MB, `firmware_is.bin` 1.23 MB |
@@ -102,7 +102,7 @@ live **inside the SDK tree**, mirrored back into this repo rather than the other
 indirection is the single biggest ergonomic difference between the two paths, and it is why the
 AmebaZ2 build has more ways to silently produce a wrong image.
 
-ESPHome is the smallest of the three by a wide margin: `pip install esphome`, then `esphome run`.
+ESPHome is the smallest of the three by a wide margin: `pipx install esphome`, then `esphome run`.
 It pulls its own ESP-IDF and needs no esp-matter checkout, no `sdk/` symlink and no release script.
 The driver and the ESP-IDF HAL are reused unchanged, registered as local IDF components from the
 custom component's `__init__.py`, so there is still exactly one copy of the protocol code in the
@@ -184,7 +184,7 @@ or capability work that needs `decode` and `selftest` on a live unit.
 
 **Take the ESP32 ESPHome path if** Home Assistant is your only controller and you would rather not
 own a Matter build at all. It is the shortest route from an empty board to a working climate card:
-one `pip install`, one YAML, `esphome run`, and the A/C appears over the native API with the same
+one `pipx install`, one YAML, `esphome run`, and the A/C appears over the native API with the same
 control surface and per-bit diagnostics. It is also the newest of the three, so prefer it if you are
 comfortable being an early user.
 
