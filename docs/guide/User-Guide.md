@@ -39,6 +39,11 @@ is still missing for your target.
 | `esp32` | ESP-IDF's and connectedhomeip's prerequisites: `sudo apt install git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0 gcc g++ pkg-config curl libdbus-1-dev libglib2.0-dev libavahi-client-dev python3-dev unzip libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev` (`doctor esp32` checks the ones that fail the fetch) | about 16 GB for ESP-IDF, esp-matter and their toolchains |
 | `amebaz2` | `sudo` rights: `fetch` installs its own host packages. A CH341A programmer and SOIC-8 clip for the first install | about 25 GB for the Realtek SDKs and connectedhomeip |
 
+On a host whose `python3` is 3.14 or newer, the `esp32` target runs ESP-IDF and esp-matter under a
+uv-managed Python 3.12 (`uv python install 3.12` if you have none), or under the interpreter you
+name with `ESP_PYTHON=/path/to/python3.12`. Both environments have to come from the same one, and
+`doctor esp32` says so if they don't.
+
 Then clone the repository with its submodule (the companion Home Assistant integration, which one
 of the host tests checks against):
 
