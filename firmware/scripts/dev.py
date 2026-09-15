@@ -207,9 +207,10 @@ ESP_HOST_PKGS = ("git wget flex bison gperf python3 python3-pip python3-venv cma
                  "ccache libffi-dev libssl-dev dfu-util libusb-1.0-0")
 # connectedhomeip's Linux prerequisites (docs/guides/BUILDING.md). esp-matter's install.sh sources
 # connectedhomeip's bootstrap.sh -p all,esp32, so the ESP32 Matter fetch needs these as well.
+# default-jre from that list is left out: a clean ubuntu:24.04 without Java fetched and built fine.
 CHIP_HOST_PKGS = ("git gcc g++ pkg-config cmake curl libssl-dev libdbus-1-dev libglib2.0-dev "
                   "libavahi-client-dev ninja-build python3-venv python3-dev python3-pip unzip "
-                  "libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev default-jre")
+                  "libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev")
 ESP32_HOST_PKGS = " ".join(dict.fromkeys(f"{ESP_HOST_PKGS} {CHIP_HOST_PKGS}".split()))
 
 
@@ -268,6 +269,18 @@ def doctor(ctx):
             ok(f"sdk symlink -> {sdk}")
             git_head_is(f"{sdk}/ameba-rtos-z2", v.get("AMEBA_Z2_PIN", ""), "ameba-rtos-z2", gaps)
             git_head_is(f"{sdk}/connectedhomeip", v.get("CHIP_PIN", ""), "connectedhomeip", gaps)
+            # scripts/setup.sh (our patches, the Matter-overlay edits) is the second half of fetch.
+            # Checkouts at the right pins without it build an unpatched SDK, which fails in codegen
+            # with "Unhandled server cluster: HISENSE_AIRCON_CLUSTER". Only patches/connectedhomeip.patch
+            # registers that cluster in zap_cluster_list.json; the cluster XML and ClusterId.h are no
+            # use as a marker, because ota-release.sh build copies those too.
+            reg = Path(f"{sdk}/connectedhomeip/src/app/zap_cluster_list.json")
+            if reg.is_file() and "HISENSE_AIRCON_CLUSTER" in reg.read_text(errors="replace"):
+                ok("scripts/setup.sh applied (Hisense cluster registered in connectedhomeip)")
+            else:
+                gaps.append("scripts/setup.sh has not run on this SDK (no patches, no Hisense cluster): "
+                            f"AMEBA_SDK={sdk}/ameba-rtos-z2 CHIP_SDK={sdk}/connectedhomeip "
+                            "bash scripts/setup.sh")
         else:
             gaps.append("no ./sdk symlink (dev.py fetch amebaz2)")
         ok("ota-release.env") if ENVF.is_file() else gaps.append("ota-release.env (cp ota-release.env.example)")
@@ -353,7 +366,20 @@ def fetch(ctx):
         run(["git", "-C", matter_path, "submodule", "update", "--init", "--depth", "1"])
         run(["./scripts/checkout_submodules.py", "--platform", "esp32", "linux", "--shallow"],
             env=env, cwd=f"{matter_path}/connectedhomeip/connectedhomeip")
-        run(["./install.sh"], cwd=matter_path)
+        # With the ESP-IDF env: install.sh ends in `python3 -m pip install -r requirements.txt`, which
+        # a distro Python (PEP 668, e.g. Ubuntu 24.04) refuses as externally-managed. esp-matter's
+        # docs source ESP-IDF's export.sh first so python3 is the IDF venv. --no-host-tool skips
+        # building chip-tool/chip-cert, which the firmware build does not use.
+        flags = ["--no-host-tool"]
+        # Re-running with connectedhomeip's environment already bootstrapped fails inside pigweed's
+        # activate.sh ("pw: command not found", exit 127), even after a clean first install.
+        # install.sh's --no-bootstrap exists for exactly that case and still installs esp-matter's
+        # Python requirements.
+        chip_env = Path(matter_path, "connectedhomeip/connectedhomeip/.environment")
+        if (chip_env / "activate.sh").is_file() and (chip_env / "cipd/packages/pigweed/gn").is_file():
+            say("connectedhomeip's environment is already bootstrapped; reusing it (--no-bootstrap)")
+            flags.append("--no-bootstrap")
+        run(["./install.sh", *flags], env=env, cwd=matter_path)
     elif ctx.target == "esphome":
         if not have("pipx"):
             die(f"install pipx first (Debian/Ubuntu: sudo apt install pipx; Arch: sudo pacman -S "

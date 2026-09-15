@@ -18,12 +18,33 @@ chk(){ local got; got=$(git -C "$1" rev-parse --short=7 HEAD 2>/dev/null || echo
        [ "$got" = "$2" ] || echo "  [warn] $(basename "$1") at $got; patches made against $2 -- '--3way' will try to merge, may fuzz/conflict"; }
 chk "$AMEBA_SDK" "$AMEBA_BASE"; chk "$CHIP_SDK" "$CHIP_BASE"
 
+# The patches are `git -C $SDK diff` against the pinned base, so they already contain what earlier
+# steps did to those files (matter_setup.sh's ENABLE_MATTER flip and ctype.h removal) and values that
+# `ota-release.sh build` re-derives on every build (the version header, the FWHS serial). Reset exactly
+# the paths a patch touches to the pinned commit, then apply it: deterministic, and safe to re-run.
+# This used to be `git apply --3way ... && echo ok`. On a tree matter_setup.sh or a build had touched,
+# the apply failed ("does not match index"), and set -e does not stop on a failure inside an && list,
+# so setup reported success on an unpatched SDK and codegen later died with
+# "Unhandled server cluster: HISENSE_AIRCON_CLUSTER".
+apply_sdk_patch() {  # $1=SDK checkout  $2=patch file
+  local sdk="$1" patch="$2" p paths=()
+  while IFS= read -r p; do
+    git -C "$sdk" cat-file -e "HEAD:$p" 2>/dev/null && paths+=("$p")
+  done < <(git -C "$sdk" apply --numstat "$patch" | cut -f3)
+  [ "${#paths[@]}" -eq 0 ] || git -C "$sdk" checkout -q HEAD -- "${paths[@]}"
+  if git -C "$sdk" apply "$patch"; then
+    echo "  [ok] $(basename "$patch")"
+  else
+    echo "  [!!] $(basename "$patch") does not apply to $sdk; is it at the commit pinned in versions.env?"
+    exit 1
+  fi
+}
+
 echo "== 1/4  apply SDK patches (base-tracked files) =="
-git -C "$AMEBA_SDK" apply --3way "$HERE/patches/ameba-rtos-z2.patch"  && echo "  [ok] ameba-rtos-z2.patch"
+apply_sdk_patch "$AMEBA_SDK" "$HERE/patches/ameba-rtos-z2.patch"
 # ameba-rtos-z2.patch deletes this SDK ctype.h (it shadows <cctype> -> 'ispunct not declared').
-# git apply --3way can *resurrect* a delete when matter_setup already removed it, so force it gone.
 rm -f "$AMEBA_SDK/component/soc/realtek/8710c/misc/utilities/include/ctype.h"
-git -C "$CHIP_SDK"  apply --3way "$HERE/patches/connectedhomeip.patch" && echo "  [ok] connectedhomeip.patch"
+apply_sdk_patch "$CHIP_SDK" "$HERE/patches/connectedhomeip.patch"
 
 echo "== 2/4  Matter-overlay in-place edits (untracked layer, can't be a git patch) =="
 AMEBA_SDK="$AMEBA_SDK" bash "$HERE/scripts/apply-matter-edits.sh"

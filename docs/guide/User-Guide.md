@@ -36,7 +36,7 @@ is still missing for your target.
 |---|---|---|
 | everything | `sudo apt install git python3 g++` (`g++` builds the host tests that `test` runs) | |
 | `esphome` | `sudo apt install pipx` (`fetch` installs the pinned ESPHome with it) | about 5 GB: ESPHome downloads its own ESP-IDF into `~/.cache/esphome`, so the first build takes several minutes |
-| `esp32` | ESP-IDF's and connectedhomeip's prerequisites: `sudo apt install git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0 gcc g++ pkg-config curl libdbus-1-dev libglib2.0-dev libavahi-client-dev python3-dev unzip libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev default-jre` (`doctor esp32` checks the ones that fail the fetch) | about 10 GB for ESP-IDF and esp-matter |
+| `esp32` | ESP-IDF's and connectedhomeip's prerequisites: `sudo apt install git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0 gcc g++ pkg-config curl libdbus-1-dev libglib2.0-dev libavahi-client-dev python3-dev unzip libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev` (`doctor esp32` checks the ones that fail the fetch) | about 10 GB for ESP-IDF and esp-matter |
 | `amebaz2` | `sudo` rights: `fetch` installs its own host packages. A CH341A programmer and SOIC-8 clip for the first install | about 30 GB for the Realtek SDKs and connectedhomeip |
 
 Then clone the repository with its submodule (the companion Home Assistant integration, which one
