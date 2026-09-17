@@ -5,6 +5,15 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 [`firmware/src/version.txt`](firmware/src/version.txt) and
 [`firmware/esp32-matter/CMakeLists.txt`](firmware/esp32-matter/CMakeLists.txt)).
 
+## Unreleased
+
+### Fixed
+- AmebaZ2 1.3.33 -> 1.3.35: PercentSetting 42 / 75 landed one fan step up (medium / high). The uplink
+  folds the six speeds into a FanMode bucket, that local write re-enters the FanMode handler, and the
+  echo guard compared the bucket's representative speed instead of the bucket, so an in-between
+  speed was re-commanded to Medium or High. The guard is now `matter_fanmode_write_to_cmd()` in
+  `matter_aircon_map.h`, host-tested. ESP32 does not re-enter its handler and was not affected.
+
 ## Diagnostics exposed to Home Assistant - 2026-07-22
 
 ### Firmware
