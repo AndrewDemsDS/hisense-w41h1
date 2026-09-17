@@ -122,8 +122,8 @@ static inline void climate_swing_to_hisense(uint8_t swing, HisenseSwingMode *vsw
 /* ---- ClimateFanMode (mirrors esphome::climate::ClimateFanMode) ---------------
  * These matter because ESPHome resolves a fan-mode NAME against this enum before the custom
  * list: ClimateCall::set_fan_mode(const char *) does a case-insensitive match on the built-in
- * names first, so "Auto", "Quiet", "Low", "Medium" and "High" arrive as enum values and never
- * as custom modes. Only "Medium-low" and "Medium-high" stay custom. Glue that handles just the
+ * names first, so "auto", "low", "medium" and "high" arrive as enum values and never as custom
+ * modes. Only "medium_low" and "medium_high" stay custom. Glue that handles just the
  * custom path drops five of the seven speeds, which is exactly what shipped and was caught on
  * the bench. */
 #define ESPHOME_CLIMATE_FAN_ON      0
@@ -152,6 +152,16 @@ static inline uint8_t esphome_fan_enum_to_index(uint8_t fan_mode)
     case ESPHOME_CLIMATE_FAN_ON:     return 6;
     default:                         return ESPHOME_FAN_INDEX_AUTO;
     }
+}
+
+/* Ladder index -> the index the climate entity publishes. Quiet (1) is not offered as a fan mode:
+ * the A/C only reaches it through the mute flag, which is the `quiet` preset, and the Matter path
+ * (hisense-unified-ac) reads that step back as low. Publishing it as low keeps both firmwares
+ * showing the same fan mode for the same unit state, and never shows a mode outside the advertised
+ * list. */
+static inline uint8_t esphome_fan_published_index(uint8_t idx)
+{
+    return idx == 1 ? 2 : idx;
 }
 
 static inline HisenseFanSpeed esphome_fan_index_to_hisense(uint8_t idx)

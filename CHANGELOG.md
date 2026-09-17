@@ -15,6 +15,10 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   New `supports_eco/quiet/turbo/sleep` options on the climate platform. The preset table, detection
   and write plan are pure functions in `esphome_aircon_map.h` with host tests. AmebaZ2 1.3.33 ->
   1.3.34 only because that header lives under `firmware/src/`; the Matter images are unchanged.
+- ESPHome, **breaking**: fan modes are now `auto`, `low`, `medium_low`, `medium`, `medium_high`,
+  `high`, matching `hisense-unified-ac`. `Medium-low` / `Medium-high` are renamed, and `quiet` is
+  no longer a fan mode (use the `quiet` preset; the quiet step reads back as `low`). Update
+  automations that set the old names.
 
 ## Diagnostics exposed to Home Assistant - 2026-07-22
 

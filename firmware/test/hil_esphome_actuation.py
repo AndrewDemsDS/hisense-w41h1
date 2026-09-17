@@ -170,10 +170,10 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # --- 3. fan, CUSTOM name path -----------------------------------------------------
     print("[fan: custom name]")
     before = node.climate_snapshot()
-    client.climate_command(key=node.climate.key, custom_fan_mode="Medium-low")
+    client.climate_command(key=node.climate.key, custom_fan_mode="medium_low")
     await asyncio.sleep(settle)
     after = node.climate_snapshot()
-    record("fan Medium-low actuates", after.get("custom_fan_mode") == "Medium-low",
+    record("fan medium_low actuates", after.get("custom_fan_mode") == "medium_low",
            f"got {after.get('custom_fan_mode')}")
     node.no_collateral("fan custom", before, {"fan_mode", "custom_fan_mode"})
 
@@ -189,18 +189,18 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     node.no_collateral("swing", before, {"swing_mode"})
 
     # --- 4b. FULL FAN LADDER ----------------------------------------------------------
-    # All seven steps, not just a sample. Five arrive as ESPHome's built-in enum and two stay
-    # custom, and the split is invisible to the caller -- which is exactly why the enum path
-    # went unnoticed when it was broken.
-    print("[fan ladder: all 7 steps]")
-    for name in ("Auto", "Quiet", "Low", "Medium-low", "Medium", "Medium-high", "High"):
+    # All six advertised steps, not just a sample. Four arrive as ESPHome's built-in enum and two
+    # stay custom, and the split is invisible to the caller -- which is exactly why the enum path
+    # went unnoticed when it was broken. Quiet is the `quiet` preset, not a fan mode.
+    print("[fan ladder: all 6 steps]")
+    for name in ("auto", "low", "medium_low", "medium", "medium_high", "high"):
         before = node.climate_snapshot()
         client.climate_command(key=node.climate.key, custom_fan_mode=name)
         await asyncio.sleep(settle)
         after = node.climate_snapshot()
         moved = (before.get("fan_mode") != after.get("fan_mode")
                  or before.get("custom_fan_mode") != after.get("custom_fan_mode"))
-        record(f"fan {name}", moved or name == "Auto",
+        record(f"fan {name}", moved or name == "auto",
                f"fan_mode={after.get('fan_mode')} custom={after.get('custom_fan_mode')}")
         node.no_collateral(f"fan {name}", before, {"fan_mode", "custom_fan_mode"})
 
@@ -278,6 +278,26 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
                node.switch_state("Panel display") is False or disp is None,
                f"display reads {node.switch_state('Panel display')}")
         node.no_collateral("sleep", before, set())
+
+    # --- 6. climate presets ------------------------------------------------------------
+    # The special modes as climate presets, named like hisense-unified-ac. One preset can take
+    # several writes 10 s apart (the A/C swallows a faster special-mode command), so each step
+    # waits out the longest plan. The order walks through every kind of transition: set, combine,
+    # replace eco with turbo, turbo to sleep, add eco under a running profile, sleep to quiet.
+    print("[presets]")
+    preset_wait = 35.0
+    for name in ("eco", "eco_quiet", "turbo", "sleep_general", "eco_sleep_general", "quiet", "none"):
+        if name in ("none", "eco"):
+            client.climate_command(key=node.climate.key, preset=0 if name == "none" else 5)
+        else:
+            client.climate_command(key=node.climate.key, custom_preset=name)
+        await asyncio.sleep(preset_wait)
+        s = node.states.get(node.climate.key)
+        custom = getattr(s, "custom_preset", "") or ""
+        builtin = str(getattr(s, "preset", ""))
+        got = custom or builtin
+        ok = got == name or (not custom and builtin.upper().endswith(name.upper()))
+        record(f"preset {name}", ok, f"got {got}")
 
     # --- restore ------------------------------------------------------------------------
     print("\n[restore]")

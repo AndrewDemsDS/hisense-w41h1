@@ -79,7 +79,7 @@ refer to `firmware/esp32-matter/main/app_main.cpp`.
 | ep1 LocalTemperature | `climate` current temperature | `state.indoor_temp_c` |
 | ep1 ThermostatRunningState | `climate` action | `hisense_to_running_state()` |
 | ep1 Thermostat FeatureMap gating | YAML: omit `heat` from `supported_modes` | `matter_thermostat_featuremap()` |
-| ep1 FanControl FanMode/Percent/Speed | `climate` fan mode: auto plus 6 custom speeds | `hisense_fan_raw_to_*()` |
+| ep1 FanControl FanMode/Percent/Speed | `climate` fan mode: auto, low, medium_low, medium, medium_high, high (quiet is a preset) | `hisense_fan_raw_to_*()` |
 | ep1 FanControl Rock | `climate` swing mode off/vertical/horizontal/both | `state.vswing_on`, `state.hswing_on` |
 | ep1 EPM ActivePower/Voltage/Current | 3 `sensor` (power W, voltage V, current A) | `power_estimate.h` |
 | not exposed today | `sensor` energy kWh, `state_class: total_increasing` | `hisense_energy_add/mwh()` |

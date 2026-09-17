@@ -10,10 +10,12 @@ static const char *const TAG = "hisense_ac.climate";
 // has no name for stay custom. Mixing is not cosmetic: ClimateCall converts a name matching a
 // built-in into the enum, and validate_() then DISCARDS that enum unless traits advertise it.
 // Publishing everything as custom therefore made "High" unsettable, which is what shipped.
-// Ladder index -> representation: 0 Auto, 1 Quiet, 2 Low, 3 "Medium-low", 4 Medium,
-// 5 "Medium-high", 6 High.
-const char *const FAN_CUSTOM_MEDIUM_LOW = "Medium-low";
-const char *const FAN_CUSTOM_MEDIUM_HIGH = "Medium-high";
+// Ladder index -> representation: 0 auto, 2 low, 3 "medium_low", 4 medium, 5 "medium_high",
+// 6 high. Index 1 (quiet) is the `quiet` preset, not a fan mode, and publishes as low. The names
+// match the hisense-unified-ac wrapper's fan_modes so a climate group syncs fan speed across
+// firmwares.
+const char *const FAN_CUSTOM_MEDIUM_LOW = "medium_low";
+const char *const FAN_CUSTOM_MEDIUM_HIGH = "medium_high";
 const char *const FAN_CUSTOM_NAMES[2] = {FAN_CUSTOM_MEDIUM_LOW, FAN_CUSTOM_MEDIUM_HIGH};
 
 static bool fan_index_is_custom(uint8_t idx) { return idx == 3 || idx == 5; }
@@ -21,7 +23,6 @@ static bool fan_index_is_custom(uint8_t idx) { return idx == 3 || idx == 5; }
 static climate::ClimateFanMode fan_index_to_enum(uint8_t idx) {
   switch (idx) {
     case 0: return climate::CLIMATE_FAN_AUTO;
-    case 1: return climate::CLIMATE_FAN_QUIET;
     case 2: return climate::CLIMATE_FAN_LOW;
     case 4: return climate::CLIMATE_FAN_MEDIUM;
     default: return climate::CLIMATE_FAN_HIGH;
@@ -93,8 +94,7 @@ climate::ClimateTraits HisenseClimate::traits() {
   }
 
   // Without this, validate_() silently resets any built-in fan mode and the command vanishes.
-  traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_QUIET,
-                                  climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM,
+  traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM,
                                   climate::CLIMATE_FAN_HIGH});
 
   // none + eco ride the built-in enum (see esphome_aircon_map.h); the rest are the custom
@@ -155,9 +155,9 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
 
   // A fan request can arrive by EITHER route, and the trap is that it is not our choice which.
   // ClimateCall::set_fan_mode(const char *) case-insensitively matches the built-in enum names
-  // FIRST, so "Auto", "Quiet", "Low", "Medium" and "High" are converted to ClimateFanMode and
-  // never reach has_custom_fan_mode(); only "Medium-low" and "Medium-high" stay custom. Handling
-  // just the custom path silently dropped five of the seven speeds.
+  // FIRST, so "auto", "low", "medium" and "high" are converted to ClimateFanMode and never reach
+  // has_custom_fan_mode(); only "medium_low" and "medium_high" stay custom. Handling just the
+  // custom path silently dropped most of the speeds.
   int8_t wanted_index = -1;
   if (call.has_custom_fan_mode()) {
     StringRef wanted = call.get_custom_fan_mode();
@@ -178,6 +178,8 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   }
   if (wanted_index >= 0) {
     if (wanted_index == 1) {
+      // Unreachable from Home Assistant now that quiet is not an advertised fan mode (validate_()
+      // drops it), kept so a direct API client asking for QUIET still gets the mute path.
       // "Quiet" is not reachable through the fan byte on this unit. Commanding fan 0x03 (the
       // 3-speed reference's "mute" value, flagged // VERIFY in the driver and never confirmed
       // on a W41H1) put the A/C on HIGH. The A/C reaches quiet via the MUTE flag instead:
@@ -243,6 +245,7 @@ void HisenseClimate::update_from_bus(const HisenseState &state, bool holdoff) {
 }
 
 void HisenseClimate::publish_fan_index(uint8_t idx) {
+  idx = esphome_fan_published_index(idx);   // quiet (1) shows as low; see esphome_aircon_map.h
   if (fan_index_is_custom(idx)) {
     this->set_custom_fan_mode_(idx == 3 ? FAN_CUSTOM_MEDIUM_LOW : FAN_CUSTOM_MEDIUM_HIGH);
   } else {

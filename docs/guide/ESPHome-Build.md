@@ -34,9 +34,13 @@ footprints, is `firmware/docs/13-path-comparison.md` in the repo.
 
 | Entity | Covers |
 |---|---|
-| `climate` | power, mode (auto/cool/heat/dry/fan_only), setpoint 16 to 32, 7-step fan, swing, current temperature, action, special-mode presets |
+| `climate` | power, mode (auto/cool/heat/dry/fan_only), setpoint 16 to 32, fan (auto, low, medium_low, medium, medium_high, high), swing, current temperature, action, special-mode presets |
 | `switch` | Eco, Turbo, Quiet, panel display |
 | `select` | Sleep profile (Off / General / Old / Young / Kids) |
+
+Quiet is a preset, not a fan speed: the A/C only reaches it through its mute flag, and while it is
+on the fan reads `low`. The fan and preset names match what `hisense-unified-ac` gives a Matter
+node, so the same unit state looks identical on either firmware.
 
 The climate presets are `none`, `eco`, `quiet`, `turbo`, `eco_quiet`, `sleep_general`,
 `sleep_old`, `sleep_young`, `sleep_kids` and `eco_sleep_*` for each profile: the same names the

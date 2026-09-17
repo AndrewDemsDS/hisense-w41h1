@@ -116,6 +116,13 @@ int main() {
           "raw 0x01 -> index 0");
     CHECK(hisense_fan_raw_to_esphome_index(0x0A) == 2, "raw 0x0A (low) -> index 2");
     CHECK(hisense_fan_raw_to_esphome_index(0x12) == 6, "raw 0x12 (high) -> index 6");
+    // quiet is a preset, not a fan mode: its readback publishes as low, like the Matter wrapper
+    CHECK(esphome_fan_published_index(hisense_fan_raw_to_esphome_index(0x02)) == 2,
+          "raw 0x02 (quiet step) publishes as low");
+    for (uint8_t i = 0; i <= ESPHOME_FAN_INDEX_MAX; i++)
+        CHECK(esphome_fan_published_index(i) != 1, "index %u never publishes as quiet", i);
+    CHECK(esphome_fan_published_index(3) == 3 && esphome_fan_published_index(5) == 5 &&
+              esphome_fan_published_index(0) == 0, "other steps publish unchanged");
 
     // Every ladder index must survive index -> command -> wire -> status-raw -> index. This is
     // the loop that decides whether the fan control in Home Assistant sticks.
