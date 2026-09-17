@@ -245,32 +245,6 @@ int main() {
         hisense_features_from_bitmap32(0, NULL);   // NULL must not crash
     }
 
-    // ---- FanMode write guard (#11) ------------------------------------------------------------
-    // AmebaZ2 re-enters its FanMode handler on its own uplink write. The readback of every speed
-    // must be recognised as a no-op, or in-between speeds get bumped to the bucket's representative.
-    printf("[fanmode write guard]\n");
-    for (unsigned i = 0; i < HISENSE_FAN_TABLE_LEN; i++) {
-        const HisenseFanRow &row = k_hisense_fan_table[i];
-        uint8_t readback = hisense_fan_raw_to_fanmode(row.raw, true);
-        CHECK(matter_fanmode_write_to_cmd(readback, row.cmd) == HISENSE_FAN_NOCHANGE,
-              "speed %u readback FanMode %u is an echo", row.speed, readback);
-    }
-    CHECK(matter_fanmode_write_to_cmd(2, HISENSE_FAN_MED_LOW) == HISENSE_FAN_NOCHANGE,
-          "Medium over medium-low: no re-command to MID (the Kitchen bug)");
-    CHECK(matter_fanmode_write_to_cmd(3, HISENSE_FAN_MED_HIGH) == HISENSE_FAN_NOCHANGE,
-          "High over medium-high: no re-command to HIGH");
-    CHECK(matter_fanmode_write_to_cmd(3, HISENSE_FAN_MED_LOW) == HISENSE_FAN_HIGH,
-          "a different bucket still commands its speed");
-    CHECK(matter_fanmode_write_to_cmd(1, HISENSE_FAN_HIGH) == HISENSE_FAN_LOW, "High -> Low moves");
-    CHECK(matter_fanmode_write_to_cmd(5, HISENSE_FAN_MED_LOW) == HISENSE_FAN_AUTO, "Auto always applies");
-    CHECK(matter_fanmode_write_to_cmd(5, HISENSE_FAN_AUTO) == HISENSE_FAN_NOCHANGE, "Auto over auto: no-op");
-    CHECK(matter_fanmode_write_to_cmd(2, HISENSE_FAN_AUTO) == HISENSE_FAN_MID, "Medium from auto moves");
-    CHECK(matter_fanmode_write_to_cmd(4, HISENSE_FAN_MED_HIGH) == HISENSE_FAN_HIGH, "On -> full speed");
-    CHECK(matter_fanmode_write_to_cmd(0, HISENSE_FAN_LOW) == HISENSE_FAN_AUTO, "Off -> auto, as before");
-    // PercentSetting 42 / 75 -> in-between speed, and the readback does not undo it
-    CHECK(percent_to_hisense_fan(42) == HISENSE_FAN_MED_LOW && percent_to_hisense_fan(75) == HISENSE_FAN_MED_HIGH,
-          "42 / 75 percent -> medium-low / medium-high");
-
     printf("== %d passed, %d failed ==\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

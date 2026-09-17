@@ -126,34 +126,6 @@ static inline HisenseFanSpeed fanmode_to_hisense_fan(uint8_t fanmode)
     }
 }
 
-/* FanMode WRITE -> the fan command to send, or HISENSE_FAN_NOCHANGE.
- *
- * FanMode is a bucket (Low / Medium / High), not a speed. The uplink publishes it by folding the six
- * speeds (hisense_fan_raw_to_fanmode: 1-2 Low, 3-4 Medium, 5-6 High), and on AmebaZ2 that local
- * attribute write re-enters the app's FanMode handler. The old guard compared the bucket's
- * REPRESENTATIVE speed with the shadow, so a unit running medium-low (speed 3) read back as Medium,
- * mapped to MID, differed from MED_LOW, and was re-commanded to MID: PercentSetting 42 landed on 58
- * and 75 on 100 (hardware, Kitchen node, 2026-09-17). ESP32 does not re-enter, which is why only
- * AmebaZ2 showed it.
- *
- * So a FanMode that names the bucket the shadow speed already sits in is a no-op, whether it is our
- * own readback or a user picking the bucket the unit is already in. Anything else (a different
- * bucket, Auto, On, a shadow on auto) commands the bucket's representative speed as before. */
-static inline HisenseFanSpeed matter_fanmode_write_to_cmd(uint8_t fanmode, HisenseFanSpeed shadow)
-{
-    HisenseFanSpeed want = fanmode_to_hisense_fan(fanmode);
-    unsigned i;
-    if (want == shadow) return HISENSE_FAN_NOCHANGE;
-    if (fanmode >= 1 && fanmode <= 3) {
-        for (i = 0; i < HISENSE_FAN_TABLE_LEN; i++) {
-            if (k_hisense_fan_table[i].cmd == shadow)
-                return (uint8_t) ((k_hisense_fan_table[i].speed + 1) / 2) == fanmode
-                           ? HISENSE_FAN_NOCHANGE : want;
-        }
-    }
-    return want;
-}
-
 /* status wind_status byte -> SpeedCurrent (1..6), 0 = auto/unknown. */
 static inline uint8_t hisense_fan_raw_to_speed(uint8_t raw)
 {
