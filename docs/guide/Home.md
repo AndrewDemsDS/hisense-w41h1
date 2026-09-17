@@ -51,6 +51,7 @@ flowchart LR
 | [Installing the Custom Firmware](Installing-Custom-Firmware) | the stock AmebaZ2 module, flashed with a CH341A clip |
 | [Commissioning & HA Setup](Commissioning-and-HA-Setup) | commission into HA via matter-server, the cross-VLAN mDNS fix, re-interview after an OTA |
 | [Everyday Control](Everyday-Control) | what entities appear, the unified climate integration, special modes, the dashboard card |
+| [Climate Groups](Climate-Groups) | several A/Cs as one thermostat with Climate Group Helper, across ESPHome and Matter |
 | [OTA Updates](OTA-Updates) | ship a new firmware, retry reality, version rules |
 | [Recovery & Reflash](Recovery-and-Reflash) | CH341A SPI-clip recovery, the stock image, preserving commissioning |
 | [FAQ & Gotchas](FAQ-Gotchas) | the load-bearing traps, in Q&A form |

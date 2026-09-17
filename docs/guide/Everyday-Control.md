@@ -10,7 +10,7 @@ everything else as separate entities on the same device.
 
 | Entity | What you use it for |
 |---|---|
-| climate | power, mode (auto / cool / heat / dry / fan only), setpoint 16 to 32 °C, fan speed, swing |
+| climate | power, mode (auto / cool / heat / dry / fan only), setpoint 16 to 32 °C, fan speed (auto / low / medium_low / medium / medium_high / high), swing, and the special modes as presets |
 | Eco, Turbo, Quiet, Panel display switches | the special modes, written straight to the A/C |
 | Sleep profile select | Off / General / Old / Young / Kids |
 | Outdoor temperature, Coil temperature, Compressor frequency | what the unit is doing |
@@ -75,9 +75,9 @@ climate entity**, so you get a single Thermostat card with the special modes as 
 
 It gives you:
 - HVAC: off / cool / heat / auto / dry / fan-only
-- Fan: auto / low / medium / high
+- Fan: auto / low / medium_low / medium / medium_high / high (1.4.0 and later)
 - Swing: off / vertical
-- Presets: **eco / quiet / turbo / sleep** (folded in from the special-mode switches + sleep select)
+- Presets: **none / eco / quiet / turbo / eco_quiet / sleep_\* / eco_sleep_\*** (folded in from the special-mode switches + sleep select)
 - Setpoint gated to cool/heat (a temp change elsewhere shows no target and is a no-op)
 
 **Install (HACS):**
@@ -93,6 +93,9 @@ Then hide the now-redundant native entities (the Power switch and the raw specia
 > gates those on a vendor allow-list; the companion
 > [`ha-matter-extra-hvac-modes`](https://github.com/AndrewDemsDS/ha-matter-extra-hvac-modes)
 > integration (domain `matter_extra_hvac_modes`) lifts that gate for test-vendor `0xFFF1` devices.
+
+The ESPHome climate entity and the unified climate entity expose the same names, so units on either
+firmware can be controlled together as one thermostat: see [Climate Groups](Climate-Groups).
 
 ## Special modes (Eco / Turbo / Mute-Quiet / Sleep)
 

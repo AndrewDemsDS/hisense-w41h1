@@ -41,6 +41,7 @@ GUIDE_ORDER = [
     "Installing-Custom-Firmware",
     "Commissioning-and-HA-Setup",
     "Everyday-Control",
+    "Climate-Groups",
     "OTA-Updates",
     "Recovery-and-Reflash",
     "Build-Flash-Test",

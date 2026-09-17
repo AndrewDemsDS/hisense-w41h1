@@ -8,6 +8,7 @@
 - [Installing on the AmebaZ2 Module](Installing-Custom-Firmware)
 - [Commissioning & HA Setup](Commissioning-and-HA-Setup)
 - [Everyday Control](Everyday-Control)
+- [Climate Groups](Climate-Groups)
 - [OTA Updates](OTA-Updates)
 - [Recovery & Reflash](Recovery-and-Reflash)
 - [FAQ & Gotchas](FAQ-Gotchas)
