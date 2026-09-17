@@ -21,23 +21,25 @@ void HisenseSwitch::setup() {
 void HisenseSwitch::write_state(bool state) {
   if (this->parent_ == nullptr)
     return;
-  HisenseCommand &cmd = this->parent_->cmd();
-
   switch (this->kind_) {
+    // Eco, turbo and quiet are special modes: they go through the hub's paced queue, shared
+    // with the climate presets, so a switch flipped right after a preset change is not
+    // swallowed by the A/C's debounce.
     case SWITCH_ECO:
       // Eco and turbo share one command byte and are mutually exclusive on this bus, so
       // clearing eco sends the explicit eco-off value rather than the neutral one (which
       // clears turbo instead).
-      cmd.feature = state ? HISENSE_FEATURE_ECO : HISENSE_FEATURE_ECO_OFF;
-      this->parent_->send_command();
-      cmd.feature = esphome_feature_after_send(cmd.feature);   // ECO_OFF is one-shot
+      this->parent_->enqueue_special(
+          {HISENSE_SPECIAL_OP_FEATURE,
+           (uint8_t) (state ? HISENSE_FEATURE_ECO : HISENSE_FEATURE_ECO_OFF)});
       break;
     case SWITCH_TURBO:
-      cmd.feature = state ? HISENSE_FEATURE_TURBO : HISENSE_FEATURE_NONE;
-      this->parent_->send_command();
+      this->parent_->enqueue_special(
+          {HISENSE_SPECIAL_OP_FEATURE,
+           (uint8_t) (state ? HISENSE_FEATURE_TURBO : HISENSE_FEATURE_NONE)});
       break;
     case SWITCH_QUIET:
-      this->parent_->send_mute(state);
+      this->parent_->enqueue_special({HISENSE_SPECIAL_OP_MUTE, (uint8_t) (state ? 1 : 0)});
       break;
     case SWITCH_DISPLAY:
       // Standing preference, re-asserted on every later frame. See the note on
@@ -52,7 +54,8 @@ void HisenseSwitch::write_state(bool state) {
 }
 
 void HisenseSwitch::on_status(const HisenseState &state) {
-  if (this->parent_ != nullptr && this->parent_->in_command_holdoff())
+  if (this->parent_ != nullptr &&
+      (this->parent_->in_command_holdoff() || this->parent_->special_busy()))
     return;
   switch (this->kind_) {
     case SWITCH_ECO:

@@ -241,6 +241,145 @@ int main() {
               "TURBO kept");
     }
 
+    // ---- special modes as climate presets ----------------------------------------------------
+    // Names must match hisense-unified-ac verbatim so a climate group syncs presets across the
+    // ESPHome and Matter paths; the ordering rules are the wrapper's measured interlocks.
+    printf("[presets]\n");
+    {
+        static const char *const wrapper_names[] = {
+            "none", "eco", "quiet", "turbo", "eco_quiet",
+            "sleep_general", "sleep_old", "sleep_young", "sleep_kids",
+            "eco_sleep_general", "eco_sleep_old", "eco_sleep_young", "eco_sleep_kids"};
+        CHECK(ESPHOME_PRESET_COUNT == 13, "13 presets");
+        for (unsigned i = 0; i < 13; i++)
+            CHECK(esphome_preset_index(wrapper_names[i]) == (int) i, "name %s", wrapper_names[i]);
+        CHECK(esphome_preset_index("sleep") == -1 && esphome_preset_index("Eco") == -1,
+              "no built-in-colliding or case-folded names");
+        // Custom rows must not collide with ESPHome's built-in preset names, or set_preset()
+        // converts them to the enum and the custom list never sees them.
+        static const char *const builtins[] = {"none", "home", "away", "boost", "comfort", "eco",
+                                               "sleep", "activity"};
+        for (unsigned i = ESPHOME_PRESET_FIRST_CUSTOM; i < ESPHOME_PRESET_COUNT; i++)
+            for (unsigned b = 0; b < 8; b++)
+                CHECK(strcasecmp(k_esphome_presets[i].name, builtins[b]) != 0,
+                      "custom %s is not built-in %s", k_esphome_presets[i].name, builtins[b]);
+        CHECK(strcmp(k_esphome_presets[ESPHOME_PRESET_NONE].name, "none") == 0 &&
+                  strcmp(k_esphome_presets[ESPHOME_PRESET_ECO].name, "eco") == 0,
+              "the two built-in rows come first");
+
+        // no row pairs quiet with sleep, or turbo with anything (measured interlocks)
+        for (unsigned i = 0; i < ESPHOME_PRESET_COUNT; i++) {
+            const EsphomePresetRow &r = k_esphome_presets[i];
+            CHECK(!(r.mute && r.sleep), "%s: quiet never with sleep", r.name);
+            CHECK(!(r.turbo && (r.eco || r.mute || r.sleep)), "%s: turbo alone", r.name);
+        }
+
+        const uint8_t all = ESPHOME_SUPPORT_ECO | ESPHOME_SUPPORT_QUIET | ESPHOME_SUPPORT_TURBO |
+                            ESPHOME_SUPPORT_SLEEP;
+        CHECK(esphome_preset_available(0, 0), "none always available");
+        CHECK(!esphome_preset_available(9, ESPHOME_SUPPORT_SLEEP), "eco_sleep needs eco");
+        CHECK(!esphome_preset_available(4, ESPHOME_SUPPORT_ECO), "eco_quiet needs quiet");
+        CHECK(esphome_preset_available(4, ESPHOME_SUPPORT_ECO | ESPHOME_SUPPORT_QUIET), "eco_quiet");
+        CHECK(!esphome_preset_available(13, all), "out of range");
+
+        // detection
+        HisenseSpecialState s = hisense_special_from_status(false, false, false, 0);
+        CHECK(esphome_preset_detect(&s, all) == 0, "nothing on -> none");
+        s = hisense_special_from_status(true, false, false, 0x04);   // eco + Old (byte17 = 2*2)
+        CHECK(s.sleep == 2 && esphome_preset_detect(&s, all) == 10, "eco + sleep_raw 4 -> eco_sleep_old");
+        s = hisense_special_from_status(false, false, true, 0x02);   // illegal pair mid-arbitration
+        CHECK(esphome_preset_detect(&s, all) == 2, "quiet + sleep in flight -> quiet");
+        s = hisense_special_from_status(true, true, false, 0);
+        CHECK(esphome_preset_detect(&s, all) == 3, "eco + turbo in flight -> turbo");
+        s = hisense_special_from_status(false, false, false, 0x08);
+        CHECK(esphome_preset_detect(&s, all) == 8, "sleep_raw 8 -> sleep_kids");
+        CHECK(esphome_preset_detect(&s, ESPHOME_SUPPORT_ECO) == 0, "unoffered result -> none");
+
+        // plans
+        HisenseSpecialOp ops[ESPHOME_PRESET_PLAN_MAX];
+        HisenseSpecialState none = hisense_special_from_status(false, false, false, 0);
+        uint8_t n = esphome_preset_plan(&none, 0, ops);
+        CHECK(n == 0, "none -> none sends nothing");
+
+        n = esphome_preset_plan(&none, 1, ops);
+        CHECK(n == 1 && ops[0].kind == HISENSE_SPECIAL_OP_FEATURE &&
+                  ops[0].value == HISENSE_FEATURE_ECO, "none -> eco: one ECO write");
+
+        HisenseSpecialState eco = hisense_special_from_status(true, false, false, 0);
+        n = esphome_preset_plan(&eco, 0, ops);
+        CHECK(n == 1 && ops[0].value == HISENSE_FEATURE_ECO_OFF,
+              "eco -> none clears with ECO_OFF (NONE only clears turbo)");
+        n = esphome_preset_plan(&eco, 3, ops);
+        CHECK(n == 1 && ops[0].value == HISENSE_FEATURE_TURBO, "eco -> turbo is one byte33 write");
+
+        HisenseSpecialState turbo = hisense_special_from_status(false, true, false, 0);
+        n = esphome_preset_plan(&turbo, 0, ops);
+        CHECK(n == 1 && ops[0].value == HISENSE_FEATURE_NONE, "turbo -> none clears with NONE");
+
+        n = esphome_preset_plan(&none, 4, ops);   // eco_quiet
+        CHECK(n == 2 && ops[0].kind == HISENSE_SPECIAL_OP_FEATURE &&
+                  ops[1].kind == HISENSE_SPECIAL_OP_MUTE && ops[1].value == 1,
+              "none -> eco_quiet: eco then mute");
+
+        n = esphome_preset_plan(&none, 10, ops);  // eco_sleep_old
+        CHECK(n == 2 && ops[0].kind == HISENSE_SPECIAL_OP_FEATURE &&
+                  ops[1].kind == HISENSE_SPECIAL_OP_SLEEP && ops[1].value == 2,
+              "eco before sleep (sleep then eco loses the profile)");
+
+        HisenseSpecialState sleep_old = hisense_special_from_status(false, false, false, 0x04);
+        n = esphome_preset_plan(&sleep_old, 10, ops);
+        CHECK(n == 2 && ops[0].value == HISENSE_FEATURE_ECO &&
+                  ops[1].kind == HISENSE_SPECIAL_OP_SLEEP && ops[1].value == 2,
+              "sleep_old -> eco_sleep_old re-sends the unchanged profile after eco");
+
+        n = esphome_preset_plan(&sleep_old, 2, ops);   // quiet
+        CHECK(n == 2 && ops[0].kind == HISENSE_SPECIAL_OP_SLEEP && ops[0].value == 0 &&
+                  ops[1].kind == HISENSE_SPECIAL_OP_MUTE && ops[1].value == 1,
+              "sleep -> quiet clears sleep FIRST, then mute");
+
+        HisenseSpecialState quiet = hisense_special_from_status(false, false, true, 0);
+        n = esphome_preset_plan(&quiet, 7, ops);   // sleep_young
+        CHECK(n == 2 && ops[0].kind == HISENSE_SPECIAL_OP_MUTE && ops[0].value == 0 &&
+                  ops[1].kind == HISENSE_SPECIAL_OP_SLEEP && ops[1].value == 3,
+              "quiet -> sleep_young: mute off, then sleep last");
+
+        HisenseSpecialState eco_sleep = hisense_special_from_status(true, false, false, 0x02);
+        n = esphome_preset_plan(&eco_sleep, 5, ops);   // sleep_general
+        CHECK(n == 2 && ops[0].value == HISENSE_FEATURE_ECO_OFF &&
+                  ops[1].kind == HISENSE_SPECIAL_OP_SLEEP && ops[1].value == 1,
+              "eco_sleep_general -> sleep_general: eco off, profile re-sent");
+
+        HisenseSpecialState eq = hisense_special_from_status(true, false, true, 0);
+        n = esphome_preset_plan(&eq, 3, ops);   // turbo
+        CHECK(n == 2 && ops[0].kind == HISENSE_SPECIAL_OP_MUTE && ops[0].value == 0 &&
+                  ops[1].value == HISENSE_FEATURE_TURBO, "eco_quiet -> turbo: mute off, then turbo");
+
+        CHECK(esphome_preset_plan(&none, 13, ops) == 0, "bad target sends nothing");
+
+        // every plan, applied, lands on its target row
+        HisenseSpecialState starts[] = {none, eco, turbo, sleep_old, quiet, eco_sleep, eq};
+        for (unsigned a = 0; a < sizeof(starts) / sizeof(starts[0]); a++) {
+            for (uint8_t t = 0; t < ESPHOME_PRESET_COUNT; t++) {
+                HisenseSpecialState cur = starts[a];
+                n = esphome_preset_plan(&cur, t, ops);
+                CHECK(n <= ESPHOME_PRESET_PLAN_MAX, "plan fits");
+                for (uint8_t i = 0; i < n; i++) hisense_special_apply(&cur, &ops[i]);
+                CHECK(esphome_preset_detect(&cur, all) == t, "start %u -> %s lands", a,
+                      k_esphome_presets[t].name);
+            }
+        }
+
+        // fan pinning
+        CHECK(esphome_fan_request_allowed(&none, 4), "free fan: any speed");
+        CHECK(!esphome_fan_request_allowed(&turbo, 4) && esphome_fan_request_allowed(&turbo, 6),
+              "turbo pins high");
+        CHECK(esphome_fan_request_allowed(&quiet, 1) && esphome_fan_request_allowed(&quiet, 2) &&
+                  !esphome_fan_request_allowed(&quiet, 0),
+              "quiet pins the low profile");
+        CHECK(!esphome_fan_request_allowed(&sleep_old, 6), "sleep pins low");
+        CHECK(esphome_fan_request_allowed(&eco, 5), "eco does not pin the fan");
+    }
+
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

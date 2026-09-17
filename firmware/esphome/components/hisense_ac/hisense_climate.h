@@ -29,6 +29,8 @@ class HisenseClimate : public climate::Climate, public Component {
   void set_visual_max(float v) { this->visual_max_ = v; }
   void set_supports_heat(bool v) { this->supports_heat_ = v; }
   void set_supports_horizontal_swing(bool v) { this->supports_hswing_ = v; }
+  /// ESPHOME_SUPPORT_* bits: which special modes this unit offers as presets.
+  void set_preset_support(uint8_t v) { this->preset_support_ = v; }
 
   /// Called from the hub on the main loop with a freshly decoded status frame.
   void update_from_bus(const HisenseState &state, bool holdoff);
@@ -37,14 +39,23 @@ class HisenseClimate : public climate::Climate, public Component {
   /// ESPHome names, custom string for the two it does not.
   void publish_fan_index(uint8_t idx);
 
+  /// Publish a preset row using the right representation: built-in enum for none/eco,
+  /// custom string (pointer into k_esphome_presets) for the rest.
+  void publish_preset_index(uint8_t idx);
+
  protected:
   void control(const climate::ClimateCall &call) override;
+  int preset_request_index_(const climate::ClimateCall &call) const;
 
   HisenseAC *parent_{nullptr};
   float visual_min_{16.0f};
   float visual_max_{32.0f};
   bool supports_heat_{true};
   bool supports_hswing_{false};
+  uint8_t preset_support_{0};
+  /// The custom preset names this unit offers, pointers into k_esphome_presets. ESPHome matches
+  /// custom presets by pointer into this vector, so it must outlive the entity (it is a member).
+  std::vector<const char *> custom_presets_;
 };
 
 }  // namespace hisense_ac

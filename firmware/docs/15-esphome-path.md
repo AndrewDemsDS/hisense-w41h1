@@ -88,10 +88,11 @@ refer to `firmware/esp32-matter/main/app_main.cpp`.
 | ep1 mfg `0x0013` Faults1 (18 bits) | 18 diagnostic `binary_sensor` | `HisenseFaults` |
 | ep2 TemperatureMeasurement | `sensor` outdoor temperature | `state.outdoor_temp_c` |
 | ep8 TemperatureMeasurement | `sensor` coil temperature | `state.coil_temp_c` |
-| ep3 OnOff Eco | `switch` | `HISENSE_FEATURE_ECO` / `ECO_OFF` |
-| ep4 OnOff Quiet | `switch` | `hisense_build_mute_frame()` |
-| ep5 OnOff Turbo | `switch` | `HISENSE_FEATURE_TURBO` |
-| ep6 ModeSelect Sleep profile | `select` with 5 options | `hisense_build_sleep_frame()` |
+| ep3 OnOff Eco | `switch`, and the `climate` presets | `HISENSE_FEATURE_ECO` / `ECO_OFF` |
+| ep4 OnOff Quiet | `switch`, and the `climate` presets | `hisense_build_mute_frame()` |
+| ep5 OnOff Turbo | `switch`, and the `climate` presets | `HISENSE_FEATURE_TURBO` |
+| ep6 ModeSelect Sleep profile | `select` with 5 options, and the `climate` presets | `hisense_build_sleep_frame()` |
+| wrapper preset (hisense-unified-ac) | `climate` preset, same 13 names | `esphome_preset_plan()` |
 | ep7 ContactSensor aux heat | `binary_sensor` | `state.heat_relay_on` |
 | ep9 OnOff panel display | `switch` | `HisenseDisplay` tri-state |
 | ep10 BooleanState aggregate fault | `binary_sensor`, `device_class: problem` | `HisenseFaults.any` |
@@ -225,6 +226,30 @@ state around the run. It needs real hardware, so it stays outside `run_tests.sh`
 Outstanding: stage 3 of the bring-up procedure (powered from the A/C connector's 5 V instead of
 USB, and closed up), plus a DI-tap sniffer pass confirming the frames on the wire, which is the
 same Layer 5 gate the other two paths pass. Do not skip the ground-loop warning.
+
+**Phase 6, special modes as climate presets. IMPLEMENTED, awaiting hardware validation.** A
+climate group syncs only `climate` attributes, so eco, quiet, turbo and sleep were invisible to it
+as switches and a select. The climate entity now offers them as presets with the exact names the
+`hisense-unified-ac` wrapper gives the Matter builds (`none`, `eco`, `quiet`, `turbo`,
+`eco_quiet`, `sleep_<profile>`, `eco_sleep_<profile>`), so units on either firmware agree.
+
+The decisions are pure functions in `esphome_aircon_map.h`, host-tested in
+`test_esphome_map.cpp`, and port the interlocks the wrapper measured on a live A/C:
+
+- which states exist: eco pairs with quiet or with any sleep profile, quiet never with sleep, turbo
+  with nothing (`k_esphome_presets`);
+- naming a transient state the same way the wrapper does: exact row, else turbo, eco, quiet, sleep
+  (`esphome_preset_detect`);
+- the write order: a sleep clear first, byte33 and mute clears, then sets, and a sleep profile last,
+  re-sent after any byte33 write because eco after sleep drops the profile (`esphome_preset_plan`);
+- refusing a fan speed while turbo, quiet or sleep owns the fan (`esphome_fan_request_allowed`).
+
+The A/C swallows a special-mode command that arrives within about 8 s of the previous one, so the
+hub owns a small paced queue (`HISENSE_SPECIAL_SETTLE_MS`, 10 s) that presets, the eco / turbo /
+quiet switches and the sleep select all feed. The climate entity keeps showing the requested preset
+until the queue drains and the command hold-off expires, so a group mirroring it never copies an
+intermediate state. Exit criterion: every preset set from Home Assistant reads back as itself on a
+live A/C, from each starting preset.
 
 **Phase 5, docs and CI. MOSTLY DONE.** Landed: [`firmware/esphome/README.md`](../esphome/README.md),
 the ESPHome column in [`13-path-comparison.md`](13-path-comparison.md), the `ESPHome-Build` guide

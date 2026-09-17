@@ -57,6 +57,19 @@ class HisenseAC : public Component {
   void send_mute(bool on);
   void send_sleep(uint8_t profile);
 
+  /// Special modes (eco/turbo byte33, mute, sleep) go through a paced queue, never straight to
+  /// the bus: the A/C swallows a special-mode command that lands within ~8 s of the previous
+  /// one, so every op waits HISENSE_SPECIAL_SETTLE_MS after the last. Presets, switches and the
+  /// sleep select all share it, so they can never race each other on the wire.
+  void enqueue_special(const HisenseSpecialOp &op);
+  /// Replace whatever is still queued with the plan for preset `target` (a row index), computed
+  /// against what the unit is expected to be once already-sent ops land.
+  void request_preset(uint8_t target);
+  /// Queue not yet drained: preset/switch readbacks would show intermediate states.
+  bool special_busy() const { return this->special_len_ > 0; }
+  /// The special-mode state the unit should report once everything sent so far lands.
+  const HisenseSpecialState &projected_special() const { return this->projected_; }
+
   /// Panel display is STICKY, not one-shot. Byte 36 rides every frame, and 0x00 ("no change")
   /// turns the panel ON on real hardware, so a command that does not state a preference
   /// re-lights a display the user switched off. Confirmed on an A/C 2026-08-19; only 0x40
@@ -134,6 +147,8 @@ class HisenseAC : public Component {
   volatile bool link_dirty_{false};
 
   void publish_telemetry_(const HisenseState &state);
+  void drain_special_queue_();
+  void execute_special_(const HisenseSpecialOp &op);
   void publish_diagnostics_();
 
   HisenseState last_{};
@@ -141,6 +156,14 @@ class HisenseAC : public Component {
   HisenseClimate *climate_{nullptr};
   std::vector<StatusListener *> listeners_;
   uint32_t holdoff_until_{0};
+  // Paced special-mode queue. Fixed size: a preset plan is at most ESPHOME_PRESET_PLAN_MAX ops,
+  // and anything that would overflow is dropped with a warning rather than allocated.
+  static constexpr uint8_t SPECIAL_QUEUE_CAP = 8;
+  HisenseSpecialOp special_queue_[SPECIAL_QUEUE_CAP]{};
+  uint8_t special_len_{0};
+  uint32_t last_special_ms_{0};
+  bool special_sent_{false};
+  HisenseSpecialState projected_{};
   bool features_published_{false};
   // Defaults to ON to match the switch's boot state; the A/C ships with the panel lit.
   HisenseDisplay display_pref_{HISENSE_DISPLAY_ON};

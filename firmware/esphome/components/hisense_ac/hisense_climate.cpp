@@ -65,6 +65,12 @@ void HisenseClimate::setup() {
   // advertised in traits(). Lives on the entity because ClimateTraits only references the
   // entity's vector, and set_custom_fan_mode_() matches by pointer into it.
   this->set_supported_custom_fan_modes(FAN_CUSTOM_NAMES);
+  for (uint8_t i = ESPHOME_PRESET_FIRST_CUSTOM; i < ESPHOME_PRESET_COUNT; i++) {
+    if (esphome_preset_available(i, this->preset_support_))
+      this->custom_presets_.push_back(k_esphome_presets[i].name);
+  }
+  if (!this->custom_presets_.empty())
+    this->set_supported_custom_presets(this->custom_presets_);
   this->mode = climate::CLIMATE_MODE_OFF;
   this->action = climate::CLIMATE_ACTION_OFF;
   this->target_temperature = NAN;
@@ -90,6 +96,14 @@ climate::ClimateTraits HisenseClimate::traits() {
   traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_QUIET,
                                   climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM,
                                   climate::CLIMATE_FAN_HIGH});
+
+  // none + eco ride the built-in enum (see esphome_aircon_map.h); the rest are the custom
+  // presets registered in setup(). No special modes at all means no preset control.
+  if (this->preset_support_ != 0) {
+    traits.add_supported_preset(climate::CLIMATE_PRESET_NONE);
+    if (esphome_preset_available(ESPHOME_PRESET_ECO, this->preset_support_))
+      traits.add_supported_preset(climate::CLIMATE_PRESET_ECO);
+  }
 
   traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE |
                            climate::CLIMATE_SUPPORTS_ACTION);
@@ -154,6 +168,14 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   } else if (call.get_fan_mode().has_value()) {
     wanted_index = (int8_t) esphome_fan_enum_to_index((uint8_t) *call.get_fan_mode());
   }
+  // A mode that owns the fan (turbo, quiet, sleep) overwrites any other speed about a second
+  // later. Refuse instead of acknowledging a change that undoes itself, and keep showing the
+  // pinned speed. Same rule as the wrapper's fan_mode_forced_by_preset.
+  if (wanted_index >= 0 &&
+      !esphome_fan_request_allowed(&this->parent_->projected_special(), (uint8_t) wanted_index)) {
+    ESP_LOGW(TAG, "fan change refused: an active special mode (turbo/quiet/sleep) owns the fan");
+    wanted_index = -1;
+  }
   if (wanted_index >= 0) {
     if (wanted_index == 1) {
       // "Quiet" is not reachable through the fan byte on this unit. Commanding fan 0x03 (the
@@ -161,7 +183,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
       // on a W41H1) put the A/C on HIGH. The A/C reaches quiet via the MUTE flag instead:
       // toggling mute drove fan_raw to 0x02 on hardware 2026-08-19, which is what the driver
       // documents ("also sets fan_raw=0x02 quiet").
-      this->parent_->send_mute(true);
+      this->parent_->enqueue_special({HISENSE_SPECIAL_OP_MUTE, 1});
     } else {
       cmd.fan = esphome_fan_index_to_hisense((uint8_t) wanted_index);
       send_combined = true;
@@ -174,6 +196,13 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
     climate_swing_to_hisense((uint8_t) swing, &cmd.vswing, &cmd.hswing);
     this->swing_mode = swing;
     send_combined = true;
+  }
+
+  int preset = this->preset_request_index_(call);
+  if (preset >= 0) {
+    this->parent_->request_preset((uint8_t) preset);
+    this->publish_preset_index((uint8_t) preset);
+    this->publish_state();
   }
 
   if (powering_on)
@@ -202,6 +231,14 @@ void HisenseClimate::update_from_bus(const HisenseState &state, bool holdoff) {
     if (idx <= ESPHOME_FAN_INDEX_MAX)
       this->publish_fan_index(idx);
   }
+  // A preset can take several paced frames (~10 s apart). Until the last one has landed and been
+  // held off, keep showing the requested preset: a climate group mirroring this entity would
+  // otherwise copy every intermediate state to the other rooms.
+  if (this->preset_support_ != 0 && !holdoff && !this->parent_->special_busy()) {
+    HisenseSpecialState special =
+        hisense_special_from_status(state.eco_on, state.turbo_on, state.mute_on, state.sleep_raw);
+    this->publish_preset_index(esphome_preset_detect(&special, this->preset_support_));
+  }
   this->publish_state();
 }
 
@@ -211,6 +248,49 @@ void HisenseClimate::publish_fan_index(uint8_t idx) {
   } else {
     this->clear_custom_fan_mode_();
     this->fan_mode = fan_index_to_enum(idx);
+  }
+}
+
+int HisenseClimate::preset_request_index_(const climate::ClimateCall &call) const {
+  if (this->preset_support_ == 0)
+    return -1;
+  int idx = -1;
+  // Same two routes as the fan: "none" and "eco" match ESPHome's built-in names and arrive as
+  // the enum; every other name arrives as a custom preset.
+  if (call.has_custom_preset()) {
+    StringRef wanted = call.get_custom_preset();
+    for (const char *name : this->custom_presets_) {
+      if (wanted == name) {
+        idx = esphome_preset_index(name);
+        break;
+      }
+    }
+  } else if (call.get_preset().has_value()) {
+    switch (*call.get_preset()) {
+      case climate::CLIMATE_PRESET_NONE:
+        idx = ESPHOME_PRESET_NONE;
+        break;
+      case climate::CLIMATE_PRESET_ECO:
+        idx = ESPHOME_PRESET_ECO;
+        break;
+      default:
+        break;
+    }
+  }
+  if (idx < 0 || !esphome_preset_available((uint8_t) idx, this->preset_support_)) {
+    if (call.has_custom_preset() || call.get_preset().has_value())
+      ESP_LOGW(TAG, "unsupported preset requested");
+    return -1;
+  }
+  return idx;
+}
+
+void HisenseClimate::publish_preset_index(uint8_t idx) {
+  if (idx >= ESPHOME_PRESET_FIRST_CUSTOM) {
+    this->set_custom_preset_(k_esphome_presets[idx].name);
+  } else {
+    this->clear_custom_preset_();
+    this->preset = idx == ESPHOME_PRESET_ECO ? climate::CLIMATE_PRESET_ECO : climate::CLIMATE_PRESET_NONE;
   }
 }
 

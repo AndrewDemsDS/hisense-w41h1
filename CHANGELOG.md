@@ -5,6 +5,17 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 [`firmware/src/version.txt`](firmware/src/version.txt) and
 [`firmware/esp32-matter/CMakeLists.txt`](firmware/esp32-matter/CMakeLists.txt)).
 
+## Unreleased
+
+### Firmware
+- ESPHome: eco, quiet, turbo and the sleep profile are now `climate` presets, named exactly as the
+  `hisense-unified-ac` integration names them for Matter nodes, so a climate group can sync presets
+  across both firmwares. Special-mode writes (presets, switches, sleep select) share a paced queue
+  that spaces them 10 s apart, and a fan change is refused while turbo, quiet or sleep owns the fan.
+  New `supports_eco/quiet/turbo/sleep` options on the climate platform. The preset table, detection
+  and write plan are pure functions in `esphome_aircon_map.h` with host tests. AmebaZ2 1.3.33 ->
+  1.3.34 only because that header lives under `firmware/src/`; the Matter images are unchanged.
+
 ## Diagnostics exposed to Home Assistant - 2026-07-22
 
 ### Firmware

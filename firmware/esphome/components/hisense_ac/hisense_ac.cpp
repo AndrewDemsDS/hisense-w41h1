@@ -71,6 +71,8 @@ void HisenseAC::loop() {
     }
   }
 
+  this->drain_special_queue_();
+
   if (this->link_dirty_) {
     this->link_dirty_ = false;
     ESP_LOGW(TAG, "A/C bus link %s", this->link_up_ ? "restored" : "LOST");
@@ -113,6 +115,11 @@ void HisenseAC::loop() {
     // after the remote cleared it. Ported from the esp32 Matter sync.
     this->cmd_.feature = hisense_feature_from_status(state.eco_on, state.turbo_on);
   }
+  // The projection only follows the A/C while nothing of ours is queued or settling; otherwise
+  // a frame from before our last op would make the next plan re-send what is already on its way.
+  if (!this->special_busy() && !this->in_command_holdoff())
+    this->projected_ = hisense_special_from_status(state.eco_on, state.turbo_on, state.mute_on,
+                                                   state.sleep_raw);
 
   if (this->climate_ != nullptr)
     this->climate_->update_from_bus(state, this->in_command_holdoff());
@@ -274,6 +281,67 @@ void HisenseAC::send_sleep(uint8_t profile) {
   size_t len = hisense_build_sleep_frame(profile, frame, sizeof(frame));
   if (len == 0 || !hisense_send_frame(frame, len))
     ESP_LOGW(TAG, "sleep frame not sent");
+}
+
+void HisenseAC::enqueue_special(const HisenseSpecialOp &op) {
+  if (this->special_len_ >= SPECIAL_QUEUE_CAP) {
+    ESP_LOGW(TAG, "special-mode queue full, op %u dropped", op.kind);
+    return;
+  }
+  this->special_queue_[this->special_len_++] = op;
+  // Held from the moment of the request, not the send, so a readback that predates it cannot
+  // flip the entity back while the op waits out the settle.
+  this->note_user_command();
+}
+
+void HisenseAC::request_preset(uint8_t target) {
+  // Plan from where the unit will be once everything already SENT lands. Queued-but-unsent ops
+  // are discarded: the new preset fully determines all four modes, so they would only add
+  // settle waits (or undo each other).
+  HisenseSpecialOp ops[ESPHOME_PRESET_PLAN_MAX];
+  uint8_t n = esphome_preset_plan(&this->projected_, target, ops);
+  this->special_len_ = 0;
+  ESP_LOGD(TAG, "preset -> %s: %u op(s)", k_esphome_presets[target].name, n);
+  for (uint8_t i = 0; i < n; i++)
+    this->enqueue_special(ops[i]);
+  this->note_user_command();
+}
+
+void HisenseAC::drain_special_queue_() {
+  if (this->special_len_ == 0)
+    return;
+  if (this->special_sent_ && millis() - this->last_special_ms_ < HISENSE_SPECIAL_SETTLE_MS)
+    return;
+  HisenseSpecialOp op = this->special_queue_[0];
+  for (uint8_t i = 1; i < this->special_len_; i++)
+    this->special_queue_[i - 1] = this->special_queue_[i];
+  this->special_len_--;
+  this->execute_special_(op);
+  hisense_special_apply(&this->projected_, &op);
+  this->last_special_ms_ = millis();
+  this->special_sent_ = true;
+  this->note_user_command();
+}
+
+void HisenseAC::execute_special_(const HisenseSpecialOp &op) {
+  switch (op.kind) {
+    case HISENSE_SPECIAL_OP_FEATURE:
+      ESP_LOGD(TAG, "TX special: byte33 feature %u", op.value);
+      this->cmd_.feature = (HisenseFeature) op.value;
+      this->send_command();
+      this->cmd_.feature = esphome_feature_after_send(this->cmd_.feature);   // ECO_OFF is one-shot
+      break;
+    case HISENSE_SPECIAL_OP_MUTE:
+      ESP_LOGD(TAG, "TX special: mute %u", op.value);
+      this->send_mute(op.value != 0);
+      break;
+    case HISENSE_SPECIAL_OP_SLEEP:
+      ESP_LOGD(TAG, "TX special: sleep profile %u", op.value);
+      this->send_sleep(op.value);
+      break;
+    default:
+      break;
+  }
 }
 
 void HisenseAC::dump_config() {

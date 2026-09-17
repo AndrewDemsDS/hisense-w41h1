@@ -34,9 +34,19 @@ footprints, is `firmware/docs/13-path-comparison.md` in the repo.
 
 | Entity | Covers |
 |---|---|
-| `climate` | power, mode (auto/cool/heat/dry/fan_only), setpoint 16 to 32, 7-step fan, swing, current temperature, action |
+| `climate` | power, mode (auto/cool/heat/dry/fan_only), setpoint 16 to 32, 7-step fan, swing, current temperature, action, special-mode presets |
 | `switch` | Eco, Turbo, Quiet, panel display |
 | `select` | Sleep profile (Off / General / Old / Young / Kids) |
+
+The climate presets are `none`, `eco`, `quiet`, `turbo`, `eco_quiet`, `sleep_general`,
+`sleep_old`, `sleep_young`, `sleep_kids` and `eco_sleep_*` for each profile: the same names the
+`hisense-unified-ac` integration gives a Matter node, so a climate group (for example Climate
+Group Helper) can sync presets across units on either firmware. A preset that needs several bus
+writes spaces them 10 s apart, because the A/C ignores a special-mode command that lands too soon
+after the previous one, so a combined preset such as `eco_sleep_old` takes about 10 s to settle.
+While turbo, quiet or a sleep profile is active they own the fan, and a fan change is refused
+rather than silently undone a second later. The switches and the select still work and share the
+same pacing, so keep them for dashboards or delete them if the presets are all you use.
 | `sensor` | indoor, outdoor and coil temperature, compressor Hz, power, voltage, current, bus checksum errors |
 | `binary_sensor` | aux heat relay, bus link, aggregate fault, 18 per-bit faults, 13 capability flags |
 | `text_sensor` | A/C device type (the learned link bytes) |
@@ -103,7 +113,9 @@ state, so it leaves a live A/C as it found it. See [Testing & QA](Testing-and-QA
 The Matter builds hide eco, quiet and display at runtime when the A/C reports it lacks them,
 because a commissioned Matter node's endpoint list is fixed. Here you delete the entities your unit
 does not have. Flash with everything declared, read the `capability_*` binary sensors your A/C
-answers with, then trim the YAML to match.
+answers with, then trim the YAML to match. For the presets, set `supports_eco`, `supports_quiet`,
+`supports_turbo` or `supports_sleep` to `false` on the climate platform; every preset that needs
+the missing mode disappears.
 
 ## Shared code, one copy
 
