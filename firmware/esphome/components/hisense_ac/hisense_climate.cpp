@@ -23,6 +23,7 @@ static bool fan_index_is_custom(uint8_t idx) { return idx == 3 || idx == 5; }
 static climate::ClimateFanMode fan_index_to_enum(uint8_t idx) {
   switch (idx) {
     case 0: return climate::CLIMATE_FAN_AUTO;
+    case 1: return climate::CLIMATE_FAN_LOW;   // quiet step: not a fan mode, shows as low
     case 2: return climate::CLIMATE_FAN_LOW;
     case 4: return climate::CLIMATE_FAN_MEDIUM;
     default: return climate::CLIMATE_FAN_HIGH;
