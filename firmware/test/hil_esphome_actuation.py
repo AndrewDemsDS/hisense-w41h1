@@ -30,6 +30,7 @@ State is snapshotted at the start and restored at the end, so a real unit is lef
 
 import argparse
 import asyncio
+import time
 
 from aioesphomeapi import APIClient
 
@@ -105,6 +106,31 @@ class Node:
         record(f"{label}: no collateral change", not drifted, "; ".join(drifted))
 
 
+# Phases in run order with rough durations (s), for the progress bar. The run takes ~12 minutes,
+# mostly waiting out the firmware's 10 s special-mode pacing, and is silent while it waits.
+PHASES = [
+    ("prepare", 35), ("setpoint", 6), ("fan: built-in enum", 6), ("fan: custom name", 6), ("swing", 6),
+    ("fan ladder", 36), ("mode sweep", 24), ("display + special modes", 90),
+    ("sleep profile", 14), ("presets", 245), ("restore", 15),
+]
+_T0 = time.monotonic()
+
+
+def phase(name: str) -> None:
+    """Print a progress bar line for the phase about to start: done/total weighted by time."""
+    names = [n for n, _ in PHASES]
+    idx = names.index(name) if name in names else 0
+    total = sum(d for _, d in PHASES)
+    done = sum(d for _, d in PHASES[:idx])
+    width = 30
+    filled = round(width * done / total)
+    elapsed = int(time.monotonic() - _T0)
+    left = max(0, total - done)
+    print(f"\n[{'#' * filled}{'-' * (width - filled)}] {round(100 * done / total):3d}%  "
+          f"{idx + 1}/{len(PHASES)} {name}  elapsed {elapsed // 60}m{elapsed % 60:02d}s, "
+          f"~{left // 60}m{left % 60:02d}s left", flush=True)
+
+
 async def run(host: str, key: str | None, power_on: bool) -> int:
     client = APIClient(host, 6053, None, noise_psk=key)
     await client.connect(login=True)
@@ -151,6 +177,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # Special modes pin the fan (quiet/sleep low, turbo high) and the firmware refuses other
     # speeds while they do, so start from no special mode. The baseline preset is put back at
     # the end through the climate entity, which is one ordered plan rather than switch writes.
+    phase("prepare")
     base_preset = _preset_name(node.states.get(node.climate.key))
     if base_preset not in ("", "none"):
         client.climate_command(key=node.climate.key, preset=0)
@@ -158,7 +185,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         print(f"  cleared baseline preset {base_preset} for the run")
 
     # --- 1. setpoint ------------------------------------------------------------------
-    print("[setpoint]")
+    phase("setpoint")
     before = node.climate_snapshot()
     target = 25.0 if float(before.get("target_temperature") or 24) != 25.0 else 23.0
     client.climate_command(key=node.climate.key, target_temperature=target)
@@ -169,20 +196,22 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     node.no_collateral("setpoint", before, {"target_temperature"})
 
     # --- 2. fan, BUILT-IN enum path (the 2026-08-18 bug) ------------------------------
-    print("[fan: built-in enum]")
+    phase("fan: built-in enum")
     before = node.climate_snapshot()
-    client.climate_command(key=node.climate.key, custom_fan_mode="High")
+    # A command matching the current value proves nothing, so pick a step that is not active.
+    enum_step = "Medium" if before.get("fan_mode") == str(FAN_ENUM["high"]) else "High"
+    client.climate_command(key=node.climate.key, custom_fan_mode=enum_step)
     await asyncio.sleep(settle)
     after = node.climate_snapshot()
     moved = before.get("fan_mode") != after.get("fan_mode") or \
         before.get("custom_fan_mode") != after.get("custom_fan_mode")
-    record("fan High actuates", moved,
+    record(f"fan {enum_step} actuates", moved,
            f"fan_mode {before.get('fan_mode')} -> {after.get('fan_mode')}, "
            f"custom {before.get('custom_fan_mode')} -> {after.get('custom_fan_mode')}")
     node.no_collateral("fan", before, {"fan_mode", "custom_fan_mode"})
 
     # --- 3. fan, CUSTOM name path -----------------------------------------------------
-    print("[fan: custom name]")
+    phase("fan: custom name")
     before = node.climate_snapshot()
     client.climate_command(key=node.climate.key, custom_fan_mode="medium_low")
     await asyncio.sleep(settle)
@@ -192,7 +221,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     node.no_collateral("fan custom", before, {"fan_mode", "custom_fan_mode"})
 
     # --- 4. swing ---------------------------------------------------------------------
-    print("[swing]")
+    phase("swing")
     before = node.climate_snapshot()
     want = 0 if str(before.get("swing_mode")) not in ("0", "ClimateSwingMode.SWING_MODE_OFF") else 2
     client.climate_command(key=node.climate.key, swing_mode=want)
@@ -206,7 +235,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # All six advertised steps, not just a sample. Four arrive as ESPHome's built-in enum and two
     # stay custom, and the split is invisible to the caller -- which is exactly why the enum path
     # went unnoticed when it was broken. Quiet is the `quiet` preset, not a fan mode.
-    print("[fan ladder: all 6 steps]")
+    phase("fan ladder")
     for name in ("auto", "low", "medium_low", "medium", "medium_high", "high"):
         before = node.climate_snapshot()
         client.climate_command(key=node.climate.key, custom_fan_mode=name)
@@ -223,7 +252,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # --- 4c. MODE SWEEP ----------------------------------------------------------------
     # HEAT is deliberately skipped: it would heat the room to prove a mapping the host tests
     # already cover. Cool / dry / fan-only / heat-cool exercise the same code path.
-    print("[mode sweep]")
+    phase("mode sweep")
     for label, mode_val in (("cool", 2), ("dry", 5), ("fan_only", 4), ("heat_cool", 1)):
         before = node.climate_snapshot()
         client.climate_command(key=node.climate.key, mode=mode_val)
@@ -239,7 +268,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # Turn the panel off, then drive eco, turbo and quiet in turn. Each of those sends a
     # frame carrying byte 36; before the fix they re-lit the panel while the switch still
     # read off. The switch must stay off, and the A/C must not be retuned.
-    print("[display: off, then special modes must not disturb it]")
+    phase("display + special modes")
     disp = node.switches.get("Panel display")
     if disp is None:
         record("display switch present", False, "no 'Panel display' switch declared")
@@ -281,7 +310,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
             await asyncio.sleep(special_settle)
 
     # --- 6. sleep profile --------------------------------------------------------------
-    print("[sleep profile]")
+    phase("sleep profile")
     sleep_sel = node.selects.get("Sleep profile")
     if sleep_sel is not None:
         before = node.climate_snapshot()
@@ -293,14 +322,16 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         record("sleep leaves display off",
                node.switch_state("Panel display") is False or disp is None,
                f"display reads {node.switch_state('Panel display')}")
-        node.no_collateral("sleep", before, set())
+        # A sleep profile owns the fan and drops it to its low profile (docs/05 "Special
+        # functions"), so a fan change is the unit's behaviour, not shadow drift.
+        node.no_collateral("sleep", before, {"fan_mode", "custom_fan_mode"})
 
     # --- 6. climate presets ------------------------------------------------------------
     # The special modes as climate presets, named like hisense-unified-ac. One preset can take
     # several writes 10 s apart (the A/C swallows a faster special-mode command), so each step
     # waits out the longest plan. The order walks through every kind of transition: set, combine,
     # replace eco with turbo, turbo to sleep, add eco under a running profile, sleep to quiet.
-    print("[presets]")
+    phase("presets")
     preset_wait = 35.0
     for name in ("eco", "eco_quiet", "turbo", "sleep_general", "eco_sleep_general", "quiet", "none"):
         if name in ("none", "eco"):
@@ -312,7 +343,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         record(f"preset {name}", got == name, f"got {got}")
 
     # --- restore ------------------------------------------------------------------------
-    print("\n[restore]")
+    phase("restore")
     if powered_here:
         client.climate_command(key=node.climate.key, mode=0)  # back off, as found
         await asyncio.sleep(6)
