@@ -35,6 +35,8 @@ from aioesphomeapi import APIClient
 
 # Fields the collateral check watches. Anything the test did not deliberately change must
 # still match after the step.
+# esphome ClimateFanMode values for the built-in names the ladder uses
+FAN_ENUM = {"auto": 2, "low": 3, "medium": 4, "high": 5}
 CLIMATE_FIELDS = ("mode", "target_temperature", "custom_fan_mode", "fan_mode", "swing_mode")
 
 results: list[tuple[str, bool, str]] = []
@@ -127,6 +129,9 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         print()
 
     settle = 6
+    # Eco / turbo / quiet / sleep go through the firmware's paced special-mode queue: each write
+    # waits 10 s after the previous one (the A/C swallows faster ones), then ~3 s to read back.
+    special_settle = 14
 
     # --- 0. power on (opt-in) -----------------------------------------------------------
     # Off by default: this starts a real compressor. Also the only test of the power path,
@@ -142,6 +147,15 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         record("power on takes (issue #7)", got_on, f"mode now {after.get('mode')}")
         powered_here = got_on
         powered_off = not got_on
+
+    # Special modes pin the fan (quiet/sleep low, turbo high) and the firmware refuses other
+    # speeds while they do, so start from no special mode. The baseline preset is put back at
+    # the end through the climate entity, which is one ordered plan rather than switch writes.
+    base_preset = _preset_name(node.states.get(node.climate.key))
+    if base_preset not in ("", "none"):
+        client.climate_command(key=node.climate.key, preset=0)
+        await asyncio.sleep(35)
+        print(f"  cleared baseline preset {base_preset} for the run")
 
     # --- 1. setpoint ------------------------------------------------------------------
     print("[setpoint]")
@@ -200,7 +214,9 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         after = node.climate_snapshot()
         moved = (before.get("fan_mode") != after.get("fan_mode")
                  or before.get("custom_fan_mode") != after.get("custom_fan_mode"))
-        record(f"fan {name}", moved or name == "auto",
+        already = before.get("custom_fan_mode") == name or \
+            before.get("fan_mode") == str(FAN_ENUM.get(name))
+        record(f"fan {name}", moved or already or name == "auto",
                f"fan_mode={after.get('fan_mode')} custom={after.get('custom_fan_mode')}")
         node.no_collateral(f"fan {name}", before, {"fan_mode", "custom_fan_mode"})
 
@@ -241,7 +257,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
             before = node.climate_snapshot()
             was = node.switch_state(mode_name)
             client.switch_command(key=e.key, state=not was)
-            await asyncio.sleep(settle)
+            await asyncio.sleep(special_settle)
             record(f"{mode_name} actuates", node.switch_state(mode_name) == (not was),
                    f"{was} -> {node.switch_state(mode_name)}")
             record(f"{mode_name} leaves display off",
@@ -260,9 +276,9 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
             else:
                 allowed = set()
             node.no_collateral(f"{mode_name}", before, allowed)
-            # put it back
+            # put it back, and let turbo's forced cool / 16 C land before the next mode's snapshot
             client.switch_command(key=e.key, state=bool(was))
-            await asyncio.sleep(settle)
+            await asyncio.sleep(special_settle)
 
     # --- 6. sleep profile --------------------------------------------------------------
     print("[sleep profile]")
@@ -271,7 +287,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         before = node.climate_snapshot()
         want = "General" if node.select_state("Sleep profile") != "General" else "Off"
         client.select_command(key=sleep_sel.key, state=want)
-        await asyncio.sleep(settle)
+        await asyncio.sleep(special_settle)
         record("sleep profile actuates", node.select_state("Sleep profile") == want,
                f"got {node.select_state('Sleep profile')}")
         record("sleep leaves display off",
@@ -292,12 +308,8 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         else:
             client.climate_command(key=node.climate.key, custom_preset=name)
         await asyncio.sleep(preset_wait)
-        s = node.states.get(node.climate.key)
-        custom = getattr(s, "custom_preset", "") or ""
-        builtin = str(getattr(s, "preset", ""))
-        got = custom or builtin
-        ok = got == name or (not custom and builtin.upper().endswith(name.upper()))
-        record(f"preset {name}", ok, f"got {got}")
+        got = _preset_name(node.states.get(node.climate.key))
+        record(f"preset {name}", got == name, f"got {got}")
 
     # --- restore ------------------------------------------------------------------------
     print("\n[restore]")
@@ -308,7 +320,22 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     if sleep_sel is not None and base_sleep:
         client.select_command(key=sleep_sel.key, state=base_sleep)
         await asyncio.sleep(3)
+    if base_swing := baseline.get("swing_mode"):
+        client.climate_command(key=node.climate.key, swing_mode=int(base_swing))
+        await asyncio.sleep(3)
+    # Special modes come back as ONE preset plan. Restoring them switch by switch replayed eco on
+    # and then turbo off, and byte33's neutral turbo-off write cleared eco again.
+    if base_preset not in ("", "none"):
+        if base_preset == "eco":
+            client.climate_command(key=node.climate.key, preset=5)
+        else:
+            client.climate_command(key=node.climate.key, custom_preset=base_preset)
+        print(f"  preset {base_preset} queued (settles over ~30 s)")
+    else:
+        client.climate_command(key=node.climate.key, preset=0)
     for name, was in base_switches.items():
+        if name in ("Eco", "Turbo", "Quiet"):
+            continue
         e = node.switches.get(name)
         if e is not None and was is not None:
             client.switch_command(key=e.key, state=was)
@@ -325,6 +352,21 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     failed = len(results) - passed
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0
+
+
+def _preset_name(state) -> str:
+    """The climate preset as its Home Assistant name. Built-ins arrive as enum ints."""
+    if state is None:
+        return ""
+    custom = getattr(state, "custom_preset", "") or ""
+    if custom:
+        return custom
+    builtin = getattr(state, "preset", None)
+    try:
+        return {0: "none", 5: "eco"}.get(int(builtin), str(builtin))
+    except (TypeError, ValueError):
+        text = str(builtin)
+        return "eco" if text.endswith("ECO") else "none" if text.endswith("NONE") else text
 
 
 def main() -> None:
