@@ -1,8 +1,22 @@
 diff --git a/src/app/clusters/fan-control-server/fan-control-server.cpp b/src/app/clusters/fan-control-server/fan-control-server.cpp
-index d1f1dd2b..abd8ae9a 100644
+index d1f1dd2b..36e157bc 100644
 --- a/src/app/clusters/fan-control-server/fan-control-server.cpp
 +++ b/src/app/clusters/fan-control-server/fan-control-server.cpp
-@@ -377,6 +377,20 @@ void MatterFanControlClusterServerAttributeChangedCallback(const app::ConcreteAt
+@@ -40,6 +40,13 @@ using namespace chip::app::Clusters;
+ using namespace chip::app::Clusters::FanControl;
+ using namespace chip::app::Clusters::FanControl::Attributes;
+ 
++// W41H1: true while the app itself publishes FanMode from the A/C's reported speed. That readback is
++// a bucket (Low/Medium/High) folded from six speeds, so mapping it back onto 33/66/100 below would
++// overwrite an in-between speed with the bucket's speed and re-command the A/C (Kitchen node: 42 %
++// landed on 58 %, 75 % on 100 %). The mapping is for client FanMode writes only. This callback runs
++// synchronously inside the app's FanMode::Set, so a flag around that call is exact.
++bool gW41h1AppFanModeWrite = false;
++
+ using Protocols::InteractionModel::Status;
+ 
+ namespace {
+@@ -377,6 +384,21 @@ void MatterFanControlClusterServerAttributeChangedCallback(const app::ConcreteAt
                                 ChipLogError(Zcl, "Failed to write SpeedSetting with error: 0x%02x", to_underlying(status)));
              }
          }
@@ -13,7 +27,8 @@ index d1f1dd2b..abd8ae9a 100644
 +        // only worked because HA sends it as percent=100). Map them onto a percentage so
 +        // the PercentSetting logic below drives the concrete speed
 +        // (33/66/100% -> SpeedSetting 2/4/6 at SpeedMax 6 -> Low/Mid/High on the bus).
-+        if (mode == FanModeEnum::kLow || mode == FanModeEnum::kMedium || mode == FanModeEnum::kHigh)
++        if (!gW41h1AppFanModeWrite &&
++            (mode == FanModeEnum::kLow || mode == FanModeEnum::kMedium || mode == FanModeEnum::kHigh))
 +        {
 +            Percent pct = (mode == FanModeEnum::kHigh) ? 100 : (mode == FanModeEnum::kMedium) ? 66 : 33;
 +            status      = PercentSetting::Set(attributePath.mEndpointId, pct);

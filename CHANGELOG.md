@@ -5,6 +5,17 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 [`firmware/src/version.txt`](firmware/src/version.txt) and
 [`firmware/esp32-matter/CMakeLists.txt`](firmware/esp32-matter/CMakeLists.txt)).
 
+## Unreleased
+
+### Fixed
+- AmebaZ2 1.3.33 -> 1.3.36: PercentSetting 42 / 75 landed one fan step up (58 / 100 %). The
+  connectedhomeip patch maps a FanMode of Low/Medium/High onto PercentSetting 33/66/100 so fan-card
+  presets reach the bus, but it also fired on the app's own FanMode readback, which folds six speeds
+  into three buckets, so an in-between speed was overwritten with the bucket's speed and
+  re-commanded. The mapping now skips writes flagged `gW41h1AppFanModeWrite` by the uplink. ESP32
+  builds its FanControl in code without that mapping and was not affected. (1.3.35 shipped a guard
+  on the wrong handler and is superseded.)
+
 ## Diagnostics exposed to Home Assistant - 2026-07-22
 
 ### Firmware

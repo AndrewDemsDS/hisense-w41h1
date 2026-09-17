@@ -58,6 +58,10 @@ static void hisense_breakglass_start(void);
 #include <system/SystemClock.h>                 // monotonic clock for the time-based sync hold-off (#61)
 
 #include <FreeRTOS.h>                            // taskENTER_CRITICAL for the s_status snapshot (#57)
+
+// Defined in the patched connectedhomeip fan-control-server.cpp (patches/connectedhomeip.patch):
+// set while the app publishes FanMode from the bus, so the server's client-preset mapping skips it.
+extern bool gW41h1AppFanModeWrite;
 #include <task.h>
 
 using namespace ::chip::app;
@@ -1694,8 +1698,14 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         FanAttr::SpeedCurrent::Set(kAirconEp, hisense_fan_raw_to_speed(st.fan_raw));
         // FanMode -> HA's fan entity reads THIS (not PercentCurrent) for on/off + preset,
         // so without it the fan shows off even while running. (docs/08)
+        // Flagged as our own write: the patched FanControl server maps a CLIENT Low/Medium/High
+        // onto PercentSetting 33/66/100, and applied to this folded readback it overwrote an
+        // in-between speed with the bucket's speed and re-commanded the A/C (#11, hardware
+        // 2026-09-17: 42 % -> 58 %, 75 % -> 100 %). The server callback runs inside Set().
+        gW41h1AppFanModeWrite = true;
         FanAttr::FanMode::Set(kAirconEp,
             (chip::app::Clusters::FanControl::FanModeEnum)hisense_fan_raw_to_fanmode(st.fan_raw, st.power_on));
+        gW41h1AppFanModeWrite = false;
         // Swing state -> RockSetting bitmap (vertical only; no H-swing motor on this unit,
         // so never report RockLeftRight even if the vestigial status bit is set)
         FanAttr::RockSetting::Set(kAirconEp, swing_to_rock(st.vswing_on, false));
