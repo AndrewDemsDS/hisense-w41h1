@@ -245,29 +245,40 @@ int main() {
         hisense_features_from_bitmap32(0, NULL);   // NULL must not crash
     }
 
-    // ---- FanMode write guard (#11) ------------------------------------------------------------
-    // AmebaZ2 re-enters its FanMode handler on its own uplink write. The readback of every speed
-    // must be recognised as a no-op, or in-between speeds get bumped to the bucket's representative.
-    printf("[fanmode write guard]\n");
-    for (unsigned i = 0; i < HISENSE_FAN_TABLE_LEN; i++) {
-        const HisenseFanRow &row = k_hisense_fan_table[i];
-        uint8_t readback = hisense_fan_raw_to_fanmode(row.raw, true);
-        CHECK(matter_fanmode_write_to_cmd(readback, row.cmd) == HISENSE_FAN_NOCHANGE,
-              "speed %u readback FanMode %u is an echo", row.speed, readback);
+    // ---- FanMode own-write echo ledger (#11) --------------------------------------------------
+    printf("[fanmode echo ledger]\n");
+    {
+        MatterEchoLedger l = { { 0 }, 0 };
+        CHECK(!matter_echo_consume(&l, 2), "empty ledger: a client write is not an echo");
+        matter_echo_note(&l, 2);                                   // readback Medium (medium-low)
+        CHECK(matter_echo_consume(&l, 2) && l.len == 0, "readback consumed once");
+        CHECK(!matter_echo_consume(&l, 2), "a later client Medium is acted on");
+
+        // fan-card Medium from Low: client writes 2, then a stale readback of Low arrives
+        matter_echo_note(&l, 1);                                   // uplink rewrites Low over HA's 2
+        CHECK(!matter_echo_consume(&l, 2), "client Medium is not mistaken for the Low readback");
+        CHECK(matter_echo_consume(&l, 1), "stale Low readback is skipped, not re-commanded");
+        matter_echo_note(&l, 2);                                   // A/C reaches medium
+        CHECK(matter_echo_consume(&l, 2) && l.len == 0, "final readback skipped");
+
+        // an entry whose event never arrived is dropped by a later match
+        matter_echo_note(&l, 1); matter_echo_note(&l, 3);
+        CHECK(matter_echo_consume(&l, 3) && l.len == 0, "match drops older stale entries");
+
+        // overflow drops the oldest
+        for (uint8_t v = 1; v <= 5; v++) matter_echo_note(&l, v);
+        CHECK(l.len == MATTER_ECHO_LEDGER_LEN && l.vals[0] == 2 && l.vals[3] == 5, "overflow keeps newest");
+        CHECK(!matter_echo_consume(&l, 1), "dropped entry is gone");
+
+        // every readback bucket of every ladder speed round-trips
+        for (unsigned i = 0; i < HISENSE_FAN_TABLE_LEN; i++) {
+            MatterEchoLedger e = { { 0 }, 0 };
+            uint8_t fm = hisense_fan_raw_to_fanmode(k_hisense_fan_table[i].raw, true);
+            matter_echo_note(&e, fm);
+            CHECK(matter_echo_consume(&e, fm), "speed %u readback FanMode %u is an echo",
+                  k_hisense_fan_table[i].speed, fm);
+        }
     }
-    CHECK(matter_fanmode_write_to_cmd(2, HISENSE_FAN_MED_LOW) == HISENSE_FAN_NOCHANGE,
-          "Medium over medium-low: no re-command to MID (the Kitchen bug)");
-    CHECK(matter_fanmode_write_to_cmd(3, HISENSE_FAN_MED_HIGH) == HISENSE_FAN_NOCHANGE,
-          "High over medium-high: no re-command to HIGH");
-    CHECK(matter_fanmode_write_to_cmd(3, HISENSE_FAN_MED_LOW) == HISENSE_FAN_HIGH,
-          "a different bucket still commands its speed");
-    CHECK(matter_fanmode_write_to_cmd(1, HISENSE_FAN_HIGH) == HISENSE_FAN_LOW, "High -> Low moves");
-    CHECK(matter_fanmode_write_to_cmd(5, HISENSE_FAN_MED_LOW) == HISENSE_FAN_AUTO, "Auto always applies");
-    CHECK(matter_fanmode_write_to_cmd(5, HISENSE_FAN_AUTO) == HISENSE_FAN_NOCHANGE, "Auto over auto: no-op");
-    CHECK(matter_fanmode_write_to_cmd(2, HISENSE_FAN_AUTO) == HISENSE_FAN_MID, "Medium from auto moves");
-    CHECK(matter_fanmode_write_to_cmd(4, HISENSE_FAN_MED_HIGH) == HISENSE_FAN_HIGH, "On -> full speed");
-    CHECK(matter_fanmode_write_to_cmd(0, HISENSE_FAN_LOW) == HISENSE_FAN_AUTO, "Off -> auto, as before");
-    // PercentSetting 42 / 75 -> in-between speed, and the readback does not undo it
     CHECK(percent_to_hisense_fan(42) == HISENSE_FAN_MED_LOW && percent_to_hisense_fan(75) == HISENSE_FAN_MED_HIGH,
           "42 / 75 percent -> medium-low / medium-high");
 

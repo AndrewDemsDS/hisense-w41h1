@@ -123,6 +123,10 @@ static HisenseCommand s_cmd = { HISENSE_MODE_COOL, 24, false,
                                 HISENSE_FAN_AUTO, HISENSE_SWING_OFF,
                                 HISENSE_SWING_OFF, HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
 
+// FanMode values the uplink has written and our own downlink handler must ignore (#11). Written on
+// the uplink path, consumed on the downlink event path: guarded with taskENTER_CRITICAL.
+static MatterEchoLedger s_fanmode_echo = { { 0 }, 0 };
+
 /* Latest parsed A/C status, written by the bus task, read by the downlink
  * handler. Poll cadence is seconds apart so a plain snapshot copy is adequate. */
 static volatile bool  s_status_fresh = false;
@@ -1399,10 +1403,14 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
             // HA's fan card writes FanMode when the user picks a Low/Medium/High/Auto
             // preset. The SDK FanControl server does NOT mirror FanMode->PercentSetting
             // here, so without this branch the preset was silently dropped. (v17 fix)
-            // Bucket-aware echo guard: our own FanMode readback of an in-between speed must not
-            // re-command the bucket's representative speed (#11, see matter_fanmode_write_to_cmd).
-            HisenseFanSpeed nf = matter_fanmode_write_to_cmd(aEvent->value._u8, s_cmd.fan);
-            if (nf == HISENSE_FAN_NOCHANGE) break;   // echo / same bucket
+            // Our own uplink FanMode readback arrives here too; skip it (#11, matter_echo_consume).
+            bool own_echo;
+            taskENTER_CRITICAL();
+            own_echo = matter_echo_consume(&s_fanmode_echo, aEvent->value._u8);
+            taskEXIT_CRITICAL();
+            if (own_echo) break;
+            HisenseFanSpeed nf = fanmode_to_hisense_fan(aEvent->value._u8);
+            if (nf == s_cmd.fan) break;   // no-op
             s_cmd.fan = nf;
             hisense_flush_command();
         }
@@ -1704,10 +1712,21 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // onto PercentSetting 33/66/100, and applied to this folded readback it overwrote an
         // in-between speed with the bucket's speed and re-commanded the A/C (#11, hardware
         // 2026-09-17: 42 % -> 58 %, 75 % -> 100 %). The server callback runs inside Set().
-        gW41h1AppFanModeWrite = true;
-        FanAttr::FanMode::Set(kAirconEp,
-            (chip::app::Clusters::FanControl::FanModeEnum)hisense_fan_raw_to_fanmode(st.fan_raw, st.power_on));
-        gW41h1AppFanModeWrite = false;
+        // The same readback is also queued to our own FanMode handler, which must not act on it:
+        // note the value first (only if it changes the attribute, or no event is posted).
+        {
+            uint8_t fm = hisense_fan_raw_to_fanmode(st.fan_raw, st.power_on);
+            chip::app::Clusters::FanControl::FanModeEnum cur;
+            if (FanAttr::FanMode::Get(kAirconEp, &cur) != chip::Protocols::InteractionModel::Status::Success ||
+                (uint8_t) cur != fm) {
+                taskENTER_CRITICAL();
+                matter_echo_note(&s_fanmode_echo, fm);
+                taskEXIT_CRITICAL();
+            }
+            gW41h1AppFanModeWrite = true;
+            FanAttr::FanMode::Set(kAirconEp, (chip::app::Clusters::FanControl::FanModeEnum) fm);
+            gW41h1AppFanModeWrite = false;
+        }
         // Swing state -> RockSetting bitmap (vertical only; no H-swing motor on this unit,
         // so never report RockLeftRight even if the vestigial status bit is set)
         FanAttr::RockSetting::Set(kAirconEp, swing_to_rock(st.vswing_on, false));

@@ -8,13 +8,14 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 ## Unreleased
 
 ### Fixed
-- AmebaZ2 1.3.33 -> 1.3.37: PercentSetting 42 / 75 landed one fan step up (58 / 100 %). The app
-  publishes FanMode by folding the six speeds into Low/Medium/High, and that readback caused two
-  re-commands of the bucket's speed: the connectedhomeip patch mapped it onto PercentSetting
-  33/66/100 (now skipped for writes the uplink flags with `gW41h1AppFanModeWrite`), and the app's
-  own FanMode handler compared the bucket's representative speed with the shadow (now
-  `matter_fanmode_write_to_cmd()`, host-tested: a FanMode naming the bucket the shadow is already in
-  is a no-op). ESP32 builds its FanControl in code, has neither path, and was not affected.
+- AmebaZ2 1.3.33 -> 1.3.38: PercentSetting 42 / 75 landed one fan step up (58 / 100 %). The app
+  publishes FanMode by folding the six speeds into Low/Medium/High, and that readback re-commanded
+  the bucket's speed along two paths: the connectedhomeip patch mapped it onto PercentSetting
+  33/66/100 (now skipped for writes flagged `gW41h1AppFanModeWrite`), and it was queued to the
+  app's own FanMode handler as if a client wrote it (now recorded in an own-write echo ledger,
+  `matter_echo_note/consume()`, and skipped). 1.3.35-1.3.37 tried a bucket comparison instead, which
+  let a stale readback undo a fan-card Medium press. ESP32 builds its FanControl in code, has neither
+  path, and was not affected.
 
 ## Diagnostics exposed to Home Assistant - 2026-07-22
 
