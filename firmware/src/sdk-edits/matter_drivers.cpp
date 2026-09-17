@@ -1399,8 +1399,10 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
             // HA's fan card writes FanMode when the user picks a Low/Medium/High/Auto
             // preset. The SDK FanControl server does NOT mirror FanMode->PercentSetting
             // here, so without this branch the preset was silently dropped. (v17 fix)
-            HisenseFanSpeed nf = fanmode_to_hisense_fan(aEvent->value._u8);
-            if (nf == s_cmd.fan) break;   // echo / no-op
+            // Bucket-aware echo guard: our own FanMode readback of an in-between speed must not
+            // re-command the bucket's representative speed (#11, see matter_fanmode_write_to_cmd).
+            HisenseFanSpeed nf = matter_fanmode_write_to_cmd(aEvent->value._u8, s_cmd.fan);
+            if (nf == HISENSE_FAN_NOCHANGE) break;   // echo / same bucket
             s_cmd.fan = nf;
             hisense_flush_command();
         }
