@@ -13,12 +13,22 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   across both firmwares. Special-mode writes (presets, switches, sleep select) share a paced queue
   that spaces them 10 s apart, and a fan change is refused while turbo, quiet or sleep owns the fan.
   New `supports_eco/quiet/turbo/sleep` options on the climate platform. The preset table, detection
-  and write plan are pure functions in `esphome_aircon_map.h` with host tests. AmebaZ2 1.3.33 ->
-  1.3.34 only because that header lives under `firmware/src/`; the Matter images are unchanged.
+  and write plan are pure functions in `esphome_aircon_map.h` with host tests. It lives under
+  `firmware/src/` but changes no Matter image.
 - ESPHome, **breaking**: fan modes are now `auto`, `low`, `medium_low`, `medium`, `medium_high`,
   `high`, matching `hisense-unified-ac`. `Medium-low` / `Medium-high` are renamed, and `quiet` is
   no longer a fan mode (use the `quiet` preset; the quiet step reads back as `low`). Update
   automations that set the old names.
+
+### Fixed
+- AmebaZ2 1.3.33 -> 1.3.38: PercentSetting 42 / 75 landed one fan step up (58 / 100 %). The app
+  publishes FanMode by folding the six speeds into Low/Medium/High, and that readback re-commanded
+  the bucket's speed along two paths: the connectedhomeip patch mapped it onto PercentSetting
+  33/66/100 (now skipped for writes flagged `gW41h1AppFanModeWrite`), and it was queued to the
+  app's own FanMode handler as if a client wrote it (now recorded in an own-write echo ledger,
+  `matter_echo_note/consume()`, and skipped). 1.3.35-1.3.37 tried a bucket comparison instead, which
+  let a stale readback undo a fan-card Medium press. ESP32 builds its FanControl in code, has neither
+  path, and was not affected.
 
 ## Diagnostics exposed to Home Assistant - 2026-07-22
 

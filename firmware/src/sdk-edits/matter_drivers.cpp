@@ -58,6 +58,10 @@ static void hisense_breakglass_start(void);
 #include <system/SystemClock.h>                 // monotonic clock for the time-based sync hold-off (#61)
 
 #include <FreeRTOS.h>                            // taskENTER_CRITICAL for the s_status snapshot (#57)
+
+// Defined in the patched connectedhomeip fan-control-server.cpp (patches/connectedhomeip.patch):
+// set while the app publishes FanMode from the bus, so the server's client-preset mapping skips it.
+extern bool gW41h1AppFanModeWrite;
 #include <task.h>
 
 using namespace ::chip::app;
@@ -118,6 +122,10 @@ static const chip::EndpointId kFaultEp     = 10; // BooleanState (Contact Sensor
 static HisenseCommand s_cmd = { HISENSE_MODE_COOL, 24, false,
                                 HISENSE_FAN_AUTO, HISENSE_SWING_OFF,
                                 HISENSE_SWING_OFF, HISENSE_FEATURE_NONE, HISENSE_DISPLAY_NOCHANGE };
+
+// FanMode values the uplink has written and our own downlink handler must ignore (#11). Written on
+// the uplink path, consumed on the downlink event path: guarded with taskENTER_CRITICAL.
+static MatterEchoLedger s_fanmode_echo = { { 0 }, 0 };
 
 /* Latest parsed A/C status, written by the bus task, read by the downlink
  * handler. Poll cadence is seconds apart so a plain snapshot copy is adequate. */
@@ -1395,8 +1403,14 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
             // HA's fan card writes FanMode when the user picks a Low/Medium/High/Auto
             // preset. The SDK FanControl server does NOT mirror FanMode->PercentSetting
             // here, so without this branch the preset was silently dropped. (v17 fix)
+            // Our own uplink FanMode readback arrives here too; skip it (#11, matter_echo_consume).
+            bool own_echo;
+            taskENTER_CRITICAL();
+            own_echo = matter_echo_consume(&s_fanmode_echo, aEvent->value._u8);
+            taskEXIT_CRITICAL();
+            if (own_echo) break;
             HisenseFanSpeed nf = fanmode_to_hisense_fan(aEvent->value._u8);
-            if (nf == s_cmd.fan) break;   // echo / no-op
+            if (nf == s_cmd.fan) break;   // no-op
             s_cmd.fan = nf;
             hisense_flush_command();
         }
@@ -1694,8 +1708,25 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         FanAttr::SpeedCurrent::Set(kAirconEp, hisense_fan_raw_to_speed(st.fan_raw));
         // FanMode -> HA's fan entity reads THIS (not PercentCurrent) for on/off + preset,
         // so without it the fan shows off even while running. (docs/08)
-        FanAttr::FanMode::Set(kAirconEp,
-            (chip::app::Clusters::FanControl::FanModeEnum)hisense_fan_raw_to_fanmode(st.fan_raw, st.power_on));
+        // Flagged as our own write: the patched FanControl server maps a CLIENT Low/Medium/High
+        // onto PercentSetting 33/66/100, and applied to this folded readback it overwrote an
+        // in-between speed with the bucket's speed and re-commanded the A/C (#11, hardware
+        // 2026-09-17: 42 % -> 58 %, 75 % -> 100 %). The server callback runs inside Set().
+        // The same readback is also queued to our own FanMode handler, which must not act on it:
+        // note the value first (only if it changes the attribute, or no event is posted).
+        {
+            uint8_t fm = hisense_fan_raw_to_fanmode(st.fan_raw, st.power_on);
+            chip::app::Clusters::FanControl::FanModeEnum cur;
+            if (FanAttr::FanMode::Get(kAirconEp, &cur) != chip::Protocols::InteractionModel::Status::Success ||
+                (uint8_t) cur != fm) {
+                taskENTER_CRITICAL();
+                matter_echo_note(&s_fanmode_echo, fm);
+                taskEXIT_CRITICAL();
+            }
+            gW41h1AppFanModeWrite = true;
+            FanAttr::FanMode::Set(kAirconEp, (chip::app::Clusters::FanControl::FanModeEnum) fm);
+            gW41h1AppFanModeWrite = false;
+        }
         // Swing state -> RockSetting bitmap (vertical only; no H-swing motor on this unit,
         // so never report RockLeftRight even if the vestigial status bit is set)
         FanAttr::RockSetting::Set(kAirconEp, swing_to_rock(st.vswing_on, false));

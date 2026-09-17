@@ -245,6 +245,43 @@ int main() {
         hisense_features_from_bitmap32(0, NULL);   // NULL must not crash
     }
 
+    // ---- FanMode own-write echo ledger (#11) --------------------------------------------------
+    printf("[fanmode echo ledger]\n");
+    {
+        MatterEchoLedger l = { { 0 }, 0 };
+        CHECK(!matter_echo_consume(&l, 2), "empty ledger: a client write is not an echo");
+        matter_echo_note(&l, 2);                                   // readback Medium (medium-low)
+        CHECK(matter_echo_consume(&l, 2) && l.len == 0, "readback consumed once");
+        CHECK(!matter_echo_consume(&l, 2), "a later client Medium is acted on");
+
+        // fan-card Medium from Low: client writes 2, then a stale readback of Low arrives
+        matter_echo_note(&l, 1);                                   // uplink rewrites Low over HA's 2
+        CHECK(!matter_echo_consume(&l, 2), "client Medium is not mistaken for the Low readback");
+        CHECK(matter_echo_consume(&l, 1), "stale Low readback is skipped, not re-commanded");
+        matter_echo_note(&l, 2);                                   // A/C reaches medium
+        CHECK(matter_echo_consume(&l, 2) && l.len == 0, "final readback skipped");
+
+        // an entry whose event never arrived is dropped by a later match
+        matter_echo_note(&l, 1); matter_echo_note(&l, 3);
+        CHECK(matter_echo_consume(&l, 3) && l.len == 0, "match drops older stale entries");
+
+        // overflow drops the oldest
+        for (uint8_t v = 1; v <= 5; v++) matter_echo_note(&l, v);
+        CHECK(l.len == MATTER_ECHO_LEDGER_LEN && l.vals[0] == 2 && l.vals[3] == 5, "overflow keeps newest");
+        CHECK(!matter_echo_consume(&l, 1), "dropped entry is gone");
+
+        // every readback bucket of every ladder speed round-trips
+        for (unsigned i = 0; i < HISENSE_FAN_TABLE_LEN; i++) {
+            MatterEchoLedger e = { { 0 }, 0 };
+            uint8_t fm = hisense_fan_raw_to_fanmode(k_hisense_fan_table[i].raw, true);
+            matter_echo_note(&e, fm);
+            CHECK(matter_echo_consume(&e, fm), "speed %u readback FanMode %u is an echo",
+                  k_hisense_fan_table[i].speed, fm);
+        }
+    }
+    CHECK(percent_to_hisense_fan(42) == HISENSE_FAN_MED_LOW && percent_to_hisense_fan(75) == HISENSE_FAN_MED_HIGH,
+          "42 / 75 percent -> medium-low / medium-high");
+
     printf("== %d passed, %d failed ==\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -126,6 +126,51 @@ static inline HisenseFanSpeed fanmode_to_hisense_fan(uint8_t fanmode)
     }
 }
 
+/* Own-write echo ledger for FanMode (#11).
+ *
+ * The uplink publishes FanMode from the A/C's reported speed, folded into Low/Medium/High. On
+ * AmebaZ2 every attribute change, including that local write, is queued as a downlink event and
+ * handled later on another task, so the handler cannot tell our readback from a client's write.
+ * Treated as a client write, the readback re-commanded the bucket's speed: an in-between speed
+ * jumped a step (42 % -> 58 %), and a readback of the OLD bucket that landed after a fan-card
+ * Medium press put the unit back on Low (hardware 2026-09-17).
+ *
+ * So the uplink notes each FanMode value it is about to write (only when it changes the attribute,
+ * since an unchanged write posts no event), and the handler consumes a matching entry instead of
+ * acting on it. Events arrive in post order; a match drops that entry and any older ones (a stale
+ * entry can only mean its event was lost). A client write that happens to equal a pending readback
+ * is also skipped, which is harmless: it names what the A/C is already reporting. Fixed size, the
+ * oldest entry is dropped on overflow. */
+#define MATTER_ECHO_LEDGER_LEN 4
+typedef struct {
+    uint8_t vals[MATTER_ECHO_LEDGER_LEN];
+    uint8_t len;
+} MatterEchoLedger;
+
+static inline void matter_echo_note(MatterEchoLedger *l, uint8_t v)
+{
+    unsigned i;
+    if (l->len >= MATTER_ECHO_LEDGER_LEN) {
+        for (i = 1; i < MATTER_ECHO_LEDGER_LEN; i++) l->vals[i - 1] = l->vals[i];
+        l->len = MATTER_ECHO_LEDGER_LEN - 1;
+    }
+    l->vals[l->len++] = v;
+}
+
+static inline bool matter_echo_consume(MatterEchoLedger *l, uint8_t v)
+{
+    unsigned i, j, drop;
+    for (i = 0; i < l->len; i++) {
+        if (l->vals[i] == v) {
+            drop = i + 1;
+            for (j = drop; j < l->len; j++) l->vals[j - drop] = l->vals[j];
+            l->len = (uint8_t) (l->len - drop);
+            return true;
+        }
+    }
+    return false;
+}
+
 /* status wind_status byte -> SpeedCurrent (1..6), 0 = auto/unknown. */
 static inline uint8_t hisense_fan_raw_to_speed(uint8_t raw)
 {
