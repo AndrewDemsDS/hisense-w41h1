@@ -234,29 +234,84 @@ acceptable outcome: once images are signed, the fetch transport carries no autho
 downgrade attack gets an attacker a rejected image and a log line. If HTTPS does fit, pin the server
 certificate rather than shipping a CA bundle.
 
-## 5. The server (issue #104 proper)
+## 5. Where the images live (issue #104 proper)
 
-Only now does the server matter, because at this point it is a convenience, not a trust anchor.
+Only now does hosting matter, because at this point the server is a convenience rather than a trust
+anchor.
 
-- A systemd unit or container on the Pi serving a read-only docroot over HTTP, on a reserved LAN
-  address (`192.168.1.x` here, real value in the gitignored `ota-release.env`).
-- **The URL is baked at compile time.** Changing the server's address means reflashing every node,
-  which is the fragility that turns a convenience into a trap. Use a name or a DHCP reservation that
-  will not move, and write the consequence into the traps list in
-  `10-firmware-ota-procedure.md`.
-- Layout: versioned files plus a `current` symlink per target and per flavour, for example
-  `esp32c3/esp32-v1.4.2-release.bin` with `esp32c3/current-release.bin` pointing at it. Serve the
-  **release** flavour by default. Never let `current` resolve to a debug image: the debug `:2323`
-  console is unauthenticated and drives the A/C bus, and the flavour lives in the filename rather
-  than the version, so a symlink is the exact place that mistake gets made.
-- The AmebaZ2 file must be the build's `firmware_is.bin` with the correct FWHS serial, per section 11
-  of the OTA procedure doc. Serving an image whose serial was not bumped produces an OTA that applies
-  and then silently reverts.
-- Publishing is a new `stage` target in `ota-release.sh` and `esp32-release.sh`, beside the existing
-  scp of the `.ota` and manifest to the matter-server provider directory. Same ssh pattern, same
-  key, one more destination.
-- Serve checksums beside the images. They are not a security control once signing is on, but they
-  catch a truncated upload before a node does.
+### What already exists, because #104's text is stale
+
+The issue says the image is "served ad-hoc" at a transient address. That has not been true for a
+while. `firmware/scripts/ota-guards.sh:105` defines `pi_http_publish()`, and **both** release scripts
+already call it as part of `stage`: `ota-release.sh:579` for the AmebaZ2 and `esp32-release.sh:294`
+for the ESP32. Each call copies the raw `.bin` into a persistent, user-owned docroot (`PI_HTTP_DIR`)
+served by a `restart=always` `ota-http` container on the Pi, keeps a per-target, per-version,
+per-flavour copy under `archive/`, and repoints the stable basename that deployed nodes fetch
+(`rac-ota.bin` for the AmebaZ2, `esp32-ota.bin` for the ESP32). Those basenames are compile-time
+constants in the firmware, so they can never be renamed for nodes already in the field.
+
+So the persistent server asked for in #104 is running and wired in. What is missing is everything
+that makes it survive its own host.
+
+### Where each artifact should live, and why it is not one place
+
+| Artifact | Home | Why |
+|---|---|---|
+| Device-facing current image | The Pi `ota-http` container | The only host the device can actually fetch from, see below |
+| Per-version archive | Same docroot, `archive/` | Lets `revert` fetch an older image without a rebuild |
+| Release copy of record | GitHub release assets | Durable, offsite, already how the project publishes |
+| Delta bases and the signing key | `firmware/built-images/` plus an off-Pi backup | Losing either strands every node on USB |
+
+**The device cannot fetch from GitHub, and that decides the origin.** Release asset URLs are HTTPS
+and redirect, while `https_ota_task()` builds an `esp_http_client_config_t` with a URL, a timeout and
+keep-alive and nothing else: no `cert_pem`, no `crt_bundle_attach`, and no cert bundle enabled in
+`sdkconfig.defaults`. `CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y` is what makes the current fetch work at
+all. So as long as break-glass is plain HTTP (section 4 argues that is acceptable once images are
+signed), the origin the device points at must be on the LAN. GitHub is the archive humans and
+python-matter-server use, not a URL that can be baked into firmware.
+
+That also settles the tempting idea of a second baked mirror for redundancy: the URL is a single
+compile-time constant, so there is no failover to point at. Redundancy for this path is a docroot
+that can be rebuilt quickly, not a second address.
+
+Note `OTA_RELEASE_BASE` (#79) is currently unset, so manifests still carry a local `file://` `otaUrl`
+into the Pi provider directory. Setting it is orthogonal to this section: it moves the big `.ota` for
+the **Matter** path into the GitHub release, where python-matter-server downloads it over HTTPS and
+re-serves it over BDX. That is worth doing and it does not help break-glass.
+
+### What is actually left to do
+
+1. **The `ota-http` service is not in the repo.** It exists only as state on the Pi: no compose file,
+   no unit, no documentation of the port or the bind address anywhere in the tree. An SD card failure
+   takes the break-glass path with it, silently, and it would be noticed on the day it is needed.
+   Check in the service definition and a short bring-up note, with the real paths in the gitignored
+   `ota-release.env` as usual.
+2. **A documented rebuild path for the docroot.** From `firmware/built-images/` on the build box, or
+   from the GitHub release assets. One command, written down, tested once.
+3. **`stage` should verify, not assume.** After publishing, `GET` the current-image path back and
+   compare its SHA-256 against the local file. This is the same principle as section 14 of the OTA
+   procedure doc, trust the device rather than the tool, applied to the mirror.
+4. **Fix the flavour hole in the current-image pointer.** `stage()` in `ota-release.sh` goes to real
+   trouble to keep the debug and release `.ota` apart, because both flavours share one version int
+   and staging the wrong one is invisible. The HTTP mirror does not do the same: the archive name
+   carries the flavour (`rac-v$v$sfx.bin`, `$(idf_target)-v$int-$flav.bin`) but the current-image
+   basename passed to `pi_http_publish` is flavour-blind in both scripts. Staging a debug build
+   therefore repoints the URL **every deployed node's break-glass fetches** at a debug image, whose
+   `:2323` console is unauthenticated and drives the A/C bus. Either refuse to repoint the pointer
+   from a debug stage, or give debug its own basename and accept that debug nodes need their own
+   baked URL.
+5. **Address stability.** The URL is baked at compile time, so moving the server means reflashing
+   every node. Pin it with a DHCP reservation or a name that will not move, and put that consequence
+   in the traps list in `10-firmware-ota-procedure.md`.
+6. **Serve the archive and an index.** The archive directory already exists on disk; exposing it
+   turns a manual scp into a URL that `revert` can use.
+7. **Checksums beside the images.** Not a security control once signing is on, but they catch a
+   truncated upload before a node does.
+
+One consequence worth stating plainly: once images are signed, this docroot stops being sensitive.
+It can be world-readable on the LAN, rebuilt from anywhere, or mirrored without ceremony, because a
+tampered image is rejected by the device rather than by the server. That is the payoff for doing
+section 2 before this section.
 
 ## 6. Key management
 
@@ -314,8 +369,10 @@ running version disagrees with the archive marker.
 `firmware/scripts/dev.py`. Exit criterion: a captured exchange replayed verbatim is refused, and the
 old bare-token path still works for nodes flashed before the change.
 
-**Phase 4. The server and the `stage` targets.** Exit criterion: break-glass recovery on both targets
-with no manual file copying, from a cold start of the server.
+**Phase 4. Make the mirror survive its host.** The seven items in section 5. The flavour hole (item 4)
+is a bug rather than a feature and can land first, on its own. Exit criterion: the `ota-http` service
+is reproducible from the repo, `stage` verifies what it published, and break-glass recovery works on
+both targets after rebuilding the docroot from scratch.
 
 **Phase 5. AmebaZ2 verify-before-reset.** Independent of #75 and worth doing regardless. Exit
 criterion: a corrupted image written to the idle slot is rejected on-device, and the node stays up.
