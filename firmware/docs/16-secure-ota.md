@@ -281,10 +281,12 @@ re-serves it over BDX. That is worth doing and it does not help break-glass.
 
 ### What is actually left to do
 
-1. **The `ota-http` service is not in the repo.** It exists only as state on the Pi: no compose file,
-   no unit, no documentation of the port or the bind address anywhere in the tree. An SD card failure
-   takes the break-glass path with it, silently, and it would be noticed on the day it is needed.
-   Check in the service definition and a short bring-up note, with the real paths in the gitignored
+1. **The `ota-http` service is declared nowhere.** Not in this repo, and not in the homelab
+   infrastructure repo either: no compose file, no unit, no record of the port or the bind address.
+   It exists only as state on the Pi, so an SD card failure takes the break-glass path with it
+   silently, to be discovered on the day it is needed. The service definition belongs in the homelab
+   repo rather than here, since it is infrastructure and not firmware; what belongs in this repo is a
+   pointer to it and a bring-up note, with the real paths staying in the gitignored
    `ota-release.env` as usual.
 2. **A documented rebuild path for the docroot.** From `firmware/built-images/` on the build box, or
    from the GitHub release assets. One command, written down, tested once.
@@ -299,12 +301,17 @@ re-serves it over BDX. That is worth doing and it does not help break-glass.
    therefore repoints the URL **every deployed node's break-glass fetches** at a debug image, whose
    `:2323` console is unauthenticated and drives the A/C bus. Either refuse to repoint the pointer
    from a debug stage, or give debug its own basename and accept that debug nodes need their own
-   baked URL.
+   baked URL. On the ESP32 side note that `ESP32_FLAVOUR` defaults to `debug`
+   (`esp32-release.sh:293`), so the flavour-blind pointer is the default path rather than an edge
+   case. Whichever fix is taken, it must not touch `.released-version-<target>`: that marker is
+   written by `flash` after the on-device version is confirmed (`esp32-release.sh:422`), not by
+   `stage`, and section 3 already has one desync problem to fix there without adding a second.
 5. **Address stability.** The URL is baked at compile time, so moving the server means reflashing
    every node. Pin it with a DHCP reservation or a name that will not move, and put that consequence
    in the traps list in `10-firmware-ota-procedure.md`.
-6. **Serve the archive and an index.** The archive directory already exists on disk; exposing it
-   turns a manual scp into a URL that `revert` can use.
+6. **Serve the archive and an index.** The archive directory already exists on disk, so exposing it
+   turns a manual scp into a URL that `revert` can use. `// VERIFY` whether the container already
+   does directory listing, in which case this collapses to writing the URL down.
 7. **Checksums beside the images.** Not a security control once signing is on, but they catch a
    truncated upload before a node does.
 
