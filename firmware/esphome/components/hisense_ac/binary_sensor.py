@@ -88,12 +88,7 @@ CONFIG_SCHEMA = (
             ),
         }
     )
-    .extend(
-        {
-            cv.Optional(key): _diagnostic(DEVICE_CLASS_PROBLEM)
-            for key in FAULT_BITS
-        }
-    )
+    .extend({cv.Optional(key): _diagnostic(DEVICE_CLASS_PROBLEM) for key in FAULT_BITS})
     .extend({cv.Optional(key): _diagnostic() for key in CAPABILITY_BITS})
     .extend(HISENSE_AC_CLIENT_SCHEMA)
 )

@@ -30,7 +30,14 @@ Or `firmware/scripts/dev.py flash esphome --board c3 --port <port>` from the rep
 |---|---|
 | `w41h1.yaml` | reference config; board and pins are substitutions |
 | `components/hisense_ac/` | the custom component: hub, climate, switches, select, sensors |
+| `tests/hisense_ac/` | every option of every platform, in the layout of ESPHome's own `tests/components/<name>/` |
+| `tests/build.*.yaml` | repo-only harness so `esphome config` and `esphome compile` can run those tests (CI runs `config`) |
 | `secrets.yaml.example` | template for the gitignored `secrets.yaml` |
+
+The component code follows ESPHome's upstream standards (their `.clang-format`, ruff format, and
+the `script/ci-custom.py` rules), so it can be proposed upstream without a style pass. The shared
+driver under `firmware/src/rs485-driver/` does not, and is not meant to: it also has to build on
+AmebaZ2.
 
 The component registers `firmware/src/rs485-driver/` and `../esp32-matter/components/hisense_hal`
 as local IDF components, so the driver compiles in place with no copy. There is deliberately no

@@ -1,0 +1,20 @@
+# Repo-only harness: supplies what ESPHome's own tests/test_build_components base config would,
+# so `esphome config` (CI) and `esphome compile` can run the upstream-shaped test for esp32-c3-idf.
+esphome:
+  name: hisense-ac-test
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [hisense_ac]
+
+packages:
+  hisense_ac: !include hisense_ac/test.esp32-c3-idf.yaml

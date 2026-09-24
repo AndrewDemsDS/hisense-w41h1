@@ -22,11 +22,16 @@ static bool fan_index_is_custom(uint8_t idx) { return idx == 3 || idx == 5; }
 
 static climate::ClimateFanMode fan_index_to_enum(uint8_t idx) {
   switch (idx) {
-    case 0: return climate::CLIMATE_FAN_AUTO;
-    case 1: return climate::CLIMATE_FAN_LOW;   // quiet step: not a fan mode, shows as low
-    case 2: return climate::CLIMATE_FAN_LOW;
-    case 4: return climate::CLIMATE_FAN_MEDIUM;
-    default: return climate::CLIMATE_FAN_HIGH;
+    case 0:
+      return climate::CLIMATE_FAN_AUTO;
+    case 1:
+      return climate::CLIMATE_FAN_LOW;  // quiet step: not a fan mode, shows as low
+    case 2:
+      return climate::CLIMATE_FAN_LOW;
+    case 4:
+      return climate::CLIMATE_FAN_MEDIUM;
+    default:
+      return climate::CLIMATE_FAN_HIGH;
   }
 }
 
@@ -48,8 +53,7 @@ static_assert((int) climate::CLIMATE_ACTION_FAN == ESPHOME_CLIMATE_ACTION_FAN, "
 static_assert((int) climate::CLIMATE_SWING_OFF == ESPHOME_CLIMATE_SWING_OFF, "ClimateSwingMode drift");
 static_assert((int) climate::CLIMATE_SWING_BOTH == ESPHOME_CLIMATE_SWING_BOTH, "ClimateSwingMode drift");
 static_assert((int) climate::CLIMATE_SWING_VERTICAL == ESPHOME_CLIMATE_SWING_VERTICAL, "ClimateSwingMode drift");
-static_assert((int) climate::CLIMATE_SWING_HORIZONTAL == ESPHOME_CLIMATE_SWING_HORIZONTAL,
-              "ClimateSwingMode drift");
+static_assert((int) climate::CLIMATE_SWING_HORIZONTAL == ESPHOME_CLIMATE_SWING_HORIZONTAL, "ClimateSwingMode drift");
 static_assert(ESPHOME_FAN_INDEX_MAX == (int) HISENSE_FAN_TABLE_LEN, "fan ladder drift");
 static_assert((int) climate::CLIMATE_FAN_AUTO == ESPHOME_CLIMATE_FAN_AUTO, "ClimateFanMode drift");
 static_assert((int) climate::CLIMATE_FAN_LOW == ESPHOME_CLIMATE_FAN_LOW, "ClimateFanMode drift");
@@ -82,9 +86,8 @@ void HisenseClimate::setup() {
 climate::ClimateTraits HisenseClimate::traits() {
   auto traits = climate::ClimateTraits();
 
-  traits.set_supported_modes({climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL,
-                              climate::CLIMATE_MODE_DRY, climate::CLIMATE_MODE_FAN_ONLY,
-                              climate::CLIMATE_MODE_HEAT_COOL});
+  traits.set_supported_modes({climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL, climate::CLIMATE_MODE_DRY,
+                              climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_HEAT_COOL});
   if (this->supports_heat_)
     traits.add_supported_mode(climate::CLIMATE_MODE_HEAT);
 
@@ -95,8 +98,8 @@ climate::ClimateTraits HisenseClimate::traits() {
   }
 
   // Without this, validate_() silently resets any built-in fan mode and the command vanishes.
-  traits.set_supported_fan_modes({climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM,
-                                  climate::CLIMATE_FAN_HIGH});
+  traits.set_supported_fan_modes(
+      {climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_HIGH});
 
   // none + eco ride the built-in enum (see esphome_aircon_map.h); the rest are the custom
   // presets registered in setup(). No special modes at all means no preset control.
@@ -106,8 +109,7 @@ climate::ClimateTraits HisenseClimate::traits() {
       traits.add_supported_preset(climate::CLIMATE_PRESET_ECO);
   }
 
-  traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE |
-                           climate::CLIMATE_SUPPORTS_ACTION);
+  traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE | climate::CLIMATE_SUPPORTS_ACTION);
   traits.set_visual_min_temperature(this->visual_min_);
   traits.set_visual_max_temperature(this->visual_max_);
   traits.set_visual_target_temperature_step(1.0f);
@@ -148,8 +150,8 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   if (call.get_target_temperature().has_value()) {
     // The A/C reads byte 19 in its panel's unit, so an F panel needs the value in F (#117).
     const HisenseState &st = this->parent_->last_state();
-    int wanted = esphome_setpoint_to_cmd((int) lroundf(*call.get_target_temperature()),
-                                         st.valid && st.temp_unit_f, &cmd);
+    int wanted =
+        esphome_setpoint_to_cmd((int) lroundf(*call.get_target_temperature()), st.valid && st.temp_unit_f, &cmd);
     this->target_temperature = (float) wanted;
     send_combined = true;
   }
@@ -172,8 +174,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   // A mode that owns the fan (turbo, quiet, sleep) overwrites any other speed about a second
   // later. Refuse instead of acknowledging a change that undoes itself, and keep showing the
   // pinned speed. Same rule as the wrapper's fan_mode_forced_by_preset.
-  if (wanted_index >= 0 &&
-      !esphome_fan_request_allowed(&this->parent_->projected_special(), (uint8_t) wanted_index)) {
+  if (wanted_index >= 0 && !esphome_fan_request_allowed(&this->parent_->projected_special(), (uint8_t) wanted_index)) {
     ESP_LOGW(TAG, "fan change refused: an active special mode (turbo/quiet/sleep) owns the fan");
     wanted_index = -1;
   }
@@ -220,16 +221,14 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
 
 void HisenseClimate::update_from_bus(const HisenseState &state, bool holdoff) {
   this->current_temperature = state.indoor_temp_c;
-  this->action = (climate::ClimateAction) hisense_to_climate_action(state.power_on, state.mode,
-                                                                    state.compressor_freq);
+  this->action = (climate::ClimateAction) hisense_to_climate_action(state.power_on, state.mode, state.compressor_freq);
   // During the hold-off the frame may predate the user's command, so only telemetry is taken
   // from it. Everything the user can move is left showing what they asked for.
   if (!holdoff) {
-    this->mode = state.power_on ? (climate::ClimateMode) hisense_mode_to_esphome(state.mode)
-                                : climate::CLIMATE_MODE_OFF;
+    this->mode =
+        state.power_on ? (climate::ClimateMode) hisense_mode_to_esphome(state.mode) : climate::CLIMATE_MODE_OFF;
     this->target_temperature = state.setpoint_c;
-    this->swing_mode = (climate::ClimateSwingMode) hisense_to_climate_swing(state.vswing_on,
-                                                                           state.hswing_on);
+    this->swing_mode = (climate::ClimateSwingMode) hisense_to_climate_swing(state.vswing_on, state.hswing_on);
     uint8_t idx = hisense_fan_raw_to_esphome_index(state.fan_raw);
     if (idx <= ESPHOME_FAN_INDEX_MAX)
       this->publish_fan_index(idx);
@@ -246,7 +245,7 @@ void HisenseClimate::update_from_bus(const HisenseState &state, bool holdoff) {
 }
 
 void HisenseClimate::publish_fan_index(uint8_t idx) {
-  idx = esphome_fan_published_index(idx);   // quiet (1) shows as low; see esphome_aircon_map.h
+  idx = esphome_fan_published_index(idx);  // quiet (1) shows as low; see esphome_aircon_map.h
   if (fan_index_is_custom(idx)) {
     this->set_custom_fan_mode_(idx == 3 ? FAN_CUSTOM_MEDIUM_LOW : FAN_CUSTOM_MEDIUM_HIGH);
   } else {
@@ -282,8 +281,9 @@ int HisenseClimate::preset_request_index_(const climate::ClimateCall &call) cons
     }
   }
   if (idx < 0 || !esphome_preset_available((uint8_t) idx, this->preset_support_)) {
-    if (call.has_custom_preset() || call.get_preset().has_value())
+    if (call.has_custom_preset() || call.get_preset().has_value()) {
       ESP_LOGW(TAG, "unsupported preset requested");
+    }
     return -1;
   }
   return idx;

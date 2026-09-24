@@ -12,10 +12,10 @@ mainboard. Pins therefore belong to this component, and there is no `uart:` bloc
 
 from pathlib import Path
 
-import esphome.codegen as cg
-import esphome.config_validation as cv
 from esphome import pins
+import esphome.codegen as cg
 from esphome.components.esp32 import add_idf_component
+import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_RX_PIN, CONF_TX_PIN
 
 CODEOWNERS = ["@AndrewDemsDS"]
@@ -27,7 +27,8 @@ DEPENDENCIES = ["esp32"]
 # the repo and no sync step to forget. (Copying or symlinking them into this directory also
 # works for the sources, but not for the headers: ESPHome drops -I flags on the ESP-IDF
 # framework, forwarding only -D and -W, so the driver's <platform_stdlib.h> would not resolve.)
-_COMPONENT_DIR = Path(__file__).resolve().parent  # firmware/esphome/components/hisense_ac
+# firmware/esphome/components/hisense_ac
+_COMPONENT_DIR = Path(__file__).resolve().parent
 _FIRMWARE_ROOT = _COMPONENT_DIR.parents[2]  # firmware/
 _IDF_COMPONENTS = {
     "hisense_hal": _FIRMWARE_ROOT / "esp32-matter" / "components" / "hisense_hal",

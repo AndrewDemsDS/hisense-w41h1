@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 from esphome.components import switch
 import esphome.config_validation as cv
-from esphome.const import ENTITY_CATEGORY_CONFIG
+from esphome.const import CONF_DISPLAY, ENTITY_CATEGORY_CONFIG
 
 from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA, hisense_ac_ns
 
@@ -13,7 +13,6 @@ SwitchKind = hisense_ac_ns.enum("SwitchKind")
 CONF_ECO = "eco"
 CONF_TURBO = "turbo"
 CONF_QUIET = "quiet"
-CONF_DISPLAY = "display"
 
 # Declare only the ones your unit has: the `capabilities` text sensor reports what the A/C
 # answers to the ProductType poll, and an absent capability means the switch does nothing.

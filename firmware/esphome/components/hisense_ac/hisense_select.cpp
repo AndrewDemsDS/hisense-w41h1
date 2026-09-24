@@ -26,8 +26,7 @@ void HisenseSleepSelect::control(const std::string &value) {
 }
 
 void HisenseSleepSelect::on_status(const HisenseState &state) {
-  if (this->parent_ != nullptr &&
-      (this->parent_->in_command_holdoff() || this->parent_->special_busy()))
+  if (this->parent_ != nullptr && (this->parent_->in_command_holdoff() || this->parent_->special_busy()))
     return;
   // Status carries profile * 2 (0x00 off, 0x02 General, 0x04 Old, 0x06 Young, 0x08 Kids).
   uint8_t profile = (uint8_t) (state.sleep_raw / 2);

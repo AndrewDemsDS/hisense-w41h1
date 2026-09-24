@@ -1,7 +1,7 @@
 #pragma once
 // Sleep profile: the ep6 ModeSelect endpoint of the Matter builds, as an ESPHome select.
 // Profiles are Off / General / Old / Young / Kids, confirmed on hardware as status byte 17
-// = profile * 2 and command byte 17 = profile * 2 + 1.
+// = profile * 2 and command byte 17 is profile * 2 + 1.
 #include "esphome/core/defines.h"
 #ifdef USE_SELECT
 #include "esphome/components/select/select.h"

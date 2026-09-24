@@ -30,13 +30,11 @@ void HisenseSwitch::write_state(bool state) {
       // clearing eco sends the explicit eco-off value rather than the neutral one (which
       // clears turbo instead).
       this->parent_->enqueue_special(
-          {HISENSE_SPECIAL_OP_FEATURE,
-           (uint8_t) (state ? HISENSE_FEATURE_ECO : HISENSE_FEATURE_ECO_OFF)});
+          {HISENSE_SPECIAL_OP_FEATURE, (uint8_t) (state ? HISENSE_FEATURE_ECO : HISENSE_FEATURE_ECO_OFF)});
       break;
     case SWITCH_TURBO:
       this->parent_->enqueue_special(
-          {HISENSE_SPECIAL_OP_FEATURE,
-           (uint8_t) (state ? HISENSE_FEATURE_TURBO : HISENSE_FEATURE_NONE)});
+          {HISENSE_SPECIAL_OP_FEATURE, (uint8_t) (state ? HISENSE_FEATURE_TURBO : HISENSE_FEATURE_NONE)});
       break;
     case SWITCH_QUIET:
       this->parent_->enqueue_special({HISENSE_SPECIAL_OP_MUTE, (uint8_t) (state ? 1 : 0)});
@@ -54,8 +52,7 @@ void HisenseSwitch::write_state(bool state) {
 }
 
 void HisenseSwitch::on_status(const HisenseState &state) {
-  if (this->parent_ != nullptr &&
-      (this->parent_->in_command_holdoff() || this->parent_->special_busy()))
+  if (this->parent_ != nullptr && (this->parent_->in_command_holdoff() || this->parent_->special_busy()))
     return;
   switch (this->kind_) {
     case SWITCH_ECO:

@@ -2,6 +2,10 @@ import esphome.codegen as cg
 from esphome.components import sensor
 import esphome.config_validation as cv
 from esphome.const import (
+    CONF_CURRENT,
+    CONF_OUTDOOR_TEMPERATURE,
+    CONF_POWER,
+    CONF_VOLTAGE,
     DEVICE_CLASS_CURRENT,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_TEMPERATURE,
@@ -21,12 +25,8 @@ from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA
 DEPENDENCIES = ["hisense_ac"]
 
 CONF_INDOOR_TEMPERATURE = "indoor_temperature"
-CONF_OUTDOOR_TEMPERATURE = "outdoor_temperature"
 CONF_COIL_TEMPERATURE = "coil_temperature"
 CONF_COMPRESSOR_FREQUENCY = "compressor_frequency"
-CONF_POWER = "power"
-CONF_VOLTAGE = "voltage"
-CONF_CURRENT = "current"
 CONF_CHECKSUM_ERRORS = "checksum_errors"
 
 
