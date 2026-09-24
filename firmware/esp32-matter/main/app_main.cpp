@@ -111,7 +111,7 @@ static uint8_t s_user_matter_mode = 0;
 
 // Post-command settle window: after we send a frame, skip resyncing s_cmd from status for
 // this long, so a stale pre-command status poll can't revert an in-flight command (#61).
-#define HISENSE_SYNC_HOLD_MS 3000
+static constexpr int HISENSE_SYNC_HOLD_MS = 3000;
 static chip::System::Clock::Timestamp s_sync_hold_until = chip::System::Clock::kZero;
 
 // ---------------------------------------------------------------------------
@@ -165,10 +165,11 @@ static void flush_cmd() {
              (int) s_cmd.mode, (int) s_cmd.setpoint, (int) s_cmd.fahrenheit);
     return;
   }
-  if (hisense_send_frame(f, n))
+  if (hisense_send_frame(f, n)) {
     arm_sync_hold();  // arm the settle only if it enqueued
-  else
+  } else {
     ESP_LOGW(TAG, "cmd dropped (TX queue full)");
+  }
 }
 /* Bench bridge for the diag console's `tx` (#52 display-byte hunt). Lives here, not
  * in diag_console.cpp, so s_cmd and arm_sync_hold stay private: the probe frame is
@@ -209,10 +210,11 @@ static void send_power(bool on) {
   size_t n = hisense_build_power_frame(on, f, sizeof(f));
   if (!n)
     return;
-  if (hisense_send_frame(f, n))
+  if (hisense_send_frame(f, n)) {
     arm_sync_hold();
-  else
+  } else {
     ESP_LOGW(TAG, "power dropped (TX queue full)");
+  }
 }
 
 // Special-mode frame builders (ported from matter_drivers.cpp hisense_apply_*).
@@ -909,8 +911,9 @@ static void recommission_finish(bool paired, const char *why) {
   // Restore the BLE advert to what a commissioned node should be doing: nothing. If the
   // re-pair FAILED we still hold a fabric, so this is the correct resting state either way.
   CHIP_ERROR berr = chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(false);
-  if (berr != CHIP_NO_ERROR)
+  if (berr != CHIP_NO_ERROR) {
     ESP_LOGE(TAG, "recommission: SetBLEAdvertisingEnabled(false) failed: %" CHIP_ERROR_FORMAT, berr.Format());
+  }
 
   if (!paired)
     hisense_send_exit_77();  // on success the delegate already cleared it
@@ -969,8 +972,9 @@ static void recommission_open_window(intptr_t) {
    * at most kRecommissionWindowSec and makes the window reachable by BOTH transports, which is
    * the entire point of a recovery path: it must work when the normal one does not. */
   err = chip::DeviceLayer::ConnectivityMgr().SetBLEAdvertisingEnabled(true);
-  if (err != CHIP_NO_ERROR)
+  if (err != CHIP_NO_ERROR) {
     ESP_LOGE(TAG, "recommission: SetBLEAdvertisingEnabled(true) failed: %" CHIP_ERROR_FORMAT, err.Format());
+  }
   s_recommission_pending = true;
   chip::DeviceLayer::SystemLayer().StartTimer(chip::System::Clock::Seconds32(kRecommissionWindowSec),
                                               recommission_timeout, nullptr);
@@ -1266,7 +1270,7 @@ static void trigger_https_ota(void) {
 #ifdef HISENSE_BREAKGLASS_TOKEN
 
 #ifndef HISENSE_BREAKGLASS_PORT
-#define HISENSE_BREAKGLASS_PORT 2324
+#define HISENSE_BREAKGLASS_PORT 2324  // NOLINT: a macro so the build can override it with -D
 #endif
 
 // Non-short-circuiting compare: an early-return memcmp leaks the matched prefix across repeated
@@ -1956,8 +1960,9 @@ extern "C" void app_main() {
   hisense_set_link_frame_cb(on_link_frame);  // bench: every 0x1E reply -> serial
   hisense_set_features_cb(on_features);      // 0x66/40 ProductType flags -> log
   hisense_set_link_cb(on_link);              // #56: bus silence -> null liveness attrs
-  if (hisense_init(on_status) != pdPASS)
+  if (hisense_init(on_status) != pdPASS) {
     ESP_LOGE(TAG, "hisense_init failed");
+  }
 
   // #12: heap-leak visibility over long unattended uptime, plus the net-loss reboot watchdog
   // (see the header comment on health_watchdog_task). 4096-byte stack matches this repo's

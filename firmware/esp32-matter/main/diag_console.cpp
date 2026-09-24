@@ -23,7 +23,7 @@
 #include "diag_console.h"
 
 static const char *TAG = "diag";
-#define DIAG_TCP_PORT 2323
+static constexpr int DIAG_TCP_PORT = 2323;
 
 static SemaphoreHandle_t s_mtx;
 static HisenseState s_snap;
