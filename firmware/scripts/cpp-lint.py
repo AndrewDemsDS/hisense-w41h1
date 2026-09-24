@@ -402,9 +402,9 @@ def run_format(fmt: str, files: list[str], fix: bool) -> int:
             # One line per offending file keeps CI output short; `fix` shows the whole diff.
             bad = sorted(set(re.findall(r"^(\S+?):\d+:\d+: (?:error|warning)", r.stderr, re.M)))
             for b in bad:
-                print(f"{Path(b).relative_to(ROOT)}: not clang-format clean")
+                print(f"{Path(b).relative_to(ROOT)}: not clang-format clean", flush=True)
             if not bad:
-                print(r.stderr.strip())
+                print(r.stderr.strip(), flush=True)
     return rc
 
 
