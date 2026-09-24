@@ -38,7 +38,8 @@ int main() {
   CHECK(hisense_mode_to_matter(HISENSE_MODE_AUTO) == 1, "AUTO->Auto(1)");
   for (uint8_t mm : {1, 3, 4, 7, 8}) {
     HisenseMode x;
-    matter_mode_to_hisense(mm, &x);
+    matter_mode_to_hisense(mm, &x);  // every mm in the list maps, so x is always written
+    // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
     CHECK(hisense_mode_to_matter(x) == mm, "round-trip mode %d", mm);
   }
 

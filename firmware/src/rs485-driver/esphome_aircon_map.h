@@ -323,9 +323,10 @@ static inline int esphome_preset_index(const char *name) {
   unsigned i;
   if (!name)
     return -1;
-  for (i = 0; i < ESPHOME_PRESET_COUNT; i++)
+  for (i = 0; i < ESPHOME_PRESET_COUNT; i++) {
     if (strcmp(k_esphome_presets[i].name, name) == 0)
       return (int) i;
+  }
   return -1;
 }
 
@@ -352,14 +353,15 @@ static inline uint8_t esphome_preset_detect(const HisenseSpecialState *s, uint8_
     if (r->eco == s->eco && r->turbo == s->turbo && r->mute == s->mute && r->sleep == s->sleep)
       return esphome_preset_available((uint8_t) i, support) ? (uint8_t) i : ESPHOME_PRESET_NONE;
   }
-  if (s->turbo)
+  if (s->turbo) {
     guess = 3; /* turbo */
-  else if (s->eco)
+  } else if (s->eco) {
     guess = ESPHOME_PRESET_ECO;
-  else if (s->mute)
+  } else if (s->mute) {
     guess = 2; /* quiet */
-  else if (s->sleep >= 1 && s->sleep <= 4)
+  } else if (s->sleep >= 1 && s->sleep <= 4) {
     guess = (uint8_t) (4 + s->sleep); /* sleep_* */
+  }
   return esphome_preset_available(guess, support) ? guess : ESPHOME_PRESET_NONE;
 }
 

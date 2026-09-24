@@ -87,16 +87,18 @@ static const HisenseFanRow k_hisense_fan_table[] = {
 #define HISENSE_FAN_AUTO_PERCENT 50
 
 static inline const HisenseFanRow *hisense_fan_row_by_raw(uint8_t raw) {
-  for (unsigned i = 0; i < HISENSE_FAN_TABLE_LEN; i++)
+  for (unsigned i = 0; i < HISENSE_FAN_TABLE_LEN; i++) {
     if (k_hisense_fan_table[i].raw == raw)
       return &k_hisense_fan_table[i];
+  }
   return 0;
 }
 
 static inline const HisenseFanRow *hisense_fan_row_by_speed(uint8_t speed) {
-  for (unsigned i = 0; i < HISENSE_FAN_TABLE_LEN; i++)
+  for (unsigned i = 0; i < HISENSE_FAN_TABLE_LEN; i++) {
     if (k_hisense_fan_table[i].speed == speed)
       return &k_hisense_fan_table[i];
+  }
   return 0;
 }
 
@@ -136,6 +138,8 @@ static inline HisenseFanSpeed fanmode_to_hisense_fan(uint8_t fanmode) {
       return HISENSE_FAN_LOW;  // Low
     case 2:
       return HISENSE_FAN_MID;  // Medium
+    // High and On both mean full speed; one case each so the table reads like the spec's enum.
+    // NOLINTNEXTLINE(bugprone-branch-clone)
     case 3:
       return HISENSE_FAN_HIGH;  // High
     case 4:

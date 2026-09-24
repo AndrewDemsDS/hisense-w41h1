@@ -85,13 +85,13 @@ static uint8_t s_devtype_env[2] = {0x00, 0x00};
 static bool s_devtype_env_seen = false;
 
 /* RX ring buffer, filled from the UART RxIrq, drained by the bus task. */
-#define HISENSE_RX_RING_SIZE 256  // power of two
+static constexpr int HISENSE_RX_RING_SIZE = 256;  // power of two
 static volatile uint8_t s_rx_ring[HISENSE_RX_RING_SIZE];
 static volatile uint16_t s_rx_head = 0;  // written by ISR
 static volatile uint16_t s_rx_tail = 0;  // written by task
 
 /* TX queue of whole frames. A frame is a length-prefixed byte blob. */
-#define HISENSE_TX_MAX_FRAME 64
+static constexpr int HISENSE_TX_MAX_FRAME = 64;
 typedef struct {
   uint8_t len;
   uint8_t data[HISENSE_TX_MAX_FRAME];
@@ -100,11 +100,10 @@ static QueueHandle_t s_tx_queue = NULL;
 
 /* Half-duplex direction (PA_17 DE) timing, from the stock byte-writer
  * (docs/09): assert DE, settle, send, drain, deassert. */
-#define HISENSE_DE_SETTLE_MS 5  // DE-high settle before the first byte
-#define HISENSE_DE_DRAIN_MS \
-  25  // hold DE high after last byte until the TX
-      // FIFO+shift drains (<=16B @9600 ~= 17ms);
-      // releasing early truncates our frame's tail
+static constexpr int HISENSE_DE_SETTLE_MS = 5;  // DE-high settle before the first byte
+static constexpr int HISENSE_DE_DRAIN_MS = 25;  // hold DE high after last byte until the TX
+                                                // FIFO+shift drains (<=16B @9600 ~= 17ms);
+                                                // releasing early truncates our frame's tail
 
 /* Who owns the DE line.
  *
@@ -116,9 +115,9 @@ static QueueHandle_t s_tx_queue = NULL;
  *   by hand would fight the peripheral for the pin, and the delays would just add dead time to a
  *   turnaround the hardware already sequences exactly. */
 #if defined(ESP_PLATFORM) && defined(CONFIG_HISENSE_RS485_HW_MODE)
-#define HISENSE_RS485_SW_DE 0
+#define HISENSE_RS485_SW_DE 0  // NOLINT: a macro because #if HISENSE_RS485_SW_DE compiles code out
 #else
-#define HISENSE_RS485_SW_DE 1
+#define HISENSE_RS485_SW_DE 1  // NOLINT: see above
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -811,7 +810,7 @@ static int hisense_ring_getc(void) {
 // Must hold the largest frame. The real W41H1 STATUS frame is 160 bytes
 // (confirmed on hardware), so the old 128 overflowed and dropped every status
 // frame before it even reached the parser. 200 leaves headroom + stuffing.
-#define HISENSE_RX_BUF_SIZE 200
+static constexpr int HISENSE_RX_BUF_SIZE = 200;
 
 // Reassembly state, kept across calls so the bus task can interleave RX
 // processing with TX pacing.
@@ -990,7 +989,7 @@ bool hisense_get_devtype_envelope(uint8_t *hi, uint8_t *lo) {
  * frame, then listen up to timeout_ms for a complete A/C reply. Returns the
  * reply length (bytes in s_msg_buf) or 0 on timeout.
  *
- * The A/C is a pure slave that answers each poll within ~500ms. NEVER send two
+ * The A/C is a pure responder that answers each poll within ~500ms. NEVER send two
  * frames without a reply window, or the A/C's reply collides with our next TX
  * on the half-duplex bus and the link never comes up -- that is exactly why a
  * free-running-timer replay got silence (reverse-engineering/docs/09).
@@ -1013,6 +1012,7 @@ static int hisense_transact(const uint8_t *frame, size_t len, int timeout_ms, ui
   // frame that bootstraps the link.
   uint8_t txbuf[HISENSE_TX_MAX_FRAME + 2];
   size_t txlen = 0;
+  // NOLINTNEXTLINE(readability-simplify-boolean-expr): reads as the rule, "not a 0x0A probe"
   if (!(len > 13 && frame[13] == 0x0A)) {
     txlen = hisense_stamp_link_token(frame, len, s_link_tok[0], s_link_tok[1], txbuf, sizeof txbuf);
   }
@@ -1292,12 +1292,12 @@ static void hisense_hw_bringup(void) {
  * -------------------------------------------------------------------------*/
 // Consecutive silent ~1Hz status polls before we treat the link as lost and
 // re-run the DevType handshake (link recovery, docs/07 Tier-4).
-#define HISENSE_LINK_LOST_POLLS 5
+static constexpr int HISENSE_LINK_LOST_POLLS = 5;
 
 // How often (in ~1 Hz poll cycles) to re-request the 0x66/40 ProductType feature
 // flags. They are static per model, so a slow refresh is plenty; the first poll
 // after link-up happens immediately (guarded by !s_features_valid).
-#define HISENSE_PRODUCTTYPE_POLL_CYCLES 60
+static constexpr int HISENSE_PRODUCTTYPE_POLL_CYCLES = 60;
 
 // Bus-task stack depth. NOTE: xTaskCreate's unit differs by platform -- WORDS on
 // AmebaZ2/standard-FreeRTOS (1024 -> 4KB), but BYTES on ESP-IDF (1024 -> only 1KB,
@@ -1305,7 +1305,7 @@ static void hisense_hw_bringup(void) {
 // the ESP-IDF build overrides it to a byte count via a -D compile definition (see
 // esp32-matter/components/hisense_rs485/CMakeLists.txt).
 #ifndef HISENSE_BUS_TASK_STACK
-#define HISENSE_BUS_TASK_STACK 1024
+#define HISENSE_BUS_TASK_STACK 1024  // NOLINT: a macro so the build can override it with -D
 #endif
 
 static void hisense_bus_task(void *pvParameters) {
@@ -1393,6 +1393,9 @@ static void hisense_bus_task(void *pvParameters) {
          * node all by itself. Same #ifdef idiom as the other feeds: no-op on AmebaZ2. */
         esp_task_wdt_reset();
 #endif
+        // The host stub's xQueueReceive reports pdTRUE without filling item; a real queue always
+        // copies a whole item before returning pdTRUE.
+        // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
         n = hisense_transact(item.data, item.len, 500, 0x00);  // may echo a 0x66 status
         if (n > 0)
           hisense_consume_status((size_t) n);
