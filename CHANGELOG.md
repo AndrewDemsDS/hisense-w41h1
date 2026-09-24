@@ -30,6 +30,13 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   let a stale readback undo a fan-card Medium press. ESP32 builds its FanControl in code, has neither
   path, and was not affected.
 
+### Tooling
+- C/C++ lint for every tree we own (`firmware/scripts/cpp-lint.sh check|fix`), with ESPHome's
+  clang-format and clang-tidy configs and the portable rules of its `ci-custom.py`, gated in CI
+  and the pre-commit hook. The shared driver, the ESP32 glue, esp32-recon and the host tests were
+  reformatted and their findings cleared with no behaviour change (host objects identical), which
+  is why AmebaZ2 moves to 1.3.40 and ESP32 to 1.1.16 with nothing new on the bus.
+
 ## Diagnostics exposed to Home Assistant - 2026-07-22
 
 ### Firmware
