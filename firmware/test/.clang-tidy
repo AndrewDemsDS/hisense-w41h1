@@ -1,0 +1,21 @@
+# Host tests. They include the C-API driver headers and hal_stub.h, which mirrors the Realtek SDK's
+# serial/gpio/FreeRTOS signatures (long, camelCase, typedef structs), so they inherit the driver's
+# relaxations. On top of that, test code is held to the bug-finding checks (bugprone, analyzer,
+# performance, cert), not to style: long table-driven mains, CHECK(!(a == b)) spelled the way the
+# expectation reads, and unbraced one-line checks are how these files are meant to read.
+InheritParentConfig: true
+Checks: >-
+  -modernize-use-using,
+  -modernize-redundant-void-arg,
+  -modernize-deprecated-headers,
+  -modernize-loop-convert,
+  -modernize-use-emplace,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -readability-identifier-naming,
+  -google-runtime-int,
+  -google-readability-function-size,
+  -readability-function-size,
+  -readability-braces-around-statements,
+  -readability-simplify-boolean-expr,
+  -misc-confusable-identifiers,
+  -bugprone-too-small-loop-variable,

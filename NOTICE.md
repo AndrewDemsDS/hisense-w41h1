@@ -18,6 +18,13 @@ its changes to them (see [`patches/`](patches/) and
 | **Realtek AmebaZ2 Matter component** (`.../application/matter/`) (Realtek's Matter integration layer | **Proprietary / Apache-2.0 mix) © Realtek.** *Not redistributable.* | Our `room_air_conditioner` example is our own code (dropped into this layer); Realtek framework-file edits (e.g. `matter_events.h`, `platform_opts_matter.h`, the example makefiles) are documented as in-place diffs in `sdk-edits/README.md`. **Realtek proprietary source is never checked in** (e.g. `matter_core.cpp` is used unmodified from the SDK and not vendored here). |
 | **connectedhomeip / Matter SDK** (`connectedhomeip`) | **Apache-2.0, © Project CHIP Authors.** | SDK-file edits shipped as [`patches/connectedhomeip.patch`](patches/connectedhomeip.patch). Pinned base commit: `cc74311cffac`. |
 
+## Adapted lint tooling
+
+The root `.clang-format` and `.clang-tidy`, and the custom rules in
+`firmware/scripts/cpp-lint.py`, are adapted from ESPHome's `.clang-format`, `.clang-tidy` and
+`script/ci-custom.py` (ESPHome's Python and tooling are MIT-licensed, © 2019 ESPHome).
+Nothing from ESPHome's GPL C++ runtime is copied.
+
 ## Matter credentials
 
 The firmware uses **CSA test attestation credentials**: test Vendor ID `0xFFF1`, a Product ID
