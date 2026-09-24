@@ -4,7 +4,10 @@
 # config or an unbumped version can't be committed. See firmware/docs/10.
 set -euo pipefail
 REPO="$(git rev-parse --show-toplevel)"
-if git diff --cached --name-only | grep -qE '^firmware/(src|test)/|room-air-conditioner-app\.zap$'; then
+# The ESPHome component's codec port is covered too: its parity test (layer 1d) is what keeps it
+# equal to the driver, and an edit to the port alone must not skip it.
+if git diff --cached --name-only \
+    | grep -qE '^firmware/(src|test)/|room-air-conditioner-app\.zap$|^firmware/esphome/components/hisense_ac/hisense_(protocol|map)\.'; then
   echo "[pre-commit] firmware changed -> ota-release.sh lint"
   bash "$REPO/firmware/scripts/ota-release.sh" lint || {
     echo "[pre-commit] LINT FAILED. Fix, or bypass with: git commit --no-verify"; exit 1; }
