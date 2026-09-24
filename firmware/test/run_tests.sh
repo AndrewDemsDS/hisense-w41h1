@@ -30,6 +30,12 @@ g++ -std=c++17 -Wall -Istubinc -I. -I../src/rs485-driver -I../esphome/components
     test_esphome_codec_parity.cpp parity_port.o parity_driver.o -o test_esphome_codec_parity
 rm -f parity_driver.o parity_port.o
 ./test_esphome_codec_parity
+echo
+echo "== Layer 1e: ESPHome bus scheduler vs the original bus task's contract (simulated A/C) =="
+g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_bus.cpp \
+    ../esphome/components/hisense_ac/hisense_bus.cpp ../esphome/components/hisense_ac/hisense_protocol.cpp \
+    -o test_esphome_bus
+./test_esphome_bus
 
 echo
 echo "== Layer 2: virtual A/C <-> decoder round-trip =="

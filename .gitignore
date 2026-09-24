@@ -64,6 +64,7 @@ firmware/scripts/ota-release.env
 /firmware/test/test_matter_map
 /firmware/test/test_esphome_map
 /firmware/test/test_esphome_codec_parity
+/firmware/test/test_esphome_bus
 
 # python lint cache
 .ruff_cache/
