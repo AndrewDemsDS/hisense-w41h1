@@ -118,10 +118,10 @@ class HisenseAC : public Component {
   /// builds pack these into a bitmap because a manufacturer cluster cannot be rendered in
   /// Home Assistant without upstream changes; here each bit is its own entity.
   void add_fault_binary_sensor(uint8_t bit, binary_sensor::BinarySensor *sensor) {
-    this->fault_sensors_.push_back({bit, sensor});
+    this->fault_sensors_.emplace_back(bit, sensor);
   }
   void add_capability_binary_sensor(uint8_t bit, binary_sensor::BinarySensor *sensor) {
-    this->capability_sensors_.push_back({bit, sensor});
+    this->capability_sensors_.emplace_back(bit, sensor);
   }
 #endif
 #ifdef USE_TEXT_SENSOR

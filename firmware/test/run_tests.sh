@@ -20,6 +20,16 @@ echo "== Layer 1c: ESPHome <-> A/C mapping (ESPHome-side QA, no chip, no ESPHome
 g++ -std=c++11 -Wall -Istubinc -I. -I../src/rs485-driver \
     test_esphome_map.cpp ../src/rs485-driver/hisense_rs485.cpp -o test_esphome_map
 ./test_esphome_map
+echo
+echo "== Layer 1d: ESPHome codec port == original driver (parity, see the test's header) =="
+# The port is C++17 (ESPHome's nested namespaces); the original stays C++11 as it ships.
+g++ -std=c++11 -Wall -Istubinc -I. -I../src/rs485-driver -c ../src/rs485-driver/hisense_rs485.cpp \
+    -o parity_driver.o
+g++ -std=c++17 -Wall -c ../esphome/components/hisense_ac/hisense_protocol.cpp -o parity_port.o
+g++ -std=c++17 -Wall -Istubinc -I. -I../src/rs485-driver -I../esphome/components/hisense_ac \
+    test_esphome_codec_parity.cpp parity_port.o parity_driver.o -o test_esphome_codec_parity
+rm -f parity_driver.o parity_port.o
+./test_esphome_codec_parity
 
 echo
 echo "== Layer 2: virtual A/C <-> decoder round-trip =="

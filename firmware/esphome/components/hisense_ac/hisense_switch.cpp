@@ -51,7 +51,7 @@ void HisenseSwitch::write_state(bool state) {
 }
 
 void HisenseSwitch::on_status(const HisenseState &state) {
-  if (this->parent_ != nullptr && (this->parent_->in_command_holdoff() || this->parent_->special_busy()))
+  if (this->parent_->in_command_holdoff() || this->parent_->special_busy())
     return;
   switch (this->kind_) {
     case SWITCH_ECO:
