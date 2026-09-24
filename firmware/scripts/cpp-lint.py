@@ -373,12 +373,14 @@ def run_tidy(tidy: str, files: list[str], fix: bool) -> int:
                     if ln.strip() and not re.match(r"^\d+ (warnings?|errors?) generated", ln)
                     and "Suppressed" not in ln and "Use -header-filter" not in ln
                 ]
-                block = "\n".join(lines).replace(str(ROOT) + "/", "")
-                if code != 0 or re.search(r": (warning|error):", block):
+                text = "\n".join(lines).replace(str(ROOT) + "/", "")
+                if code != 0 or re.search(r": (warning|error):", text):
                     rc = 1
-                    if block and block not in seen:
-                        seen.add(block)
-                        print(block, flush=True)
+                # A header shows up once per unit that includes it; print each diagnostic once.
+                for diag in re.split(r"\n(?=\S+:\d+:\d+: (?:warning|error):)", text):
+                    if diag and diag not in seen:
+                        seen.add(diag)
+                        print(diag, flush=True)
         return rc
 
 
@@ -449,7 +451,10 @@ def main() -> int:
 
     # 2. clang-tidy before clang-format in fix mode, so format tidies whatever tidy inserted
     if not a.no_tidy:
-        rc |= run_tidy(a.clang_tidy, files, fix)
+        # In fix mode clang-tidy exits non-zero for every finding it just fixed; what is left is
+        # for `check` to report, so only check mode takes its exit code.
+        tidy_rc = run_tidy(a.clang_tidy, files, fix)
+        rc |= 0 if fix else tidy_rc
     # 3. clang-format
     if not a.no_format:
         rc |= run_format(a.clang_format, files, fix)
