@@ -17,37 +17,38 @@ static const char *TAG = "busmon";
 static volatile int s_frames = 0;
 // HAL diagnostic byte counters (defined in hisense_hal.c).
 extern "C" {
-extern volatile uint32_t g_hal_tx_bytes; extern volatile uint32_t g_hal_rx_bytes;
-extern volatile uint32_t g_hal_evt_total; extern volatile uint32_t g_hal_evt_data;
-extern volatile uint8_t  g_hal_rx_task_up;
+extern volatile uint32_t g_hal_tx_bytes;
+extern volatile uint32_t g_hal_rx_bytes;
+extern volatile uint32_t g_hal_evt_total;
+extern volatile uint32_t g_hal_evt_data;
+extern volatile uint8_t g_hal_rx_task_up;
 }
 
-static void on_status(const HisenseState *st)
-{
-    if (!st || !st->valid) return;
-    s_frames++;
-    ESP_LOGI(TAG, "A/C #%d: power=%d mode=%d set=%dC indoor=%dC outdoor=%dC "
-                  "fan=0x%02x comp=%dHz eco=%d turbo=%d mute=%d sleep=%d vswing=%d",
-             s_frames, st->power_on, st->mode, st->setpoint_c, st->indoor_temp_c,
-             st->outdoor_temp_c, st->fan_raw, st->compressor_freq,
-             st->eco_on, st->turbo_on, st->mute_on, st->sleep_on, st->vswing_on);
+static void on_status(const HisenseState *st) {
+  if (!st || !st->valid)
+    return;
+  s_frames++;
+  ESP_LOGI(TAG,
+           "A/C #%d: power=%d mode=%d set=%dC indoor=%dC outdoor=%dC "
+           "fan=0x%02x comp=%dHz eco=%d turbo=%d mute=%d sleep=%d vswing=%d",
+           s_frames, st->power_on, st->mode, st->setpoint_c, st->indoor_temp_c, st->outdoor_temp_c, st->fan_raw,
+           st->compressor_freq, st->eco_on, st->turbo_on, st->mute_on, st->sleep_on, st->vswing_on);
 }
 
-extern "C" void app_main(void)
-{
-    // Pins come from PinNames.h per build target, so name the target rather than one pin set.
-    ESP_LOGI(TAG, "=== Hisense RS-485 bus monitor (" CONFIG_IDF_TARGET ", pins per PinNames.h) ===");
-    ESP_LOGI(TAG, "starting driver -> DevType handshake + ~1Hz poll of the A/C...");
-    if (hisense_init(on_status) != pdPASS) {
-        ESP_LOGE(TAG, "hisense_init FAILED");
-        return;
-    }
-    int t = 0;
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        t += 3;
-        ESP_LOGW(TAG, "t=%ds: frames=%d TX=%u RX=%u | rx_task_up=%u uart_evts=%u data_evts=%u",
-                 t, s_frames, (unsigned)g_hal_tx_bytes, (unsigned)g_hal_rx_bytes,
-                 (unsigned)g_hal_rx_task_up, (unsigned)g_hal_evt_total, (unsigned)g_hal_evt_data);
-    }
+extern "C" void app_main(void) {
+  // Pins come from PinNames.h per build target, so name the target rather than one pin set.
+  ESP_LOGI(TAG, "=== Hisense RS-485 bus monitor (" CONFIG_IDF_TARGET ", pins per PinNames.h) ===");
+  ESP_LOGI(TAG, "starting driver -> DevType handshake + ~1Hz poll of the A/C...");
+  if (hisense_init(on_status) != pdPASS) {
+    ESP_LOGE(TAG, "hisense_init FAILED");
+    return;
+  }
+  int t = 0;
+  while (1) {
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    t += 3;
+    ESP_LOGW(TAG, "t=%ds: frames=%d TX=%u RX=%u | rx_task_up=%u uart_evts=%u data_evts=%u", t, s_frames,
+             (unsigned) g_hal_tx_bytes, (unsigned) g_hal_rx_bytes, (unsigned) g_hal_rx_task_up,
+             (unsigned) g_hal_evt_total, (unsigned) g_hal_evt_data);
+  }
 }
