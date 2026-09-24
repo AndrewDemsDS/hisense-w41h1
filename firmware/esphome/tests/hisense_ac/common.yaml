@@ -1,9 +1,8 @@
 # Every option of every hisense_ac platform, shaped like ESPHome's tests/components/<name>/common.yaml
-# so it can move upstream unchanged. Pins come from the per-target test.*.yaml.
+# so it can move upstream unchanged. The uart bus and the pins come from the per-target test.*.yaml.
 hisense_ac:
   id: ac_bus
-  tx_pin: ${tx_pin}
-  rx_pin: ${rx_pin}
+  uart_id: uart_bus
   de_pin: ${de_pin}
 
 climate:

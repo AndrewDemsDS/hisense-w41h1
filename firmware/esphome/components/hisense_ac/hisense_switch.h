@@ -21,7 +21,7 @@ class HisenseSwitch : public switch_::Switch, public Component, public StatusLis
   void dump_config() override;
   void set_parent(HisenseAC *parent) { this->parent_ = parent; }
   void set_kind(SwitchKind kind) { this->kind_ = kind; }
-  void on_status(const HisenseState &state) override;
+  void on_status(const AcState &state) override;
 
  protected:
   void write_state(bool state) override;

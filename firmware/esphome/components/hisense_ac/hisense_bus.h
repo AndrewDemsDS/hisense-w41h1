@@ -6,8 +6,8 @@
 // but no task, no queue object and no module state. Every exchange is a transaction, as on the
 // stock module (RE docs/09, docs/10): flush RX, stamp the frame, raise DE, settle 5 ms, send, hold
 // DE 25 ms past the last byte, drop DE, then listen up to 500 ms for a reply of the expected
-// class. The A/C is a pure slave; two frames without a reply window collide on the half-duplex
-// bus, which is why a free-running replay once got silence.
+// class. The A/C only ever answers, never initiates; two frames without a reply window collide on
+// the half-duplex bus, which is why a free-running replay once got silence.
 //
 // Boot: DevType (0x0A) handshake, up to 10 tries 500 ms apart, then 0x07.
 // Each ~1 s cycle: a DevType re-handshake if 5 status polls in a row went unanswered, the 0x1E
@@ -29,12 +29,12 @@ class BusIO {
  public:
   virtual ~BusIO() = default;
   // Drive the transceiver's DE line (high = transmit). Only called when a DE pin is configured.
-  virtual void set_de(bool high) = 0;
-  virtual void write(const uint8_t *data, size_t len) = 0;
+  virtual void bus_set_de(bool high) = 0;
+  virtual void bus_write(const uint8_t *data, size_t len) = 0;
   // Block until every written byte has left the shift register (at most a few ms by then).
-  virtual void flush_tx() = 0;
+  virtual void bus_flush() = 0;
   // One received byte, or -1 when none is waiting.
-  virtual int read() = 0;
+  virtual int bus_read() = 0;
 };
 
 // Results, delivered from inside poll(), i.e. on ESPHome's main loop.
@@ -47,10 +47,10 @@ class BusListener {
 };
 
 // Timing, from the stock byte-writer and transaction primitive (RE docs/09).
-static constexpr uint32_t BUS_DE_SETTLE_MS = 5;   // DE high before the first byte
-static constexpr uint32_t BUS_DE_DRAIN_MS = 25;   // DE held after the last byte left
+static constexpr uint32_t BUS_DE_SETTLE_MS = 5;  // DE high before the first byte
+static constexpr uint32_t BUS_DE_DRAIN_MS = 25;  // DE held after the last byte left
 static constexpr uint32_t BUS_REPLY_TIMEOUT_MS = 500;
-static constexpr uint32_t BUS_CYCLE_MS = 1000;    // stock master paces at 0x3e8 ms
+static constexpr uint32_t BUS_CYCLE_MS = 1000;  // stock master paces at 0x3e8 ms
 static constexpr uint32_t BUS_BOOT_RETRY_MS = 500;
 static constexpr uint8_t BUS_BOOT_TRIES = 10;
 static constexpr uint8_t BUS_LINK_LOST_POLLS = 5;

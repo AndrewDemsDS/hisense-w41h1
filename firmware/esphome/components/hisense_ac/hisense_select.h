@@ -14,7 +14,7 @@ class HisenseSleepSelect : public select::Select, public Component, public Statu
   void setup() override;
   void dump_config() override;
   void set_parent(HisenseAC *parent) { this->parent_ = parent; }
-  void on_status(const HisenseState &state) override;
+  void on_status(const AcState &state) override;
 
  protected:
   void control(const std::string &value) override;

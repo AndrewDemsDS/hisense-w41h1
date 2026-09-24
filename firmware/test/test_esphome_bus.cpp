@@ -97,18 +97,18 @@ class SimAC : public H::BusIO {
   bool de_high = false;
   int set_de_calls = 0;
 
-  void set_de(bool high) override {
+  void bus_set_de(bool high) override {
     set_de_calls++;
     de_high = high;
     de.push_back({g_now, high});
   }
-  void write(const uint8_t *data, size_t len) override {
+  void bus_write(const uint8_t *data, size_t len) override {
     writes.push_back({g_now, de_high, std::vector<uint8_t>(data, data + len)});
     if (responsive)
       respond_(writes.back().bytes);
   }
-  void flush_tx() override {}
-  int read() override {
+  void bus_flush() override {}
+  int bus_read() override {
     if (rx_.empty() || rx_.front().first > g_now)
       return -1;
     int b = rx_.front().second;

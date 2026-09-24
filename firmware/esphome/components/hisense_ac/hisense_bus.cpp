@@ -14,7 +14,7 @@ void BusScheduler::setup(BusIO *io, BusListener *listener, bool has_de) {
   this->listener_ = listener;
   this->has_de_ = has_de;
   if (this->has_de_)
-    this->io_->set_de(false);  // idle low = receive, before the UART speaks (stock hs_driver_init)
+    this->io_->bus_set_de(false);  // idle low = receive, before the UART speaks (stock hs_driver_init)
   this->step_ = Step::BOOT_DEVTYPE;
   this->phase_ = Phase::IDLE;
 }
@@ -52,7 +52,7 @@ bool BusScheduler::features(AcFeatures *out) const {
 }
 
 void BusScheduler::discard_rx_() {
-  while (this->io_->read() >= 0) {
+  while (this->io_->bus_read() >= 0) {
   }
   this->rx_.reset();
 }
@@ -74,12 +74,12 @@ void BusScheduler::begin_transaction_(const uint8_t *frame, size_t len, uint8_t 
 
   if (this->has_de_) {
     // hisense_tx_raw(): assert DE, then let the transceiver settle before the first byte.
-    this->io_->set_de(true);
+    this->io_->bus_set_de(true);
     this->phase_ = Phase::TX_SETTLE;
     this->phase_until_ = now + BUS_DE_SETTLE_MS;
   } else {
     // Peripheral-owned DE: no settle, no drain, and the reply window opens as the bytes are queued.
-    this->io_->write(this->tx_, this->tx_len_);
+    this->io_->bus_write(this->tx_, this->tx_len_);
     this->phase_ = Phase::LISTEN;
     this->phase_until_ = now + BUS_REPLY_TIMEOUT_MS;
   }
@@ -106,7 +106,7 @@ void BusScheduler::poll(uint32_t now) {
       case Phase::TX_SETTLE:
         if (!reached(now, this->phase_until_))
           return;
-        this->io_->write(this->tx_, this->tx_len_);
+        this->io_->bus_write(this->tx_, this->tx_len_);
         // The original waited for every byte to shift out, then held DE a further 25 ms.
         this->phase_ = Phase::TX_DRAIN;
         this->phase_until_ = now + bus_tx_time_ms(this->tx_len_) + BUS_DE_DRAIN_MS;
@@ -115,15 +115,15 @@ void BusScheduler::poll(uint32_t now) {
       case Phase::TX_DRAIN:
         if (!reached(now, this->phase_until_))
           return;
-        this->io_->flush_tx();   // already empty by now; guarantees it before DE drops
-        this->io_->set_de(false);  // release: back to receive
+        this->io_->bus_flush();        // already empty by now; guarantees it before DE drops
+        this->io_->bus_set_de(false);  // release: back to receive
         this->phase_ = Phase::LISTEN;
         this->phase_until_ = now + BUS_REPLY_TIMEOUT_MS;
         continue;
 
       case Phase::LISTEN: {
         int c;
-        while ((c = this->io_->read()) >= 0) {
+        while ((c = this->io_->bus_read()) >= 0) {
           size_t n = this->rx_.feed(static_cast<uint8_t>(c));
           if (n == 0)
             continue;
