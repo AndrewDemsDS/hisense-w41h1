@@ -3,8 +3,7 @@
 
 #ifdef USE_SWITCH
 
-namespace esphome {
-namespace hisense_ac {
+namespace esphome::hisense_ac {
 
 static const char *const TAG = "hisense_ac.switch";
 
@@ -75,6 +74,5 @@ void HisenseSwitch::on_status(const HisenseState &state) {
 
 void HisenseSwitch::dump_config() { LOG_SWITCH("", "Hisense A/C switch", this); }
 
-}  // namespace hisense_ac
-}  // namespace esphome
+}  // namespace esphome::hisense_ac
 #endif  // USE_SWITCH

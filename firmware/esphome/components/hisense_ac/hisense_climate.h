@@ -10,8 +10,7 @@
 #include "esphome/components/climate/climate.h"
 #include "hisense_ac.h"
 
-namespace esphome {
-namespace hisense_ac {
+namespace esphome::hisense_ac {
 
 /// The two ladder steps ESPHome has no built-in fan-mode name for (indices 3 and 5).
 /// The other five ride the built-in enum; see the note in hisense_climate.cpp. ESPHome matches
@@ -58,5 +57,4 @@ class HisenseClimate : public climate::Climate, public Component {
   std::vector<const char *> custom_presets_;
 };
 
-}  // namespace hisense_ac
-}  // namespace esphome
+}  // namespace esphome::hisense_ac

@@ -29,8 +29,7 @@ extern "C" {
 #include "esphome_aircon_map.h"
 #include "power_estimate.h"
 
-namespace esphome {
-namespace hisense_ac {
+namespace esphome::hisense_ac {
 
 class HisenseClimate;
 
@@ -135,7 +134,7 @@ class HisenseAC : public Component {
   // topology the bus supports anyway.
   static void status_trampoline(const HisenseState *state);
   static void link_trampoline(bool link_up);
-  static HisenseAC *instance_;
+  static HisenseAC *instance;
 
   /// Called on the BUS TASK. Must not touch entities.
   void on_status_isr_(const HisenseState *state);
@@ -175,5 +174,4 @@ class HisenseAC : public Component {
   static constexpr uint32_t COMMAND_HOLDOFF_MS = 4000;
 };
 
-}  // namespace hisense_ac
-}  // namespace esphome
+}  // namespace esphome::hisense_ac

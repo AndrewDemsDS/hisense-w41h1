@@ -3,8 +3,7 @@
 
 #ifdef USE_SELECT
 
-namespace esphome {
-namespace hisense_ac {
+namespace esphome::hisense_ac {
 
 static const char *const TAG = "hisense_ac.select";
 
@@ -37,6 +36,5 @@ void HisenseSleepSelect::on_status(const HisenseState &state) {
 
 void HisenseSleepSelect::dump_config() { LOG_SELECT("", "Hisense A/C sleep profile", this); }
 
-}  // namespace hisense_ac
-}  // namespace esphome
+}  // namespace esphome::hisense_ac
 #endif  // USE_SELECT

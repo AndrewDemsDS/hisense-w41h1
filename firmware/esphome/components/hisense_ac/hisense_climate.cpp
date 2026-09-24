@@ -1,8 +1,7 @@
 #include "hisense_climate.h"
 #include "esphome/core/log.h"
 
-namespace esphome {
-namespace hisense_ac {
+namespace esphome::hisense_ac {
 
 static const char *const TAG = "hisense_ac.climate";
 
@@ -24,8 +23,7 @@ static climate::ClimateFanMode fan_index_to_enum(uint8_t idx) {
   switch (idx) {
     case 0:
       return climate::CLIMATE_FAN_AUTO;
-    case 1:
-      return climate::CLIMATE_FAN_LOW;  // quiet step: not a fan mode, shows as low
+    case 1:  // quiet step: not a fan mode, shows as low
     case 2:
       return climate::CLIMATE_FAN_LOW;
     case 4:
@@ -71,9 +69,10 @@ void HisenseClimate::setup() {
   // advertised in traits(). Lives on the entity because ClimateTraits only references the
   // entity's vector, and set_custom_fan_mode_() matches by pointer into it.
   this->set_supported_custom_fan_modes(FAN_CUSTOM_NAMES);
-  for (uint8_t i = ESPHOME_PRESET_FIRST_CUSTOM; i < ESPHOME_PRESET_COUNT; i++) {
-    if (esphome_preset_available(i, this->preset_support_))
+  for (size_t i = ESPHOME_PRESET_FIRST_CUSTOM; i < ESPHOME_PRESET_COUNT; i++) {
+    if (esphome_preset_available((uint8_t) i, this->preset_support_)) {
       this->custom_presets_.push_back(k_esphome_presets[i].name);
+    }
   }
   if (!this->custom_presets_.empty())
     this->set_supported_custom_presets(this->custom_presets_);
@@ -164,10 +163,11 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   int8_t wanted_index = -1;
   if (call.has_custom_fan_mode()) {
     StringRef wanted = call.get_custom_fan_mode();
-    if (wanted == FAN_CUSTOM_MEDIUM_LOW)
+    if (wanted == FAN_CUSTOM_MEDIUM_LOW) {
       wanted_index = 3;
-    else if (wanted == FAN_CUSTOM_MEDIUM_HIGH)
+    } else if (wanted == FAN_CUSTOM_MEDIUM_HIGH) {
       wanted_index = 5;
+    }
   } else if (call.get_fan_mode().has_value()) {
     wanted_index = (int8_t) esphome_fan_enum_to_index((uint8_t) *call.get_fan_mode());
   }
@@ -300,5 +300,4 @@ void HisenseClimate::publish_preset_index(uint8_t idx) {
 
 void HisenseClimate::dump_config() { LOG_CLIMATE("", "Hisense A/C climate", this); }
 
-}  // namespace hisense_ac
-}  // namespace esphome
+}  // namespace esphome::hisense_ac

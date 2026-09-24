@@ -6,8 +6,7 @@
 #include "esphome/components/switch/switch.h"
 #include "hisense_ac.h"
 
-namespace esphome {
-namespace hisense_ac {
+namespace esphome::hisense_ac {
 
 enum SwitchKind : uint8_t {
   SWITCH_ECO = 0,
@@ -31,6 +30,5 @@ class HisenseSwitch : public switch_::Switch, public Component, public StatusLis
   SwitchKind kind_{SWITCH_ECO};
 };
 
-}  // namespace hisense_ac
-}  // namespace esphome
+}  // namespace esphome::hisense_ac
 #endif  // USE_SWITCH

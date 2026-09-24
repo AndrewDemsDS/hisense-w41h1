@@ -3,29 +3,28 @@
 #include "hisense_climate.h"
 #include "esphome/core/log.h"
 
-namespace esphome {
-namespace hisense_ac {
+namespace esphome::hisense_ac {
 
 static const char *const TAG = "hisense_ac";
 
-HisenseAC *HisenseAC::instance_ = nullptr;
+HisenseAC *HisenseAC::instance = nullptr;
 
 void HisenseAC::status_trampoline(const HisenseState *state) {
-  if (HisenseAC::instance_ != nullptr)
-    HisenseAC::instance_->on_status_isr_(state);
+  if (HisenseAC::instance != nullptr)
+    HisenseAC::instance->on_status_isr_(state);
 }
 
 void HisenseAC::link_trampoline(bool link_up) {
-  if (HisenseAC::instance_ == nullptr)
+  if (HisenseAC::instance == nullptr)
     return;
   if (!link_up) {
     // Drop any undrained pre-loss frame, or loop() would publish those stale values (and flip
     // link_up_ back to true) until real data returns. Port of the Matter fix 0d3b9ff.
-    LockGuard guard(HisenseAC::instance_->lock_);
-    HisenseAC::instance_->pending_valid_ = false;
+    LockGuard guard(HisenseAC::instance->lock_);
+    HisenseAC::instance->pending_valid_ = false;
   }
-  HisenseAC::instance_->link_up_ = link_up;
-  HisenseAC::instance_->link_dirty_ = true;
+  HisenseAC::instance->link_up_ = link_up;
+  HisenseAC::instance->link_dirty_ = true;
 }
 
 void HisenseAC::on_status_isr_(const HisenseState *state) {
@@ -37,7 +36,7 @@ void HisenseAC::on_status_isr_(const HisenseState *state) {
 }
 
 void HisenseAC::setup() {
-  HisenseAC::instance_ = this;
+  HisenseAC::instance = this;
 
   // Shadow defaults mirror the esp-matter build's: a combined frame always carries every
   // field, so the shadow must start somewhere sane rather than at all-zero (mode FAN, 0 C).
@@ -359,5 +358,4 @@ void HisenseAC::dump_config() {
   }
 }
 
-}  // namespace hisense_ac
-}  // namespace esphome
+}  // namespace esphome::hisense_ac

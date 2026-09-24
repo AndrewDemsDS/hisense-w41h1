@@ -7,8 +7,7 @@
 #include "esphome/components/select/select.h"
 #include "hisense_ac.h"
 
-namespace esphome {
-namespace hisense_ac {
+namespace esphome::hisense_ac {
 
 class HisenseSleepSelect : public select::Select, public Component, public StatusListener {
  public:
@@ -23,6 +22,5 @@ class HisenseSleepSelect : public select::Select, public Component, public Statu
   HisenseAC *parent_{nullptr};
 };
 
-}  // namespace hisense_ac
-}  // namespace esphome
+}  // namespace esphome::hisense_ac
 #endif  // USE_SELECT

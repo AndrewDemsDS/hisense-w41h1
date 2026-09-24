@@ -34,8 +34,8 @@ Or `firmware/scripts/dev.py flash esphome --board c3 --port <port>` from the rep
 | `tests/build.*.yaml` | repo-only harness so `esphome config` and `esphome compile` can run those tests (CI runs `config`) |
 | `secrets.yaml.example` | template for the gitignored `secrets.yaml` |
 
-The component code follows ESPHome's upstream standards (their `.clang-format`, ruff format, and
-the `script/ci-custom.py` rules), so it can be proposed upstream without a style pass. The shared
+The component code passes ESPHome's own gates as of their `dev` branch in September 2026:
+`script/ci-custom.py`, their `.clang-format` and `.clang-tidy`, ruff format, and pylint. The shared
 driver under `firmware/src/rs485-driver/` does not, and is not meant to: it also has to build on
 AmebaZ2.
 
