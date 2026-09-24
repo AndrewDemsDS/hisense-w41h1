@@ -55,6 +55,13 @@ check(g.link_verdict(-70, 0.2)[0] is True, "exactly the -70 dBm threshold passes
 check(g.link_verdict(-65, 3.0)[0] is False, "good RSSI but a 3 s read is refused")
 check(g.link_verdict(None, None)[0] is False, "no reading is refused, never assumed healthy")
 
+# --- HTTP mirror repoint: the current-image path is every node's break-glass image ---
+check(g.repoint_verdict("release")[0] is True, "release image repoints the current-image path")
+check(g.repoint_verdict("debug")[0] is False and ":2323" in g.repoint_verdict("debug")[1],
+      "near miss: a default (debug) ESP32 stage no longer repoints the fleet's recovery image")
+check(g.repoint_verdict("debug", allow_debug=True)[0] is True, "debug repoints only with the override")
+check(g.repoint_verdict("")[0] is False, "unknown flavour is refused, never assumed release")
+
 
 # --- manifest archive plan ---
 def man(pid, v, vid=0xFFF1):
@@ -101,6 +108,12 @@ with tempfile.TemporaryDirectory() as d:
     os.utime(out, (1, 1))
     r = subprocess.run(cli + ["stale", img, out], capture_output=True, text=True)
     check(r.returncode == 1 and "img.ota" in r.stdout, "CLI stale exits 1 and names the old output")
+    r = subprocess.run(cli + ["repoint", img, ESP_MARK.decode()], capture_output=True, text=True)
+    check(r.returncode == 1, "CLI repoint exits 1 for a debug image read from the bytes")
+    r = subprocess.run(cli + ["repoint", img, ESP_MARK.decode(), "1"], capture_output=True, text=True)
+    check(r.returncode == 0, "CLI repoint exits 0 for a debug image under the override")
+    r = subprocess.run(cli + ["repoint", img, AMEBA_MARK.decode()], capture_output=True, text=True)
+    check(r.returncode == 0, "CLI repoint reads release when the target's marker is absent")
     r = subprocess.run(cli + ["archive-plan", "esp32-v10115.json"], input=
                        "\n".join(f"{n}\t{json.dumps(v)}" for n, v in listing.items() if v), capture_output=True, text=True)
     check(r.returncode == 0 and r.stdout.split() == ["esp32-v10030.json", "esp32-v10114.json"], "CLI archive-plan prints the plan")

@@ -576,7 +576,8 @@ stage() {
   pi_stage "$src_json" "$src_ota"
   # Mirror the RAW firmware_is.bin to the persistent HTTP OTA server for the #78 break-glass path
   # (rac-ota.bin is the compile-time HTTP-OTA resource); keeps the deployed image retrievable.
-  pi_http_publish "$GCC_RELEASE/application_is/Debug/bin/firmware_is.bin" "rac-ota.bin" "rac-v$v${sfx}.bin"
+  pi_http_publish "$GCC_RELEASE/application_is/Debug/bin/firmware_is.bin" "rac-ota.bin" "rac-v$v${sfx}.bin" \
+    "diag console listening"
 }
 
 # ---- flash (update_node with retries + rollback detection) -----------------
