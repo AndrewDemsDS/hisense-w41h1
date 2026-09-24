@@ -13,7 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "PinNames.h"   // PA_14=19 (TX/DI), PA_13=18 (RX/RO), PA_17=4 (DE) — from hisense_hal
+#include "PinNames.h"   // PA_14=19 (TX/DI), PA_13=18 (RX/RO), PA_17=4 (DE), from hisense_hal
 #include "recon.h"
 
 static const char *TAG = "recon-tap";

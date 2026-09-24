@@ -61,7 +61,7 @@ void app_main(void)
     esp_console_register_help_command();
     recon_register_commands();
 
-    // USB-serial (UART0) REPL — always available, even if WiFi is down. This is
+    // USB-serial (UART0) REPL, always available, even if WiFi is down. This is
     // where you first provision WiFi:  wifi <ssid> <pass>
     esp_console_repl_t *repl = NULL;
     esp_console_repl_config_t rc = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
