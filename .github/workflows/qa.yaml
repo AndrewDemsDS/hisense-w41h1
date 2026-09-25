@@ -46,6 +46,10 @@ jobs:
       - name: C/C++ lint (clang-format, custom rules, clang-tidy)
         run: bash firmware/scripts/cpp-lint.sh check
 
+      # The pre-commit hook's form: explicit paths after the options the wrapper inserts.
+      - name: C/C++ lint, path form (as the pre-commit hook runs it)
+        run: bash firmware/scripts/cpp-lint.sh check --no-tidy firmware/test/test_matter_map.cpp
+
       - name: ESP32 version consistency
         run: bash firmware/scripts/esp32-lint.sh
 

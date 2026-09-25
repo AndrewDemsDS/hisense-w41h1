@@ -416,7 +416,9 @@ def main() -> int:
     ap.add_argument("--clang-tidy", default=os.environ.get("CLANG_TIDY", "clang-tidy"))
     ap.add_argument("--no-tidy", action="store_true", help="skip clang-tidy (fast, pre-commit)")
     ap.add_argument("--no-format", action="store_true", help="skip clang-format")
-    a = ap.parse_args()
+    # Intermixed: cpp-lint.sh puts --clang-format/--clang-tidy between the mode and the paths, and
+    # plain parse_args() hands the empty paths list to the mode's group, then rejects every path.
+    a = ap.parse_intermixed_args()
 
     if a.mode == "compdb":
         out = Path(a.paths[0]) if a.paths else ROOT / "build" / "cpp-lint"

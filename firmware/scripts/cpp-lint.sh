@@ -22,7 +22,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="${XDG_CACHE_HOME:-$HOME/.cache}/hisense-w41h1/cpp-lint"
 
 has_version() {  # has_version <binary> <version>
-  command -v "$1" >/dev/null 2>&1 && "$1" --version 2>/dev/null | grep -qF "version $2"
+  command -v "$1" >/dev/null 2>&1 && "$1" --version 2>/dev/null | grep -qE "version ${2//./\\.}([^0-9]|\$)"
 }
 
 bootstrap_venv() {
