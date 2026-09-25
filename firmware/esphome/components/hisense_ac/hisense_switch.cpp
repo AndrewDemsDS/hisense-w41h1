@@ -3,8 +3,7 @@
 
 #ifdef USE_SWITCH
 
-namespace esphome {
-namespace hisense_ac {
+namespace esphome::hisense_ac {
 
 static const char *const TAG = "hisense_ac.switch";
 
@@ -29,17 +28,13 @@ void HisenseSwitch::write_state(bool state) {
       // Eco and turbo share one command byte and are mutually exclusive on this bus, so
       // clearing eco sends the explicit eco-off value rather than the neutral one (which
       // clears turbo instead).
-      this->parent_->enqueue_special(
-          {HISENSE_SPECIAL_OP_FEATURE,
-           (uint8_t) (state ? HISENSE_FEATURE_ECO : HISENSE_FEATURE_ECO_OFF)});
+      this->parent_->enqueue_special({SPECIAL_OP_FEATURE, (uint8_t) (state ? FEATURE_ECO : FEATURE_ECO_OFF)});
       break;
     case SWITCH_TURBO:
-      this->parent_->enqueue_special(
-          {HISENSE_SPECIAL_OP_FEATURE,
-           (uint8_t) (state ? HISENSE_FEATURE_TURBO : HISENSE_FEATURE_NONE)});
+      this->parent_->enqueue_special({SPECIAL_OP_FEATURE, (uint8_t) (state ? FEATURE_TURBO : FEATURE_NONE)});
       break;
     case SWITCH_QUIET:
-      this->parent_->enqueue_special({HISENSE_SPECIAL_OP_MUTE, (uint8_t) (state ? 1 : 0)});
+      this->parent_->enqueue_special({SPECIAL_OP_MUTE, (uint8_t) (state ? 1 : 0)});
       break;
     case SWITCH_DISPLAY:
       // Standing preference, re-asserted on every later frame. See the note on
@@ -53,9 +48,8 @@ void HisenseSwitch::write_state(bool state) {
   this->publish_state(state);
 }
 
-void HisenseSwitch::on_status(const HisenseState &state) {
-  if (this->parent_ != nullptr &&
-      (this->parent_->in_command_holdoff() || this->parent_->special_busy()))
+void HisenseSwitch::on_status(const AcState &state) {
+  if (this->parent_->in_command_holdoff() || this->parent_->special_busy())
     return;
   switch (this->kind_) {
     case SWITCH_ECO:
@@ -78,6 +72,5 @@ void HisenseSwitch::on_status(const HisenseState &state) {
 
 void HisenseSwitch::dump_config() { LOG_SWITCH("", "Hisense A/C switch", this); }
 
-}  // namespace hisense_ac
-}  // namespace esphome
+}  // namespace esphome::hisense_ac
 #endif  // USE_SWITCH

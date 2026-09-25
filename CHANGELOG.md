@@ -8,6 +8,9 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 ## Unreleased
 
 ### Firmware
+- ESPHome: the `bus_link` binary sensor now shows the link going down (it could only ever publish
+  on), and the post-command holdoff no longer sticks on for ~24.8 days after the `millis()` sign
+  flips, which skipped every readback on a unit left untouched that long.
 - ESPHome: eco, quiet, turbo and the sleep profile are now `climate` presets, named exactly as the
   `hisense-unified-ac` integration names them for Matter nodes, so a climate group can sync presets
   across both firmwares. Special-mode writes (presets, switches, sleep select) share a paced queue

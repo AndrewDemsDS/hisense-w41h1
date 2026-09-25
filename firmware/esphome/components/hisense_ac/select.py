@@ -6,7 +6,9 @@ from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA, hisense_ac_ns
 
 DEPENDENCIES = ["hisense_ac"]
 
-HisenseSleepSelect = hisense_ac_ns.class_("HisenseSleepSelect", select.Select, cg.Component)
+HisenseSleepSelect = hisense_ac_ns.class_(
+    "HisenseSleepSelect", select.Select, cg.Component
+)
 
 CONF_SLEEP_PROFILE = "sleep_profile"
 

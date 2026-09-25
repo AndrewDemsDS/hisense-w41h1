@@ -1,0 +1,135 @@
+# Every option of every hisense_ac platform, shaped like ESPHome's tests/components/<name>/common.yaml
+# so it can move upstream unchanged. The uart bus and the pins come from the per-target test.*.yaml.
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: ${de_pin}
+
+climate:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    name: AC Test
+    supports_heat: true
+    supports_horizontal_swing: true
+    supports_eco: true
+    supports_quiet: true
+    supports_turbo: true
+    supports_sleep: true
+    min_temperature: 16
+    max_temperature: 32
+
+switch:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    eco:
+      name: Eco
+    turbo:
+      name: Turbo
+    quiet:
+      name: Quiet
+    display:
+      name: Panel display
+
+select:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    sleep_profile:
+      name: Sleep profile
+
+sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    indoor_temperature:
+      name: Indoor temperature
+    outdoor_temperature:
+      name: Outdoor temperature
+    coil_temperature:
+      name: Coil temperature
+    compressor_frequency:
+      name: Compressor frequency
+    power:
+      name: Power
+    voltage:
+      name: Voltage
+    current:
+      name: Current
+    checksum_errors:
+      name: Bus checksum errors
+
+binary_sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    aux_heat:
+      name: Aux heat relay
+    bus_link:
+      name: AC bus link
+    problem:
+      name: Fault
+    fault_indoor_temp:
+      name: Fault indoor temp sensor
+    fault_indoor_coil_temp:
+      name: Fault indoor coil sensor
+    fault_indoor_humidity:
+      name: Fault indoor humidity sensor
+    fault_water_full:
+      name: Fault condensate tray full
+    fault_indoor_fan_motor:
+      name: Fault indoor fan motor
+    fault_grille:
+      name: Fault grille
+    fault_indoor_vzero:
+      name: Fault zero-cross detect
+    fault_indoor_comms:
+      name: Fault indoor to outdoor comms
+    fault_indoor_display:
+      name: Fault indoor display
+    fault_indoor_keys:
+      name: Fault indoor keypad
+    fault_indoor_wifi:
+      name: Fault indoor wifi module
+    fault_indoor_ele:
+      name: Fault indoor electrical
+    fault_indoor_eeprom:
+      name: Fault indoor EEPROM
+    fault_outdoor_eeprom:
+      name: Fault outdoor EEPROM
+    fault_outdoor_coil_temp:
+      name: Fault outdoor coil sensor
+    fault_outdoor_gas_temp:
+      name: Fault outdoor gas sensor
+    fault_outdoor_temp:
+      name: Fault outdoor temp sensor
+    fault_over_temp:
+      name: Fault over temperature
+    capability_cool_heat:
+      name: Capability heat pump
+    capability_ai:
+      name: Capability AI mode
+    capability_infinite_fan:
+      name: Capability infinite fan
+    capability_power_save:
+      name: Capability eco
+    capability_fan_mute:
+      name: Capability quiet
+    capability_swing_dir_8:
+      name: Capability 8-position louvre
+    capability_swing_follow:
+      name: Capability swing follow
+    capability_humidity:
+      name: Capability humidity
+    capability_heat_8c:
+      name: Capability 8C frost guard
+    capability_purify:
+      name: Capability purify
+    capability_q_display:
+      name: Capability display control
+    capability_enable_8heat:
+      name: Capability enable 8C heat
+    capability_trans_102_64:
+      name: Capability trans 102/64
+
+text_sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    link_token:
+      name: AC device type

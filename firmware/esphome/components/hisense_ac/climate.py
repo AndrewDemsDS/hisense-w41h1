@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 from esphome.components import climate
 import esphome.config_validation as cv
-from esphome.const import CONF_MAX_TEMPERATURE, CONF_MIN_TEMPERATURE
+from esphome.const import CONF_MAX_TEMPERATURE, CONF_MIN_TEMPERATURE, CONF_SUPPORTS_HEAT
 
 from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA, hisense_ac_ns
 
@@ -9,7 +9,6 @@ DEPENDENCIES = ["hisense_ac"]
 
 HisenseClimate = hisense_ac_ns.class_("HisenseClimate", climate.Climate, cg.Component)
 
-CONF_SUPPORTS_HEAT = "supports_heat"
 CONF_SUPPORTS_HORIZONTAL_SWING = "supports_horizontal_swing"
 CONF_SUPPORTS_ECO = "supports_eco"
 CONF_SUPPORTS_QUIET = "supports_quiet"
@@ -38,7 +37,10 @@ CONFIG_SCHEMA = (
             # eco_sleep_*), named exactly as the hisense-unified-ac wrapper names them for the
             # Matter builds. Set false for a mode your unit lacks and every preset needing it
             # disappears; the capability_* binary sensors report what the A/C answers.
-            **{cv.Optional(key, default=True): cv.boolean for key in PRESET_SUPPORT_BITS},
+            **{
+                cv.Optional(key, default=True): cv.boolean
+                for key in PRESET_SUPPORT_BITS
+            },
             cv.Optional(CONF_MIN_TEMPERATURE, default=16): cv.temperature,
             cv.Optional(CONF_MAX_TEMPERATURE, default=32): cv.temperature,
         }

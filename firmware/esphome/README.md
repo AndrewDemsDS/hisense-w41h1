@@ -30,10 +30,34 @@ Or `firmware/scripts/dev.py flash esphome --board c3 --port <port>` from the rep
 |---|---|
 | `w41h1.yaml` | reference config; board and pins are substitutions |
 | `components/hisense_ac/` | the custom component: hub, climate, switches, select, sensors |
+| `tests/hisense_ac/` | every option of every platform, in the layout of ESPHome's own `tests/components/<name>/` |
+| `tests/build.*.yaml` | repo-only harness so `esphome config` and `esphome compile` can run those tests (CI runs `config`) |
 | `secrets.yaml.example` | template for the gitignored `secrets.yaml` |
 
-The component registers `firmware/src/rs485-driver/` and `../esp32-matter/components/hisense_hal`
-as local IDF components, so the driver compiles in place with no copy. There is deliberately no
-`uart:` block: the HAL opens the port itself to keep the validated DE timing. ESPHome forwards only
-`-D` and `-W` flags on the ESP-IDF framework, so an `-I` flag cannot reach the shared headers;
-registering real IDF components is what makes `<platform_stdlib.h>` resolve.
+Every file in the component passes ESPHome's own gates as of their `dev` branch in September 2026:
+`script/ci-custom.py`, their `.clang-format` and `.clang-tidy`, ruff format, and pylint.
+
+### The codec port (`hisense_protocol.*`, `hisense_map.h`)
+
+The shared driver under `firmware/src/rs485-driver/` cannot pass those gates and is not meant to:
+it also has to build on AmebaZ2. Upstream ESPHome needs a component that carries its own protocol
+code, so the component holds an ESPHome-style port of the codec: frame builders and parsers,
+the enum and fan-ladder mapping, presets, and the power estimate. It leaves out only the stock
+module's cloud-pairing parts ("77", smart-config, provisioning).
+
+A second copy is only safe because it cannot drift. `firmware/test/test_esphome_codec_parity.cpp`
+runs every builder and parser of both over the same inputs (the full command cartesian product,
+exhaustive small domains, and seeded random frames) and compares them byte for byte and field by
+field. It runs in `run_tests.sh`, so the lint gate and CI fail on any divergence. A protocol fix
+lands in the shared driver first, then gets ported here until the parity test passes again.
+
+The port is what the component runs by default: `w41h1.yaml` has a `uart:` block and the bus is
+scheduled in `loop()` (`hisense_bus.*`). That transport has not been run on hardware yet; the
+bench session decides whether it stays the default. Until then the shared driver's own bus task is
+kept as the legacy transport (give `hisense_ac:` `tx_pin` / `rx_pin` / `de_pin` and no `uart_id`).
+
+For the legacy transport the component registers `firmware/src/rs485-driver/` and
+`../esp32-matter/components/hisense_hal` as local IDF components, so the driver compiles in place
+with no copy, and the HAL opens the port itself. ESPHome forwards only `-D` and `-W` flags on the
+ESP-IDF framework, so an `-I` flag cannot reach the shared headers; registering real IDF
+components is what makes `<platform_stdlib.h>` resolve.

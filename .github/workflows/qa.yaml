@@ -54,6 +54,9 @@ jobs:
           cd firmware/esphome
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
           pipx run esphome==2026.7.4 config w41h1.yaml
+          # The upstream-shaped component test (tests/hisense_ac/) sets every option of every
+          # platform, which w41h1.yaml does not.
+          for t in tests/build*.yaml; do pipx run esphome==2026.7.4 config "$t"; done
 
       - name: softwareVersion must increase vs base (when firmware changed)
         if: ${{ github.event_name == 'pull_request' }}

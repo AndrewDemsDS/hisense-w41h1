@@ -2,8 +2,8 @@
 # exists and what it does and does not cover versus the Matter builds.
 #
 # Wiring is identical to the esp-matter ESP32 path; the pin tables and the C3 GPIO warnings in
-# firmware/esp32-matter/README.md apply unchanged. Note there is NO `uart:` block: the driver's
-# HAL opens the port itself so the validated DE timing is untouched.
+# firmware/esp32-matter/README.md apply unchanged. The bytes ride ESPHome's `uart:`; the
+# component drives DE itself with the hardware-validated timing (5 ms settle, 25 ms drain).
 #
 #   flash:   esphome run firmware/esphome/w41h1.yaml
 #   logs:    esphome logs firmware/esphome/w41h1.yaml
@@ -93,11 +93,21 @@ time:
   - platform: homeassistant
     id: ha_time
 
-hisense_ac:
-  id: ac_bus
+uart:
+  id: uart_bus
   tx_pin: ${tx_pin}
   rx_pin: ${rx_pin}
+  baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
   de_pin: ${de_pin}
+  # LEGACY fallback (the shared driver's own bus task, as before the uart transport): delete the
+  # uart: block above and replace uart_id + de_pin here with
+  #   tx_pin: ${tx_pin}
+  #   rx_pin: ${rx_pin}
+  #   de_pin: ${de_pin}
 
 climate:
   - platform: hisense_ac

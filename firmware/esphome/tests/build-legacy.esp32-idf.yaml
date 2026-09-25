@@ -1,0 +1,29 @@
+# Repo-only harness for the LEGACY transport (the shared driver's own bus task over pins). The
+# uart transport is covered by build.*.yaml with every option; this only proves the legacy path
+# still validates and compiles while it is kept as a fallback.
+esphome:
+  name: hisense-ac-legacy-test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [hisense_ac]
+
+hisense_ac:
+  id: ac_bus
+  tx_pin: 19
+  rx_pin: 18
+  de_pin: 4
+
+climate:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    name: AC Legacy Test

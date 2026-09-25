@@ -6,8 +6,7 @@
 #include "esphome/components/switch/switch.h"
 #include "hisense_ac.h"
 
-namespace esphome {
-namespace hisense_ac {
+namespace esphome::hisense_ac {
 
 enum SwitchKind : uint8_t {
   SWITCH_ECO = 0,
@@ -22,7 +21,7 @@ class HisenseSwitch : public switch_::Switch, public Component, public StatusLis
   void dump_config() override;
   void set_parent(HisenseAC *parent) { this->parent_ = parent; }
   void set_kind(SwitchKind kind) { this->kind_ = kind; }
-  void on_status(const HisenseState &state) override;
+  void on_status(const AcState &state) override;
 
  protected:
   void write_state(bool state) override;
@@ -31,6 +30,5 @@ class HisenseSwitch : public switch_::Switch, public Component, public StatusLis
   SwitchKind kind_{SWITCH_ECO};
 };
 
-}  // namespace hisense_ac
-}  // namespace esphome
+}  // namespace esphome::hisense_ac
 #endif  // USE_SWITCH
