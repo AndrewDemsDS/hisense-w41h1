@@ -51,11 +51,13 @@ exhaustive small domains, and seeded random frames) and compares them byte for b
 field. It runs in `run_tests.sh`, so the lint gate and CI fail on any divergence. A protocol fix
 lands in the shared driver first, then gets ported here until the parity test passes again.
 
-The port is not wired in yet: the component still runs the shared driver's bus task, and it will
-move onto the port together with `uart:`, which needs a bench session first.
+The port is what the component runs by default: `w41h1.yaml` has a `uart:` block and the bus is
+scheduled in `loop()` (`hisense_bus.*`). That transport has not been run on hardware yet; the
+bench session decides whether it stays the default. Until then the shared driver's own bus task is
+kept as the legacy transport (give `hisense_ac:` `tx_pin` / `rx_pin` / `de_pin` and no `uart_id`).
 
-The component registers `firmware/src/rs485-driver/` and `../esp32-matter/components/hisense_hal`
-as local IDF components, so the driver compiles in place with no copy. There is deliberately no
-`uart:` block: the HAL opens the port itself to keep the validated DE timing. ESPHome forwards only
-`-D` and `-W` flags on the ESP-IDF framework, so an `-I` flag cannot reach the shared headers;
-registering real IDF components is what makes `<platform_stdlib.h>` resolve.
+For the legacy transport the component registers `firmware/src/rs485-driver/` and
+`../esp32-matter/components/hisense_hal` as local IDF components, so the driver compiles in place
+with no copy, and the HAL opens the port itself. ESPHome forwards only `-D` and `-W` flags on the
+ESP-IDF framework, so an `-I` flag cannot reach the shared headers; registering real IDF
+components is what makes `<platform_stdlib.h>` resolve.

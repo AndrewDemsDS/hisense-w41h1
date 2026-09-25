@@ -64,6 +64,12 @@ void HisenseAC::loop() {
   if (this->link_dirty_) {
     this->link_dirty_ = false;
     ESP_LOGW(TAG, "A/C bus link %s", this->link_up_ ? LOG_STR_LITERAL("restored") : LOG_STR_LITERAL("LOST"));
+#ifdef USE_BINARY_SENSOR
+    // publish_telemetry_() only runs on a decoded frame, so it can only ever publish true; the
+    // loss edge has to be published here or the sensor never shows the link down.
+    if (this->bus_link_binary_sensor_ != nullptr)
+      this->bus_link_binary_sensor_->publish_state(this->link_up_);
+#endif
   }
 
   if (have_state)

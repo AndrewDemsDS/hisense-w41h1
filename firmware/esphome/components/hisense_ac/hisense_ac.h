@@ -104,8 +104,17 @@ class HisenseAC : public Component,
   /// A user command just went out, so ignore the A/C's echo of the PREVIOUS state for a
   /// moment. Without this, a poll already in flight lands after the write and visibly
   /// reverts the control in Home Assistant before the next poll corrects it.
-  void note_user_command() { this->holdoff_until_ = millis() + COMMAND_HOLDOFF_MS; }
-  bool in_command_holdoff() const { return int32_t(millis() - this->holdoff_until_) < 0; }
+  /// Elapsed-time form, so it stays correct across the 49.7-day millis() wrap: a stored deadline
+  /// compared with a signed difference reads as "in holdoff" again ~24.8 days after the last command.
+  void note_user_command() {
+    this->holdoff_start_ = millis();
+    this->holdoff_armed_ = true;
+  }
+  bool in_command_holdoff() const {
+    if (this->holdoff_armed_ && millis() - this->holdoff_start_ >= COMMAND_HOLDOFF_MS)
+      this->holdoff_armed_ = false;  // or it re-arms for 4 s at every wrap
+    return this->holdoff_armed_;
+  }
 
   bool link_up() const { return this->link_up_; }
   bool has_state() const { return this->last_.valid; }
@@ -184,7 +193,8 @@ class HisenseAC : public Component,
   AcCommand cmd_{};
   HisenseClimate *climate_{nullptr};
   std::vector<StatusListener *> listeners_;
-  uint32_t holdoff_until_{0};
+  uint32_t holdoff_start_{0};
+  mutable bool holdoff_armed_{false};
   // Paced special-mode queue. Fixed size: a preset plan is at most PRESET_PLAN_MAX ops, and
   // anything that would overflow is dropped with a warning rather than allocated.
   static constexpr uint8_t SPECIAL_QUEUE_CAP = 8;
