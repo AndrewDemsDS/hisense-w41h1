@@ -1,0 +1,20 @@
+# The shared RS-485 driver: a C API (every header sits in extern "C" and hisense_rs485.h is also
+# included from C in esp32-recon), compiled as C++11 by the AmebaZ2 Realtek SDK. Inherits the
+# repo check set and switches off only what that contract forbids:
+#   modernize-use-using, -redundant-void-arg, -deprecated-headers: C syntax is the API.
+#   cppcoreguidelines-avoid-non-const-global-variables: the driver is a single-instance module
+#     whose file-static s_* state (ring buffer, shadow, link health) is the design, shared with
+#     the ISR/HAL through the C API.
+#   readability-identifier-naming: FreeRTOS task signatures (pvParameters) and the SDK's
+#     camelCase HAL callbacks are fixed by the platform, not by us.
+#   modernize-loop-convert: index loops over the protocol tables mirror the RE docs row by row.
+# C++17-only checks (concat-nested-namespaces and friends) stay off because the compile database
+# builds this tree with -std=c++11, as the SDK does.
+InheritParentConfig: true
+Checks: >-
+  -modernize-use-using,
+  -modernize-redundant-void-arg,
+  -modernize-deprecated-headers,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -readability-identifier-naming,
+  -modernize-loop-convert,

@@ -33,6 +33,7 @@ Read `firmware/docs/10-firmware-ota-procedure.md` before driving them by hand.
 | `ota_guards.py` | The pure guard decisions behind `ota-guards.sh`, host-tested by `../test/test_ota_guards.py`. |
 | `sync-files.sh` | Single source of truth for which repo files are copied into the SDK example dir. Sourced by the release script and `scripts/setup.sh`. |
 | `esp32-lint.sh` | Host-only gate: `PROJECT_VER` vs `sdkconfig` consistency. |
+| `cpp-lint.sh` | C/C++ lint for every tree we own: `check` (clang-format, custom rules, clang-tidy; what CI runs) and `fix`. Rules and scope in `cpp-lint.py`; see `docs/guide/Testing-and-QA.md`. |
 
 ## Config
 

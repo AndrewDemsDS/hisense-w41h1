@@ -20,6 +20,27 @@ if git diff --cached --name-only | grep -qE '^firmware/esp32-matter/'; then
     echo "[pre-commit] ESP32 LINT FAILED. Fix, or bypass with: git commit --no-verify"; exit 1; }
 fi
 
+# C/C++ lint on the staged sources (cpp-lint.py owns the scope and skips SDK copies, so the whole
+# staged list can be passed). clang-format + the custom rules only, to stay fast; CPP_LINT_TIDY=1
+# adds clang-tidy, and CI always runs it. It reads the working tree, not the index. A missing
+# pinned clang-format warns instead of blocking: `cpp-lint.sh fix` installs it on first use.
+mapfile -t cpp_staged < <(git diff --cached --name-only --diff-filter=ACMR \
+  | grep -E '\.(c|cc|cpp|h|hpp|tcc)$' || true)
+if [ ${#cpp_staged[@]} -gt 0 ]; then
+  tidy_flag=--no-tidy
+  [ "${CPP_LINT_TIDY:-0}" = 1 ] && tidy_flag=""
+  rc=0
+  (cd "$REPO" && CPP_LINT_NO_INSTALL=1 bash firmware/scripts/cpp-lint.sh check ${tidy_flag:+"$tidy_flag"} \
+    "${cpp_staged[@]}") || rc=$?
+  if [ "$rc" = 3 ]; then
+    echo "[pre-commit] WARNING: pinned clang-format/clang-tidy not installed, C/C++ lint skipped" \
+      "(run firmware/scripts/cpp-lint.sh fix once to install them)"
+  elif [ "$rc" != 0 ]; then
+    echo "[pre-commit] C/C++ LINT FAILED. Apply with: firmware/scripts/cpp-lint.sh fix," \
+      "or bypass with: git commit --no-verify"; exit 1
+  fi
+fi
+
 # Prose slop gate: block em dashes in newly-added markdown (no-op when no .md is staged).
 # This is the portable gate every contributor gets.
 bash "$REPO/firmware/scripts/stop-slop.sh" || exit 1

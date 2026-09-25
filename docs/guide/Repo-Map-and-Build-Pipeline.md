@@ -130,15 +130,15 @@ Three things to keep straight:
 
 Hooks are opt-in per clone: `git config core.hooksPath firmware/.githooks`. The **pre-commit hook**
 runs `ota-release.sh lint` when `firmware/src`, `firmware/test`, or the `.zap` is staged,
-`esp32-lint.sh` when `firmware/esp32-matter/` is staged, and `stop-slop.sh` on staged markdown
-(bypass: `--no-verify`).
+`esp32-lint.sh` when `firmware/esp32-matter/` is staged, `cpp-lint.sh check --no-tidy` on staged
+C/C++ files, and `stop-slop.sh` on staged markdown (bypass: `--no-verify`).
 
 ## Continuous integration & releases (GitHub Actions)
 
 `.github/workflows/` mirrors the local gate and automates release builds:
 
-- **`qa.yaml`** runs on every push/PR: shellcheck, ruff, `esp32-lint.sh` (ESP32 version
-  consistency), `ota-release.sh lint` (host codec/map tests, `.zap` contiguity, version sanity),
+- **`qa.yaml`** runs on every push/PR: shellcheck, ruff, `cpp-lint.sh check` (clang-format,
+  custom rules and clang-tidy on the C/C++ we own), `esp32-lint.sh` (ESP32 version consistency), `ota-release.sh lint` (host codec/map tests, `.zap` contiguity, version sanity),
   `esphome config` on `w41h1.yaml`, and a check that `firmware/src/version.txt` strictly increases
   when firmware changed. It is hardware-free, so it runs on a GitHub-hosted runner, using the same
   commands as the pre-commit hook so CI and local never drift.

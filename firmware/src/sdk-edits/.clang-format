@@ -1,0 +1,5 @@
+# SDK-derived and generated files (copies of Realtek/CHIP example files, the .zap captures).
+# Never reformat them: a whitespace churn here turns every SDK rebase into a conflict.
+# cpp-lint.sh also excludes this directory explicitly; this file covers editors and IDEs.
+DisableFormat: true
+SortIncludes: false
