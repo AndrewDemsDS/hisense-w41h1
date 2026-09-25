@@ -52,9 +52,10 @@ field. It runs in `run_tests.sh`, so the lint gate and CI fail on any divergence
 lands in the shared driver first, then gets ported here until the parity test passes again.
 
 The port is what the component runs by default: `w41h1.yaml` has a `uart:` block and the bus is
-scheduled in `loop()` (`hisense_bus.*`). That transport has not been run on hardware yet; the
-bench session decides whether it stays the default. Until then the shared driver's own bus task is
-kept as the legacy transport (give `hisense_ac:` `tx_pin` / `rx_pin` / `de_pin` and no `uart_id`).
+scheduled in `loop()` (`hisense_bus.*`). It passed the hardware-in-loop actuation test on a live
+A/C (48/49 on 2026-09-25; the one miss, heat_cool readback, is an intermittent A/C-side flake also
+seen on the legacy transport). The shared driver's own bus task stays available as the legacy
+transport (give `hisense_ac:` `tx_pin` / `rx_pin` / `de_pin` and no `uart_id`).
 
 For the legacy transport the component registers `firmware/src/rs485-driver/` and
 `../esp32-matter/components/hisense_hal` as local IDF components, so the driver compiles in place
