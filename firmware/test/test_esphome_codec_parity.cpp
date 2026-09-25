@@ -26,17 +26,17 @@ namespace H = esphome::hisense_ac;
 
 static int g_fail = 0;
 static long g_checks = 0;
-#define CHECK(cond, ...)                   \
-  do {                                     \
-    g_checks++;                            \
-    if (!(cond)) {                         \
-      if (g_fail < 25) {                   \
+#define CHECK(cond, ...) \
+  do { \
+    g_checks++; \
+    if (!(cond)) { \
+      if (g_fail < 25) { \
         printf("  FAIL %s:%d ", __FILE__, __LINE__); \
-        printf(__VA_ARGS__);               \
-        printf("\n");                      \
-      }                                    \
-      g_fail++;                            \
-    }                                      \
+        printf(__VA_ARGS__); \
+        printf("\n"); \
+      } \
+      g_fail++; \
+    } \
   } while (0)
 
 // Deterministic PRNG (xorshift32) so a failure reproduces.
@@ -95,7 +95,8 @@ static bool same_faults(const HisenseFaults &o, const H::AcFaults &n) {
 
 // A random, well-formed A/C -> module frame of `len` bytes with a valid LEN byte and checksum.
 static void random_frame(uint8_t *f, size_t len, uint8_t cls, uint8_t sub) {
-  for (size_t i = 0; i < len; i++) f[i] = (uint8_t) rnd();
+  for (size_t i = 0; i < len; i++)
+    f[i] = (uint8_t) rnd();
   f[0] = 0xF4;
   f[1] = 0xF5;
   f[2] = 0x01;
@@ -104,7 +105,8 @@ static void random_frame(uint8_t *f, size_t len, uint8_t cls, uint8_t sub) {
   f[13] = cls;
   f[14] = sub;
   uint32_t sum = 0;
-  for (size_t i = 2; i < len - 4; i++) sum += f[i];
+  for (size_t i = 2; i < len - 4; i++)
+    sum += f[i];
   f[len - 4] = (uint8_t) (sum >> 8);
   f[len - 3] = (uint8_t) sum;
   f[len - 2] = 0xF4;
@@ -135,8 +137,7 @@ static void test_constants() {
   for (size_t i = 0; i < H::PRESET_COUNT; i++) {
     const EsphomePresetRow &o = k_esphome_presets[i];
     const H::PresetRow &n = H::PRESETS[i];
-    CHECK(strcmp(o.name, n.name) == 0 && o.eco == n.eco && o.turbo == n.turbo && o.mute == n.mute &&
-              o.sleep == n.sleep,
+    CHECK(strcmp(o.name, n.name) == 0 && o.eco == n.eco && o.turbo == n.turbo && o.mute == n.mute && o.sleep == n.sleep,
           "preset row %zu", i);
   }
   CHECK(H::FAN_TABLE_LEN == HISENSE_FAN_TABLE_LEN, "fan table size");
@@ -147,13 +148,17 @@ static void test_constants() {
           "fan row %zu", i);
   }
   // Enum values are wire arithmetic (mode * 2 + 1, fan * 2 + 1), so they must match too.
-  CHECK((int) H::MODE_FAN == (int) HISENSE_MODE_FAN && (int) H::MODE_HEAT == (int) HISENSE_MODE_HEAT && (int) H::MODE_COOL == (int) HISENSE_MODE_COOL &&
-            (int) H::MODE_DRY == (int) HISENSE_MODE_DRY && (int) H::MODE_AUTO == (int) HISENSE_MODE_AUTO,
+  CHECK((int) H::MODE_FAN == (int) HISENSE_MODE_FAN && (int) H::MODE_HEAT == (int) HISENSE_MODE_HEAT &&
+            (int) H::MODE_COOL == (int) HISENSE_MODE_COOL && (int) H::MODE_DRY == (int) HISENSE_MODE_DRY &&
+            (int) H::MODE_AUTO == (int) HISENSE_MODE_AUTO,
         "mode enum");
   CHECK((int) H::FAN_SPEED_AUTO == (int) HISENSE_FAN_AUTO && (int) H::FAN_SPEED_QUIET == (int) HISENSE_FAN_QUIET &&
-            (int) H::FAN_SPEED_LOW == (int) HISENSE_FAN_LOW && (int) H::FAN_SPEED_MED_LOW == (int) HISENSE_FAN_MED_LOW &&
-            (int) H::FAN_SPEED_MID == (int) HISENSE_FAN_MID && (int) H::FAN_SPEED_MED_HIGH == (int) HISENSE_FAN_MED_HIGH &&
-            (int) H::FAN_SPEED_HIGH == (int) HISENSE_FAN_HIGH && (int) H::FAN_SPEED_NOCHANGE == (int) HISENSE_FAN_NOCHANGE,
+            (int) H::FAN_SPEED_LOW == (int) HISENSE_FAN_LOW &&
+            (int) H::FAN_SPEED_MED_LOW == (int) HISENSE_FAN_MED_LOW &&
+            (int) H::FAN_SPEED_MID == (int) HISENSE_FAN_MID &&
+            (int) H::FAN_SPEED_MED_HIGH == (int) HISENSE_FAN_MED_HIGH &&
+            (int) H::FAN_SPEED_HIGH == (int) HISENSE_FAN_HIGH &&
+            (int) H::FAN_SPEED_NOCHANGE == (int) HISENSE_FAN_NOCHANGE,
         "fan enum");
 }
 
@@ -297,7 +302,8 @@ static void test_stamp_link_token() {
   // Random garbage, including a bad start marker and oversize LEN.
   for (int i = 0; i < 20000; i++) {
     uint8_t in[80], a[80], b[80];
-    for (auto &x : in) x = (uint8_t) rnd();
+    for (auto &x : in)
+      x = (uint8_t) rnd();
     if (i & 1) {
       in[0] = 0xF4;
       in[1] = 0xF5;
@@ -317,10 +323,14 @@ static void test_parsers() {
     size_t len = 30 + rnd() % 180;
     random_frame(f, len, 0x66, (uint8_t) (i % 3 == 0 ? 0x40 : 0x00));
     int breakage = rnd() % 8;
-    if (breakage == 1) f[rnd() % len] ^= (uint8_t) (1u << (rnd() % 8));
-    if (breakage == 2) f[4]++;
-    if (breakage == 3) f[len - 1] = 0x00;
-    if (breakage == 4) f[1] = 0x00;
+    if (breakage == 1)
+      f[rnd() % len] ^= (uint8_t) (1u << (rnd() % 8));
+    if (breakage == 2)
+      f[4]++;
+    if (breakage == 3)
+      f[len - 1] = 0x00;
+    if (breakage == 4)
+      f[1] = 0x00;
     size_t plen = (breakage == 5) ? len - 1 : len;
 
     HisenseState os;
@@ -359,7 +369,8 @@ static void test_parsers() {
   }
   // Fault parsing gates each group on length separately, so walk every length.
   uint8_t f[80];
-  for (auto &x : f) x = (uint8_t) rnd();
+  for (auto &x : f)
+    x = (uint8_t) rnd();
   for (size_t len = 0; len < sizeof(f); len++) {
     HisenseFaults o;
     H::AcFaults n;
@@ -382,16 +393,17 @@ static void test_bitmaps() {
     HisenseFaults fo;
     memset(&fo, 0, sizeof(fo));
     H::AcFaults fn;
-    bool *ob[] = {&fo.in_temp,   &fo.in_coil_temp, &fo.in_humidity,  &fo.water_full,   &fo.in_fan_motor,
-                  &fo.grille,    &fo.in_vzero,     &fo.in_com,       &fo.in_display,   &fo.in_keys,
-                  &fo.in_wifi,   &fo.in_ele,       &fo.in_eeprom,    &fo.out_eeprom,   &fo.out_coil_temp,
-                  &fo.out_gas_temp, &fo.out_temp,  &fo.over_temp,    &fo.any,          &fo.valid};
-    bool *nb[] = {&fn.in_temp,   &fn.in_coil_temp, &fn.in_humidity,  &fn.water_full,   &fn.in_fan_motor,
-                  &fn.grille,    &fn.in_vzero,     &fn.in_com,       &fn.in_display,   &fn.in_keys,
-                  &fn.in_wifi,   &fn.in_ele,       &fn.in_eeprom,    &fn.out_eeprom,   &fn.out_coil_temp,
-                  &fn.out_gas_temp, &fn.out_temp,  &fn.over_temp,    &fn.any,          &fn.valid};
+    bool *ob[] = {&fo.in_temp,      &fo.in_coil_temp, &fo.in_humidity, &fo.water_full, &fo.in_fan_motor,
+                  &fo.grille,       &fo.in_vzero,     &fo.in_com,      &fo.in_display, &fo.in_keys,
+                  &fo.in_wifi,      &fo.in_ele,       &fo.in_eeprom,   &fo.out_eeprom, &fo.out_coil_temp,
+                  &fo.out_gas_temp, &fo.out_temp,     &fo.over_temp,   &fo.any,        &fo.valid};
+    bool *nb[] = {&fn.in_temp,      &fn.in_coil_temp, &fn.in_humidity, &fn.water_full, &fn.in_fan_motor,
+                  &fn.grille,       &fn.in_vzero,     &fn.in_com,      &fn.in_display, &fn.in_keys,
+                  &fn.in_wifi,      &fn.in_ele,       &fn.in_eeprom,   &fn.out_eeprom, &fn.out_coil_temp,
+                  &fn.out_gas_temp, &fn.out_temp,     &fn.over_temp,   &fn.any,        &fn.valid};
     uint32_t bits = rnd();
-    for (size_t k = 0; k < sizeof(ob) / sizeof(ob[0]); k++) *ob[k] = *nb[k] = ((bits >> k) & 1u) != 0;
+    for (size_t k = 0; k < sizeof(ob) / sizeof(ob[0]); k++)
+      *ob[k] = *nb[k] = ((bits >> k) & 1u) != 0;
     CHECK(hisense_faults_to_bitmap32(&fo) == H::faults_to_bitmap32(fn), "faults_to_bitmap32 bits 0x%08X",
           (unsigned) bits);
   }
@@ -516,7 +528,8 @@ static void test_presets() {
         uint8_t co = esphome_preset_plan(&os, (uint8_t) target, oo);
         size_t cn = H::preset_plan(ns, (uint8_t) target, no);
         bool same = co == cn;
-        for (size_t k = 0; same && k < cn; k++) same = oo[k].kind == no[k].kind && oo[k].value == no[k].value;
+        for (size_t k = 0; same && k < cn; k++)
+          same = oo[k].kind == no[k].kind && oo[k].value == no[k].value;
         CHECK(same, "preset_plan bits=%d sleep=%d target=%d", bits, sleep, target);
       }
       for (int kind = 0; kind < 4; kind++) {
@@ -560,11 +573,13 @@ static void test_frame_assembler() {
   // On the real bus only a checksum byte can be 0xF4, so clear the body of it, then tune one body
   // byte until the checksum's low byte is 0xF4 and has to be stuffed on the wire.
   for (size_t i = 2; i < 156; i++)
-    if (f[i] == 0xF4) f[i] = 0x00;
+    if (f[i] == 0xF4)
+      f[i] = 0x00;
   for (int v = 0; v < 256; v++) {
     f[100] = (uint8_t) v;
     uint32_t sum = 0;
-    for (size_t i = 2; i < 156; i++) sum += f[i];
+    for (size_t i = 2; i < 156; i++)
+      sum += f[i];
     if ((uint8_t) sum == 0xF4 && f[100] != 0xF4) {
       f[156] = (uint8_t) (sum >> 8);
       f[157] = (uint8_t) sum;
@@ -576,15 +591,18 @@ static void test_frame_assembler() {
   uint8_t wire[200];
   size_t w = 0;
   const uint8_t junk[] = {0x00, 0xFB, 0x12};
-  for (uint8_t j : junk) wire[w++] = j;
+  for (uint8_t j : junk)
+    wire[w++] = j;
   for (size_t i = 0; i < sizeof(f); i++) {
     wire[w++] = f[i];
-    if (i >= 156 && i <= 157 && f[i] == 0xF4) wire[w++] = 0xF4;
+    if (i >= 156 && i <= 157 && f[i] == 0xF4)
+      wire[w++] = 0xF4;
   }
   size_t got = 0;
   for (size_t i = 0; i < w; i++) {
     size_t n = fa.feed(wire[i]);
-    if (n) got = n;
+    if (n)
+      got = n;
   }
   CHECK(got == sizeof(f) && memcmp(fa.data(), f, sizeof(f)) == 0, "assembler: stuffed status frame recovered");
   H::AcState st;
@@ -592,23 +610,27 @@ static void test_frame_assembler() {
 
   // Our own frames (direction byte 0x00) are echoes and are dropped.
   got = 0;
-  for (size_t i = 0; i < HISENSE_STATUS_REQUEST_LEN; i++) got |= fa.feed(HISENSE_STATUS_REQUEST[i]);
+  for (size_t i = 0; i < HISENSE_STATUS_REQUEST_LEN; i++)
+    got |= fa.feed(HISENSE_STATUS_REQUEST[i]);
   CHECK(got == 0, "assembler: echo of our own poll dropped");
 
   // A missing end tag resyncs instead of returning a frame.
   uint8_t g[28];
   random_frame(g, sizeof(g), 0x1E, 0x00);
   for (size_t i = 2; i < 26; i++)
-    if (g[i] == 0xF4) g[i] = 0x00;
+    if (g[i] == 0xF4)
+      g[i] = 0x00;
   g[27] = 0x00;
   got = 0;
-  for (uint8_t b : g) got |= fa.feed(b);
+  for (uint8_t b : g)
+    got |= fa.feed(b);
   CHECK(got == 0, "assembler: missing F4 FB rejected");
 
   // A LEN that claims more than the buffer holds is dropped at byte 4.
   const uint8_t big[] = {0xF4, 0xF5, 0x01, 0x40, 0xFF};
   got = 0;
-  for (uint8_t b : big) got |= fa.feed(b);
+  for (uint8_t b : big)
+    got |= fa.feed(b);
   CHECK(got == 0, "assembler: oversize LEN dropped");
 }
 

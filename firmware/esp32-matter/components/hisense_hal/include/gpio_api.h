@@ -4,7 +4,9 @@
 // Enums typedef'd so bare names work in both C and C++.
 #include "PinNames.h"
 
-typedef struct gpio_s { PinName pin; } gpio_t;
+typedef struct gpio_s {
+  PinName pin;
+} gpio_t;
 typedef enum { PIN_INPUT = 0, PIN_OUTPUT = 1 } PinDirection;
 typedef enum { PullNone = 0, PullUp = 1, PullDown = 2 } PinMode;
 

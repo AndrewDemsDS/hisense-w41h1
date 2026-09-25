@@ -70,6 +70,39 @@ It builds `busmon`, the real driver plus the ESP-IDF HAL, logging each decoded s
 against `virtual_ac.py` on a USB adapter with `dev.py bench esp32`. Wiring, passing output and the
 failure signatures live in one place: [Build, Flash and Test](Build-Flash-Test#bench-stage-no-ac).
 
+## C/C++ lint
+
+Every C/C++ tree we own is held to one style and one check set, taken from ESPHome's so the
+component and the shared driver read alike: `.clang-format` and `.clang-tidy` at the repo root,
+narrowed per directory where a tree has a real constraint (`firmware/src/rs485-driver/` is a C API
+built as C++11 for the Realtek SDK; `firmware/test/` is held to bug checks, not style). The
+SDK-derived `firmware/src/sdk-edits/` is excluded and never reformatted.
+
+```
+firmware/scripts/cpp-lint.sh check [PATH...]   # what CI runs: clang-format, custom rules, clang-tidy
+firmware/scripts/cpp-lint.sh fix   [PATH...]   # applies the fixable part, then check reports the rest
+```
+
+- **clang-format 13.0.1 and clang-tidy 22.1.8**, ESPHome's pins. Another clang-format major
+  formats differently, so the script refuses other versions and installs the pinned wheels into
+  `~/.cache/hisense-w41h1/cpp-lint` on first use (`CLANG_FORMAT` / `CLANG_TIDY` override).
+- **Custom rules** (`cpp-lint.py`) are the portable part of ESPHome's `ci-custom.py`: no
+  integer-constant `#define` where `constexpr` works, braces around a lone `ESP_LOG` body, no
+  `byte`, `sprintf`, `scanf` or `std::bind`, inclusive language, `#pragma once`, whitespace. A
+  line with `NOLINT` is exempt; say why next to it. The C-API driver headers keep their macros
+  (C includes them, and the HACS contract test parses `HISENSE_FEAT1_*` / `HISENSE_FAULT1_*`).
+- **clang-tidy** runs on the host-compilable set only (driver, its headers, the host tests, the
+  ESPHome codec port and bus scheduler), through a compile database the script generates from
+  the same flags as `run_tests.sh` (`cpp-lint.sh compdb [DIR]` writes it for an editor). The
+  esp32-matter and esp32-recon trees need ESP-IDF, and the rest of the ESPHome component needs
+  ESPHome's headers, so those get clang-format and the custom rules, not clang-tidy.
+- **`fix`** applies the whitespace rules, the clang-tidy fixes that cannot change behaviour
+  (braces, `override`, redundant control flow and the like, only where the file's own
+  `.clang-tidy` enables them), then clang-format.
+
+The pre-commit hook runs `check --no-tidy` on staged C/C++ files (`CPP_LINT_TIDY=1` adds
+clang-tidy) and only warns if the pinned tools are not installed yet.
+
 ## Beyond the host tests
 
 The rest of the pyramid is described once, in `firmware/docs/04-qa-strategy.md`. What each part is

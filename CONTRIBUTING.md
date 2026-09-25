@@ -53,6 +53,8 @@ that's out of scope (and can't be redistributed). `gen-creds.sh` handles per-uni
 - Open an issue for anything non-trivial before a big PR, so we can agree on the approach.
 - CI is host-only (no hardware): `.github/workflows/qa.yaml` runs `ota-release.sh lint` (the same
   gate as the pre-commit hook) on every push/PR, make sure it passes.
+- C/C++ style and lint: run `firmware/scripts/cpp-lint.sh fix` before committing C/C++ changes; CI
+  runs `cpp-lint.sh check` (clang-format 13.0.1, clang-tidy 22.1.8, ESPHome-derived rules).
 - Bumping the firmware version = edit **`firmware/src/version.txt`** (the git-tracked source of
   truth) and commit it; on a PR, CI requires it to strictly increase vs the target branch.
 

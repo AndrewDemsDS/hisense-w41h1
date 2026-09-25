@@ -25,13 +25,13 @@ typedef int PinName;
 // the C3's BUILT-IN USB-Serial/JTAG, so external JTAG is never muxed in, and the pins boot as
 // ordinary GPIOs.
 #ifndef PA_14
-#define PA_14    5   // UART1 TX  -> transceiver DI
+#define PA_14 5  // UART1 TX  -> transceiver DI
 #endif
 #ifndef PA_13
-#define PA_13    6   // UART1 RX  <- transceiver RO
+#define PA_13 6  // UART1 RX  <- transceiver RO
 #endif
 #ifndef PA_17
-#define PA_17   10   // RS-485 DE -> transceiver DE+RE (tied)
+#define PA_17 10  // RS-485 DE -> transceiver DE+RE (tied)
 #endif
 // DE is GPIO10 as of 2026-08-10; the boards are wired to GPIO10 (confirmed with the user).
 // Originally GPIO7, moved after a wiring fault shorted the DE/EN line to 3V3 on the first board.
@@ -51,12 +51,12 @@ typedef int PinName;
 // GPIO17 and the original RX on GPIO16; that (not the transceiver) is why external
 // RX stayed 0 while internal loopback passed. Both UART pins now avoid 16/17.
 #ifndef PA_14
-#define PA_14   19   // UART1 TX  -> transceiver DI  (moved off GPIO17: WROVER PSRAM pin)
+#define PA_14 19  // UART1 TX  -> transceiver DI  (moved off GPIO17: WROVER PSRAM pin)
 #endif
 #ifndef PA_13
-#define PA_13   18   // UART1 RX  <- transceiver RO  (moved off GPIO16: WROVER PSRAM pin)
+#define PA_13 18  // UART1 RX  <- transceiver RO  (moved off GPIO16: WROVER PSRAM pin)
 #endif
 #ifndef PA_17
-#define PA_17    4   // RS-485 DE -> transceiver DE+RE (tied)
+#define PA_17 4  // RS-485 DE -> transceiver DE+RE (tied)
 #endif
 #endif

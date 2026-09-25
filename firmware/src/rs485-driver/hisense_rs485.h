@@ -1,30 +1,30 @@
 /********************************************************************************
-  *
-  * hisense_rs485.h
-  *
-  * RS-485 driver for the Hisense/AirconIntl indoor-unit control bus, replacing
-  * the Ameba room_air_conditioner SDK example's stub (DHT11 + PWM fan) hardware
-  * I/O with real A/C bus TX/RX.
-  *
-  * Frame format is FIRMWARE-CONFIRMED (W41H1 dongle disassembly, see
-  * hisense-w41h1-re/docs/03-rs485-ac-protocol.md): F4 F5 start, F4 FB end,
-  * length + checksum. The payload byte layout, field encodings, and checksum
-  * ALGORITHM below are reverse-derived from the community reference
-  * implementation `pslawinski/esphome_airconintl` (messages.h / device_status.h
-  * / aircon_climate.h), which drives the identical Hisense/AirconIntl bus, and
-  * were arithmetically re-verified against all ~75 sample frames in that repo
-  * before being encoded here (see hisense-w41h1-re/docs/05-esp32-replacement.md
-  * for the human-readable summary this header supersedes in places -- offsets
-  * that disagree with docs/05 are called out explicitly below).
-  *
-  * Anything not directly exercised by a sample frame in the reference repo is
-  * marked `// VERIFY` and MUST be confirmed on the bench (see INTEGRATION.md)
-  * before being trusted in the field.
-  *
-  * Plain C-style embedded C++: no STL, no heap churn in the hot path, no
-  * exceptions. Matches the style of room_aircon_driver.{h,cpp}.
-  *
-********************************************************************************/
+ *
+ * hisense_rs485.h
+ *
+ * RS-485 driver for the Hisense/AirconIntl indoor-unit control bus, replacing
+ * the Ameba room_air_conditioner SDK example's stub (DHT11 + PWM fan) hardware
+ * I/O with real A/C bus TX/RX.
+ *
+ * Frame format is FIRMWARE-CONFIRMED (W41H1 dongle disassembly, see
+ * hisense-w41h1-re/docs/03-rs485-ac-protocol.md): F4 F5 start, F4 FB end,
+ * length + checksum. The payload byte layout, field encodings, and checksum
+ * ALGORITHM below are reverse-derived from the community reference
+ * implementation `pslawinski/esphome_airconintl` (messages.h / device_status.h
+ * / aircon_climate.h), which drives the identical Hisense/AirconIntl bus, and
+ * were arithmetically re-verified against all ~75 sample frames in that repo
+ * before being encoded here (see hisense-w41h1-re/docs/05-esp32-replacement.md
+ * for the human-readable summary this header supersedes in places -- offsets
+ * that disagree with docs/05 are called out explicitly below).
+ *
+ * Anything not directly exercised by a sample frame in the reference repo is
+ * marked `// VERIFY` and MUST be confirmed on the bench (see INTEGRATION.md)
+ * before being trusted in the field.
+ *
+ * Plain C-style embedded C++: no STL, no heap churn in the hot path, no
+ * exceptions. Matches the style of room_aircon_driver.{h,cpp}.
+ *
+ ********************************************************************************/
 
 #pragma once
 
@@ -57,11 +57,11 @@ extern "C" {
  * silent -- confirmed on hardware across three firmware revisions. Full
  * disassembly + timing in reverse-engineering/docs/09.
  * -------------------------------------------------------------------------*/
-#define HISENSE_UART_TX_PIN   PA_14   // firmware-confirmed (UART0 TX, raw 0x0E)
-#define HISENSE_UART_RX_PIN   PA_13   // firmware-confirmed (UART0 RX, raw 0x0D)
-#define HISENSE_UART_DE_PIN   PA_17   // half-duplex driver-enable (HIGH=TX, LOW=RX)
+#define HISENSE_UART_TX_PIN PA_14  // firmware-confirmed (UART0 TX, raw 0x0E)
+#define HISENSE_UART_RX_PIN PA_13  // firmware-confirmed (UART0 RX, raw 0x0D)
+#define HISENSE_UART_DE_PIN PA_17  // half-duplex driver-enable (HIGH=TX, LOW=RX)
 
-#define HISENSE_UART_BAUD      9600   // firmware-confirmed A/C-link baud (8N1)
+#define HISENSE_UART_BAUD 9600  // firmware-confirmed A/C-link baud (8N1)
 #define HISENSE_UART_DATA_BITS 8
 #define HISENSE_UART_STOP_BITS 1
 
@@ -78,10 +78,10 @@ extern "C" {
 // length are IDENTICAL across on/off/mode/temp/fan/swing/eco/turbo/display
 // commands -- only the 30-byte body (offset 16..45) and the recomputed
 // checksum differ.
-#define HISENSE_CMD_FRAME_LEN     50
-#define HISENSE_CMD_HEADER_LEN    16
-#define HISENSE_CMD_CHK_OFFSET    46  // 2 bytes, big-endian
-#define HISENSE_CMD_END_OFFSET    48  // F4 FB
+#define HISENSE_CMD_FRAME_LEN 50
+#define HISENSE_CMD_HEADER_LEN 16
+#define HISENSE_CMD_CHK_OFFSET 46  // 2 bytes, big-endian
+#define HISENSE_CMD_END_OFFSET 48  // F4 FB
 
 // The 16-byte header on every "write" (message-class 0x65) command frame,
 // byte-for-byte from messages.h. Byte[2]=TYPE(0x00), byte[3]=CTRL(0x40),
@@ -97,18 +97,15 @@ extern "C" {
 // to these. byte[4]=0x29 is the 8-bit LEN (bit5 "16-bit LEN" clear, as
 // expected for a 41-byte payload). The header is thus a genuine, decoded
 // envelope, not an opaque blob.
-static const uint8_t HISENSE_CMD_HEADER[HISENSE_CMD_HEADER_LEN] = {
-    0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01,
-    0x01, 0xFE, 0x01, 0x00, 0x00, 0x65, 0x00, 0x00
-};
+static const uint8_t HISENSE_CMD_HEADER[HISENSE_CMD_HEADER_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01,
+                                                                   0x01, 0xFE, 0x01, 0x00, 0x00, 0x65, 0x00, 0x00};
 
 // Status-request frame (module -> A/C, message-class 0x66), verbatim from
 // messages.h `request_status[]`. Send this periodically to poll A/C state.
 #define HISENSE_STATUS_REQUEST_LEN 21
-static const uint8_t HISENSE_STATUS_REQUEST[HISENSE_STATUS_REQUEST_LEN] = {
-    0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01,
-    0x00, 0x00, 0x66, 0x00, 0x00, 0x00, 0x01, 0xB3, 0xF4, 0xFB
-};
+static const uint8_t HISENSE_STATUS_REQUEST[HISENSE_STATUS_REQUEST_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00, 0x00,
+                                                                           0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x66,
+                                                                           0x00, 0x00, 0x00, 0x01, 0xB3, 0xF4, 0xFB};
 
 // Link / keepalive frames (module -> A/C), captured VERBATIM from the stock
 // AEH-W41H1 dongle's DI line at link-up (live capture, 2026-07-06). The A/C
@@ -119,21 +116,17 @@ static const uint8_t HISENSE_STATUS_REQUEST[HISENSE_STATUS_REQUEST_LEN] = {
 // OK by the repo decoder. Direction byte[2]=0x00 = module->A/C (the A/C replies
 // with byte[2]=0x01).
 #define HISENSE_LINK_INIT_0A_LEN 20
-static const uint8_t HISENSE_LINK_INIT_0A[HISENSE_LINK_INIT_0A_LEN] = {
-    0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x00, 0x00, 0xFE,
-    0x01, 0x00, 0x00, 0x0A, 0x04, 0x00, 0x01, 0x58, 0xF4, 0xFB
-};
+static const uint8_t HISENSE_LINK_INIT_0A[HISENSE_LINK_INIT_0A_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00,
+                                                                       0x00, 0x00, 0xFE, 0x01, 0x00, 0x00, 0x0A,
+                                                                       0x04, 0x00, 0x01, 0x58, 0xF4, 0xFB};
 #define HISENSE_LINK_INIT_07_LEN 20
-static const uint8_t HISENSE_LINK_INIT_07[HISENSE_LINK_INIT_07_LEN] = {
-    0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x01, 0x01, 0xFE,
-    0x01, 0x00, 0x00, 0x07, 0x01, 0x00, 0x01, 0x54, 0xF4, 0xFB
-};
+static const uint8_t HISENSE_LINK_INIT_07[HISENSE_LINK_INIT_07_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00,
+                                                                       0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x07,
+                                                                       0x01, 0x00, 0x01, 0x54, 0xF4, 0xFB};
 #define HISENSE_LINK_HEARTBEAT_LEN 28
 static const uint8_t HISENSE_LINK_HEARTBEAT[HISENSE_LINK_HEARTBEAT_LEN] = {
-    0xF4, 0xF5, 0x00, 0x40, 0x13, 0x00, 0x00, 0x01, 0x01, 0xFE,
-    0x01, 0x00, 0x00, 0x1E, 0x00, 0x00, 0xB0, 0x80, 0x20, 0x00,
-    0x00, 0x00, 0x40, 0x00, 0x03, 0x02, 0xF4, 0xFB
-};
+    0xF4, 0xF5, 0x00, 0x40, 0x13, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x1E,
+    0x00, 0x00, 0xB0, 0x80, 0x20, 0x00, 0x00, 0x00, 0x40, 0x00, 0x03, 0x02, 0xF4, 0xFB};
 
 // Status (A/C -> module) frame: 16-byte header (TYPE=0x01, class-id
 // byte[13]=0x66) + body + [chk_hi][chk_lo][F4][FB].
@@ -147,7 +140,7 @@ static const uint8_t HISENSE_LINK_HEARTBEAT[HISENSE_LINK_HEARTBEAT_LEN] = {
 // -- the 160-byte frame is the reference layout plus trailing telemetry.
 // The status frame is 160 bytes as observed, but the parser/RX compute length
 // from byte[4] so they stay correct regardless.
-#define HISENSE_STATUS_HEADER_LEN  16
+#define HISENSE_STATUS_HEADER_LEN 16
 
 /* ---------------------------------------------------------------------------
  * Value maps -- CONFIRMED via `raw = value*2 + 1` arithmetic against every
@@ -158,18 +151,18 @@ static const uint8_t HISENSE_LINK_HEARTBEAT[HISENSE_LINK_HEARTBEAT_LEN] = {
  * esphome_airconintl actually sends on the wire for this bus).
  * -------------------------------------------------------------------------*/
 typedef enum {
-    HISENSE_MODE_FAN  = 0,
-    HISENSE_MODE_HEAT = 1,
-    HISENSE_MODE_COOL = 2,
-    HISENSE_MODE_DRY  = 3,
-    HISENSE_MODE_AUTO = 4,   // Enum value = COMMAND index (so the builder's
-                              // (mode*2+1)<<4 gives the CONFIRMED AUTO command
-                              // byte18 = 0x90, sniffed from the stock dongle).
-                              // NOTE the STATUS frame reports AUTO as nibble 5
-                              // OR 6 (value 4 is skipped), so hisense_parse_status
-                              // remaps status nibble 5/6 -> AUTO. Command index 4
-                              // and status value 5/6 genuinely differ for AUTO;
-                              // both hardware-confirmed (bus-tap 2026-07-08).
+  HISENSE_MODE_FAN = 0,
+  HISENSE_MODE_HEAT = 1,
+  HISENSE_MODE_COOL = 2,
+  HISENSE_MODE_DRY = 3,
+  HISENSE_MODE_AUTO = 4,  // Enum value = COMMAND index (so the builder's
+                          // (mode*2+1)<<4 gives the CONFIRMED AUTO command
+                          // byte18 = 0x90, sniffed from the stock dongle).
+                          // NOTE the STATUS frame reports AUTO as nibble 5
+                          // OR 6 (value 4 is skipped), so hisense_parse_status
+                          // remaps status nibble 5/6 -> AUTO. Command index 4
+                          // and status value 5/6 genuinely differ for AUTO;
+                          // both hardware-confirmed (bus-tap 2026-07-08).
 } HisenseMode;
 
 // Enum value = W41H1 fan INDEX, so the command builder's (fan*2+1) yields the
@@ -178,35 +171,35 @@ typedef enum {
 // NOT the reference's 2..4 (which is why the old LOW=2 -> 0x05 was wrong; the
 // real LOW command is 0x0B). Status byte16 = index*2 (even); command = index*2+1.
 typedef enum {
-    HISENSE_FAN_AUTO     = 0,   // cmd 0x01 / status 0x01   CONFIRMED
-    HISENSE_FAN_QUIET    = 1,   // cmd 0x03 / status 0x02   (mute; VERIFY cmd)
-    HISENSE_FAN_LOW      = 5,   // cmd 0x0B / status 0x0A   CONFIRMED
-    HISENSE_FAN_MED_LOW  = 6,   // cmd 0x0D / status 0x0C   CONFIRMED
-    HISENSE_FAN_MID      = 7,   // cmd 0x0F / status 0x0E   CONFIRMED
-    HISENSE_FAN_MED_HIGH = 8,   // cmd 0x11 / status 0x10   CONFIRMED
-    HISENSE_FAN_HIGH     = 9,   // cmd 0x13 / status 0x12   CONFIRMED
-    HISENSE_FAN_NOCHANGE = 0xFF, // sentinel: "keep previous fan"; NEVER packed on the wire.
-                                 // Returned by hisense_fan_raw_to_cmd() for an unknown raw so a
-                                 // transient garbled status can't clobber the shadow to AUTO (#59).
+  HISENSE_FAN_AUTO = 0,         // cmd 0x01 / status 0x01   CONFIRMED
+  HISENSE_FAN_QUIET = 1,        // cmd 0x03 / status 0x02   (mute; VERIFY cmd)
+  HISENSE_FAN_LOW = 5,          // cmd 0x0B / status 0x0A   CONFIRMED
+  HISENSE_FAN_MED_LOW = 6,      // cmd 0x0D / status 0x0C   CONFIRMED
+  HISENSE_FAN_MID = 7,          // cmd 0x0F / status 0x0E   CONFIRMED
+  HISENSE_FAN_MED_HIGH = 8,     // cmd 0x11 / status 0x10   CONFIRMED
+  HISENSE_FAN_HIGH = 9,         // cmd 0x13 / status 0x12   CONFIRMED
+  HISENSE_FAN_NOCHANGE = 0xFF,  // sentinel: "keep previous fan"; NEVER packed on the wire.
+                                // Returned by hisense_fan_raw_to_cmd() for an unknown raw so a
+                                // transient garbled status can't clobber the shadow to AUTO (#59).
 } HisenseFanSpeed;
 
 typedef enum {
-    HISENSE_SWING_OFF       = 0,  // fixed / no swing command
-    HISENSE_SWING_DIRECTION = 1,  // move to a set position, no oscillation
-    HISENSE_SWING_SWING     = 3,  // oscillate (2-bit field value 0b11)
+  HISENSE_SWING_OFF = 0,        // fixed / no swing command
+  HISENSE_SWING_DIRECTION = 1,  // move to a set position, no oscillation
+  HISENSE_SWING_SWING = 3,      // oscillate (2-bit field value 0b11)
 } HisenseSwingMode;
 
 typedef enum {
-    HISENSE_FEATURE_NONE    = 0,   // byte33=0x04 (neutral / turbo-off, confirmed)
-    HISENSE_FEATURE_ECO     = 1,   // byte33=0x30 (eco-on, confirmed W41H1)
-    HISENSE_FEATURE_TURBO   = 2,   // byte33=0x0C (turbo-on, confirmed W41H1)
-    HISENSE_FEATURE_ECO_OFF = 3,   // byte33=0x10 explicit eco-clear (P3c). NONE's
-                                    // 0x04 clears TURBO but is NOT the eco-off value;
-                                    // send ECO_OFF to clear eco. VERIFY on hardware.
-    // VERIFY: eco and turbo are mutually exclusive in this driver because no
-    // sample frame shows both bits combined in body offset 17 (0x34/0x14 =
-    // eco on/off, 0x5C/0x54 = turbo on/off, 0x04 = neither). Requesting both
-    // simultaneously will just pick turbo.
+  HISENSE_FEATURE_NONE = 0,     // byte33=0x04 (neutral / turbo-off, confirmed)
+  HISENSE_FEATURE_ECO = 1,      // byte33=0x30 (eco-on, confirmed W41H1)
+  HISENSE_FEATURE_TURBO = 2,    // byte33=0x0C (turbo-on, confirmed W41H1)
+  HISENSE_FEATURE_ECO_OFF = 3,  // byte33=0x10 explicit eco-clear (P3c). NONE's
+                                // 0x04 clears TURBO but is NOT the eco-off value;
+                                // send ECO_OFF to clear eco. VERIFY on hardware.
+                                // VERIFY: eco and turbo are mutually exclusive in this driver because no
+                                // sample frame shows both bits combined in body offset 17 (0x34/0x14 =
+                                // eco on/off, 0x5C/0x54 = turbo on/off, 0x04 = neither). Requesting both
+                                // simultaneously will just pick turbo.
 } HisenseFeature;
 
 /* Panel display / LED, frame[36] (= payload @20). All three values CONFIRMED on the
@@ -221,9 +214,9 @@ typedef enum {
  * NOCHANGE after the frame goes out), otherwise later frames keep re-asserting it and
  * fight the user's remote. */
 typedef enum {
-    HISENSE_DISPLAY_NOCHANGE = 0,  // frame[36]=0x00 leave the panel alone (default)
-    HISENSE_DISPLAY_ON       = 1,  // frame[36]=0xC0 CONFIRMED lights the panel
-    HISENSE_DISPLAY_OFF      = 2,  // frame[36]=0x40 CONFIRMED darkens the panel
+  HISENSE_DISPLAY_NOCHANGE = 0,  // frame[36]=0x00 leave the panel alone (default)
+  HISENSE_DISPLAY_ON = 1,        // frame[36]=0xC0 CONFIRMED lights the panel
+  HISENSE_DISPLAY_OFF = 2,       // frame[36]=0x40 CONFIRMED darkens the panel
 } HisenseDisplay;
 
 /* ---------------------------------------------------------------------------
@@ -245,87 +238,87 @@ typedef enum {
  * hisense_build_power_frame().
  * -------------------------------------------------------------------------*/
 typedef struct {
-    HisenseMode      mode;
-    int8_t           setpoint;         // whole degrees, unit per `fahrenheit`
-    bool             fahrenheit;       // false = Celsius (16-32 range seen),
-                                        // true = Fahrenheit (61-90 range seen)
-    HisenseFanSpeed  fan;
-    HisenseSwingMode vswing;
-    HisenseSwingMode hswing;
-    HisenseFeature   feature;          // eco / turbo / none
-    HisenseDisplay   display;          // panel display/LED. CONFIRMED on the bench
-                                        // 2026-07-19 (see HisenseDisplay).
+  HisenseMode mode;
+  int8_t setpoint;  // whole degrees, unit per `fahrenheit`
+  bool fahrenheit;  // false = Celsius (16-32 range seen),
+                    // true = Fahrenheit (61-90 range seen)
+  HisenseFanSpeed fan;
+  HisenseSwingMode vswing;
+  HisenseSwingMode hswing;
+  HisenseFeature feature;  // eco / turbo / none
+  HisenseDisplay display;  // panel display/LED. CONFIRMED on the bench
+                           // 2026-07-19 (see HisenseDisplay).
 } HisenseCommand;
 
 /* ---------------------------------------------------------------------------
  * Parsed status, extracted from a 160-byte W41H1 status frame.
  * -------------------------------------------------------------------------*/
 typedef struct {
-    bool     valid;             // false until first good frame parsed
-    bool     power_on;          // run_status != 0 (byte18 bits2-3)
-    HisenseMode mode;           // byte18 bits4-7
-    /* C/F display unit the A/C is set to (#5). Frame byte 26 bit 1: 0 = Celsius.
-     *
-     * Located from the stock capability table, not guessed. Its `t_temp_type` record
-     * decodes to (offset 0x0B, 1-bit, shift 1) under the same rule that reproduces six
-     * fields we already had confirmed on hardware (vswing/hswing/eco/turbo/mute as 1-bit
-     * flags, and t_temp as the 7-bit setpoint at byte 19). See RE docs/10 7.
-     *
-     * UNVERIFIED direction: both bench units are Celsius and read 0 here, so "1 means
-     * Fahrenheit" is the obvious reading but has not been seen. Switch a unit to F on its
-     * remote and diff `raw` to confirm before trusting it for anything user-facing. */
-    bool     temp_unit_f;
-    int8_t   indoor_temp_c;     // offset 20, DIRECT integer C. CONFIRMED on
-                                 // hardware: 21 C room -> 0x15. (NOT the
-                                 // reference's (raw-32)*0.5556 -- that was the
-                                 // bug that gave -5 C.)
-    int8_t   setpoint_c;        // offset 19, DIRECT integer C. CONFIRMED:
-                                 // 22 C setpoint -> 0x16.
-    uint8_t  fan_raw;           // offset 16 wind_status. CONFIRMED W41H1 values:
-                                 // 0x01=AUTO, 0x0A=LOW, 0x0C=MED-LOW, 0x0E=MID,
-                                 // 0x10=MED-HIGH, 0x12=HIGH (0x02=quiet). Six
-                                 // speeds -- more than the reference's three;
-                                 // steps of 2. (COMMAND-side fan encoding is a
-                                 // separate 2n+1 scheme, see HisenseFanSpeed.)
-    bool     vswing_on;         // offset 35 bit7 (0x80). CONFIRMED on hw.
-    bool     turbo_on;          // offset 35 bit1 (0x02). CONFIRMED on hw (app
-                                 // Turbo/Boost toggled it; also forces fan high
-                                 // + setpoint to 16 C). New W41H1 status field.
-    bool     eco_on;            // offset 35 bit2 (0x04). CONFIRMED on hw (app
-                                 // Eco/Power-save). NOTE: bit2, not the
-                                 // reference's bit3 low_power.
-    bool     hswing_on;         // offset 35 bit6 (0x40, left_right). CONFIRMED
-                                 // on hw via the remote (0x40<->0x00).
-    bool     heat_relay_on;     // offset 35 bit4 (0x10) = aux/PTC electric-heat
-                                 // relay. Position confirmed; stays 0 during
-                                 // normal heat-pump heating (verified HEAT +
-                                 // 50Hz), only asserts in cold/defrost.
-    bool     mute_on;           // offset 36 bit2 (0x04). CONFIRMED on hw (app
-                                 // Mute/Quiet; also sets fan_raw=0x02 quiet).
-    bool     sleep_on;          // offset 17 != 0. CONFIRMED on hw (also drops
-                                 // fan to low when on).
-    uint8_t  sleep_raw;         // raw offset-17 byte = sleep PROFILE, CONFIRMED
-                                 // on hw: 0x00 off, 0x02 General, 0x04 Old,
-                                 // 0x06 Young, 0x08 Kids (= profile*2, 1..4).
-                                 // The COMMAND side uses profile*2+1 (odd:
-                                 // 0x03/05/07/09, matching the reference's
-                                 // sleep_1..4 frames).
-    bool     purify_on;         // offset 36 bit5 (0x20). Not present on this
-                                 // unit's app -- unconfirmed.
-    int8_t   outdoor_temp_c;    // offset 44, direct C. CONFIRMED vs a weather
-                                 // station (sensor 32-33 / station 33-34).
-    int8_t   coil_temp_c;       // offset 45, outdoor/condenser coil temp, direct C.
-                                 // CONFIRMED by cool->off->heat reversal (33->25->17;
-                                 // reverses, unlike outdoor@44). docs/03 diag map.
-    uint8_t  compressor_freq;   // offset 42, Hz. CONFIRMED: 0 stopped, ramps
-                                 // 24->42->55 under load. (56/144 = frame
-                                 // counter, not Hz; offset 43 = likely target.)
-    uint8_t  current_raw;       // offset 55: current PROXY. Calibrated 2026-07-07
-                                 // vs a panel meter: active power P[W] = 4.15*raw^2
-                                 // (raw tracks sqrt(power)). Feeds the energy
-                                 // clusters. See firmware/docs/09 + power_estimate.h.
-    uint8_t  voltage_raw;       // offset 50: supply voltage, whole V (coarse ~220,
-                                 // reads ~6% low vs the panel meter). docs/09.
+  bool valid;        // false until first good frame parsed
+  bool power_on;     // run_status != 0 (byte18 bits2-3)
+  HisenseMode mode;  // byte18 bits4-7
+  /* C/F display unit the A/C is set to (#5). Frame byte 26 bit 1: 0 = Celsius.
+   *
+   * Located from the stock capability table, not guessed. Its `t_temp_type` record
+   * decodes to (offset 0x0B, 1-bit, shift 1) under the same rule that reproduces six
+   * fields we already had confirmed on hardware (vswing/hswing/eco/turbo/mute as 1-bit
+   * flags, and t_temp as the 7-bit setpoint at byte 19). See RE docs/10 7.
+   *
+   * UNVERIFIED direction: both bench units are Celsius and read 0 here, so "1 means
+   * Fahrenheit" is the obvious reading but has not been seen. Switch a unit to F on its
+   * remote and diff `raw` to confirm before trusting it for anything user-facing. */
+  bool temp_unit_f;
+  int8_t indoor_temp_c;     // offset 20, DIRECT integer C. CONFIRMED on
+                            // hardware: 21 C room -> 0x15. (NOT the
+                            // reference's (raw-32)*0.5556 -- that was the
+                            // bug that gave -5 C.)
+  int8_t setpoint_c;        // offset 19, DIRECT integer C. CONFIRMED:
+                            // 22 C setpoint -> 0x16.
+  uint8_t fan_raw;          // offset 16 wind_status. CONFIRMED W41H1 values:
+                            // 0x01=AUTO, 0x0A=LOW, 0x0C=MED-LOW, 0x0E=MID,
+                            // 0x10=MED-HIGH, 0x12=HIGH (0x02=quiet). Six
+                            // speeds -- more than the reference's three;
+                            // steps of 2. (COMMAND-side fan encoding is a
+                            // separate 2n+1 scheme, see HisenseFanSpeed.)
+  bool vswing_on;           // offset 35 bit7 (0x80). CONFIRMED on hw.
+  bool turbo_on;            // offset 35 bit1 (0x02). CONFIRMED on hw (app
+                            // Turbo/Boost toggled it; also forces fan high
+                            // + setpoint to 16 C). New W41H1 status field.
+  bool eco_on;              // offset 35 bit2 (0x04). CONFIRMED on hw (app
+                            // Eco/Power-save). NOTE: bit2, not the
+                            // reference's bit3 low_power.
+  bool hswing_on;           // offset 35 bit6 (0x40, left_right). CONFIRMED
+                            // on hw via the remote (0x40<->0x00).
+  bool heat_relay_on;       // offset 35 bit4 (0x10) = aux/PTC electric-heat
+                            // relay. Position confirmed; stays 0 during
+                            // normal heat-pump heating (verified HEAT +
+                            // 50Hz), only asserts in cold/defrost.
+  bool mute_on;             // offset 36 bit2 (0x04). CONFIRMED on hw (app
+                            // Mute/Quiet; also sets fan_raw=0x02 quiet).
+  bool sleep_on;            // offset 17 != 0. CONFIRMED on hw (also drops
+                            // fan to low when on).
+  uint8_t sleep_raw;        // raw offset-17 byte = sleep PROFILE, CONFIRMED
+                            // on hw: 0x00 off, 0x02 General, 0x04 Old,
+                            // 0x06 Young, 0x08 Kids (= profile*2, 1..4).
+                            // The COMMAND side uses profile*2+1 (odd:
+                            // 0x03/05/07/09, matching the reference's
+                            // sleep_1..4 frames).
+  bool purify_on;           // offset 36 bit5 (0x20). Not present on this
+                            // unit's app -- unconfirmed.
+  int8_t outdoor_temp_c;    // offset 44, direct C. CONFIRMED vs a weather
+                            // station (sensor 32-33 / station 33-34).
+  int8_t coil_temp_c;       // offset 45, outdoor/condenser coil temp, direct C.
+                            // CONFIRMED by cool->off->heat reversal (33->25->17;
+                            // reverses, unlike outdoor@44). docs/03 diag map.
+  uint8_t compressor_freq;  // offset 42, Hz. CONFIRMED: 0 stopped, ramps
+                            // 24->42->55 under load. (56/144 = frame
+                            // counter, not Hz; offset 43 = likely target.)
+  uint8_t current_raw;      // offset 55: current PROXY. Calibrated 2026-07-07
+                            // vs a panel meter: active power P[W] = 4.15*raw^2
+                            // (raw tracks sqrt(power)). Feeds the energy
+                            // clusters. See firmware/docs/09 + power_estimate.h.
+  uint8_t voltage_raw;      // offset 50: supply voltage, whole V (coarse ~220,
+                            // reads ~6% low vs the panel meter). docs/09.
 } HisenseState;
 
 /* ---------------------------------------------------------------------------
@@ -336,41 +329,41 @@ typedef struct {
  * byte (frame byte 13 = 0x66); the parser indexes buf[13 + N].
  * -------------------------------------------------------------------------*/
 typedef struct {
-    bool    valid;              // false until a 0x66/40 response has been parsed
-    bool    cool_heat;         // [ 5]&0x80  ac_cool_heat  (heat-pump capable)
-    bool    ai;                // [15]&0x40  ac_ai         (AI/SMART mode)
-    bool    infinite_fan;      // [12]&0x08  ac_infinite_fan_speed
-    bool    power_save;        // [10]&0x40  ac_power_save (eco)
-    bool    fan_mute;          // [11]&0x40  ac_fan_mute   (quiet)
-    bool    swing_dir_8;       // [15]&0x10  ac_swing_direction_8 (8-pos louvre)
-    bool    swing_follow;      // [13]&0x02  ac_swing_follow
-    uint8_t power_display;     // [14]>>6    ac_power_display (2-bit: display/LED)
-    uint8_t demand_resp;       // [22]&0x03  ac_dr          (2-bit: demand response)
-    bool    humidity;          // [19]&0x01  ac_humidity
-    // RENAMED 2026-07-16 -- these two were MISLABELED. The byte reads were always correct; the
-    // NAMES were swapped-ish, so `purify` reported 8heat and `q_display` reported purify. Caught
-    // by RE of the stock printf arg order (0x9b6f0d60) and corroborated by this repo's own
-    // [PROVEN] flag table in RE docs/10 §5a. No behaviour change -- same bytes, right names.
-    bool    heat_8c;           // [0x0D]&0x80  ac_8heat  (8 C frost-guard heat; was `purify`)
-    bool    purify;            // [0x0A]&0x08  ac_purify (was `q_display`)
+  bool valid;             // false until a 0x66/40 response has been parsed
+  bool cool_heat;         // [ 5]&0x80  ac_cool_heat  (heat-pump capable)
+  bool ai;                // [15]&0x40  ac_ai         (AI/SMART mode)
+  bool infinite_fan;      // [12]&0x08  ac_infinite_fan_speed
+  bool power_save;        // [10]&0x40  ac_power_save (eco)
+  bool fan_mute;          // [11]&0x40  ac_fan_mute   (quiet)
+  bool swing_dir_8;       // [15]&0x10  ac_swing_direction_8 (8-pos louvre)
+  bool swing_follow;      // [13]&0x02  ac_swing_follow
+  uint8_t power_display;  // [14]>>6    ac_power_display (2-bit: display/LED)
+  uint8_t demand_resp;    // [22]&0x03  ac_dr          (2-bit: demand response)
+  bool humidity;          // [19]&0x01  ac_humidity
+  // RENAMED 2026-07-16 -- these two were MISLABELED. The byte reads were always correct; the
+  // NAMES were swapped-ish, so `purify` reported 8heat and `q_display` reported purify. Caught
+  // by RE of the stock printf arg order (0x9b6f0d60) and corroborated by this repo's own
+  // [PROVEN] flag table in RE docs/10 §5a. No behaviour change -- same bytes, right names.
+  bool heat_8c;  // [0x0D]&0x80  ac_8heat  (8 C frost-guard heat; was `purify`)
+  bool purify;   // [0x0A]&0x08  ac_purify (was `q_display`)
 
-    // --- Extended tier: payload [0x19]/[0x1A] = frame bytes 38/39 -----------
-    // Stock gates the higher fields on payload length (docs/10 §5a: `len-2 ∈
-    // {>0x14, >0x17, >0x18}`), so a valid-but-short 0x66/40 reply simply does not
-    // carry them. We mirror that: the base tier above parses from len >= 36, and
-    // these three need len >= 40. `ext_valid` says which happened -- without it a
-    // `0` here is ambiguous between "this unit lacks the feature" and "the frame
-    // was too short to say", and docs/11 §5.1's design rule (gate at runtime, per
-    // unit) depends on telling those two apart.
-    bool    ext_valid;         // false => the three fields below are UNKNOWN, not 0
-    bool    q_display;         // [0x1A]&0x40  ac_q_display  (the REAL q_display)
-    bool    enable_8heat;      // [0x1A]&0x04  ac_enable_8heat
-    bool    trans_102_64;      // [0x19]&0x08  ac_trans_102_64 (set -> stock profile '199')
-    uint8_t reply_len;         // raw 0x66/40 frame length that produced this parse (0 = unset,
-                               // capped at 255). Diagnostic only: it disambiguates an
-                               // `ext_valid == false` -- a 38-byte reply is 2 bytes short of the
-                               // tier, whereas a >39-byte reply with ext_valid false would mean a
-                               // parser bug. No consumer should gate behaviour on it.
+  // --- Extended tier: payload [0x19]/[0x1A] = frame bytes 38/39 -----------
+  // Stock gates the higher fields on payload length (docs/10 §5a: `len-2 ∈
+  // {>0x14, >0x17, >0x18}`), so a valid-but-short 0x66/40 reply simply does not
+  // carry them. We mirror that: the base tier above parses from len >= 36, and
+  // these three need len >= 40. `ext_valid` says which happened -- without it a
+  // `0` here is ambiguous between "this unit lacks the feature" and "the frame
+  // was too short to say", and docs/11 §5.1's design rule (gate at runtime, per
+  // unit) depends on telling those two apart.
+  bool ext_valid;     // false => the three fields below are UNKNOWN, not 0
+  bool q_display;     // [0x1A]&0x40  ac_q_display  (the REAL q_display)
+  bool enable_8heat;  // [0x1A]&0x04  ac_enable_8heat
+  bool trans_102_64;  // [0x19]&0x08  ac_trans_102_64 (set -> stock profile '199')
+  uint8_t reply_len;  // raw 0x66/40 frame length that produced this parse (0 = unset,
+                      // capped at 255). Diagnostic only: it disambiguates an
+                      // `ext_valid == false` -- a 38-byte reply is 2 bytes short of the
+                      // tier, whereas a >39-byte reply with ext_valid false would mean a
+                      // parser bug. No consumer should gate behaviour on it.
 } HisenseFeatures;
 
 /* ---- Features1 packed bitmap (mfg cluster attr 0xFFF1FC00/0x0012) ----------
@@ -380,57 +373,71 @@ typedef struct {
  * (power_display, demand_resp) take aligned 2-bit slots. bit 31 = valid (whole word
  * meaningful); bit 30 = ext_valid (q_display/enable_8heat/trans_102_64 are only set
  * when ext_valid, else 0 == UNKNOWN, not "absent"). */
-#define HISENSE_FEAT1_COOL_HEAT            0
-#define HISENSE_FEAT1_AI                   1
-#define HISENSE_FEAT1_INFINITE_FAN         2
-#define HISENSE_FEAT1_POWER_SAVE           3
-#define HISENSE_FEAT1_FAN_MUTE             4
-#define HISENSE_FEAT1_SWING_DIR_8          5
-#define HISENSE_FEAT1_SWING_FOLLOW         6
-#define HISENSE_FEAT1_HUMIDITY             7
-#define HISENSE_FEAT1_HEAT_8C              8
-#define HISENSE_FEAT1_PURIFY               9
-#define HISENSE_FEAT1_Q_DISPLAY            10   /* ext-tier */
-#define HISENSE_FEAT1_ENABLE_8HEAT         11   /* ext-tier */
-#define HISENSE_FEAT1_TRANS_102_64         12   /* ext-tier */
-#define HISENSE_FEAT1_POWER_DISPLAY_SHIFT  16   /* 2-bit (0..3) */
-#define HISENSE_FEAT1_DEMAND_RESP_SHIFT    18   /* 2-bit (0..3) */
-#define HISENSE_FEAT1_EXT_VALID            30
-#define HISENSE_FEAT1_VALID                31
+#define HISENSE_FEAT1_COOL_HEAT 0
+#define HISENSE_FEAT1_AI 1
+#define HISENSE_FEAT1_INFINITE_FAN 2
+#define HISENSE_FEAT1_POWER_SAVE 3
+#define HISENSE_FEAT1_FAN_MUTE 4
+#define HISENSE_FEAT1_SWING_DIR_8 5
+#define HISENSE_FEAT1_SWING_FOLLOW 6
+#define HISENSE_FEAT1_HUMIDITY 7
+#define HISENSE_FEAT1_HEAT_8C 8
+#define HISENSE_FEAT1_PURIFY 9
+#define HISENSE_FEAT1_Q_DISPLAY 10           /* ext-tier */
+#define HISENSE_FEAT1_ENABLE_8HEAT 11        /* ext-tier */
+#define HISENSE_FEAT1_TRANS_102_64 12        /* ext-tier */
+#define HISENSE_FEAT1_POWER_DISPLAY_SHIFT 16 /* 2-bit (0..3) */
+#define HISENSE_FEAT1_DEMAND_RESP_SHIFT 18   /* 2-bit (0..3) */
+#define HISENSE_FEAT1_EXT_VALID 30
+#define HISENSE_FEAT1_VALID 31
 
 /* The ONLY bits the #72 capability gate consumes (matter_gate_eco/quiet/display +
  * matter_thermostat_featuremap): cool_heat, power_save, fan_mute, the 2-bit power_display, and
  * VALID. #102 persists `features_word & HISENSE_FEAT1_GATE_MASK`, so a flip in a non-gating bit
  * (demand_resp, an ext-tier flag flapping when a reply lands short) neither rewrites flash nor
  * changes the persisted gate. */
-#define HISENSE_FEAT1_GATE_MASK ((1u << HISENSE_FEAT1_COOL_HEAT) | (1u << HISENSE_FEAT1_POWER_SAVE) \
-                               | (1u << HISENSE_FEAT1_FAN_MUTE)  | (0x3u << HISENSE_FEAT1_POWER_DISPLAY_SHIFT) \
-                               | (1u << HISENSE_FEAT1_VALID))
+#define HISENSE_FEAT1_GATE_MASK \
+  ((1u << HISENSE_FEAT1_COOL_HEAT) | (1u << HISENSE_FEAT1_POWER_SAVE) | (1u << HISENSE_FEAT1_FAN_MUTE) | \
+   (0x3u << HISENSE_FEAT1_POWER_DISPLAY_SHIFT) | (1u << HISENSE_FEAT1_VALID))
 
-static inline uint32_t hisense_features_to_bitmap32(const HisenseFeatures *f)
-{
-    uint32_t b = 0;
-    if (f == NULL) return 0;
-    if (f->cool_heat)    b |= 1u << HISENSE_FEAT1_COOL_HEAT;
-    if (f->ai)           b |= 1u << HISENSE_FEAT1_AI;
-    if (f->infinite_fan) b |= 1u << HISENSE_FEAT1_INFINITE_FAN;
-    if (f->power_save)   b |= 1u << HISENSE_FEAT1_POWER_SAVE;
-    if (f->fan_mute)     b |= 1u << HISENSE_FEAT1_FAN_MUTE;
-    if (f->swing_dir_8)  b |= 1u << HISENSE_FEAT1_SWING_DIR_8;
-    if (f->swing_follow) b |= 1u << HISENSE_FEAT1_SWING_FOLLOW;
-    if (f->humidity)     b |= 1u << HISENSE_FEAT1_HUMIDITY;
-    if (f->heat_8c)      b |= 1u << HISENSE_FEAT1_HEAT_8C;
-    if (f->purify)       b |= 1u << HISENSE_FEAT1_PURIFY;
-    b |= (uint32_t)(f->power_display & 0x3u) << HISENSE_FEAT1_POWER_DISPLAY_SHIFT;
-    b |= (uint32_t)(f->demand_resp   & 0x3u) << HISENSE_FEAT1_DEMAND_RESP_SHIFT;
-    if (f->ext_valid) {
-        b |= 1u << HISENSE_FEAT1_EXT_VALID;
-        if (f->q_display)    b |= 1u << HISENSE_FEAT1_Q_DISPLAY;
-        if (f->enable_8heat) b |= 1u << HISENSE_FEAT1_ENABLE_8HEAT;
-        if (f->trans_102_64) b |= 1u << HISENSE_FEAT1_TRANS_102_64;
-    }
-    if (f->valid) b |= 1u << HISENSE_FEAT1_VALID;
-    return b;
+static inline uint32_t hisense_features_to_bitmap32(const HisenseFeatures *f) {
+  uint32_t b = 0;
+  if (f == NULL)
+    return 0;
+  if (f->cool_heat)
+    b |= 1u << HISENSE_FEAT1_COOL_HEAT;
+  if (f->ai)
+    b |= 1u << HISENSE_FEAT1_AI;
+  if (f->infinite_fan)
+    b |= 1u << HISENSE_FEAT1_INFINITE_FAN;
+  if (f->power_save)
+    b |= 1u << HISENSE_FEAT1_POWER_SAVE;
+  if (f->fan_mute)
+    b |= 1u << HISENSE_FEAT1_FAN_MUTE;
+  if (f->swing_dir_8)
+    b |= 1u << HISENSE_FEAT1_SWING_DIR_8;
+  if (f->swing_follow)
+    b |= 1u << HISENSE_FEAT1_SWING_FOLLOW;
+  if (f->humidity)
+    b |= 1u << HISENSE_FEAT1_HUMIDITY;
+  if (f->heat_8c)
+    b |= 1u << HISENSE_FEAT1_HEAT_8C;
+  if (f->purify)
+    b |= 1u << HISENSE_FEAT1_PURIFY;
+  b |= (uint32_t) (f->power_display & 0x3u) << HISENSE_FEAT1_POWER_DISPLAY_SHIFT;
+  b |= (uint32_t) (f->demand_resp & 0x3u) << HISENSE_FEAT1_DEMAND_RESP_SHIFT;
+  if (f->ext_valid) {
+    b |= 1u << HISENSE_FEAT1_EXT_VALID;
+    if (f->q_display)
+      b |= 1u << HISENSE_FEAT1_Q_DISPLAY;
+    if (f->enable_8heat)
+      b |= 1u << HISENSE_FEAT1_ENABLE_8HEAT;
+    if (f->trans_102_64)
+      b |= 1u << HISENSE_FEAT1_TRANS_102_64;
+  }
+  if (f->valid)
+    b |= 1u << HISENSE_FEAT1_VALID;
+  return b;
 }
 
 /* Inverse of hisense_features_to_bitmap32: reconstruct HisenseFeatures from the packed word.
@@ -438,27 +445,27 @@ static inline uint32_t hisense_features_to_bitmap32(const HisenseFeatures *f)
  * only) so it comes back 0. Used by the #72 persist-and-gate-at-boot path (#102): the last-seen
  * features are persisted as this compact word and reconstructed at boot to gate the data model
  * BEFORE commissioning. Pure, host-testable. */
-static inline void hisense_features_from_bitmap32(uint32_t b, HisenseFeatures *out)
-{
-    if (out == NULL) return;
-    out->cool_heat     = (b >> HISENSE_FEAT1_COOL_HEAT) & 1u;
-    out->ai            = (b >> HISENSE_FEAT1_AI) & 1u;
-    out->infinite_fan  = (b >> HISENSE_FEAT1_INFINITE_FAN) & 1u;
-    out->power_save    = (b >> HISENSE_FEAT1_POWER_SAVE) & 1u;
-    out->fan_mute      = (b >> HISENSE_FEAT1_FAN_MUTE) & 1u;
-    out->swing_dir_8   = (b >> HISENSE_FEAT1_SWING_DIR_8) & 1u;
-    out->swing_follow  = (b >> HISENSE_FEAT1_SWING_FOLLOW) & 1u;
-    out->humidity      = (b >> HISENSE_FEAT1_HUMIDITY) & 1u;
-    out->heat_8c       = (b >> HISENSE_FEAT1_HEAT_8C) & 1u;
-    out->purify        = (b >> HISENSE_FEAT1_PURIFY) & 1u;
-    out->power_display = (uint8_t)((b >> HISENSE_FEAT1_POWER_DISPLAY_SHIFT) & 0x3u);
-    out->demand_resp   = (uint8_t)((b >> HISENSE_FEAT1_DEMAND_RESP_SHIFT) & 0x3u);
-    out->ext_valid     = (b >> HISENSE_FEAT1_EXT_VALID) & 1u;
-    out->q_display     = (b >> HISENSE_FEAT1_Q_DISPLAY) & 1u;      /* 0 when ext_valid == 0 */
-    out->enable_8heat  = (b >> HISENSE_FEAT1_ENABLE_8HEAT) & 1u;
-    out->trans_102_64  = (b >> HISENSE_FEAT1_TRANS_102_64) & 1u;
-    out->reply_len     = 0;   /* not encoded in the bitmap */
-    out->valid         = (b >> HISENSE_FEAT1_VALID) & 1u;
+static inline void hisense_features_from_bitmap32(uint32_t b, HisenseFeatures *out) {
+  if (out == NULL)
+    return;
+  out->cool_heat = (b >> HISENSE_FEAT1_COOL_HEAT) & 1u;
+  out->ai = (b >> HISENSE_FEAT1_AI) & 1u;
+  out->infinite_fan = (b >> HISENSE_FEAT1_INFINITE_FAN) & 1u;
+  out->power_save = (b >> HISENSE_FEAT1_POWER_SAVE) & 1u;
+  out->fan_mute = (b >> HISENSE_FEAT1_FAN_MUTE) & 1u;
+  out->swing_dir_8 = (b >> HISENSE_FEAT1_SWING_DIR_8) & 1u;
+  out->swing_follow = (b >> HISENSE_FEAT1_SWING_FOLLOW) & 1u;
+  out->humidity = (b >> HISENSE_FEAT1_HUMIDITY) & 1u;
+  out->heat_8c = (b >> HISENSE_FEAT1_HEAT_8C) & 1u;
+  out->purify = (b >> HISENSE_FEAT1_PURIFY) & 1u;
+  out->power_display = (uint8_t) ((b >> HISENSE_FEAT1_POWER_DISPLAY_SHIFT) & 0x3u);
+  out->demand_resp = (uint8_t) ((b >> HISENSE_FEAT1_DEMAND_RESP_SHIFT) & 0x3u);
+  out->ext_valid = (b >> HISENSE_FEAT1_EXT_VALID) & 1u;
+  out->q_display = (b >> HISENSE_FEAT1_Q_DISPLAY) & 1u; /* 0 when ext_valid == 0 */
+  out->enable_8heat = (b >> HISENSE_FEAT1_ENABLE_8HEAT) & 1u;
+  out->trans_102_64 = (b >> HISENSE_FEAT1_TRANS_102_64) & 1u;
+  out->reply_len = 0; /* not encoded in the bitmap */
+  out->valid = (b >> HISENSE_FEAT1_VALID) & 1u;
 }
 
 /* Feature-flags callback: invoked (bus-task context) each time a 0x66/40
@@ -485,10 +492,10 @@ typedef void (*hisense_status_cb_t)(const HisenseState *state);
  * glitched frame must not trip a window). The handler opens an on-network
  * commissioning window (see matter_drivers.cpp).
  * -------------------------------------------------------------------------*/
-#define HISENSE_LINK_REQ_RECONFIG      0x08   // payload[4] bit3: reset / reconfigure
-#define HISENSE_LINK_REQ_SMARTCFG      0x20   // payload[4] bit5: smart-config pairing
-#define HISENSE_LINK_REQ_RECOMMISSION  (HISENSE_LINK_REQ_RECONFIG | HISENSE_LINK_REQ_SMARTCFG)
-#define HISENSE_RECOMMISSION_HOLD_FRAMES 3    // ~3s at ~1Hz: a held "77" press, not a glitch/echo
+#define HISENSE_LINK_REQ_RECONFIG 0x08  // payload[4] bit3: reset / reconfigure
+#define HISENSE_LINK_REQ_SMARTCFG 0x20  // payload[4] bit5: smart-config pairing
+#define HISENSE_LINK_REQ_RECOMMISSION (HISENSE_LINK_REQ_RECONFIG | HISENSE_LINK_REQ_SMARTCFG)
+#define HISENSE_RECOMMISSION_HOLD_FRAMES 3  // ~3s at ~1Hz: a held "77" press, not a glitch/echo
 /* Re-entry lockout after the commissioning window closes (issue #69). The horizontal-swing
  * button is BOTH a window-closing remote-activity field AND the "77" entry gesture, so the
  * press that exits "77" also emits a fresh 0x20 pulse on the next ~1Hz LINK reply -- which
@@ -512,8 +519,7 @@ typedef void (*hisense_recommission_cancel_cb_t)(void);
 // exactly once, when the request has been asserted for >= hold_frames in a row.
 // Returns +1 exactly once per sustained assertion, -1 on the falling edge of an assertion that
 // had fired (user left "77"), 0 otherwise. Mirrors hisense_link_health_edge's edge convention.
-int hisense_recommission_debounce(uint8_t req_bits, uint8_t *streak,
-                                   bool *latched, uint8_t hold_frames);
+int hisense_recommission_debounce(uint8_t req_bits, uint8_t *streak, bool *latched, uint8_t hold_frames);
 
 /* Pure re-entry lockout gate (exposed for host tests, issue #69). Returns `req_bits` with the
  * 0x20 SMARTCFG bit stripped while `now_ticks` is still before `lockout_until_ticks`
@@ -521,8 +527,7 @@ int hisense_recommission_debounce(uint8_t req_bits, uint8_t *streak,
  * lockout the bits pass through unchanged. 0x08 is NEVER stripped here -- see the lockout
  * comment above. `lockout_until_ticks == 0` means "no lockout armed" (never in the future
  * relative to any real uptime beyond one wrap). */
-uint8_t hisense_smartcfg_lockout_mask(uint8_t req_bits, uint32_t now_ticks,
-                                      uint32_t lockout_until_ticks);
+uint8_t hisense_smartcfg_lockout_mask(uint8_t req_bits, uint32_t now_ticks, uint32_t lockout_until_ticks);
 
 /* Arms the 0x20 re-entry lockout (issue #69). The Matter layer calls this when the
  * commissioning window closes -- EVERY close route (user exit, remote-activity exit,
@@ -534,9 +539,8 @@ void hisense_recommission_window_closed(void);
 // frame only when its class (frame byte[13]) matches what the request expected;
 // expect_class == 0 means "accept any class" (#60). Prevents a late/stale reply of
 // the wrong class from being consumed as the answer to the current request.
-static inline bool hisense_reply_class_ok(uint8_t got_class, uint8_t expect_class)
-{
-    return expect_class == 0 || got_class == expect_class;
+static inline bool hisense_reply_class_ok(uint8_t got_class, uint8_t expect_class) {
+  return expect_class == 0 || got_class == expect_class;
 }
 
 // ---------------------------------------------------------------------------
@@ -643,10 +647,10 @@ void hisense_send_exit_77(void);
  * hisense_build_command() return 0, and an app layer that copies an out-of-range
  * setpoint into its command shadow will then silently drop EVERY later combined
  * frame. That is not hypothetical -- see hisense_setpoint_in_range(). */
-#define HISENSE_SETPOINT_MIN_C   16
-#define HISENSE_SETPOINT_MAX_C   32
-#define HISENSE_SETPOINT_MIN_F   61
-#define HISENSE_SETPOINT_MAX_F   90
+#define HISENSE_SETPOINT_MIN_C 16
+#define HISENSE_SETPOINT_MAX_C 32
+#define HISENSE_SETPOINT_MIN_F 61
+#define HISENSE_SETPOINT_MAX_F 90
 
 /* True if `setpoint` is a value the command builder will accept for the given unit.
  *
@@ -662,13 +666,14 @@ void hisense_send_exit_77(void);
 /* Fahrenheit to Celsius, rounded to nearest, for the display-unit temperature fields.
  * Integer maths on purpose (no FPU in the hot path): (F - 32) * 5 / 9 with rounding.
  * Handles negatives correctly, which naive integer division does not. */
-static inline int8_t hisense_f_to_c(int f)
-{
-    int n = (f - 32) * 5;
-    int c = (n >= 0) ? (n + 4) / 9 : (n - 4) / 9;
-    if (c > 127) c = 127;
-    if (c < -128) c = -128;
-    return (int8_t) c;
+static inline int8_t hisense_f_to_c(int f) {
+  int n = (f - 32) * 5;
+  int c = (n >= 0) ? (n + 4) / 9 : (n - 4) / 9;
+  if (c > 127)
+    c = 127;
+  if (c < -128)
+    c = -128;
+  return (int8_t) c;
 }
 
 /* Celsius to Fahrenheit, rounded to nearest. Integer maths, mirrors hisense_f_to_c().
@@ -677,20 +682,19 @@ static inline int8_t hisense_f_to_c(int f)
  * both directions. Confirmed the hard way on hardware 2026-07-19: with the panel in F, a
  * Celsius 23 was transmitted verbatim, the A/C read it as 23 F, and the unit went chasing
  * -5 C at 74 Hz. So a command built while the panel is in F must carry Fahrenheit. */
-static inline int8_t hisense_c_to_f(int c)
-{
-    int n = c * 9;
-    int f = ((n >= 0) ? (n + 2) / 5 : (n - 2) / 5) + 32;
-    if (f > 127) f = 127;
-    if (f < -128) f = -128;
-    return (int8_t) f;
+static inline int8_t hisense_c_to_f(int c) {
+  int n = c * 9;
+  int f = ((n >= 0) ? (n + 2) / 5 : (n - 2) / 5) + 32;
+  if (f > 127)
+    f = 127;
+  if (f < -128)
+    f = -128;
+  return (int8_t) f;
 }
 
-static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit)
-{
-    return fahrenheit
-        ? (setpoint >= HISENSE_SETPOINT_MIN_F && setpoint <= HISENSE_SETPOINT_MAX_F)
-        : (setpoint >= HISENSE_SETPOINT_MIN_C && setpoint <= HISENSE_SETPOINT_MAX_C);
+static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit) {
+  return fahrenheit ? (setpoint >= HISENSE_SETPOINT_MIN_F && setpoint <= HISENSE_SETPOINT_MAX_F)
+                    : (setpoint >= HISENSE_SETPOINT_MIN_C && setpoint <= HISENSE_SETPOINT_MAX_C);
 }
 
 /* Validate + convert an A/C-reported setpoint for the command shadow. The status parser
@@ -704,16 +708,15 @@ static inline bool hisense_setpoint_in_range(int8_t setpoint, bool fahrenheit)
  * Returns false (out untouched) when the A/C reports a setpoint the command builder
  * would reject (e.g. 5 C frost-guard): the caller keeps its last good shadow instead
  * of poisoning every later hisense_build_command() call. */
-static inline bool hisense_shadow_setpoint_from_status(int8_t setpoint_c, bool temp_unit_f, int8_t *out)
-{
-    int8_t wire = temp_unit_f ? hisense_c_to_f((int) setpoint_c) : setpoint_c;
-    if (!hisense_setpoint_in_range(wire, temp_unit_f)) {
-        return false;
-    }
-    if (out != NULL) {
-        *out = wire;
-    }
-    return true;
+static inline bool hisense_shadow_setpoint_from_status(int8_t setpoint_c, bool temp_unit_f, int8_t *out) {
+  int8_t wire = temp_unit_f ? hisense_c_to_f((int) setpoint_c) : setpoint_c;
+  if (!hisense_setpoint_in_range(wire, temp_unit_f)) {
+    return false;
+  }
+  if (out != NULL) {
+    *out = wire;
+  }
+  return true;
 }
 
 /* ---------------------------------------------------------------------------
@@ -764,11 +767,11 @@ static inline bool hisense_shadow_setpoint_from_status(int8_t setpoint_c, bool t
  *     t_dimmer  -> wire 37 bit 7   (explains the healthy 0x80 that falsified base 13)
  *     f-filter  -> wire 37 bit 3   (filter-clean indicator)
  * Wire 38 bits 0 and 2 read 0x05 on a healthy unit and remain unidentified. */
-#define HISENSE_FAULT_PAYLOAD_BASE 15   /* wire byte = 15 + payload offset */
-#define HISENSE_FAULT_BYTE_INDOOR  39   /* payload 0x18 */
-#define HISENSE_FAULT_BYTE_MODULE  40   /* payload 0x19 */
-#define HISENSE_FAULT_BYTE_OUTDOOR 64   /* payload 0x31 */
-#define HISENSE_FAULT_BYTE_PROTECT 66   /* payload 0x33 */
+#define HISENSE_FAULT_PAYLOAD_BASE 15 /* wire byte = 15 + payload offset */
+#define HISENSE_FAULT_BYTE_INDOOR 39  /* payload 0x18 */
+#define HISENSE_FAULT_BYTE_MODULE 40  /* payload 0x19 */
+#define HISENSE_FAULT_BYTE_OUTDOOR 64 /* payload 0x31 */
+#define HISENSE_FAULT_BYTE_PROTECT 66 /* payload 0x33 */
 
 /* Bits in a fault byte that are NOT faults.
  *
@@ -784,38 +787,38 @@ static inline bool hisense_shadow_setpoint_from_status(int8_t setpoint_c, bool t
 #define HISENSE_FAULT_NONFAULT_PROTECT 0x80
 
 typedef struct {
-    bool    valid;        // a long-enough status frame was parsed
-    bool    any;          // true if ANY fault bit is set (cheap "is it healthy")
-    uint8_t raw_indoor;   // frame[39] verbatim, for logging an unknown bit
-    uint8_t raw_module;   // frame[40]
-    uint8_t raw_outdoor;  // frame[64]
-    uint8_t raw_protect;  // frame[66]
+  bool valid;           // a long-enough status frame was parsed
+  bool any;             // true if ANY fault bit is set (cheap "is it healthy")
+  uint8_t raw_indoor;   // frame[39] verbatim, for logging an unknown bit
+  uint8_t raw_module;   // frame[40]
+  uint8_t raw_outdoor;  // frame[64]
+  uint8_t raw_protect;  // frame[66]
 
-    // frame[39] (payload 0x18), bit 7 down to bit 0
-    bool in_temp;         // f_e_intemp        indoor temp sensor
-    bool in_coil_temp;    // f_e_incoiltemp    indoor coil sensor
-    bool in_humidity;     // f_e_inhumidity    indoor humidity sensor
-    bool water_full;      // f_e_waterfull     condensate tray full
-    bool in_fan_motor;    // f_e_infanmotor / f_e_upmachine   (aliased bit)
-    bool grille;          // f_e_arkgrille  / f_e_dwmachine   (aliased bit)
-    bool in_vzero;        // f_e_invzero       zero-cross detect
-    bool in_com;          // f_e_incom         indoor<->outdoor comms
+  // frame[39] (payload 0x18), bit 7 down to bit 0
+  bool in_temp;       // f_e_intemp        indoor temp sensor
+  bool in_coil_temp;  // f_e_incoiltemp    indoor coil sensor
+  bool in_humidity;   // f_e_inhumidity    indoor humidity sensor
+  bool water_full;    // f_e_waterfull     condensate tray full
+  bool in_fan_motor;  // f_e_infanmotor / f_e_upmachine   (aliased bit)
+  bool grille;        // f_e_arkgrille  / f_e_dwmachine   (aliased bit)
+  bool in_vzero;      // f_e_invzero       zero-cross detect
+  bool in_com;        // f_e_incom         indoor<->outdoor comms
 
-    // frame[40] (payload 0x19)
-    bool in_display;      // f_e_indisplay
-    bool in_keys;         // f_e_inkeys
-    bool in_wifi;         // f_e_inwifi
-    bool in_ele;          // f_e_inele
-    bool in_eeprom;       // f_e_ineeprom
+  // frame[40] (payload 0x19)
+  bool in_display;  // f_e_indisplay
+  bool in_keys;     // f_e_inkeys
+  bool in_wifi;     // f_e_inwifi
+  bool in_ele;      // f_e_inele
+  bool in_eeprom;   // f_e_ineeprom
 
-    // frame[64] (payload 0x31)
-    bool out_eeprom;      // f_e_outeeprom
-    bool out_coil_temp;   // f_e_outcoiltemp
-    bool out_gas_temp;    // f_e_outgastemp
-    bool out_temp;        // f_e_outtemp
+  // frame[64] (payload 0x31)
+  bool out_eeprom;     // f_e_outeeprom
+  bool out_coil_temp;  // f_e_outcoiltemp
+  bool out_gas_temp;   // f_e_outgastemp
+  bool out_temp;       // f_e_outtemp
 
-    // frame[66] (payload 0x33)
-    bool over_temp;       // f_e_over_hot / f_e_over_cold     (aliased bit)
+  // frame[66] (payload 0x33)
+  bool over_temp;  // f_e_over_hot / f_e_over_cold     (aliased bit)
 } HisenseFaults;
 
 /* ---- Faults1 packed bitmap (mfg cluster attr 0xFFF1FC00/0x0013) -----------
@@ -823,52 +826,72 @@ typedef struct {
  * The CONTRACT the HACS integration's const.py mirrors and firmware/test enforces.
  * bit 31 = valid (a long-enough frame was parsed); bit 30 = any (aggregate, the same
  * value ep10's BooleanState publishes, i.e. minus the frost-guard mode-flag). */
-#define HISENSE_FAULT1_IN_TEMP        0
-#define HISENSE_FAULT1_IN_COIL_TEMP   1
-#define HISENSE_FAULT1_IN_HUMIDITY    2
-#define HISENSE_FAULT1_WATER_FULL     3
-#define HISENSE_FAULT1_IN_FAN_MOTOR   4
-#define HISENSE_FAULT1_GRILLE         5
-#define HISENSE_FAULT1_IN_VZERO       6
-#define HISENSE_FAULT1_IN_COM         7
-#define HISENSE_FAULT1_IN_DISPLAY     8
-#define HISENSE_FAULT1_IN_KEYS        9
-#define HISENSE_FAULT1_IN_WIFI        10
-#define HISENSE_FAULT1_IN_ELE         11
-#define HISENSE_FAULT1_IN_EEPROM      12
-#define HISENSE_FAULT1_OUT_EEPROM     13
-#define HISENSE_FAULT1_OUT_COIL_TEMP  14
-#define HISENSE_FAULT1_OUT_GAS_TEMP   15
-#define HISENSE_FAULT1_OUT_TEMP       16
-#define HISENSE_FAULT1_OVER_TEMP      17
-#define HISENSE_FAULT1_ANY            30
-#define HISENSE_FAULT1_VALID          31
+#define HISENSE_FAULT1_IN_TEMP 0
+#define HISENSE_FAULT1_IN_COIL_TEMP 1
+#define HISENSE_FAULT1_IN_HUMIDITY 2
+#define HISENSE_FAULT1_WATER_FULL 3
+#define HISENSE_FAULT1_IN_FAN_MOTOR 4
+#define HISENSE_FAULT1_GRILLE 5
+#define HISENSE_FAULT1_IN_VZERO 6
+#define HISENSE_FAULT1_IN_COM 7
+#define HISENSE_FAULT1_IN_DISPLAY 8
+#define HISENSE_FAULT1_IN_KEYS 9
+#define HISENSE_FAULT1_IN_WIFI 10
+#define HISENSE_FAULT1_IN_ELE 11
+#define HISENSE_FAULT1_IN_EEPROM 12
+#define HISENSE_FAULT1_OUT_EEPROM 13
+#define HISENSE_FAULT1_OUT_COIL_TEMP 14
+#define HISENSE_FAULT1_OUT_GAS_TEMP 15
+#define HISENSE_FAULT1_OUT_TEMP 16
+#define HISENSE_FAULT1_OVER_TEMP 17
+#define HISENSE_FAULT1_ANY 30
+#define HISENSE_FAULT1_VALID 31
 
-static inline uint32_t hisense_faults_to_bitmap32(const HisenseFaults *f)
-{
-    uint32_t b = 0;
-    if (f == NULL) return 0;
-    if (f->in_temp)       b |= 1u << HISENSE_FAULT1_IN_TEMP;
-    if (f->in_coil_temp)  b |= 1u << HISENSE_FAULT1_IN_COIL_TEMP;
-    if (f->in_humidity)   b |= 1u << HISENSE_FAULT1_IN_HUMIDITY;
-    if (f->water_full)    b |= 1u << HISENSE_FAULT1_WATER_FULL;
-    if (f->in_fan_motor)  b |= 1u << HISENSE_FAULT1_IN_FAN_MOTOR;
-    if (f->grille)        b |= 1u << HISENSE_FAULT1_GRILLE;
-    if (f->in_vzero)      b |= 1u << HISENSE_FAULT1_IN_VZERO;
-    if (f->in_com)        b |= 1u << HISENSE_FAULT1_IN_COM;
-    if (f->in_display)    b |= 1u << HISENSE_FAULT1_IN_DISPLAY;
-    if (f->in_keys)       b |= 1u << HISENSE_FAULT1_IN_KEYS;
-    if (f->in_wifi)       b |= 1u << HISENSE_FAULT1_IN_WIFI;
-    if (f->in_ele)        b |= 1u << HISENSE_FAULT1_IN_ELE;
-    if (f->in_eeprom)     b |= 1u << HISENSE_FAULT1_IN_EEPROM;
-    if (f->out_eeprom)    b |= 1u << HISENSE_FAULT1_OUT_EEPROM;
-    if (f->out_coil_temp) b |= 1u << HISENSE_FAULT1_OUT_COIL_TEMP;
-    if (f->out_gas_temp)  b |= 1u << HISENSE_FAULT1_OUT_GAS_TEMP;
-    if (f->out_temp)      b |= 1u << HISENSE_FAULT1_OUT_TEMP;
-    if (f->over_temp)     b |= 1u << HISENSE_FAULT1_OVER_TEMP;
-    if (f->any)           b |= 1u << HISENSE_FAULT1_ANY;
-    if (f->valid)         b |= 1u << HISENSE_FAULT1_VALID;
-    return b;
+static inline uint32_t hisense_faults_to_bitmap32(const HisenseFaults *f) {
+  uint32_t b = 0;
+  if (f == NULL)
+    return 0;
+  if (f->in_temp)
+    b |= 1u << HISENSE_FAULT1_IN_TEMP;
+  if (f->in_coil_temp)
+    b |= 1u << HISENSE_FAULT1_IN_COIL_TEMP;
+  if (f->in_humidity)
+    b |= 1u << HISENSE_FAULT1_IN_HUMIDITY;
+  if (f->water_full)
+    b |= 1u << HISENSE_FAULT1_WATER_FULL;
+  if (f->in_fan_motor)
+    b |= 1u << HISENSE_FAULT1_IN_FAN_MOTOR;
+  if (f->grille)
+    b |= 1u << HISENSE_FAULT1_GRILLE;
+  if (f->in_vzero)
+    b |= 1u << HISENSE_FAULT1_IN_VZERO;
+  if (f->in_com)
+    b |= 1u << HISENSE_FAULT1_IN_COM;
+  if (f->in_display)
+    b |= 1u << HISENSE_FAULT1_IN_DISPLAY;
+  if (f->in_keys)
+    b |= 1u << HISENSE_FAULT1_IN_KEYS;
+  if (f->in_wifi)
+    b |= 1u << HISENSE_FAULT1_IN_WIFI;
+  if (f->in_ele)
+    b |= 1u << HISENSE_FAULT1_IN_ELE;
+  if (f->in_eeprom)
+    b |= 1u << HISENSE_FAULT1_IN_EEPROM;
+  if (f->out_eeprom)
+    b |= 1u << HISENSE_FAULT1_OUT_EEPROM;
+  if (f->out_coil_temp)
+    b |= 1u << HISENSE_FAULT1_OUT_COIL_TEMP;
+  if (f->out_gas_temp)
+    b |= 1u << HISENSE_FAULT1_OUT_GAS_TEMP;
+  if (f->out_temp)
+    b |= 1u << HISENSE_FAULT1_OUT_TEMP;
+  if (f->over_temp)
+    b |= 1u << HISENSE_FAULT1_OVER_TEMP;
+  if (f->any)
+    b |= 1u << HISENSE_FAULT1_ANY;
+  if (f->valid)
+    b |= 1u << HISENSE_FAULT1_VALID;
+  return b;
 }
 
 // Parse fault bits out of a 0x66 status frame. Returns false (and leaves
@@ -906,15 +929,15 @@ size_t hisense_build_command(const HisenseCommand *cmd, uint8_t *out, size_t out
 //
 // Returns the on-the-wire length (byte-stuffing included), or 0 on a rejected
 // offset / the same errors as hisense_build_command().
-size_t hisense_build_command_override(const HisenseCommand *cmd, uint8_t *out, size_t out_cap,
-                                      int ovr_off, uint8_t ovr_val);
+size_t hisense_build_command_override(const HisenseCommand *cmd, uint8_t *out, size_t out_cap, int ovr_off,
+                                      uint8_t ovr_val);
 
 // BENCH ONLY. Same, with TWO bytes patched. Exists because not every control is a single field
 // write: the A/C's own remote sets sleep and mute together (observed 2026-08-19), while the
 // combined frame writes byte 35 = 0x00 and so clears mute in the very frame that tries to set
 // sleep. Both offsets are range-checked exactly as the single-byte form.
-size_t hisense_build_command_override2(const HisenseCommand *cmd, uint8_t *out, size_t out_cap,
-                                       int off1, uint8_t val1, int off2, uint8_t val2);
+size_t hisense_build_command_override2(const HisenseCommand *cmd, uint8_t *out, size_t out_cap, int off1, uint8_t val1,
+                                       int off2, uint8_t val2);
 
 // Builds the literal power on/off frame, ported byte-for-byte from
 // messages.h `on[]`/`off[]` (NOT synthesized -- these carry several bytes
@@ -978,8 +1001,7 @@ bool hisense_parse_status(const uint8_t *buf, size_t len, HisenseState *out_stat
 //   - hisense_get_link_token(): the live pair; false until a 0x0A reply supplied it
 //     (the bytes are then the 01 01 default).
 bool hisense_devtype_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo);
-size_t hisense_stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8_t lo,
-                                uint8_t *out, size_t out_cap);
+size_t hisense_stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8_t lo, uint8_t *out, size_t out_cap);
 bool hisense_get_link_token(uint8_t *hi, uint8_t *lo);
 //   - hisense_get_devtype_envelope(): DIAG. The 0x0A reply's raw envelope [9]/[10] -- the
 //     value v10207 stamped and died on. If this differs from hisense_get_link_token()'s

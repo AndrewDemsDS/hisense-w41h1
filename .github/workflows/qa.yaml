@@ -38,6 +38,18 @@ jobs:
       - name: Python lint (ruff)
         run: pipx run ruff==0.15.20 check .
 
+      # C/C++ lint over every tree we own (SDK-derived sdk-edits/ is excluded): clang-format
+      # --dry-run -Werror, the ESPHome-derived custom rules, and clang-tidy over the host-compilable
+      # set. The script pins clang-format 13.0.1 and clang-tidy 22.1.8 (ESPHome's pins) and installs
+      # them into a private venv, since the runner's own clang-format is another major and formats
+      # differently. Local parity: firmware/scripts/cpp-lint.sh check (fix applies the fixes).
+      - name: C/C++ lint (clang-format, custom rules, clang-tidy)
+        run: bash firmware/scripts/cpp-lint.sh check
+
+      # The pre-commit hook's form: explicit paths after the options the wrapper inserts.
+      - name: C/C++ lint, path form (as the pre-commit hook runs it)
+        run: bash firmware/scripts/cpp-lint.sh check --no-tidy firmware/test/test_matter_map.cpp
+
       - name: ESP32 version consistency
         run: bash firmware/scripts/esp32-lint.sh
 
