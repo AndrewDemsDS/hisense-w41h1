@@ -15,6 +15,10 @@ ota-guards.sh only moves files and calls this CLI. Each guard maps to a near mis
                  after ~3.5 min of retries. One RSSI read up front refuses in a second.
   archive-plan   the provider dir held 90 active manifests. Only the manifest being shipped
                  should be offered for its product id; the rest are renamed, never deleted.
+  repoint        the HTTP mirror's current-image path is what EVERY deployed node's break-glass
+                 fetches, and ESP32_FLAVOUR defaults to debug, so a default stage repointed the
+                 fleet's recovery image at the unauthenticated :2323 console. A debug image is
+                 archived but only repoints the current path on an explicit override.
 
 CLI (exit 0 = pass, 1 = refused, 2 = usage/IO):
   ota_guards.py flavour IMAGE MARKER                 print debug|release
@@ -22,6 +26,7 @@ CLI (exit 0 = pass, 1 = refused, 2 = usage/IO):
   ota_guards.py stale INPUT OUTPUT...                refuse when an OUTPUT is older than INPUT
   ota_guards.py archive-plan KEEP < listing          names to archive (listing: name<TAB>json)
   ota_guards.py link WS NODE [MIN_RSSI] [MAX_S]      read 0/54/4 via matter-server (needs aiohttp)
+  ota_guards.py repoint IMAGE MARKER [ALLOW_DEBUG]   refuse repointing the mirror at a debug image
 """
 
 import json
@@ -64,6 +69,19 @@ def link_verdict(rssi, read_s, min_rssi=MIN_RSSI_DBM, max_s=MAX_READ_S):
     if read_s is not None and read_s > max_s:
         return False, f"attribute read took {read_s:.1f} s (limit {max_s:.1f} s)"
     return True, f"RSSI {rssi} dBm, read {read_s:.2f} s"
+
+
+def repoint_verdict(flavour: str, allow_debug: bool = False):
+    """(ok, reason): may this image become the mirror's current-image path? Only release may,
+    unless the override is set. Anything but a known flavour is refused, never assumed release."""
+    if flavour == "release":
+        return True, "release image: repointing the current-image path"
+    if flavour == "debug" and allow_debug:
+        return True, "WARNING: OTA_HTTP_REPOINT_DEBUG=1, every node's break-glass now fetches a debug image"
+    if flavour == "debug":
+        return False, ("debug image (unauthenticated :2323 console): archived only, the current-image "
+                       "path still serves the last release. OTA_HTTP_REPOINT_DEBUG=1 overrides")
+    return False, f"unknown flavour '{flavour}': archived only"
 
 
 def archive_plan(keep: str, manifests: dict) -> list:
@@ -129,6 +147,12 @@ def main(argv):
         why = flavour_mismatch(have, args[2] if len(args) > 2 else "")
         print(why or f"flavour ok: {have}")
         return 1 if why else 0
+    if cmd == "repoint" and len(args) >= 2:
+        with open(args[0], "rb") as f:
+            have = image_flavour(f.read(), args[1].encode())
+        ok, why = repoint_verdict(have, len(args) > 2 and args[2] == "1")
+        print(why)
+        return 0 if ok else 1
     if cmd == "stale" and len(args) >= 2:
         src = os.path.getmtime(args[0])
         bad = stale_outputs(src, {o: (os.path.getmtime(o) if os.path.exists(o) else None) for o in args[1:]})

@@ -7,6 +7,8 @@
 # Overrides (each one names the risk it accepts):
 #   OTA_ALLOW_WEAK_LINK=1   flash even when RSSI/read latency fail the link check
 #   OTA_KEEP_MANIFESTS=1    stage without archiving the other manifests for this product
+#   OTA_HTTP_REPOINT_DEBUG=1  let a debug stage repoint the HTTP mirror's current-image path, so
+#                           every node's break-glass fetches the unauthenticated :2323 console
 
 GUARDS_PY="$HERE/ota_guards.py"
 : "${OTA_MIN_RSSI:=-70}"
@@ -100,15 +102,20 @@ pi_stage() {  # $1 local manifest (.json) to keep active  $2... other files to i
 # keeping a per-target/version/flavour archive AND repointing the stable current-image path that
 # deployed nodes actually GET. This is what makes a deployed image always retrievable from the Pi.
 # The current-image basename is compile-time in the firmware (esp32-ota.bin serves the C3, rac-ota.bin
-# the AmebaZ2), so it must not be renamed for existing nodes.
-#   $1 raw .bin  $2 current-image basename nodes fetch  $3 archive basename
+# the AmebaZ2), so it must not be renamed for existing nodes. That path is flavour-blind and shared by
+# the whole fleet, so only a release image may repoint it: the flavour is read from the bytes via the
+# console marker, and a debug image is archived without touching the current path.
+#   $1 raw .bin  $2 current-image basename nodes fetch  $3 archive basename  $4 console marker string
 pi_http_publish() {
   [ -n "${PI_HTTP_DIR:-}" ] || { say "  PI_HTTP_DIR unset -- skipping the HTTP OTA mirror"; return 0; }
-  local bin="$1" cur="$2" arch="$3" tmp="/tmp/ota-http.$$"
+  local bin="$1" cur="$2" arch="$3" marker="$4" tmp="/tmp/ota-http.$$" why repoint=1
   [ -f "$bin" ] || die "pi_http_publish: no $bin"
+  [ -n "$marker" ] || die "pi_http_publish: no console marker for $bin"
+  why="$(python3 "$GUARDS_PY" repoint "$bin" "$marker" "${OTA_HTTP_REPOINT_DEBUG:-0}")" || repoint=0
   pi_ssh "mkdir -p $tmp $PI_HTTP_DIR/archive" || die "cannot reach $PI_HOST"
   scp -o BatchMode=yes -i "$PI_SSH_KEY" "$bin" "$PI_HOST:$tmp/$arch" >/dev/null || die "scp of $arch failed"
-  pi_ssh "install -m0644 $tmp/$arch $PI_HTTP_DIR/archive/$arch && cp $PI_HTTP_DIR/archive/$arch $PI_HTTP_DIR/$cur && rm -rf $tmp" \
-    || die "HTTP OTA mirror install failed on $PI_HOST"
-  say "  HTTP OTA mirror: archived $arch and repointed $cur (served by ota-http on the Pi)"
+  local install="install -m0644 $tmp/$arch $PI_HTTP_DIR/archive/$arch"
+  [ "$repoint" = 1 ] && install="$install && cp $PI_HTTP_DIR/archive/$arch $PI_HTTP_DIR/$cur"
+  pi_ssh "$install && rm -rf $tmp" || die "HTTP OTA mirror install failed on $PI_HOST"
+  say "  HTTP OTA mirror: archived $arch (served by ota-http on the Pi); $why"
 }
