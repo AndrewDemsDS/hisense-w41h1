@@ -48,4 +48,31 @@ if grep -q 'coffeeOptions' "$MSM" 2>/dev/null && ! grep -q '"General"' "$MSM" 2>
   echo "           EndpointSpanPair(6, ...) -- see firmware/src/sdk-edits/README.md (Sleep ModeSelect)."
 fi
 
+# 5) IPv6 SLAAC on the station netif. lwIP creates every netif with ip6_autoconfig_enabled = 0
+#    (netif.c: "not enabled by default") and nothing in the SDK turns it on; the Matter port only
+#    starts DHCPv6. On a router that hands out its prefix by RA (UniFi does) the node therefore
+#    stays link-local only, reachable solely by a controller on the same VLAN. Enable SLAAC after
+#    the DHCPv6 start (DHCP6_START clears address slots 1..n, so doing it first would race) and
+#    solicit an RA at once instead of waiting for the next periodic one.
+LW="$M/common/port/matter_lwip.c"
+if [ -f "$LW" ] && ! grep -q 'HISENSE_SLAAC' "$LW"; then
+  python3 - "$LW" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+inc_anchor = "#include <chip_porting.h>\n"
+call = "    LwIP_DHCP6(0, DHCP6_START);\n"
+if s.count(inc_anchor) != 1 or s.count(call) != 1:
+    sys.exit("anchor not unique")
+s = s.replace(inc_anchor, inc_anchor + "#include <lwip/nd6.h>\n#include <lwip/tcpip.h>\n")
+s = s.replace(call, call +
+    "    /* HISENSE_SLAAC: see scripts/apply-matter-edits.sh step 5. */\n"
+    "    netif_set_ip6_autoconfig_enabled(&xnetif[0], 1);\n"
+    "    tcpip_callback((tcpip_callback_fn) nd6_restart_netif, &xnetif[0]);\n")
+open(p, "w").write(s)
+PY
+fi
+grep -q 'HISENSE_SLAAC' "$LW" 2>/dev/null && { echo "  [ok] matter_lwip.c: IPv6 SLAAC enabled on the station netif"; edited=1; } \
+  || echo "  [!!] add the HISENSE_SLAAC block to $LW manually (firmware/src/sdk-edits/README.md)"
+
 echo "== apply-matter-edits: done (edited=$edited). Re-run safely; verify any [!!]/[MANUAL] above. =="

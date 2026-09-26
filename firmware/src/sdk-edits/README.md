@@ -37,6 +37,7 @@ matter_drivers into the example dir): `hisense_rs485.{h,cpp}`, `matter_aircon_ma
 | `common/include/platform_opts_matter.h` | `CONFIG_EXAMPLE_MATTER_CHIPTEST=0`, `CONFIG_EXAMPLE_MATTER_ROOM_AIR_CONDITIONER=1` (selects the example; SDK ships defaulting to chiptest) |
 | `.../make/room_air_conditioner/lib_chip_room_air_conditioner_main.mk` | `+ SRC_CPP += .../hisense_rs485.cpp` |
 | `core/matter_events.h` | `+ kEventType_Downlink_Aircon_Status` enum value |
+| `common/port/matter_lwip.c` | IPv6 SLAAC on the station netif, after the DHCPv6 start: `netif_set_ip6_autoconfig_enabled(&xnetif[0], 1)` plus a `tcpip_callback` to `nd6_restart_netif` (router solicitation). lwIP creates netifs with autoconfig off and the SDK only runs DHCPv6, so without this the node is link-local only and unreachable from a controller on another VLAN. `scripts/apply-matter-edits.sh` step 5. |
 | `connectedhomeip/src/app/zap-templates/zcl/zcl.json` | `+ "hisense-aircon-cluster.xml"` in `xmlFile` |
 | `connectedhomeip/src/app/zap_cluster_list.json` | `+ "HISENSE_AIRCON_CLUSTER": []` in Server + Client Directories (ember-only) |
 | `connectedhomeip/zzz_generated/.../ids/Clusters.h` | `+ #include <clusters/HisenseAircon/ClusterId.h>` |
