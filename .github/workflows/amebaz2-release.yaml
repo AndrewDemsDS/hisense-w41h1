@@ -20,6 +20,11 @@ jobs:
     runs-on: [self-hosted, sdk-builder]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the build clock is the author date of the newest commit touching the
+          # image inputs (#137). A depth-1 clone makes the tag commit look like it touched every
+          # path, and ota-release.sh refuses to build from one rather than stamp the wrong date.
+          fetch-depth: 0
 
       - name: Provision build env from the runner host
         run: |
@@ -51,6 +56,10 @@ jobs:
       # `date` call, and an LD_PRELOAD around elf2bin's srand(time(NULL)). Before that, a tag
       # rebuild differed from the flashed image in ~574 bytes purely from the wall clock, which
       # is why this step used to rename everything to *-CI-REBUILD.
+      # SOURCE_DATE_EPOCH is the AUTHOR date of the newest commit touching the image inputs
+      # (`ota-release.sh epoch`), not the tag commit's time (#137). Author dates survive the merge,
+      # so an image built on the branch from a committed tree and flashed before merging matches
+      # this rebuild of the merge commit. Squash merges rewrite author dates and break that.
       - name: Collect this version's artifacts + checksums
         run: |
           # built-images/ accumulates versions on a reused runner: reference exact filenames, not

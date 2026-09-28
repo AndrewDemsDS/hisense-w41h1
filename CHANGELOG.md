@@ -24,6 +24,11 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   automations that set the old names.
 
 ### Fixed
+- AmebaZ2 builds: the image's build date (`SOURCE_DATE_EPOCH`) is now the author date of the newest
+  commit touching the image inputs, not the HEAD commit time. An image built on a branch and
+  flashed before merging now matches the tag rebuild of the merge commit byte for byte, which is
+  what the release workflow promises. `ota-release.sh epoch` prints the value, `build` refuses a
+  shallow clone and warns on uncommitted inputs, and the release workflow checks out full history.
 - AmebaZ2 1.3.43: the node is now dual-stack (IPv4 enabled in connectedhomeip) so it answers mDNS
   on 224.0.0.251 as well as ff02::fb. The Realtek SDK ships with IPv4 off, which left mDNS
   IPv6-only. Behind UniFi Multicast Enhancement the AP delivers IPv4 mDNS to IGMP members and no

@@ -22,6 +22,8 @@ jobs:
     runs-on: sdk-builder   # host-mode Gitea runner: ~/ameba-dev + ARM toolchain on PATH
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0   # the build clock needs the image inputs' history; build refuses a shallow clone (#137)
 
       - name: Provision build env from the runner host
         run: |
