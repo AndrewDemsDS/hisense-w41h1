@@ -58,6 +58,10 @@ static void hisense_breakglass_start(void);
 #include <system/SystemClock.h>                 // monotonic clock for the time-based sync hold-off (#61)
 
 #include <FreeRTOS.h>                            // taskENTER_CRITICAL for the s_status snapshot (#57)
+#include <matter_wifis.h>                        // Wi-Fi event hook + xnetif for the multicast re-report
+#include <lwip/tcpip.h>
+#include <lwip/igmp.h>
+#include <lwip/mld6.h>
 
 // Defined in the patched connectedhomeip fan-control-server.cpp (patches/connectedhomeip.patch):
 // set while the app publishes FanMode from the bus, so the server's client-preset mapping skips it.
@@ -653,6 +657,44 @@ static void set_ha_entity_label(chip::EndpointId ep, const char *name)
     }
 }
 
+/* Re-announce multicast memberships after every Wi-Fi association.
+ *
+ * lwIP resends MLD/IGMP reports only from netif_set_link_up(). The Realtek SDK raises the station
+ * link in wifi_on(), before the first association, and never lowers it on a disconnect, so the
+ * link_up() in each reconnect is a no-op. Groups joined while not associated (the Matter mDNS group
+ * ff02::fb at boot) and every group after a deauth, AP reboot or roam are therefore never reported.
+ * An AP doing multicast-to-unicast conversion (UniFi "Multicast Enhancement") then stops delivering
+ * mDNS queries to the node: it still announces, but cannot be resolved, so a controller that
+ * restarts fails CASE until the node happens to reassociate. The ESP32 build is unaffected.
+ *
+ * Fix: on 4-way-handshake-done (the point where data frames flow; CONNECT is too early on WPA2),
+ * run the same reports link_up would have sent, on the tcpip thread. Plus one pass at init, since
+ * the first handshake at boot may precede this registration. Reports are idempotent. */
+static void hisense_mcast_report(void *arg)
+{
+    struct netif *nif = static_cast<struct netif *>(arg);
+#if LWIP_IPV6 && LWIP_IPV6_MLD
+    mld6_report_groups(nif);
+#endif
+#if LWIP_IPV4 && LWIP_IGMP
+    igmp_report_groups(nif);
+#endif
+}
+
+static void hisense_mcast_on_handshake(char *, int, int, void *)
+{
+    /* Wi-Fi indication context: queue only, no lwIP calls here. */
+    if (tcpip_callback(hisense_mcast_report, &xnetif[0]) != ERR_OK) {
+        ChipLogError(DeviceLayer, "mcast re-report: tcpip_callback failed");
+    }
+}
+
+static void hisense_mcast_rereport_start(void)
+{
+    matter_wifi_reg_event_handler(MATTER_WIFI_EVENT_FOURWAY_HANDSHAKE_DONE, hisense_mcast_on_handshake, NULL);
+    hisense_mcast_on_handshake(NULL, 0, 0, NULL);
+}
+
 /* Record how far init got, printed by the diag `sys` command. A single end-of-function flag only
  * says init stalled, never where; two confident guesses at the location were both wrong before
  * this counter found it in one flash. Keep the stage list here in sync with diag_cmd_sys. */
@@ -731,6 +773,7 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     hisense_set_features_cb(matter_driver_on_features);           // 0x66/40 feature flags -> device log
     hisense_diag_console_start();                                 // #23: :2323 console, DEBUG flavour only
     hisense_breakglass_start();                                   // #61: OTA trigger off the Matter path (BOTH flavours)
+    hisense_mcast_rereport_start();                               // MLD/IGMP re-report per association (mDNS reachability)
     HISENSE_INIT_STAGE(3);
 
     // HA entity labels (UserLabel key "ha_entitylabel") so the same-type entities are

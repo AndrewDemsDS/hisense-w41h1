@@ -75,4 +75,17 @@ fi
 grep -q 'HISENSE_SLAAC' "$LW" 2>/dev/null && { echo "  [ok] matter_lwip.c: IPv6 SLAAC enabled on the station netif"; edited=1; } \
   || echo "  [!!] add the HISENSE_SLAAC block to $LW manually (firmware/src/sdk-edits/README.md)"
 
+# 6) Dual-stack Matter (IPv4 on). The Realtek overlay builds connectedhomeip with
+#    INET_CONFIG_ENABLE_IPV4=0, so minimal mDNS listens on ff02::fb only. An AP that converts
+#    multicast to unicast from IGMP membership (UniFi Multicast Enhancement) delivers no IPv6 mDNS
+#    at all, so the node never hears a query: it announces, but a restarted controller cannot
+#    resolve it and CASE fails. ESP32 esp-matter builds dual-stack and is unaffected. The same
+#    Makefile line feeds the GN arg chip_inet_config_enable_ipv4 (chip_core_sources.mk greps it).
+MK="$M/project/amebaz2/Makefile.include.matter"
+if [ -f "$MK" ] && grep -q -- '-DINET_CONFIG_ENABLE_IPV4=0' "$MK"; then
+  sed -i 's/-DINET_CONFIG_ENABLE_IPV4=0/-DINET_CONFIG_ENABLE_IPV4=1/' "$MK"
+fi
+grep -q -- '-DINET_CONFIG_ENABLE_IPV4=1' "$MK" 2>/dev/null && { echo "  [ok] Makefile.include.matter: IPv4 enabled (dual-stack mDNS)"; edited=1; } \
+  || echo "  [!!] set -DINET_CONFIG_ENABLE_IPV4=1 in $MK manually (firmware/src/sdk-edits/README.md)"
+
 echo "== apply-matter-edits: done (edited=$edited). Re-run safely; verify any [!!]/[MANUAL] above. =="
