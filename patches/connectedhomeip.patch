@@ -609,3 +609,33 @@ index 73c52b7c..b5a91b2b 100644
  #include <clusters/ScenesManagement/ClusterId.h>
  #include <clusters/ServiceArea/ClusterId.h>
  #include <clusters/SmokeCoAlarm/ClusterId.h>
+diff --git a/src/platform/Ameba/DiagnosticDataProviderImpl.cpp b/src/platform/Ameba/DiagnosticDataProviderImpl.cpp
+index 015ec984..ed31068d 100644
+--- a/src/platform/Ameba/DiagnosticDataProviderImpl.cpp
++++ b/src/platform/Ameba/DiagnosticDataProviderImpl.cpp
+@@ -224,11 +224,20 @@ CHIP_ERROR DiagnosticDataProviderImpl::GetNetworkInterfaces(NetworkInterface **
+             ifp->IPv4Addresses       = chip::app::DataModel::List<chip::ByteSpan>(ifp->Ipv4AddressSpans, 1);
+         }
+ 
+-        // ifa->ip6_addr->u_addr.ip6.addr is never null, no need to check. If we do check with -Werror=address, we get compiler
+-        // error.
+-        memcpy(ifp->Ipv6AddressesBuffer[0], &(ifa->ip6_addr->u_addr.ip6.addr), kMaxIPv6AddrSize);
+-        ifp->Ipv6AddressSpans[0] = ByteSpan(ifp->Ipv6AddressesBuffer[0], kMaxIPv6AddrSize);
+-        ifp->IPv6Addresses       = chip::app::DataModel::List<chip::ByteSpan>(ifp->Ipv6AddressSpans, 1);
++        // Report every valid (preferred or deprecated) address, not just slot 0: slot 0 is link-local,
++        // slots 1..n hold SLAAC and DHCPv6 addresses. Tentative (DAD pending) and duplicated slots are skipped.
++        size_t ipv6AddrCount = 0;
++        for (size_t i = 0; i < LWIP_IPV6_NUM_ADDRESSES && ipv6AddrCount < kMaxIPv6AddrCount; i++)
++        {
++            if (!ip6_addr_isvalid(netif_ip6_addr_state(ifa, i)))
++            {
++                continue;
++            }
++            memcpy(ifp->Ipv6AddressesBuffer[ipv6AddrCount], netif_ip6_addr(ifa, i)->addr, kMaxIPv6AddrSize);
++            ifp->Ipv6AddressSpans[ipv6AddrCount] = ByteSpan(ifp->Ipv6AddressesBuffer[ipv6AddrCount], kMaxIPv6AddrSize);
++            ipv6AddrCount++;
++        }
++        ifp->IPv6Addresses = chip::app::DataModel::List<chip::ByteSpan>(ifp->Ipv6AddressSpans, ipv6AddrCount);
+ 
+         ifp->Next = head;
+         head      = ifp;
