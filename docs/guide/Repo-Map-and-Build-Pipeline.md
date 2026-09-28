@@ -156,6 +156,13 @@ are built with `-ffile-prefix-map` so they carry no builder home path. Cut a rel
 whose version matches the tree: `amebaz2-v$(cat firmware/src/version.txt)` or `esp32-v<PROJECT_VER>`.
 `stage`/`flash` stay manual.
 
+A tag pushed while the `sdk-builder` runner is offline does not fail. It sits in `queued` until the
+runner starts. `ota-release.sh tag` and `esp32-release.sh tag` create the tag locally and then ask the
+GitHub API (`gh api repos/<owner>/<repo>/actions/runners`) whether a runner with that label is
+online. If none is, they warn before printing the push command: start the self-hosted runner
+(`run.sh` in its install dir) first. The check only warns, and it is skipped with a note when `gh` is
+missing, not logged in, or lacks admin access to the repo (listing runners needs it).
+
 ## The three build traps (summary: docs/10 is canonical)
 
 Three failure modes each **ship a broken or rolling-back image with no error**. Full analysis,

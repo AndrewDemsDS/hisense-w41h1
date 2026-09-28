@@ -49,6 +49,11 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   and the pre-commit hook. The shared driver, the ESP32 glue, esp32-recon and the host tests were
   reformatted and their findings cleared with no behaviour change (host objects identical), which
   is why AmebaZ2 moves to 1.3.40 and ESP32 to 1.1.16 with nothing new on the bus.
+- `ota-release.sh tag` and `esp32-release.sh tag` now ask GitHub whether a runner with the
+  `sdk-builder` label is online before printing the push command, and warn if none is. Both release
+  workflows run only on that self-hosted runner, so a tag pushed while it is down sat in `queued`
+  with no error (#138). The check only warns. If `gh` is missing, not logged in, or the API call
+  fails, it says the check was skipped and carries on.
 
 ## Diagnostics exposed to Home Assistant - 2026-07-22
 

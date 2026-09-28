@@ -2,7 +2,8 @@
 # ota-guards.sh -- pre-flight + staging guards SOURCED by ota-release.sh and esp32-release.sh,
 # so both targets refuse the same unsafe OTA the same way (the sync-files.sh pattern: define
 # once, two consumers). Decisions live in ota_guards.py (host-tested); this file only runs them.
-# Callers provide say/die, load_env has run, and HERE points at firmware/scripts.
+# Callers provide say/die, load_env has run (guard_runner excepted), and HERE points at
+# firmware/scripts.
 #
 # Overrides (each one names the risk it accepts):
 #   OTA_ALLOW_WEAK_LINK=1   flash even when RSSI/read latency fail the link check
@@ -64,6 +65,51 @@ guard_link() {  # $1 node id
   [ "${OTA_ALLOW_WEAK_LINK:-0}" = 1 ] && { say "  WARNING: OTA_ALLOW_WEAK_LINK=1 -- $out"; return 0; }
   die "link pre-flight failed for node $1: $out
      Move the node/AP closer or fix Wi-Fi first, or pass OTA_ALLOW_WEAK_LINK=1."
+}
+
+# Release tags build ONLY on the self-hosted sdk-builder runner (it holds the SDK + OTA env). If it
+# is offline a pushed tag sits in `queued` with no error, which is how 1.3.43 stalled (#138). Asked
+# before the "push with" hint so the operator knows first. Warn, never refuse: the tag is local and
+# harmless, the push is a separate manual step, the job runs as soon as the runner comes up, and
+# `release --tag` reaches here after stage, where aborting would leave a staged image untagged. A
+# check that cannot run (no gh, not logged in, no admin scope, API error) says so and moves on.
+# Needs no env file, so the bare `tag` subcommand can call it.
+RUNNER_LABEL="${RUNNER_LABEL:-sdk-builder}"
+guard_runner() {  # [$1 owner/repo]  default: parsed from the origin remote, else `gh repo view`
+  local slug="${1:-}" url out err
+  if ! command -v gh >/dev/null; then
+    say "  WARNING: gh not on PATH -- runner check skipped; make sure a '$RUNNER_LABEL' runner is online before pushing"
+    return 0
+  fi
+  if [ -z "$slug" ]; then
+    url="$(git -C "$REPO" remote get-url origin 2>/dev/null || true)"
+    case "$url" in
+      *github.com[:/]*) slug="${url#*github.com[:/]}"; slug="${slug%.git}"; slug="${slug%/}" ;;
+    esac
+    [ -n "$slug" ] || slug="$(cd "$REPO" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+  fi
+  if [ -z "$slug" ]; then
+    say "  WARNING: cannot tell which GitHub repo origin is -- runner check skipped"
+    return 0
+  fi
+  # stderr kept apart: on an HTTP error gh prints the JSON body to stdout, the reason to stderr.
+  err="$(mktemp "${TMPDIR:-/tmp}/ota-runner.XXXXXX")" || { say "  WARNING: mktemp failed -- runner check skipped"; return 0; }
+  if ! out="$(gh api "repos/$slug/actions/runners?per_page=100" \
+                --jq '.runners[] | select(.status == "online") | .labels[].name' 2>"$err")"; then
+    say "  WARNING: runner check skipped (gh api repos/$slug/actions/runners failed: $(tail -n1 "$err"))"
+    rm -f "$err"
+    say "           make sure a '$RUNNER_LABEL' runner is online before pushing the tag"
+    return 0
+  fi
+  rm -f "$err"
+  if grep -qx -- "$RUNNER_LABEL" <<< "$out"; then
+    say "  runner check: a '$RUNNER_LABEL' runner is online for $slug"
+    return 0
+  fi
+  say "  WARNING: no '$RUNNER_LABEL' runner is online for $slug."
+  say "           The release workflow runs only there, so a pushed tag will sit in 'queued' (no error)"
+  say "           until the runner is started. Start the self-hosted runner (run.sh in its install dir),"
+  say "           then push. Check: gh api repos/$slug/actions/runners --jq '.runners[] | {name, status}'"
 }
 
 pi_ssh() { ssh -o BatchMode=yes -o ConnectTimeout=10 -i "$PI_SSH_KEY" "$PI_HOST" "$@"; }
