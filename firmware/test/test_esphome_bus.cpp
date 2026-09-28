@@ -19,15 +19,15 @@ namespace H = esphome::hisense_ac;
 
 static int g_fail = 0;
 static int g_checks = 0;
-#define CHECK(cond, ...)                             \
-  do {                                               \
-    g_checks++;                                      \
-    if (!(cond)) {                                   \
-      g_fail++;                                      \
-      printf("  FAIL %s:%d ", __FILE__, __LINE__);   \
-      printf(__VA_ARGS__);                           \
-      printf("\n");                                  \
-    }                                                \
+#define CHECK(cond, ...) \
+  do { \
+    g_checks++; \
+    if (!(cond)) { \
+      g_fail++; \
+      printf("  FAIL %s:%d ", __FILE__, __LINE__); \
+      printf(__VA_ARGS__); \
+      printf("\n"); \
+    } \
   } while (0)
 
 static uint32_t g_now = 1000;
@@ -58,7 +58,7 @@ static std::vector<uint8_t> status_frame(uint8_t setpoint, bool bad_checksum = f
   f[3] = 0x40;
   f[4] = 151;
   f[13] = 0x66;
-  f[16] = 0x0A;               // fan low
+  f[16] = 0x0A;         // fan low
   f[18] = 0x20 | 0x04;  // status mode nibble 2 = cool (raw, not the command encoding), running
   f[19] = setpoint;
   f[20] = 23;

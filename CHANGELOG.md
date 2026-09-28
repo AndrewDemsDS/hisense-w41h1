@@ -24,6 +24,16 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   automations that set the old names.
 
 ### Fixed
+- AmebaZ2 1.3.43: the node is now dual-stack (IPv4 enabled in connectedhomeip) so it answers mDNS
+  on 224.0.0.251 as well as ff02::fb. The Realtek SDK ships with IPv4 off, which left mDNS
+  IPv6-only. Behind UniFi Multicast Enhancement the AP delivers IPv4 mDNS to IGMP members and no
+  IPv6 mDNS at all, so the node never heard a query: it still announced itself, but a restarted
+  controller could not resolve it and CASE failed until the node happened to reassociate. The ESP32
+  build was already dual-stack.
+- AmebaZ2 1.3.42: the app resends MLD and IGMP reports after each 4-way handshake. The Realtek SDK
+  raises the lwIP link before the first association and leaves it up across disconnects, so lwIP's
+  own link-up re-report never runs and the AP forgets the node's group memberships after a
+  reassociation.
 - AmebaZ2 1.3.33 -> 1.3.38: PercentSetting 42 / 75 landed one fan step up (58 / 100 %). The app
   publishes FanMode by folding the six speeds into Low/Medium/High, and that readback re-commanded
   the bucket's speed along two paths: the connectedhomeip patch mapped it onto PercentSetting
@@ -32,6 +42,13 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   `matter_echo_note/consume()`, and skipped). 1.3.35-1.3.37 tried a bucket comparison instead, which
   let a stale readback undo a fan-card Medium press. ESP32 builds its FanControl in code, has neither
   path, and was not affected.
+
+### Tooling
+- C/C++ lint for every tree we own (`firmware/scripts/cpp-lint.sh check|fix`), with ESPHome's
+  clang-format and clang-tidy configs and the portable rules of its `ci-custom.py`, gated in CI
+  and the pre-commit hook. The shared driver, the ESP32 glue, esp32-recon and the host tests were
+  reformatted and their findings cleared with no behaviour change (host objects identical), which
+  is why AmebaZ2 moves to 1.3.40 and ESP32 to 1.1.16 with nothing new on the bus.
 
 ## Diagnostics exposed to Home Assistant - 2026-07-22
 

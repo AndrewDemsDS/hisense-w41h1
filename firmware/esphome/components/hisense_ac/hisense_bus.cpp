@@ -63,6 +63,7 @@ void BusScheduler::begin_transaction_(const uint8_t *frame, size_t len, uint8_t 
   this->discard_rx_();
   this->expect_class_ = expect_class;
   size_t stamped = 0;
+  // NOLINTNEXTLINE(readability-simplify-boolean-expr): same predicate, same shape as the driver's
   if (!(len > FRAME_CLASS_OFFSET && frame[FRAME_CLASS_OFFSET] == CLASS_DEVTYPE))
     stamped = stamp_link_token(frame, len, this->token_[0], this->token_[1], this->tx_, sizeof(this->tx_));
   if (stamped > 0) {

@@ -29,7 +29,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-ENVF="$HERE/ota-release.env"
+ENVF="${ENVF:-$HERE/ota-release.env}"  # overridable, as in ota-release.sh (e.g. an SSH-tunnel MS_WS)
 ESP="$REPO/firmware/esp32-matter"
 IMG="$REPO/firmware/built-images"
 CMAKE="$ESP/CMakeLists.txt"

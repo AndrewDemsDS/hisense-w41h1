@@ -195,6 +195,28 @@ H-swing-capable variant.
 - **Poll interval** (10 s) is carried over from the DHT11 stub, not derived from the bus;
   tighten once bench timing is known (reference polls ~5 s).
 
+### Comfort-mode coexistence (hardware-confirmed 2026-07-23)
+
+Which of eco, quiet (mute), sleep and turbo can be active together. Verified on the bus
+through our firmware (command sent, decoded status read back) and cross-checked against the
+stock Hisense app on the same unit. The A/C enforces this itself: for an exclusive pair the
+second mode enabled wins and the unit drops the first, which then reads back `0`.
+
+| | quiet | sleep | turbo |
+|---|---|---|---|
+| **eco** | yes (eco=1, mute=1, fan `0x02`) | yes | no (byte 33 enum carries one of them) |
+| **quiet** | | no | no |
+| **sleep** | | | no |
+
+Turbo excludes everything (it maxes output, the others reduce it). Eco coexists only with the
+gentle modes. Quiet and sleep conflict because both own the fan profile.
+
+- **Command debounce:** the unit drops commands that arrive too close together. Quiet needed
+  ~6 s to engage reliably; a 3 s gap, or quiet immediately followed by eco, lost the command.
+  Turbo-then-quiet can transiently leave both off. Space scripted commands ~6 s apart.
+- **Restore gotcha:** toggling quiet on then off leaves the fan at `0x0A` (low), not `0x01`
+  (auto). Write the fan mode back explicitly after a quiet test.
+
 ### Timer (byte 30 / byte 31)
 
 The on/off timer is **relative, not absolute**: the remote computes *time-remaining* against
