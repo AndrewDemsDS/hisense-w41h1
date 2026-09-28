@@ -11,6 +11,8 @@
 #   ota-release.sh package                  # pad clip image + create .ota + manifest
 #   ota-release.sh stage                    # scp .ota+manifest to the Pi, restart matter-server
 #   ota-release.sh flash                    # update_node with retries, verify the reported version changed
+#                                           # (refuses version <= .released-version; OTA_ALLOW_SAME_VERSION=1
+#                                           #  admits equal, to roll one version out to another unit)
 #   ota-release.sh release [--bump] [--flash]   # build + package + stage (+ flash)
 #   ota-release.sh revert --backup <unit-ip> [out.bin] # fetch+validate the inactive-slot stock image (#19)
 #   ota-release.sh revert --flip <unit-ip> [--force]   # break-glass slot-flip back to stock (#19)
@@ -112,12 +114,16 @@ if ids != list(range(len(ids))):
 print(f"  .zap endpoints contiguous: {ids}")
 PY
 }
-lint_version() {  # must exceed the version last CONFIRMED booted on the device
-  local cur rel; cur="$(cur_version)"; rel="$(released_version)"
-  if [ "$cur" -le "$rel" ]; then
-    die "CHIPDeviceConfig version ($cur) <= last on-device version ($rel) -- bump it (docs/10 §1). 'ota-release.sh build --bump'"
-  fi
-  say "version OK: config=$cur > on-device=$rel"
+# Tree version vs the version last CONFIRMED booted on the device. $1 = commit (lint, the git
+# hook: equal passes, so the tree that was just flashed can be committed, #136) or flash
+# (strictly greater: the provider only serves a greater int). ota_guards.py owns the rule.
+# .released-version is one mark per repo, not per node: OTA_ALLOW_SAME_VERSION=1 lets flash
+# roll the SAME version to another unit (equal only, never lower) and says so loudly.
+lint_version() {
+  local out
+  out="$(python3 "$GUARDS_PY" version "$(cur_version)" "$(released_version)" "${1:-commit}" \
+    "${OTA_ALLOW_SAME_VERSION:-0}")" || die "$out"
+  say "$out"
 }
 lint() {
   say "lint: host codec/map tests"
@@ -125,7 +131,7 @@ lint() {
     || { tail -20 /tmp/ota-lint-tests.log; die "host tests FAILED"; }
   say "  host tests passed"
   say "lint: .zap endpoint contiguity"; lint_zap
-  say "lint: softwareVersion"; lint_version   # version.txt is git-tracked -> runs in CI, no SDK needed
+  say "lint: softwareVersion"; lint_version commit   # version.txt is git-tracked -> runs in CI, no SDK needed
   say "lint OK"
 }
 
@@ -630,7 +636,11 @@ flash() {
   load_env
   : "${OTAENV_PY:?}" "${MS_WS:?}" "${NODE_ID:?}"
   local v since; v="$(cur_version)"
-  say "pre-flight: tools + link to node $NODE_ID"
+  # flash is what records .released-version (only after the new version verifies), so it is
+  # the one place an unbumped version must still be refused. A retry after a failed flash is
+  # unaffected: the mark only moves on success.
+  say "pre-flight: version, tools + link to node $NODE_ID"
+  lint_version flash
   guard_tools
   guard_link "$NODE_ID"
   since="$(pi_now 2>/dev/null || true)"

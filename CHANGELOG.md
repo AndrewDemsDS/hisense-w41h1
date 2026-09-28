@@ -42,6 +42,12 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   `matter_echo_note/consume()`, and skipped). 1.3.35-1.3.37 tried a bucket comparison instead, which
   let a stale readback undo a fan-card Medium press. ESP32 builds its FanControl in code, has neither
   path, and was not affected.
+- `ota-release.sh lint` (the pre-commit hook) no longer refuses a tree whose version equals the
+  recorded on-device version, so the tree that was just flashed can be committed without
+  `--no-verify`. A version below the device still fails. `flash` now refuses an unbumped version
+  itself instead of relying on lint having run first. `.released-version` is one mark for the
+  repo, not per node, so `OTA_ALLOW_SAME_VERSION=1` lets `flash` roll the same version out to
+  another unit (equal only, with a warning). (#136)
 
 ### Tooling
 - C/C++ lint for every tree we own (`firmware/scripts/cpp-lint.sh check|fix`), with ESPHome's

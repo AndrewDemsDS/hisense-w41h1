@@ -62,6 +62,25 @@ check(g.repoint_verdict("debug")[0] is False and ":2323" in g.repoint_verdict("d
 check(g.repoint_verdict("debug", allow_debug=True)[0] is True, "debug repoints only with the override")
 check(g.repoint_verdict("")[0] is False, "unknown flavour is refused, never assumed release")
 
+# --- softwareVersion gate: commit allows equal, flash does not (#136) ---
+check(g.version_verdict(10343, 10343, "commit")[0] is True,
+      "near miss: committing the tree that was just flashed (equal version) passes")
+check(g.version_verdict(10344, 10343, "commit")[0] is True, "commit with a bumped version passes")
+check(g.version_verdict(10342, 10343, "commit")[0] is False, "commit below the on-device version is refused")
+check(g.version_verdict(10343, 10343, "flash")[0] is False and "bump" in g.version_verdict(10343, 10343, "flash")[1],
+      "flashing an unbumped (equal) version is still refused")
+check(g.version_verdict(10342, 10343, "flash")[0] is False, "flashing a lower version is refused")
+check(g.version_verdict(10344, 10343, "flash")[0] is True, "flashing a bumped version passes")
+check(g.version_verdict(10000, 0, "flash")[0] is True, "no .released-version yet (0) passes both gates")
+check(g.version_verdict(10344, 10343, "")[0] is False, "unknown purpose is refused, never assumed")
+same = g.version_verdict(10343, 10343, "flash", allow_same=True)
+check(same[0] is True and "WARNING" in same[1] and "OTA_ALLOW_SAME_VERSION" in same[1],
+      "OTA_ALLOW_SAME_VERSION: the same version to a second unit flashes, with a warning")
+check(g.version_verdict(10342, 10343, "flash", allow_same=True)[0] is False,
+      "OTA_ALLOW_SAME_VERSION never admits a lower version")
+check("WARNING" not in g.version_verdict(10344, 10343, "flash", allow_same=True)[1],
+      "OTA_ALLOW_SAME_VERSION stays silent when the version is bumped anyway")
+
 
 # --- manifest archive plan ---
 def man(pid, v, vid=0xFFF1):
@@ -117,6 +136,18 @@ with tempfile.TemporaryDirectory() as d:
     r = subprocess.run(cli + ["archive-plan", "esp32-v10115.json"], input=
                        "\n".join(f"{n}\t{json.dumps(v)}" for n, v in listing.items() if v), capture_output=True, text=True)
     check(r.returncode == 0 and r.stdout.split() == ["esp32-v10030.json", "esp32-v10114.json"], "CLI archive-plan prints the plan")
+    r = subprocess.run(cli + ["version", "10343", "10343", "commit"], capture_output=True, text=True)
+    check(r.returncode == 0, "CLI version exits 0 for an equal version under commit")
+    r = subprocess.run(cli + ["version", "10343", "10343", "flash"], capture_output=True, text=True)
+    check(r.returncode == 1 and "bump" in r.stdout, "CLI version exits 1 for an equal version under flash")
+    r = subprocess.run(cli + ["version", "10343", "10343", "flash", "1"], capture_output=True, text=True)
+    check(r.returncode == 0 and "WARNING" in r.stdout, "CLI version exits 0 and warns for equal under the override")
+    r = subprocess.run(cli + ["version", "10342", "10343", "flash", "1"], capture_output=True, text=True)
+    check(r.returncode == 1, "CLI version exits 1 for a lower version even under the override")
+    r = subprocess.run(cli + ["version", "10342", "10343", "commit"], capture_output=True, text=True)
+    check(r.returncode == 1, "CLI version exits 1 for a lower version under commit")
+    r = subprocess.run(cli + ["version", "x", "10343", "commit"], capture_output=True, text=True)
+    check(r.returncode == 2, "CLI version exits 2 on a non-integer argument")
 
 print("== OTA GUARDS OK ==" if ok else "== OTA GUARDS FAILED ==")
 sys.exit(0 if ok else 1)

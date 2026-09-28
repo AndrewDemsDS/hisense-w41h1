@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Firmware safety gate: when firmware source or the .zap is staged, run the fast
 # lint (host tests + .zap endpoint contiguity + version check) so a boot-crashing
-# config or an unbumped version can't be committed. See firmware/docs/10.
+# config or a version below the on-device one can't be committed (equal passes: that is
+# the tree just flashed, and `flash` itself refuses an unbumped version). See firmware/docs/10.
 set -euo pipefail
 REPO="$(git rev-parse --show-toplevel)"
 # The ESPHome component's codec port is covered too: its parity test (layer 1d) is what keeps it
