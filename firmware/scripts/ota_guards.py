@@ -19,6 +19,9 @@ ota-guards.sh only moves files and calls this CLI. Each guard maps to a near mis
                  fetches, and ESP32_FLAVOUR defaults to debug, so a default stage repointed the
                  fleet's recovery image at the unauthenticated :2323 console. A debug image is
                  archived but only repoints the current path on an explicit override.
+  version        (#136) the commit gate refused the exact tree that had just been flashed, since
+                 it wanted the version strictly above the recorded on-device one. Committing needs
+                 at-or-above; only a flash needs strictly above (the provider serves a greater int).
 
 CLI (exit 0 = pass, 1 = refused, 2 = usage/IO):
   ota_guards.py flavour IMAGE MARKER                 print debug|release
@@ -27,6 +30,7 @@ CLI (exit 0 = pass, 1 = refused, 2 = usage/IO):
   ota_guards.py archive-plan KEEP < listing          names to archive (listing: name<TAB>json)
   ota_guards.py link WS NODE [MIN_RSSI] [MAX_S]      read 0/54/4 via matter-server (needs aiohttp)
   ota_guards.py repoint IMAGE MARKER [ALLOW_DEBUG]   refuse repointing the mirror at a debug image
+  ota_guards.py version CUR ON_DEVICE commit|flash   refuse a tree version the purpose does not allow
 """
 
 import json
@@ -82,6 +86,24 @@ def repoint_verdict(flavour: str, allow_debug: bool = False):
         return False, ("debug image (unauthenticated :2323 console): archived only, the current-image "
                        "path still serves the last release. OTA_HTTP_REPOINT_DEBUG=1 overrides")
     return False, f"unknown flavour '{flavour}': archived only"
+
+
+def version_verdict(cur: int, on_device: int, purpose: str):
+    """(ok, reason): is the tree's softwareVersion int acceptable against the last one confirmed
+    on the device? A commit may equal it (committing what was just flashed, #136) but not go
+    below it. A flash must exceed it: the provider only serves a strictly greater int, and the
+    equal case is exactly an unbumped rebuild. Any other purpose is refused, never assumed."""
+    if purpose == "commit":
+        if cur < on_device:
+            return False, (f"CHIPDeviceConfig version ({cur}) < last on-device version ({on_device}) "
+                           "-- the tree is behind the device, rebase or bump it")
+        return True, f"version OK: config={cur} >= on-device={on_device}"
+    if purpose == "flash":
+        if cur <= on_device:
+            return False, (f"CHIPDeviceConfig version ({cur}) <= last on-device version ({on_device}) "
+                           "-- bump it (docs/10 §1). 'ota-release.sh build --bump'")
+        return True, f"version OK: config={cur} > on-device={on_device}"
+    return False, f"unknown version gate purpose '{purpose}' (want commit or flash)"
 
 
 def archive_plan(keep: str, manifests: dict) -> list:
@@ -151,6 +173,15 @@ def main(argv):
         with open(args[0], "rb") as f:
             have = image_flavour(f.read(), args[1].encode())
         ok, why = repoint_verdict(have, len(args) > 2 and args[2] == "1")
+        print(why)
+        return 0 if ok else 1
+    if cmd == "version" and len(args) == 3:
+        try:
+            cur, on_device = int(args[0]), int(args[1])
+        except ValueError:
+            print(f"version: non-integer argument in {args[:2]}", file=sys.stderr)
+            return 2
+        ok, why = version_verdict(cur, on_device, args[2])
         print(why)
         return 0 if ok else 1
     if cmd == "stale" and len(args) >= 2:
