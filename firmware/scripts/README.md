@@ -14,6 +14,7 @@ dev.py test    esp32                 # host QA + the target's lint
 dev.py build   esp32 --board c3      # build from source
 dev.py flash   esp32 --port /dev/ttyACM0
 dev.py ota     esp32 verify          # read the live on-device version + link
+dev.py ota     amebaz2 epoch         # any release-script step passes through (lint, tag, revert, ...)
 dev.py walk    esp32                 # guided doctor -> test -> build -> flash, asks at each step
 ```
 

@@ -43,6 +43,8 @@ python3 firmware/scripts/dev.py ota amebaz2 verify                  # the versio
 
 `dev.py ota <target> <step>` hands the step and its arguments to the release script
 (`ota-release.sh` for `amebaz2`, `esp32-release.sh` for `esp32`), wrapped in the OTA guards.
+Every release-script step passes through this way, including `tag`, `publish` and `verint`, and for
+`amebaz2` also `lint`, `epoch` (the build date the image will carry) and `revert`.
 `release` runs **build → package → stage → flash** end to end:
 
 | Stage | What it does |

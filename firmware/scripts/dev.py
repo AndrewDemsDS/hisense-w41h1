@@ -22,8 +22,10 @@ Commands:
   monitor <target> --port P              serial monitor only
   bench   <target> --port P --sim-port S  busmon/app vs virtual_ac.py over a USB adapter
   next    <target>                       print the staged bring-up and its safety warnings
-  ota     <target> <step> [args]         Matter OTA (amebaz2|esp32): preflight | verify | package |
-                                         stage | flash | release [...], guarded by ota-guards.sh
+  ota     <target> <step> [args]         Matter OTA (amebaz2|esp32): preflight | verify, plus every
+                                         release-script step (build | package | stage | flash |
+                                         release | publish | tag | verint; amebaz2 also lint |
+                                         epoch | revert), guarded by ota-guards.sh
 
 Targets: amebaz2 | esp32 | esphome. Board (esp32/esphome): --board c3 (ESP32-C3 SuperMini, default)
 or --board classic (ESP32-D0WDQ6). Env: IDF_PATH / ESP_MATTER_PATH (esp32; default ~/esp/esp-idf and
@@ -600,6 +602,15 @@ def _guards_bash(target, snippet):
     return subprocess.run(["bash", "-c", script]).returncode
 
 
+# Every subcommand of the release scripts, forwarded as-is so dev.py stays the one front door.
+# Keep these in step with the scripts' own `case "$cmd"` dispatch.
+OTA_STEPS = {
+    "amebaz2": ("build", "package", "stage", "flash", "release", "publish", "tag",
+                "lint", "verint", "epoch", "revert"),
+    "esp32": ("build", "package", "stage", "flash", "release", "publish", "tag", "verint"),
+}
+
+
 def ota(ctx, step, rest):
     rel = HERE / ("ota-release.sh" if ctx.target == "amebaz2" else "esp32-release.sh")
     if ctx.target == "esphome":
@@ -647,11 +658,11 @@ def ota(ctx, step, rest):
             f'else echo "node $node reports $got, expected {want}" >&2; exit 1; fi')
         if _guards_bash(ctx.target, snippet) != 0:
             die(f"node reports an unexpected version (expected {want})")
-    elif step in ("package", "stage", "flash", "release", "build", "publish", "tag"):
+    elif step in OTA_STEPS[ctx.target]:
         rc = subprocess.run(["bash", str(rel), step, *rest]).returncode
         sys.exit(rc)
     else:
-        die("ota step must be preflight, verify, package, stage, flash, release, build, publish or tag")
+        die(f"ota step for {ctx.target} must be preflight, verify, {', '.join(OTA_STEPS[ctx.target])}")
 
 
 # ---- argument parsing + dispatch -------------------------------------------------------------
