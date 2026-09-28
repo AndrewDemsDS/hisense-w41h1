@@ -28,7 +28,11 @@ whole release, the OTA provider-discovery race, A/B rollback).
   to serve (official CSA rule). The fleet is at Ameba **sw34**; `1.x.x → ≥10000 > 34` clears it, so
   the semver can start clean while the int still increases. Tag convention: **`amebaz2-vX.Y.Z`** and
   **`esp32-vX.Y.Z`** (path-prefixed; the bare `v1.0.0`/`v1.1.0` tags are retired). `ota-release.sh tag`
-  (or `release --tag`) creates the AmebaZ2 tag locally.
+  (or `release --tag`) creates the AmebaZ2 tag locally, and `esp32-release.sh tag` the ESP32 one.
+  Both then check through `gh api` that a runner with the `sdk-builder` label is online, and warn
+  before printing the push command if none is: the release workflows run only there, and a tag
+  pushed while it is down sits in `queued` with no error until the self-hosted runner is started
+  (`run.sh` in its install dir). The check only warns, and says so when it could not run (#138).
 - **ESP32 path** mirrors this: `firmware/esp32-matter/CMakeLists.txt` derives the int from
   `PROJECT_VER` with the same formula and injects it as a compile definition that wins over
   `sdkconfig`'s `CONFIG_DEVICE_SOFTWARE_VERSION_NUMBER` (the `#ifndef` guard in `CHIPDeviceConfig.h`),

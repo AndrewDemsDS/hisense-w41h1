@@ -426,10 +426,14 @@ PY
 # ---- tag -----------------------------------------------------------------------------------
 tag_release() {
   local semver t; semver="$(cur_semver)"; t="esp32-v$semver"
-  git -C "$REPO" rev-parse -q --verify "refs/tags/$t" >/dev/null \
-    && { say "tag $t already exists -- leaving it"; return; }
-  git -C "$REPO" tag -s "$t" -m "ESP32 firmware $semver (softwareVersion $(cur_int))"
-  say "tagged $t -- push with: git push origin $t"
+  if git -C "$REPO" rev-parse -q --verify "refs/tags/$t" >/dev/null; then
+    say "tag $t already exists -- leaving it"
+  else
+    git -C "$REPO" tag -s "$t" -m "ESP32 firmware $semver (softwareVersion $(cur_int))"
+    say "tagged $t"
+  fi
+  guard_runner   # #138: the tag builds only on the self-hosted runner; warn if it is offline
+  say "push with: git push origin $t"
 }
 
 # ---- top-level -----------------------------------------------------------------------------

@@ -1403,10 +1403,14 @@ revert() {
 # ---- tag (issue #77) -------------------------------------------------------
 tag_release() {  # create the path-prefixed semver tag amebaz2-vX.Y.Z locally (never pushed here)
   local semver t; semver="$(cur_semver)"; t="amebaz2-v$semver"
-  git -C "$REPO" rev-parse -q --verify "refs/tags/$t" >/dev/null \
-    && { say "tag $t already exists -- leaving it"; return; }
-  git -C "$REPO" tag -s "$t" -m "AmebaZ2 firmware $semver (softwareVersion $(cur_version))"
-  say "tagged $t (softwareVersion $(cur_version)) -- push with: git push origin $t"
+  if git -C "$REPO" rev-parse -q --verify "refs/tags/$t" >/dev/null; then
+    say "tag $t already exists -- leaving it"
+  else
+    git -C "$REPO" tag -s "$t" -m "AmebaZ2 firmware $semver (softwareVersion $(cur_version))"
+    say "tagged $t (softwareVersion $(cur_version))"
+  fi
+  guard_runner   # #138: the tag builds only on the self-hosted runner; warn if it is offline
+  say "push with: git push origin $t"
 }
 
 # ---- top-level -------------------------------------------------------------
