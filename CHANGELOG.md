@@ -24,6 +24,10 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   automations that set the old names.
 
 ### Fixed
+- AmebaZ2 1.3.44: General Diagnostics NetworkInterfaces now lists every valid IPv6 address, not only
+  the link-local one. The Ameba port copied address slot 0 and hard-coded the count to 1, so the
+  SLAAC and DHCPv6 addresses in slots 1 and up were never reported. Tentative and duplicated slots
+  are skipped, as on ESP32 (#139).
 - AmebaZ2 builds: the image's build date (`SOURCE_DATE_EPOCH`) is now the author date of the newest
   commit touching the image inputs, not the HEAD commit time. An image built on a branch and
   flashed before merging now matches the tag rebuild of the merge commit byte for byte, which is
