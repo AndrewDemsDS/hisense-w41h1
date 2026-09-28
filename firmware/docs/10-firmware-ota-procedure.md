@@ -187,9 +187,13 @@ boot-crashing config or an unbumped version can't be committed. It chains the gl
 
 1. **Version dedup, THE one that bites.** Matter OTA is keyed on `softwareVersion`. If you
    rebuild new bytes under a version the device already runs, the device thinks it's up-to-date
-   and **won't accept the image** (no error, it just never updates). *Always bump.* The lint
-   compares against `built-images/.released-version` (the version last **confirmed booted**,
-   written by `flash`), not a filename, so it can't be fooled by our informal `rac-vN` labels.
+   and **won't accept the image** (no error, it just never updates). *Always bump.* `flash`
+   refuses a version not above `built-images/.released-version` (the version last **confirmed
+   booted**, written by `flash`), not a filename, so it can't be fooled by our informal `rac-vN`
+   labels. The pre-commit `lint` only refuses a version *below* it, so the tree you just flashed
+   can be committed (#136). The mark is one per repo, not per node: to roll the same version out
+   to a second unit, run `OTA_ALLOW_SAME_VERSION=1 ota-release.sh flash` (equal only, it prints a
+   warning; lower is never allowed).
 2. **matter-server manifest cache.** `load_local_updates()` runs **once at init**
    (`device_controller.py:186`), so a freshly-staged `.ota`/`.json` is invisible until the
    container restarts. `stage` restarts it. Symptom if skipped: `check_node_update` shows the old
@@ -268,8 +272,9 @@ strictly increasing with the version. `build` sets it before `is_matter` and **v
   returned a stale `14` right after a container restart → "success" with the device still on 12.
   Fixed: `flash` uses `read_attribute` (fresh) and requires the new version **sustained across 3
   consecutive reads**.
-- **Forgetting the version bump** and **leaving an endpoint gap**: both already blocked by the
-  pre-commit `lint` (version > `.released-version`; contiguous `.zap` endpoints).
+- **Forgetting the version bump** and **leaving an endpoint gap**: blocked by `flash` (version >
+  `.released-version`) and the pre-commit `lint` (version >= `.released-version`; contiguous `.zap`
+  endpoints).
 
 ### Build flavours (#22 / #23)
 
@@ -302,7 +307,8 @@ Three traps specific to flavours:
 | Mistake | Guard | Where |
 |---|---|---|
 | OTA serial not bumped | `serial = SERIAL_BASE + version`, set + log-verified | `build` |
-| softwareVersion not bumped | `config version > .released-version` | `lint` (pre-commit hook) |
+| softwareVersion not bumped | `config version > .released-version` (`OTA_ALLOW_SAME_VERSION=1` admits equal, for another unit) | `flash` |
+| tree behind the device | `config version >= .released-version` | `lint` (pre-commit hook) |
 | endpoint gap (non-contiguous) | `.zap` contiguity check + build-output check | `lint` + `build` |
 | flash false-positive (stale cache) | fresh `read_attribute`, sustained ×3 | `flash` |
 | manifest/version cache | restart matter-server; unique versions | `stage` (§9) |

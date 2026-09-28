@@ -30,7 +30,8 @@ CLI (exit 0 = pass, 1 = refused, 2 = usage/IO):
   ota_guards.py archive-plan KEEP < listing          names to archive (listing: name<TAB>json)
   ota_guards.py link WS NODE [MIN_RSSI] [MAX_S]      read 0/54/4 via matter-server (needs aiohttp)
   ota_guards.py repoint IMAGE MARKER [ALLOW_DEBUG]   refuse repointing the mirror at a debug image
-  ota_guards.py version CUR ON_DEVICE commit|flash   refuse a tree version the purpose does not allow
+  ota_guards.py version CUR ON_DEVICE commit|flash [ALLOW_SAME]
+                                                     refuse a tree version the purpose does not allow
 """
 
 import json
@@ -88,20 +89,27 @@ def repoint_verdict(flavour: str, allow_debug: bool = False):
     return False, f"unknown flavour '{flavour}': archived only"
 
 
-def version_verdict(cur: int, on_device: int, purpose: str):
+def version_verdict(cur: int, on_device: int, purpose: str, allow_same: bool = False):
     """(ok, reason): is the tree's softwareVersion int acceptable against the last one confirmed
     on the device? A commit may equal it (committing what was just flashed, #136) but not go
     below it. A flash must exceed it: the provider only serves a strictly greater int, and the
-    equal case is exactly an unbumped rebuild. Any other purpose is refused, never assumed."""
+    equal case is exactly an unbumped rebuild. .released-version is one mark for the whole repo,
+    not per node, so rolling the same version out to a second unit needs allow_same
+    (OTA_ALLOW_SAME_VERSION=1), which admits equal but never lower. Any other purpose is refused,
+    never assumed."""
     if purpose == "commit":
         if cur < on_device:
             return False, (f"CHIPDeviceConfig version ({cur}) < last on-device version ({on_device}) "
                            "-- the tree is behind the device, rebase or bump it")
         return True, f"version OK: config={cur} >= on-device={on_device}"
     if purpose == "flash":
+        if cur == on_device and allow_same:
+            return True, (f"WARNING: OTA_ALLOW_SAME_VERSION=1, flashing config={cur} == on-device={on_device} "
+                          "(another unit at this version? a node already on it will not update)")
         if cur <= on_device:
             return False, (f"CHIPDeviceConfig version ({cur}) <= last on-device version ({on_device}) "
-                           "-- bump it (docs/10 §1). 'ota-release.sh build --bump'")
+                           "-- bump it (docs/10 §1). 'ota-release.sh build --bump'. Same version to "
+                           "another unit: OTA_ALLOW_SAME_VERSION=1")
         return True, f"version OK: config={cur} > on-device={on_device}"
     return False, f"unknown version gate purpose '{purpose}' (want commit or flash)"
 
@@ -175,13 +183,13 @@ def main(argv):
         ok, why = repoint_verdict(have, len(args) > 2 and args[2] == "1")
         print(why)
         return 0 if ok else 1
-    if cmd == "version" and len(args) == 3:
+    if cmd == "version" and len(args) in (3, 4):
         try:
             cur, on_device = int(args[0]), int(args[1])
         except ValueError:
             print(f"version: non-integer argument in {args[:2]}", file=sys.stderr)
             return 2
-        ok, why = version_verdict(cur, on_device, args[2])
+        ok, why = version_verdict(cur, on_device, args[2], len(args) > 3 and args[3] == "1")
         print(why)
         return 0 if ok else 1
     if cmd == "stale" and len(args) >= 2:

@@ -73,6 +73,13 @@ check(g.version_verdict(10342, 10343, "flash")[0] is False, "flashing a lower ve
 check(g.version_verdict(10344, 10343, "flash")[0] is True, "flashing a bumped version passes")
 check(g.version_verdict(10000, 0, "flash")[0] is True, "no .released-version yet (0) passes both gates")
 check(g.version_verdict(10344, 10343, "")[0] is False, "unknown purpose is refused, never assumed")
+same = g.version_verdict(10343, 10343, "flash", allow_same=True)
+check(same[0] is True and "WARNING" in same[1] and "OTA_ALLOW_SAME_VERSION" in same[1],
+      "OTA_ALLOW_SAME_VERSION: the same version to a second unit flashes, with a warning")
+check(g.version_verdict(10342, 10343, "flash", allow_same=True)[0] is False,
+      "OTA_ALLOW_SAME_VERSION never admits a lower version")
+check("WARNING" not in g.version_verdict(10344, 10343, "flash", allow_same=True)[1],
+      "OTA_ALLOW_SAME_VERSION stays silent when the version is bumped anyway")
 
 
 # --- manifest archive plan ---
@@ -133,6 +140,10 @@ with tempfile.TemporaryDirectory() as d:
     check(r.returncode == 0, "CLI version exits 0 for an equal version under commit")
     r = subprocess.run(cli + ["version", "10343", "10343", "flash"], capture_output=True, text=True)
     check(r.returncode == 1 and "bump" in r.stdout, "CLI version exits 1 for an equal version under flash")
+    r = subprocess.run(cli + ["version", "10343", "10343", "flash", "1"], capture_output=True, text=True)
+    check(r.returncode == 0 and "WARNING" in r.stdout, "CLI version exits 0 and warns for equal under the override")
+    r = subprocess.run(cli + ["version", "10342", "10343", "flash", "1"], capture_output=True, text=True)
+    check(r.returncode == 1, "CLI version exits 1 for a lower version even under the override")
     r = subprocess.run(cli + ["version", "10342", "10343", "commit"], capture_output=True, text=True)
     check(r.returncode == 1, "CLI version exits 1 for a lower version under commit")
     r = subprocess.run(cli + ["version", "x", "10343", "commit"], capture_output=True, text=True)
