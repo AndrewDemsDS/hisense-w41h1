@@ -83,4 +83,8 @@ echo "== Layer 5: OTA pre-flight + staging guards =="
 python3 ./test_ota_guards.py
 
 echo
+echo "== Layer 6: AmebaZ2 build clock survives merge + cherry-pick (#137) =="
+bash ./test_image_epoch.sh
+
+echo
 echo "ALL QA LAYERS PASSED"

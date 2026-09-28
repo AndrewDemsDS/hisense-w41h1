@@ -127,6 +127,28 @@ Known SDK dep-tracking bugs (all handled by the script):
 - **(c) example-select / stale-ChipTest link errors**: delete all example `*_lib_main.oo` (both
   the source dir and `lib_main/Debug/obj`) + `lib_main.a`, then rebuild (`CLAUDE.md`).
 
+### Build clock: which date ends up in the image (#137)
+
+The image carries a build date (`__DATE__`/`__TIME__` and the SDK `build_info` stamp), and the
+header hashes smear that date across ~574 bytes. `build` pins it with `SOURCE_DATE_EPOCH`, set to
+the **author date of the newest commit that touches the image inputs**: `firmware/src/` (markdown
+excluded), `firmware/scripts/ota-release.sh`, `firmware/scripts/sync-files.sh`, `firmware/setup.sh`,
+`scripts/setup.sh`, `scripts/apply-matter-edits.sh`, `patches/` and `versions.env`. The list is
+`IMAGE_INPUTS` in the script. Print the value without building with `ota-release.sh epoch`.
+
+It used to be the HEAD commit time, so an image built on a branch and flashed before merging never
+matched the tag rebuild of the merge commit. Author dates survive a merge, rebase or cherry-pick,
+and a merge that leaves the inputs alone is walked through, so both builds now get one date and one
+set of bytes. What still breaks the match:
+
+- **Building from uncommitted inputs.** `build --bump` edits `version.txt` in the working tree, and
+  committing it afterwards moves the clock. If the image is going to be flashed, commit the bump
+  first, then build. `build` warns when the inputs are dirty.
+- **Squash merges**, which make a new commit with a new author date.
+- **A shallow clone.** `build` refuses one (the release workflow checks out with `fetch-depth: 0`).
+- **`ota-release.env`**, which is untracked: changing the break-glass host or token changes the
+  bytes without moving the clock.
+
 ## 5. OTA image + manifest
 
 ```

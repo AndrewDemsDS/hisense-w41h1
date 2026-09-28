@@ -63,8 +63,9 @@ deployed `184da838…`, and `-ffile-prefix-map` (which strips build paths) did n
 were never the problem. The clock was, in three independent places:
 
 1. `__DATE__` / `__TIME__` in the SDK's `app_start.c` boot banner. Fixed by exporting
-   `SOURCE_DATE_EPOCH`, pinned to the HEAD commit's own timestamp, which GCC honours for both
-   macros.
+   `SOURCE_DATE_EPOCH`, which GCC honours for both macros. It is the author date of the newest
+   commit touching the image inputs, so a merge or cherry-pick that leaves those inputs alone
+   keeps the same date (#137; it used to be the HEAD commit time).
 2. The SDK's `build_info` make target, which regenerates `.ver` on every build by shelling out to
    `date` (and to `id -u -n`, which also leaked the builder's username into a public image).
    Patched in place to derive both from `SOURCE_DATE_EPOCH` and a constant.

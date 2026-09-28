@@ -9,6 +9,7 @@
 #   ota-release.sh lint                     # fast offline checks (host tests + .zap lint). git hook uses this.
 #   ota-release.sh build   [--bump]         # sync mirror->SDK, build, verify (optionally bump version first)
 #   ota-release.sh package                  # pad clip image + create .ota + manifest
+#   ota-release.sh epoch                    # print the build clock (SOURCE_DATE_EPOCH) build would use
 #   ota-release.sh stage                    # scp .ota+manifest to the Pi, restart matter-server
 #   ota-release.sh flash                    # update_node with retries, verify the reported version changed
 #                                           # (refuses version <= .released-version; OTA_ALLOW_SAME_VERSION=1
@@ -358,6 +359,60 @@ apply_build_info_order() {
   [ "$hit" = 1 ] && say "  build_info ordering already applied"
   return 0
 }
+# ---- build clock (SOURCE_DATE_EPOCH, #137) ---------------------------------
+# Every tracked path whose content can reach the AmebaZ2 image: the mirrored sources and
+# version.txt, the sync list, this script (it injects defines and SDK edits at build time), and
+# the SDK setup (pins, patches, overlay edits). Markdown under firmware/src never compiles in,
+# the same exclusion the CI version gate uses. ota-guards.sh only gates staging, so it is not
+# here; ota-release.env feeds the image too (break-glass host/token) but is untracked by design.
+IMAGE_INPUTS=(
+  firmware/src ':(exclude)firmware/src/*.md'
+  firmware/scripts/ota-release.sh
+  firmware/scripts/sync-files.sh
+  firmware/setup.sh
+  scripts/setup.sh
+  scripts/apply-matter-edits.sh
+  patches
+  versions.env
+)
+image_epoch() {
+  # The build clock is the AUTHOR date of the newest commit touching IMAGE_INPUTS, not the HEAD
+  # commit time. Author dates survive merge, rebase and cherry-pick, and git's default history
+  # simplification walks through a merge that did not change these paths, so a branch build and
+  # the tag build of its merge commit get the same epoch and therefore the same bytes. A merge
+  # that combines input changes from both sides is its own new source state and gets
+  # the merge's own date; a squash merge also rewrites the author date. Prints the epoch on
+  # stdout, the chosen rule on stderr.
+  if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    # A depth-1 clone makes HEAD a graft root: every path looks touched by it, so HEAD's date
+    # wins and the tag rebuild silently stops matching. Refuse rather than guess.
+    [ "$(git -C "$REPO" rev-parse --is-shallow-repository)" = false ] \
+      || die "shallow clone: the build clock needs the history of the image inputs (#137). Run 'git fetch --unshallow', or set SOURCE_DATE_EPOCH explicitly"
+    local e c
+    e="$(git -C "$REPO" log -1 --format=%at -- "${IMAGE_INPUTS[@]}")"
+    [ -n "$e" ] || die "no commit touches the image inputs -- cannot derive SOURCE_DATE_EPOCH"
+    c="$(git -C "$REPO" log -1 --format=%h -- "${IMAGE_INPUTS[@]}")"
+    say "  build clock: author date of $c, the newest commit touching the image inputs" >&2
+    if [ -n "$(git -C "$REPO" status --porcelain -- "${IMAGE_INPUTS[@]}")" ]; then
+      say "  WARNING: uncommitted changes to the image inputs. This image will NOT match any rebuild of a future commit; commit first (including a --bump) if it is going to be flashed" >&2
+    fi
+    printf '%s\n' "$e"
+    return 0
+  fi
+  # Not a git checkout (a source tarball): git archive and GitHub tarballs stamp every file with
+  # the commit time, so the newest input mtime is still deterministic for one release.
+  local p f=() newest
+  for p in "${IMAGE_INPUTS[@]}"; do
+    case "$p" in :*) continue ;; esac
+    [ -e "$REPO/$p" ] && f+=("$REPO/$p")
+  done
+  [ "${#f[@]}" -gt 0 ] || die "not a git checkout and no image inputs found -- set SOURCE_DATE_EPOCH"
+  newest="$(find "${f[@]}" -type f ! -name '*.md' -printf '%T@\n' 2>/dev/null | sort -n | tail -1)"
+  [ -n "$newest" ] || die "not a git checkout and no image inputs found -- set SOURCE_DATE_EPOCH"
+  say "  build clock: not a git checkout, newest image-input mtime" >&2
+  printf '%s\n' "${newest%%.*}"
+}
+
 build() {
   load_env
   # --debug selects the bench flavour (#22): adds the :2323 console. Release is the default, so
@@ -377,10 +432,15 @@ build() {
   # the image header carries hashes over that content, a 5-byte timestamp diff smears into ~574
   # differing bytes, which is what made CI output look like a whole different build. GCC honours
   # SOURCE_DATE_EPOCH for both macros (verified on this ASDK-10.3.1 toolchain), so pin it to the
-  # HEAD commit's own timestamp: deterministic per source revision, and identical on any machine
-  # that builds that revision. Override with SOURCE_DATE_EPOCH=... only to reproduce an old image.
-  export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$REPO" log -1 --format=%ct)}"
-  say "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH ($(date -u -d "@$SOURCE_DATE_EPOCH" '+%Y-%m-%d %H:%M:%S UTC')) -- __DATE__/__TIME__ pinned to HEAD"
+  # image inputs' own date (image_epoch): deterministic per source state, identical on any machine,
+  # and unchanged by a merge or cherry-pick that leaves the inputs alone. It used to be the HEAD
+  # commit time, so a branch build flashed before merge never matched the tag rebuild (#137).
+  # Override with SOURCE_DATE_EPOCH=... only to reproduce an old image.
+  if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    SOURCE_DATE_EPOCH="$(image_epoch)" || exit 1
+  fi
+  export SOURCE_DATE_EPOCH
+  say "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH ($(date -u -d "@$SOURCE_DATE_EPOCH" '+%Y-%m-%d %H:%M:%S UTC')) -- __DATE__/__TIME__ pinned to the image inputs"
   set_header_version   # SDK header (int + string) derives from the git-tracked semver in version.txt
   lint_zap
   sync_mirror
@@ -1467,6 +1527,7 @@ case "$cmd" in
   flash)   flash ;;
   tag)     tag_release ;;
   verint)  semver_to_int "${1:-$(cur_semver)}" ;;   # semver -> Matter softwareVersion int (CI uses this; no SDK/env)
+  epoch)   image_epoch ;;   # the SOURCE_DATE_EPOCH `build` would use (#137); no SDK/env needed
   release)
     BUMP=""; FLASH=0; TAG=0; DEBUGF=""
     for a in "$@"; do
@@ -1488,5 +1549,5 @@ case "$cmd" in
     ;;
   publish) publish ;;
   revert)  revert "$@" ;;
-  *) die "usage: ota-release.sh {lint|build [--bump[-minor|-major]] [--debug]|package|stage|flash|tag|publish|verint [semver]|release [--bump[-minor|-major]] [--tag] [--flash] [--debug]|revert {--backup <unit-ip> [out.bin]|--flip <unit-ip> [--force]|--slots <unit-ip>|--repackage <stock-dump.bin>|--apply [--ip <unit-ip>] [--yes]}}" ;;
+  *) die "usage: ota-release.sh {lint|build [--bump[-minor|-major]] [--debug]|package|stage|flash|tag|publish|verint [semver]|epoch|release [--bump[-minor|-major]] [--tag] [--flash] [--debug]|revert {--backup <unit-ip> [out.bin]|--flip <unit-ip> [--force]|--slots <unit-ip>|--repackage <stock-dump.bin>|--apply [--ip <unit-ip>] [--yes]}}" ;;
 esac
