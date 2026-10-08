@@ -8,6 +8,9 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 ## Unreleased
 
 ### Tooling
+- ESP32 1.1.17: no firmware source change. First release built with ESP-IDF v5.5.5 and esp-matter
+  `release/v1.6`, and the first ESP32 release through `dev.py`. Its delta patch against 1.1.16 is
+  large because the toolchain changed.
 - AmebaZ2 1.3.45: no firmware change. It is the first image built, staged and flashed through
   `dev.py` after the release scripts were removed, and it carries the commit pin for
   `ameba-rtos-matter`.
