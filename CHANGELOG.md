@@ -8,6 +8,9 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 ## Unreleased
 
 ### Tooling
+- ESP32 1.1.17: no firmware source change. First release built with ESP-IDF v5.5.5 and esp-matter
+  `release/v1.6`, and the first ESP32 release through `dev.py`. Its delta patch against 1.1.16 is
+  large because the toolchain changed.
 - `firmware/scripts/dev.py` is now the release engine for both Matter targets. The logic of
   `ota-release.sh`, `esp32-release.sh` and `ota-guards.sh` was ported into it and the three scripts
   are removed (#143). Use `dev.py ota amebaz2 <step>` and `dev.py ota esp32 <step>`; the steps and
