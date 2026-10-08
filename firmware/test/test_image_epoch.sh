@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # test_image_epoch.sh -- the AmebaZ2 build clock survives merge and cherry-pick (#137).
 #
-# `ota-release.sh build` pins SOURCE_DATE_EPOCH, which lands in the image as __DATE__/__TIME__ and
-# the build_info stamp. It used to be the HEAD commit time, so a branch build flashed before merge
-# never matched the tag rebuild of the merge commit. This drives `ota-release.sh epoch` over a
+# The build pins SOURCE_DATE_EPOCH, which lands in the image as __DATE__/__TIME__ and the
+# build_info stamp. It used to be the HEAD commit time, so a branch build flashed before merge
+# never matched the tag rebuild of the merge commit. This drives `dev.py ota amebaz2 epoch` over a
 # throwaway repo with fixed dates and checks the rule: the author date of the newest commit that
 # touches the image inputs. No SDK, no env file.
+#
+# While ota-release.sh is still the builder (#143), its `epoch` must give the same answer in every
+# case below, so each check runs both and fails on any difference.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPTS="$HERE/../scripts"
@@ -31,11 +34,22 @@ at() {  # run git with both dates pinned: $1 author epoch  $2 committer epoch  $
   local a="$1" c="$2"; shift 2
   GIT_AUTHOR_DATE="@$a +0000" GIT_COMMITTER_DATE="@$c +0000" git -C "$R" "$@"
 }
-epoch() { bash "$1/firmware/scripts/ota-release.sh" epoch 2>/dev/null; }
+epoch() {  # prints the epoch, or a DIVERGED line (which no check accepts) when the two differ
+  local d s rd=0 rs=0
+  d="$(python3 "$1/firmware/scripts/dev.py" ota amebaz2 epoch 2>/dev/null)" || rd=$?
+  s="$(bash "$1/firmware/scripts/ota-release.sh" epoch 2>/dev/null)" || rs=$?
+  if [ "$d" != "$s" ] || [ "$rd" != "$rs" ]; then
+    echo "DIVERGED dev.py='$d' (rc $rd) ota-release.sh='$s' (rc $rs)"; return 1
+  fi
+  [ "$rd" = 0 ] || return "$rd"
+  printf '%s\n' "$d"
+}
+export PYTHONDONTWRITEBYTECODE=1   # no __pycache__ in the fixture trees
 
 R="$T/repo"
 mkdir -p "$R/firmware/scripts" "$R/firmware/src" "$R/patches"
-cp "$SCRIPTS/ota-release.sh" "$SCRIPTS/sync-files.sh" "$SCRIPTS/ota-guards.sh" "$R/firmware/scripts/"
+cp "$SCRIPTS/dev.py" "$SCRIPTS/ota_guards.py" \
+   "$SCRIPTS/ota-release.sh" "$SCRIPTS/sync-files.sh" "$SCRIPTS/ota-guards.sh" "$R/firmware/scripts/"
 echo 'int a;' > "$R/firmware/src/a.c"
 echo '1.0.0' > "$R/firmware/src/version.txt"
 echo 'readme' > "$R/README.md"
@@ -80,7 +94,8 @@ check "a version.txt bump moves the clock" "$(epoch "$R")" 7000
 
 # A depth-1 clone makes HEAD look like it touched everything, so it must refuse, not guess.
 git clone -q --depth 1 "file://$R" "$T/shallow"
-if epoch "$T/shallow" >/dev/null; then echo "  FAIL shallow clone was accepted"; fail=1
+if out="$(epoch "$T/shallow")"; then echo "  FAIL shallow clone was accepted"; fail=1
+elif [ -n "$out" ]; then echo "  FAIL shallow clone: $out"; fail=1
 else echo "  ok   shallow clone refused"; fi
 
 # No .git at all (a source tarball): git archive stamps files with the commit time.

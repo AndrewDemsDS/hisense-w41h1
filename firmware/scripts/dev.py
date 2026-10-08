@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""dev.py -- one portable entry point for the from-source build / flash / test flow (issue #118).
+"""dev.py -- one portable entry point for the from-source build / flash / test / release flow
+(issues #118, #143).
 
-It WRAPS the real scripts (ota-release.sh, esp32-release.sh, esp32-lint.sh, ota-guards.sh,
-run_tests.sh, firmware/setup.sh, scripts/setup.sh) and never re-implements them: this is the map,
-those are the territory. Every command prints what it is about to run before running it. Run it as
+It is becoming the release engine too (#143). The AmebaZ2 steps that need no SDK and no env file
+are implemented here: lint, verint, epoch and tag. Their decisions are plain functions with host
+tests (firmware/test/test_dev_release.py, test_image_epoch.sh); ota_guards.py keeps the guard
+verdicts both targets share. The steps not ported yet (build, package, stage, flash, release,
+publish, revert, and every ESP32 step) still forward to ota-release.sh / esp32-release.sh, which
+stay until nothing references them. The helpers dev.py calls (run_tests.sh, esp32-lint.sh,
+firmware/setup.sh, scripts/setup.sh) are separate tools, not release logic. Every external command
+is printed before it runs. Run it as
 `python3 firmware/scripts/dev.py <cmd> <target> [opts]`.
 
 Why Python and not bash: portability (no bashisms, runs the same on any box with python3), and the
@@ -22,18 +28,31 @@ Commands:
   monitor <target> --port P              serial monitor only
   bench   <target> --port P --sim-port S  busmon/app vs virtual_ac.py over a USB adapter
   next    <target>                       print the staged bring-up and its safety warnings
-  ota     <target> <step> [args]         Matter OTA (amebaz2|esp32): preflight | verify | package |
-                                         stage | flash | release [...], guarded by ota-guards.sh
+  ota     <target> <step> [args]         Matter OTA release steps (amebaz2 | esp32), below
+
+OTA steps, `dev.py ota amebaz2 <step>`:
+  lint                                   host tests + .zap contiguity + softwareVersion (the git hook)
+  verint [semver]                        semver -> Matter softwareVersion int (no SDK, no env file)
+  epoch                                  print the build clock (SOURCE_DATE_EPOCH) build would use
+  tag                                    signed local tag amebaz2-v<semver> + release-runner check
+  preflight | verify                     tools + link pre-flight | read the node's live version
+  build | package | stage | flash | release | publish | revert [...]   forwarded to ota-release.sh
+OTA steps, `dev.py ota esp32 <step>`:
+  preflight | verify, and build | package | stage | flash | release | publish | tag | verint,
+  forwarded to esp32-release.sh
 
 Targets: amebaz2 | esp32 | esphome. Board (esp32/esphome): --board c3 (ESP32-C3 SuperMini, default)
 or --board classic (ESP32-D0WDQ6). Env: IDF_PATH / ESP_MATTER_PATH (esp32; default ~/esp/esp-idf and
-~/esp/esp-matter), ESPHOME (esphome command, default `esphome`).
+~/esp/esp-matter), ESPHOME (esphome command, default `esphome`), ENVF (the release env file, default
+firmware/scripts/ota-release.env; the self-hosted runner copies its secrets file to that exact path).
 """
 
 import atexit
+import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -45,7 +64,12 @@ REPO = HERE.parent.parent
 ESP = REPO / "firmware/esp32-matter"
 ESPHOME_DIR = REPO / "firmware/esphome"
 TEST = REPO / "firmware/test"
-ENVF = HERE / "ota-release.env"
+# Overridable, as the release scripts always allowed (e.g. a copy with an SSH-tunnel MS_WS, or
+# another unit's NODE_ID). The default name is load-bearing: the self-hosted release runner copies
+# its secrets file to exactly firmware/scripts/ota-release.env.
+ENVF = Path(os.environ.get("ENVF") or HERE / "ota-release.env")
+sys.path.insert(0, str(HERE))
+import ota_guards  # noqa: E402  (pure guard verdicts shared by both targets, host-tested)
 ESPHOME_PIN = "2026.7.4"   # CI's `esphome config` pin (.github/workflows/qa.yaml); keep in step
 
 # Line-buffer stdout so our own lines stay in order with the stderr warnings and with the output
@@ -57,7 +81,7 @@ C = {"cyan": "\033[1;36m", "yellow": "\033[1;33m", "red": "\033[1;31m",
      "grey": "\033[1;90m", "green": "\033[32m", "off": "\033[0m"}
 
 
-def say(m): print(f"{C['cyan']}[dev]{C['off']} {m}")
+def say(m, file=None): print(f"{C['cyan']}[dev]{C['off']} {m}", file=file or sys.stdout)
 def warn(m): print(f"{C['yellow']}[dev] WARNING:{C['off']} {m}", file=sys.stderr)
 def ok(m): print(f"  {C['green']}ok{C['off']}    {m}")
 
@@ -170,13 +194,20 @@ class Ctx:
         self.board = board
         self.port = port
         self.sim_port = sim_port
-        self.versions = load_versions()
+        self._versions = None
         if board == "c3":
             self.idf_tgt, self.pins, self.esphome_board = "esp32c3", (5, 6, 10), "esp32-c3-devkitm-1"
         elif board == "classic":
             self.idf_tgt, self.pins, self.esphome_board = "esp32", (19, 18, 4), "esp32dev"
         else:
             die("--board must be c3 or classic")
+
+    @property
+    def versions(self):
+        # Read on first use: the SDK-free ota steps (lint, verint, epoch) never need the pins.
+        if self._versions is None:
+            self._versions = load_versions()
+        return self._versions
 
     def need_port(self, cmd):
         if not self.port:
@@ -434,7 +465,8 @@ def fetch(ctx):
 def test_target(ctx):
     run(["bash", TEST / "run_tests.sh"])
     if ctx.target == "amebaz2":
-        run(["bash", HERE / "ota-release.sh", "lint"])
+        lint_zap()                 # run_tests.sh just ran, so only the rest of `ota amebaz2 lint`
+        lint_version("commit")
     elif ctx.target == "esp32":
         run(["bash", HERE / "esp32-lint.sh"])
     elif ctx.target == "esphome":
@@ -587,7 +619,230 @@ def walk(ctx):
     next_steps(ctx)
 
 
-# ---- ota: wraps the release scripts, guarded by ota-guards.sh (bash keeps the trap logic) -----
+# ---- release engine: the SDK-free AmebaZ2 steps, ported from ota-release.sh (#143) -------------
+# Version source of truth is the git-tracked firmware/src/version.txt, a semver (#77). The Matter
+# softwareVersion int is derived from it (MAJOR*10000 + MINOR*100 + PATCH): readable, strictly
+# monotonic, and CI can gate it without the SDK. The OTA provider only serves a strictly greater
+# int. Never hand-edit the int or the SDK header, edit version.txt and commit it.
+VERSION_FILE = REPO / "firmware/src/version.txt"
+RELEASED_MARK = REPO / "firmware/built-images/.released-version"   # int last CONFIRMED booted on-device
+ZAP = REPO / "firmware/src/sdk-edits/room-air-conditioner-app.zap"
+
+
+def semver_to_int(s):
+    """'MAJOR.MINOR.PATCH' -> the Matter softwareVersion int."""
+    s = "".join(str(s).split())
+    if re.fullmatch(r"[0-9]+", s):   # legacy raw-int version.txt (pre-#77 branches / CI base)
+        return int(s)
+    m = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", s)
+    if not m:
+        die(f"version '{s}' is not semver MAJOR.MINOR.PATCH (issue #77)")
+    major, minor, patch = (int(x) for x in m.groups())
+    if minor >= 100 or patch >= 100:
+        die(f"minor/patch must be < 100 for the *10000+*100 int mapping: '{s}'")
+    return major * 10000 + minor * 100 + patch
+
+
+def int_to_semver(v):
+    return f"{v // 10000}.{(v // 100) % 100}.{v % 100}"
+
+
+def cur_semver():
+    if not VERSION_FILE.is_file():
+        die(f"missing {VERSION_FILE}")
+    return "".join(VERSION_FILE.read_text().split())
+
+
+def cur_version():
+    return semver_to_int(cur_semver())
+
+
+def released_version():
+    if not RELEASED_MARK.is_file():
+        return 0
+    raw = RELEASED_MARK.read_text().strip()
+    if not re.fullmatch(r"[0-9]+", raw):
+        die(f"{RELEASED_MARK} does not hold a softwareVersion int: '{raw}'")
+    return int(raw)
+
+
+def endpoints_contiguous(ids):
+    """(sorted ids, ok). Endpoints must be exactly {0,1,2,...}: a gap boot-crashes AmebaZ2."""
+    ids = sorted(ids)
+    return ids, ids == list(range(len(ids)))
+
+
+def lint_zap():
+    """Checks the committed mirror .zap, so it runs in CI and the git hook without the SDK."""
+    if not ZAP.is_file():
+        die(f"mirror .zap not found: {ZAP}")
+    ids, good = endpoints_contiguous(e["endpointId"] for e in json.loads(ZAP.read_text())["endpoints"])
+    if not good:
+        print(f"  .zap endpoints NOT contiguous: {ids} -- an endpoint gap boot-crashes AmebaZ2 (docs/10 §3)")
+        die(".zap endpoint lint failed")
+    print(f"  .zap endpoints contiguous: {ids}")
+
+
+def lint_version(purpose):
+    """Tree version vs the version last CONFIRMED booted on the device. `commit` (lint, the git
+    hook) lets equal pass, so the tree that was just flashed can be committed (#136). `flash` needs
+    strictly greater. ota_guards.py owns the rule. .released-version is one mark per repo, not per
+    node: OTA_ALLOW_SAME_VERSION=1 lets flash roll the SAME version to another unit."""
+    good, why = ota_guards.version_verdict(cur_version(), released_version(), purpose,
+                                           os.environ.get("OTA_ALLOW_SAME_VERSION", "0") == "1")
+    if not good:
+        die(why)
+    say(why)
+
+
+def lint():
+    say("lint: host codec/map tests")
+    r = subprocess.run(["bash", str(TEST / "run_tests.sh")], stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True, errors="replace")
+    if r.returncode != 0:
+        print("\n".join(r.stdout.splitlines()[-20:]))
+        die("host tests FAILED")
+    say("  host tests passed")
+    say("lint: .zap endpoint contiguity")
+    lint_zap()
+    say("lint: softwareVersion")
+    lint_version("commit")
+    say("lint OK")
+
+
+def git_out(*args):
+    """(returncode, stripped stdout) of `git -C REPO <args>`, stderr discarded."""
+    r = subprocess.run(["git", "-C", str(REPO), *args], stdout=subprocess.PIPE,
+                       stderr=subprocess.DEVNULL, text=True)
+    return r.returncode, r.stdout.strip()
+
+
+# Every tracked path whose content can reach the AmebaZ2 image: the mirrored sources and
+# version.txt, the sync list, the build script (it injects defines and SDK edits at build time), and
+# the SDK setup (pins, patches, overlay edits). Markdown under firmware/src never compiles in, the
+# same exclusion the CI version gate uses. ota-release.env feeds the image too (break-glass
+# host/token) but is untracked by design.
+# ota-release.sh is still the builder, so this list must stay equal to its IMAGE_INPUTS
+# (test_image_epoch.sh compares the two). It names dev.py instead once `build` is ported.
+IMAGE_INPUTS = [
+    "firmware/src", ":(exclude)firmware/src/*.md",
+    "firmware/scripts/ota-release.sh",
+    "firmware/scripts/sync-files.sh",
+    "firmware/setup.sh",
+    "scripts/setup.sh",
+    "scripts/apply-matter-edits.sh",
+    "patches",
+    "versions.env",
+]
+
+
+def image_epoch():
+    """The build clock (#137): the AUTHOR date of the newest commit touching IMAGE_INPUTS, not the
+    HEAD commit time. Author dates survive merge, rebase and cherry-pick, and git's default history
+    simplification walks through a merge that did not change these paths, so a branch build and the
+    tag build of its merge commit get the same epoch and therefore the same bytes. A merge that
+    combines input changes from both sides is its own new source state and gets the merge's own
+    date; a squash merge also rewrites the author date. Returns the epoch, notes go to stderr."""
+    if git_out("rev-parse", "--git-dir")[0] == 0:
+        # A depth-1 clone makes HEAD a graft root: every path looks touched by it, so HEAD's date
+        # wins and the tag rebuild silently stops matching. Refuse rather than guess.
+        if git_out("rev-parse", "--is-shallow-repository")[1] != "false":
+            die("shallow clone: the build clock needs the history of the image inputs (#137). "
+                "Run 'git fetch --unshallow', or set SOURCE_DATE_EPOCH explicitly")
+        epoch = git_out("log", "-1", "--format=%at", "--", *IMAGE_INPUTS)[1]
+        if not epoch:
+            die("no commit touches the image inputs -- cannot derive SOURCE_DATE_EPOCH")
+        commit = git_out("log", "-1", "--format=%h", "--", *IMAGE_INPUTS)[1]
+        say(f"  build clock: author date of {commit}, the newest commit touching the image inputs",
+            file=sys.stderr)
+        if git_out("status", "--porcelain", "--", *IMAGE_INPUTS)[1]:
+            say("  WARNING: uncommitted changes to the image inputs. This image will NOT match any "
+                "rebuild of a future commit; commit first (including a --bump) if it is going to be "
+                "flashed", file=sys.stderr)
+        return int(epoch)
+    # Not a git checkout (a source tarball): git archive and GitHub tarballs stamp every file with
+    # the commit time, so the newest input mtime is still deterministic for one release.
+    newest = None
+    for p in IMAGE_INPUTS:
+        root = REPO / p
+        if p.startswith(":") or not root.exists():
+            continue
+        files = [root] if not root.is_dir() else (Path(d) / f for d, _, fs in os.walk(root) for f in fs)
+        for f in files:
+            st = f.lstat()
+            if stat.S_ISREG(st.st_mode) and not f.name.endswith(".md"):
+                newest = st.st_mtime_ns if newest is None else max(newest, st.st_mtime_ns)
+    if newest is None:
+        die("not a git checkout and no image inputs found -- set SOURCE_DATE_EPOCH")
+    say("  build clock: not a git checkout, newest image-input mtime", file=sys.stderr)
+    return newest // 10**9
+
+
+def github_slug(url):
+    """owner/repo from a github.com remote URL (ssh or https), '' for anything else."""
+    m = re.search(r"github\.com[:/](.*)", url or "")
+    if not m:
+        return ""
+    slug = m.group(1)
+    if slug.endswith(".git"):
+        slug = slug[:-4]
+    return slug[:-1] if slug.endswith("/") else slug
+
+
+def guard_runner(slug=""):
+    """Release tags build ONLY on the self-hosted sdk-builder runner (it holds the SDK + OTA env).
+    If it is offline a pushed tag sits in `queued` with no error, which is how 1.3.43 stalled
+    (#138). Asked before the "push with" hint so the operator knows first. Warn, never refuse: the
+    tag is local and harmless, the push is a separate manual step, and the job runs as soon as the
+    runner comes up. A check that cannot run (no gh, not logged in, no admin scope, API error) says
+    so and moves on."""
+    label = os.environ.get("RUNNER_LABEL") or "sdk-builder"
+    if not shutil.which("gh"):
+        say(f"  WARNING: gh not on PATH -- runner check skipped; make sure a '{label}' runner is "
+            "online before pushing")
+        return
+    if not slug:
+        slug = github_slug(git_out("remote", "get-url", "origin")[1])
+    if not slug:
+        r = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+                           cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        slug = r.stdout.strip() if r.returncode == 0 else ""
+    if not slug:
+        say("  WARNING: cannot tell which GitHub repo origin is -- runner check skipped")
+        return
+    # stderr kept apart: on an HTTP error gh prints the JSON body to stdout, the reason to stderr.
+    r = subprocess.run(["gh", "api", f"repos/{slug}/actions/runners?per_page=100", "--jq",
+                        '.runners[] | select(.status == "online") | .labels[].name'],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if r.returncode != 0:
+        reason = (r.stderr.strip().splitlines() or [""])[-1]
+        say(f"  WARNING: runner check skipped (gh api repos/{slug}/actions/runners failed: {reason})")
+        say(f"           make sure a '{label}' runner is online before pushing the tag")
+        return
+    if label in r.stdout.splitlines():
+        say(f"  runner check: a '{label}' runner is online for {slug}")
+        return
+    say(f"  WARNING: no '{label}' runner is online for {slug}.")
+    say("           The release workflow runs only there, so a pushed tag will sit in 'queued' (no error)")
+    say("           until the runner is started. Start the self-hosted runner (run.sh in its install dir),")
+    say(f"           then push. Check: gh api repos/{slug}/actions/runners --jq '.runners[] | {{name, status}}'")
+
+
+def tag_release():
+    """Create the path-prefixed semver tag amebaz2-vX.Y.Z locally (#77). Never pushed here."""
+    semver = cur_semver()
+    tag = f"amebaz2-v{semver}"
+    if git_out("rev-parse", "-q", "--verify", f"refs/tags/{tag}")[0] == 0:
+        say(f"tag {tag} already exists -- leaving it")
+    else:
+        run(["git", "-C", REPO, "tag", "-s", tag, "-m",
+             f"AmebaZ2 firmware {semver} (softwareVersion {cur_version()})"])
+        say(f"tagged {tag} (softwareVersion {cur_version()})")
+    guard_runner()
+    say(f"push with: git push origin {tag}")
+
+
+# ---- ota: preflight/verify here; unported steps forward to the release scripts ---------------
 def _guards_bash(target, snippet):
     """Run a snippet with ota-release.env sourced and ota-guards.sh available (its say/die/pi_now/
     guard_* helpers). The guard logic stays in bash on purpose -- that is the engine. ota-guards.sh
@@ -605,7 +860,16 @@ def ota(ctx, step, rest):
     if ctx.target == "esphome":
         die("ota is Matter-only (amebaz2 or esp32); ESPHome updates go through esphome run")
     node_var = "ESP32_NODE_ID" if ctx.target == "esp32" else "NODE_ID"
-    if step == "preflight":
+    if ctx.target == "amebaz2" and step in ("lint", "verint", "epoch", "tag"):
+        if step == "lint":
+            lint()
+        elif step == "verint":   # an empty argument falls back to version.txt, as `${1:-...}` did
+            print(semver_to_int(rest[0] if rest and rest[0] else cur_semver()))
+        elif step == "epoch":
+            print(image_epoch())
+        else:
+            tag_release()
+    elif step == "preflight":
         run(["bash", TEST / "run_tests.sh"], check=False)
         ok("host QA incl. OTA guard tests")
         rc = _guards_bash(ctx.target,
@@ -635,8 +899,11 @@ def ota(ctx, step, rest):
             '     r=d.get("result"); print(r.get(A) if isinstance(r,dict) else r); return\n'
             'asyncio.run(m())\n')
         # verint gives the same value in the ameba int form; accept either the semver or the int.
-        verint = subprocess.run(["bash", str(rel), "verint"], stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True).stdout.strip()
+        if ctx.target == "amebaz2":
+            verint = str(cur_version())
+        else:
+            verint = subprocess.run(["bash", str(rel), "verint"], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True).stdout.strip()
         snippet = (
             f'node="${{{node_var}:?}}"; '
             f'got="$("$OTAENV_PY" -c \'{read_ver}\' "$MS_WS" "$node" "{attr}")"; '
@@ -647,11 +914,14 @@ def ota(ctx, step, rest):
             f'else echo "node $node reports $got, expected {want}" >&2; exit 1; fi')
         if _guards_bash(ctx.target, snippet) != 0:
             die(f"node reports an unexpected version (expected {want})")
-    elif step in ("package", "stage", "flash", "release", "build", "publish", "tag"):
+    elif step in ("package", "stage", "flash", "release", "build", "publish", "tag", "verint", "revert"):
+        if step == "revert" and ctx.target != "amebaz2":
+            die("revert is AmebaZ2-only (back to the stock firmware, #19)")
         rc = subprocess.run(["bash", str(rel), step, *rest]).returncode
         sys.exit(rc)
     else:
-        die("ota step must be preflight, verify, package, stage, flash, release, build, publish or tag")
+        die("ota step must be lint, verint, epoch, tag, preflight, verify, build, package, stage, "
+            "flash, release, publish or revert (lint and epoch are amebaz2-only)")
 
 
 # ---- argument parsing + dispatch -------------------------------------------------------------

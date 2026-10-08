@@ -67,7 +67,7 @@ jobs:
           # delta-base lookup depend on them); the release assets are COPIES under short, uniform
           # names that match the esp32 workflow: <target>-v<semver>[-debug].<ext>. Note the asset
           # version is the SEMVER, matching the tag -- the source filenames use the derived int.
-          V=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
+          V=$(python3 firmware/scripts/dev.py ota amebaz2 verint "$(cat firmware/src/version.txt)")
           SEMVER=$(cat firmware/src/version.txt)
           echo "V=$V" >> "$GITHUB_ENV"
           cd firmware/built-images

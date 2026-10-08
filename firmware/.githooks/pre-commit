@@ -9,8 +9,8 @@ REPO="$(git rev-parse --show-toplevel)"
 # equal to the driver, and an edit to the port alone must not skip it.
 if git diff --cached --name-only \
     | grep -qE '^firmware/(src|test)/|room-air-conditioner-app\.zap$|^firmware/esphome/components/hisense_ac/hisense_(protocol|map|bus)\.'; then
-  echo "[pre-commit] firmware changed -> ota-release.sh lint"
-  bash "$REPO/firmware/scripts/ota-release.sh" lint || {
+  echo "[pre-commit] firmware changed -> dev.py ota amebaz2 lint"
+  python3 "$REPO/firmware/scripts/dev.py" ota amebaz2 lint || {
     echo "[pre-commit] LINT FAILED. Fix, or bypass with: git commit --no-verify"; exit 1; }
 fi
 
