@@ -329,6 +329,9 @@ def doctor(ctx):
             ok(f"sdk symlink -> {sdk}")
             git_head_is(f"{sdk}/ameba-rtos-z2", v.get("AMEBA_Z2_PIN", ""), "ameba-rtos-z2", gaps)
             git_head_is(f"{sdk}/connectedhomeip", v.get("CHIP_PIN", ""), "connectedhomeip", gaps)
+            if v.get("AMEBA_MATTER_PIN"):
+                git_head_is(f"{sdk}/ameba-rtos-z2/component/common/application/matter",
+                            v["AMEBA_MATTER_PIN"], "ameba-rtos-matter", gaps)
             # scripts/setup.sh (our patches, the Matter-overlay edits) is the second half of fetch.
             # Checkouts at the right pins without it build an unpatched SDK, which fails in codegen
             # with "Unhandled server cluster: HISENSE_AIRCON_CLUSTER". Only patches/connectedhomeip.patch
