@@ -3,11 +3,11 @@
 (issues #118, #143).
 
 It is becoming the release engine too (#143). The AmebaZ2 steps that need no SDK and no env file
-are implemented here (lint, verint, epoch, tag), and so are build and package. Their decisions are
-plain functions with host tests (firmware/test/test_dev_release.py, test_image_epoch.sh);
-ota_guards.py keeps the guard verdicts both targets share. The steps not ported yet (stage, flash,
-publish, revert, and every ESP32 step) still forward to ota-release.sh / esp32-release.sh, which
-stay until nothing references them. The helpers dev.py calls (run_tests.sh, esp32-lint.sh,
+and every other AmebaZ2 step (build, package, stage, flash, release, publish, revert) are
+implemented here. Their decisions are plain functions with host tests
+(firmware/test/test_dev_release.py, test_image_epoch.sh); ota_guards.py keeps the guard verdicts
+both targets share. The ESP32 release steps still forward to esp32-release.sh, and ota-release.sh
+stays until nothing references it. The helpers dev.py calls (run_tests.sh, esp32-lint.sh,
 firmware/setup.sh, scripts/setup.sh) are separate tools, not release logic. Every external command
 is printed before it runs. Run it as
 `python3 firmware/scripts/dev.py <cmd> <target> [opts]`.
@@ -39,7 +39,9 @@ OTA steps, `dev.py ota amebaz2 <step>`:
   build [--bump[-patch|-minor|-major]] [--debug]   sync mirror -> SDK, FULL clean, build, verify
   package                                pad clip image + .ota + manifest (HISENSE_FLAVOUR=debug: debug)
   release [--bump[-minor|-major]] [--tag] [--flash] [--debug]   build + package + stage (+ tag, flash)
-  stage | flash | publish | revert [...]  forwarded to ota-release.sh
+  stage | flash | publish               Pi staging | OTA + verify | upload the deployed files
+  revert --backup <ip> [out.bin] | --flip <ip> [--force] | --slots <ip> |
+         --repackage <stock-dump.bin> | --apply [--ip <ip>] [--yes]   back to stock firmware (#19)
 OTA steps, `dev.py ota esp32 <step>`:
   preflight | verify, and build | package | stage | flash | release | publish | tag | verint,
   forwarded to esp32-release.sh
@@ -50,14 +52,18 @@ or --board classic (ESP32-D0WDQ6). Env: IDF_PATH / ESP_MATTER_PATH (esp32; defau
 firmware/scripts/ota-release.env; the self-hosted runner copies its secrets file to that exact path).
 """
 
+import asyncio
 import atexit
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
 import shutil
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -517,7 +523,7 @@ def flash(ctx):
     if ctx.target == "amebaz2":
         say("AmebaZ2 first install is a SOIC-8 clip write; a commissioned node takes OTA instead:")
         say("  clip: python3 firmware/flasher/ch341flash.py firmware/built-images/flash_rac-integrated-v<ver>.bin")
-        say("  OTA:  firmware/scripts/ota-release.sh package && ota-release.sh stage && ota-release.sh flash")
+        say("  OTA:  dev.py ota amebaz2 package, then stage, then flash")
         say("Read docs/guide/Installing-Custom-Firmware.md first: dump the chip before every clip write.")
     elif ctx.target == "esp32":
         ctx.need_port("flash")
@@ -594,7 +600,7 @@ Safety, before stage 2:
 Full detail: firmware/esp32-matter/README.md, docs/guide/Build-Flash-Test.md""".replace("{t}", ctx.target))
     elif ctx.target == "amebaz2":
         print("""  ! Dump the whole chip (firmware/flasher/ch341dump.py) before every clip write; never flashrom.
-  ! OTA: FWHS serial and version must bump (ota-release.sh build does it) or the update reverts.
+  ! OTA: FWHS serial and version must bump (dev.py ota amebaz2 build does it) or the update reverts.
 Full detail: firmware/docs/10-firmware-ota-procedure.md, docs/guide/Installing-Custom-Firmware.md""")
 
 
@@ -689,13 +695,14 @@ def lint_zap():
     print(f"  .zap endpoints contiguous: {ids}")
 
 
-def lint_version(purpose):
+def lint_version(purpose, allow_same=None):
     """Tree version vs the version last CONFIRMED booted on the device. `commit` (lint, the git
     hook) lets equal pass, so the tree that was just flashed can be committed (#136). `flash` needs
     strictly greater. ota_guards.py owns the rule. .released-version is one mark per repo, not per
     node: OTA_ALLOW_SAME_VERSION=1 lets flash roll the SAME version to another unit."""
-    good, why = ota_guards.version_verdict(cur_version(), released_version(), purpose,
-                                           os.environ.get("OTA_ALLOW_SAME_VERSION", "0") == "1")
+    if allow_same is None:
+        allow_same = os.environ.get("OTA_ALLOW_SAME_VERSION", "0") == "1"
+    good, why = ota_guards.version_verdict(cur_version(), released_version(), purpose, allow_same)
     if not good:
         die(why)
     say(why)
@@ -1300,7 +1307,7 @@ def build_amebaz2(args):
         hits = re.search(r"Hits:[^(\n]*\(([^)]*)\)", stats)
         misses = re.search(r"Misses:[^(\n]*\(([^)]*)\)", stats)
         say(f"ccache: {hits.group(1) if hits else '?'} hits / {misses.group(1) if misses else '?'} misses")
-    # The built image must actually carry the bumped serial (guard against a silent miss).
+    # The built image must carry the bumped serial (guard against a silent miss).
     if f"header-serial {want}" not in log:
         die(f"built image serial != {want} -- bootloader would roll back the OTA (docs/10 §11)")
     say(f"OTA image serial verified: {want} (> on-device -> bootloader will keep the new slot)")
@@ -1395,16 +1402,1111 @@ def package_amebaz2(flavour=None):
     say(f"  ota:      {ota}  (+ .json manifest, otaUrl={otaurl})")
 
 
-def release_amebaz2(script, args):
-    """build + package + stage (+ tag, + flash). stage and flash are not ported yet and run through
-    the script, told the flavour the same way it always read it (HISENSE_FLAVOUR)."""
-    build_args, flash_after, tag_after, flavour = [], False, False, None
+# ---- release engine: guards, Pi staging, OTA flash, publish (ported from ota-guards.sh and
+# ---- ota-release.sh, #143). Target-neutral where both targets do the same thing. --------------
+def need(cfg, *keys):
+    for k in keys:
+        if not cfg.get(k):
+            die(f"{k} is not set (in {ENVF})")
+
+
+def guard_tools(cfg, delta=False):
+    """The flash helper venv and (ESP32 delta) detools. A missing venv used to surface as
+    "rollback/boot crash", pointing at the device instead of this box."""
+    py = cfg.get("OTAENV_PY") or die("set OTAENV_PY to the venv python that has aiohttp")
+    if subprocess.run([py, "-c", "import aiohttp"], stderr=subprocess.DEVNULL).returncode != 0:
+        die(f"OTAENV_PY ({py}) cannot import aiohttp -- python3 -m venv <dir> && <dir>/bin/pip install aiohttp")
+    if delta:
+        idf_py = cfg.get("IDF_PYTHON") or die("set IDF_PYTHON to the IDF python env")
+        if subprocess.run([idf_py, "-c", "import detools"], stderr=subprocess.DEVNULL).returncode != 0:
+            die(f"IDF_PYTHON ({idf_py}) cannot import detools -- {idf_py} -m pip install detools")
+
+
+def guard_link(cfg, node):
+    """RSSI (0/54/4) and read latency through matter-server, before any update_node."""
+    r = subprocess.run([cfg["OTAENV_PY"], str(HERE / "ota_guards.py"), "link", cfg["MS_WS"], str(node),
+                        cfg.get("OTA_MIN_RSSI") or "-70"], stdout=subprocess.PIPE, text=True)
+    out = r.stdout.strip()
+    if r.returncode == 0:
+        say(f"  link ok: {out}")
+    elif cfg.get("OTA_ALLOW_WEAK_LINK") == "1":
+        say(f"  WARNING: OTA_ALLOW_WEAK_LINK=1 -- {out}")
+    else:
+        die(f"link pre-flight failed for node {node}: {out}\n"
+            "     Move the node/AP closer or fix Wi-Fi first, or pass OTA_ALLOW_WEAK_LINK=1.")
+
+
+def guard_fresh(source, *outputs):
+    """Every staged file must be newer than the image it was derived from. Catches a half-failed
+    package leaving an older build's .ota/.json behind."""
+    src = os.path.getmtime(source)
+    bad = ota_guards.stale_outputs(src, {str(o): (os.path.getmtime(o) if os.path.exists(o) else None)
+                                         for o in outputs})
+    if bad:
+        die("refusing to stage stale outputs, re-run package:\n" + "\n".join(
+            f"stale or missing (older than {os.path.basename(str(source))}): {b}" for b in bad))
+
+
+def pi_ssh(cfg, command, capture=False, quiet=False):
+    """(returncode, stdout) of one command on the Pi. BatchMode: never hang on a password prompt."""
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-i", cfg["PI_SSH_KEY"],
+                        cfg["PI_HOST"], command],
+                       stdout=subprocess.PIPE if capture else None,
+                       stderr=subprocess.DEVNULL if quiet else None, text=True)
+    return r.returncode, (r.stdout or "") if capture else ""
+
+
+def pi_scp(cfg, files, dest):
+    return subprocess.run(["scp", "-o", "BatchMode=yes", "-i", cfg["PI_SSH_KEY"], *[str(f) for f in files],
+                           f"{cfg['PI_HOST']}:{dest}"], stdout=subprocess.DEVNULL).returncode
+
+
+def pi_now(cfg):
+    """The Pi's clock (epoch string, '' when unreachable), so log filtering is immune to skew and TZ."""
+    if not cfg.get("PI_HOST") or not cfg.get("PI_SSH_KEY"):
+        return ""
+    rc, out = pi_ssh(cfg, "date +%s", capture=True, quiet=True)
+    return out.strip() if rc == 0 else ""
+
+
+def pi_stage(cfg, manifest, *others):
+    """Install files into the root-owned provider dir through a throwaway root container (the user
+    is in the docker group, sudo needs a password), archive every other manifest for the same
+    product, and restart matter-server (manifests are read once at init)."""
+    files = [manifest, *others]
+    keep = os.path.basename(str(manifest))
+    host, ota_dir = cfg["PI_HOST"], cfg["PI_OTA_DIR"]
+    tmp = f"/tmp/ota-stage.{os.getpid()}"
+    if pi_ssh(cfg, f"mkdir -p {tmp}")[0] != 0:
+        die(f"cannot reach {host}")
+    if pi_scp(cfg, files, f"{tmp}/") != 0:
+        die(f"scp to {host}:{tmp} failed")
+    names = "".join(f" /src/{os.path.basename(str(f))}" for f in files)
+    plan = []
+    if cfg.get("OTA_KEEP_MANIFESTS") != "1":
+        # listing = name<TAB>json for every manifest on the Pi, plus the local one being shipped
+        _, listing = pi_ssh(cfg, f'cd {ota_dir} && for f in *.json; do [ -r "$f" ] || continue; '
+                                 "printf '%s\\t' \"$f\"; tr -d '\\n' < \"$f\"; echo; done", capture=True)
+        listing += f"{keep}\t{Path(manifest).read_text().replace(chr(10), '')}\n"
+        try:
+            plan = ota_guards.archive_plan(keep, ota_guards.parse_listing(listing))
+        except ValueError:
+            die("could not plan manifest archiving")
+    mv = "".join(f" && mv /ota/{f} /ota/{f}.archived" for f in plan)
+    rc, _ = pi_ssh(cfg, f"docker run --rm -v {ota_dir}:/ota -v {tmp}:/src alpine sh -c "
+                        f"'install -m 0644 -o root -g root{names} /ota/ && rm -f /ota/chip_kvs_ota_provider_* "
+                        f"/ota/ota_provider_*.log{mv}' && rm -rf {tmp} && docker restart matter-server >/dev/null")
+    if rc != 0:
+        die(f"root-container install on {host} failed")
+    if plan:
+        say(f"  archived {len(plan)} other manifest(s) for this product (renamed *.json.archived, reversible)")
+    say("  staged via root container, provider junk pruned; waiting for matter-server to reload (~100 s)")
+    rc, _ = pi_ssh(cfg, 'for i in $(seq 60); do bash -c "echo > /dev/tcp/127.0.0.1/5580" 2>/dev/null '
+                        "&& exit 0; sleep 3; done; exit 1")
+    if rc != 0:
+        die("matter-server did not reopen :5580 within 3 min of the restart")
+    say("  matter-server is serving again")
+
+
+def pi_http_publish(cfg, image, current, archive, marker):
+    """Persistent HTTP OTA mirror on the Pi. The break-glass path fetches a FULL image over plain
+    HTTP from a compile-time URL, and losing the deployed image once already stranded node 80. So
+    every stage copies the raw .bin into the user-owned docroot (PI_HTTP_DIR, served by the
+    `ota-http` container): a per-version archive, plus the stable current-image path deployed nodes
+    GET. That path is flavour-blind and shared by the whole fleet, so only a release image may
+    repoint it: the flavour is read from the bytes, and a debug image is archived only."""
+    http_dir = cfg.get("PI_HTTP_DIR")
+    if not http_dir:
+        say("  PI_HTTP_DIR unset -- skipping the HTTP OTA mirror")
+        return
+    image = Path(image)
+    if not image.is_file():
+        die(f"pi_http_publish: no {image}")
+    repoint, why = ota_guards.repoint_verdict(ota_guards.image_flavour(image.read_bytes(), marker),
+                                              cfg.get("OTA_HTTP_REPOINT_DEBUG") == "1")
+    tmp = f"/tmp/ota-http.{os.getpid()}"
+    if pi_ssh(cfg, f"mkdir -p {tmp} {http_dir}/archive")[0] != 0:
+        die(f"cannot reach {cfg['PI_HOST']}")
+    if pi_scp(cfg, [image], f"{tmp}/{archive}") != 0:
+        die(f"scp of {archive} failed")
+    install = f"install -m0644 {tmp}/{archive} {http_dir}/archive/{archive}"
+    if repoint:
+        install += f" && cp {http_dir}/archive/{archive} {http_dir}/{current}"
+    if pi_ssh(cfg, f"{install} && rm -rf {tmp}")[0] != 0:
+        die(f"HTTP OTA mirror install failed on {cfg['PI_HOST']}")
+    say(f"  HTTP OTA mirror: archived {archive} (served by ota-http on the Pi); {why}")
+
+
+def stage_amebaz2(flavour=None):
+    cfg = load_env()
+    need(cfg, "PI_HOST", "PI_OTA_DIR", "PI_SSH_KEY")
+    flavour = flavour or cfg.get("HISENSE_FLAVOUR") or "release"
+    v = cur_version()
+    # Honour the flavour suffix package writes. Without it a debug build would silently deploy the
+    # RELEASE image: both flavours share one version int by design (#77), so the flash verifies and
+    # the only symptom is the missing console.
+    sfx = "-debug" if flavour == "debug" else ""
+    out = REPO / "firmware/built-images"
+    src_ota, src_json = out / f"rac-v{v}{sfx}.ota", out / f"rac-v{v}{sfx}.json"
+    fw = Path(cfg["GCC_RELEASE"]) / "application_is/Debug/bin/firmware_is.bin"
+    if not src_ota.is_file():
+        die(f"no {src_ota} -- run 'package' for this flavour first")
+    say(f"stage v{v}{f' ({flavour})' if sfx else ''} on {cfg['PI_HOST']}:{cfg['PI_OTA_DIR']} + restart matter-server")
+    guard_fresh(fw, src_ota, src_json)
+    # Upload under the manifest's OWN names: its otaUrl already references rac-v<int><sfx>.ota.
+    # pi_stage archives every other manifest for this pid, which covers the OTHER flavour at this
+    # version int too: two candidates at one version is a coin toss for the provider.
+    pi_stage(cfg, src_json, src_ota)
+    # Mirror the RAW firmware_is.bin for the #78 break-glass path (rac-ota.bin is the compile-time
+    # HTTP-OTA resource), which keeps the deployed image retrievable.
+    pi_http_publish(cfg, fw, "rac-ota.bin", f"rac-v{v}{sfx}.bin", AMEBA_CONSOLE_MARK)
+
+
+def check_subscription_log(cfg, node, since):
+    """#64: after the flash gate confirmed the version AND a working subscription, look for the
+    '(Re-)Subscription succeeded' line in the matter-server log when it is readable from here. The
+    line is matched per node (a bare grep once 'confirmed' node 14 with node 35's line), ANSI
+    stripped (matter-server colourises), both forms accepted (after an OTA the device reboots, so
+    the healthy signal is usually the Re-Subscription), newest taken, and polled because it can
+    land a few seconds late. Only lines after the flash started count (Pi clock)."""
+    window = since or "15m"
+    if not cfg.get("PI_HOST") or not cfg.get("PI_SSH_KEY"):
+        say("  PI_HOST/PI_SSH_KEY unset -- cannot read the matter-server log; node availability stands "
+            "as the subscription assertion (#64)")
+        return
+    line = ""
+    for _ in range(6):
+        rc, out = pi_ssh(cfg, f"docker logs --since {window} matter-server 2>&1 | "
+                              r"sed -E 's/\x1b\[[0-9;]*m//g' | "
+                              f"grep -E '<Node:{node}> (Re-)?Subscription succeeded' | tail -1 || true",
+                         capture=True, quiet=True)
+        if rc != 0:
+            say(f"  could not read the matter-server log on {cfg['PI_HOST']} -- node availability stands "
+                "as the subscription assertion (#64)")
+            return
+        line = out.strip()
+        if line:
+            break
+        time.sleep(10)
+    if line:
+        say(f"  matter-server log confirms: {line[:120]}")
+    else:
+        # Availability after the re-interview already asserted the subscription. matter-server
+        # sometimes RESUMES one without logging a fresh line, so a missing line is not a break:
+        # warn, never die, since a false die aborts a healthy flash mid-run.
+        say(f"  no fresh '(Re-)Subscription succeeded' for node {node} since {since or '15m ago'} -- "
+            "availability after re-interview already asserted the subscription (#64); matter-server "
+            "likely resumed it without a new line. OK.")
+
+
+def ws_program(cfg, name, *args, capture=False):
+    """Run one of the matter-server websocket programs below under OTAENV_PY (the venv that has
+    aiohttp; dev.py itself runs on any python3). Returns (returncode, stdout)."""
+    r = subprocess.run([cfg["OTAENV_PY"], str(Path(__file__).resolve()), "_ws", name, *[str(a) for a in args]],
+                       stdout=subprocess.PIPE if capture else None,
+                       stderr=subprocess.DEVNULL if capture else None, text=True)
+    return r.returncode, (r.stdout or "").strip() if capture else ""
+
+
+def flash_amebaz2():
+    cfg = load_env()
+    need(cfg, "OTAENV_PY", "MS_WS", "NODE_ID")
+    node, v = cfg["NODE_ID"], cur_version()
+    # flash is what records .released-version (only after the new version verifies), so it is the
+    # one place an unbumped version must still be refused. A retry after a failed flash is
+    # unaffected: the mark only moves on success.
+    say(f"pre-flight: version, tools + link to node {node}")
+    lint_version("flash", cfg.get("OTA_ALLOW_SAME_VERSION") == "1")
+    guard_tools(cfg)
+    guard_link(cfg, node)
+    since = pi_now(cfg)
+    say(f"flash v{v} to node {node} (retries; then verify the reported version changed)")
+    if ws_program(cfg, "flash", cfg["MS_WS"], node, v, "amebaz2")[0] != 0:
+        die(f"flash verification failed for v{v} -- version not sustained (rollback/boot crash, docs/10 "
+            "§7,§11) or the subscription gate failed (#64, docs/10 §16); see the [flash] lines above")
+    RELEASED_MARK.parent.mkdir(parents=True, exist_ok=True)
+    RELEASED_MARK.write_text(f"{v}\n")
+    say(f"recorded on-device version {v}")
+    check_subscription_log(cfg, node, since)
+
+
+def gh_release_upload(tag, files):
+    """Upload the files that exist to the release, clobbering. Returns how many went up."""
+    n = 0
+    for f in files:
+        if Path(f).is_file() and subprocess.run(["gh", "release", "upload", tag, str(f), "--clobber"],
+                                                 stdout=subprocess.DEVNULL).returncode == 0:
+            say(f"  uploaded {Path(f).name}")
+            n += 1
+    return n
+
+
+def publish_amebaz2():
+    """Upload the DEPLOYED artifacts to the GitHub release (#89): the bytes a device booted, under
+    the canonical names. Only ever what THIS box confirmed booted: flash writes the marker after
+    the device sustained the new version across three fresh reads."""
+    if not shutil.which("gh"):
+        die("gh not on PATH -- needed to upload release assets")
+    v = released_version()
+    if v == 0:
+        die("no on-device version recorded -- run 'flash' first")
+    tag = f"amebaz2-v{int_to_semver(v)}"
+    if subprocess.run(["gh", "release", "view", tag], cwd=str(REPO), stdout=subprocess.DEVNULL,
+                      stderr=subprocess.DEVNULL).returncode != 0:
+        die(f"no release {tag} -- push the tag first ('dev.py ota amebaz2 tag')")
+    # firmware_is-v<N>*.bin FIRST: the raw image is what the break-glass HTTP OTA streams, so the
+    # archived copy is the byte-exact deployed payload. The clip/.ota are derived and are published
+    # only when they exist, never regenerated.
+    out = REPO / "firmware/built-images"
+    n = gh_release_upload(tag, [out / f for f in (
+        f"firmware_is-v{v}.bin", f"firmware_is-v{v}-debug.bin",
+        f"flash_rac-integrated-v{v}.bin", f"rac-v{v}.ota", f"rac-v{v}.json",
+        f"flash_rac-integrated-v{v}-debug.bin", f"rac-v{v}-debug.ota", f"rac-v{v}-debug.json")])
+    if n == 0:
+        die(f"no artifacts for v{v} in built-images/ -- build + package first")
+    say(f"published {n} deployed artifact(s) to {tag} (on-device version {v})")
+
+
+# ---- matter-server websocket programs. They need aiohttp, so dev.py re-runs itself under
+# ---- OTAENV_PY as `dev.py _ws <name> ...` (see ws_program). Never import aiohttp at module level.
+async def _ws_call(ws, command, args, mid, timeout=600):
+    await ws.send_json({"message_id": mid, "command": command, "args": args})
+    while True:
+        d = json.loads((await ws.receive(timeout=timeout)).data)
+        if d.get("message_id") == mid:
+            return d
+
+
+async def _ws_read(ws, node, path, mid="g", timeout=30):
+    """FRESH read (read_attribute), NOT get_node: get_node returns matter-server's cached
+    attributes, which can lie (stale version) after a reboot or rollback."""
+    r = await _ws_call(ws, "read_attribute", {"node_id": node, "attribute_path": path}, mid, timeout)
+    res = r.get("result")
+    return res.get(path) if isinstance(res, dict) else res
+
+
+async def _ws_update_node(url, node, v, tag, label):
+    import aiohttp
+    for n in range(1, 8):
+        print(f"[{tag}] update_node attempt {n} -> {label}", flush=True)
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.ws_connect(url, heartbeat=30) as ws:
+                    await ws.receive(timeout=10)
+                    r = await _ws_call(ws, "update_node", {"node_id": node, "software_version": v}, str(n), 600)
+                    if r.get("error_code") is None:
+                        print(f"[{tag}] provider reports finished")
+                        break
+                    print(f"[{tag}] declined:", r.get("error_code"), r.get("details", ""))
+        except Exception as e:
+            print(f"[{tag}] exc", repr(e)[:120])
+        await asyncio.sleep(15)
+
+
+async def ws_flash(url, node, v, target, vs=""):
+    """update_node with retries, then verify the DEVICE booted the new version, then the
+    subscription gate. AmebaZ2 verifies the softwareVersion int (0/40/9). ESP32 verifies the
+    STRING (0/40/10): that firmware leaves the int unwired (reads 0). Exit 2: version never
+    sustained. Exit 3: the subscription gate failed."""
+    import aiohttp
+    if target == "esp32":
+        attr, want, shown, label = "0/40/10", vs, (lambda x: str(x)), f"v{v} ({vs})"
+        iv_note, ref = "", ""
+        never = "delta base mismatch (safe), full image rejected by delta target, or boot crash"
+    else:
+        attr, want, shown, label = "0/40/9", v, (lambda x: f"v{x}"), f"v{v}"
+        iv_note, ref = " (docs/10 §9)", ", docs/10 §16"
+        never = "OTA serial not bumped (rollback) or boot crash (docs/10 §7,§11)"
+    await _ws_update_node(url, node, v, "flash", label)
+    # Require the version SUSTAINED across 3 consecutive fresh reads: a single read right after a
+    # matter-server restart can return a stale cached value (this false-positived the flash).
+    good = 0
+    for _ in range(30):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.ws_connect(url, heartbeat=30) as ws:
+                    await ws.receive(timeout=8)
+                    got = await _ws_read(ws, node, attr)
+                    if got == want:
+                        good += 1
+                        print(f"[flash] device reports {shown(want)} ({good}/3)")
+                        if good >= 3:
+                            # #64: a sustained version read is NOT enough. The 2026-07-19
+                            # regression passed every read gate while wildcard subscriptions failed
+                            # with 'Invalid TLV tag'. The re-interview is FATAL, and the node must
+                            # then come back available: matter-server only marks a node available
+                            # once its subscription is up, so that transition is the assertion.
+                            r = await _ws_call(ws, "interview_node", {"node_id": node}, "iv", 120)
+                            if not r or r.get("error_code") is not None:
+                                print(f"[flash] FAILED: re-interview rejected: "
+                                      f"{r.get('error_code') if r else 'no reply'} -- data-model/subscription "
+                                      f"break? (#64{ref})")
+                                sys.exit(3)
+                            print(f"[flash] re-interviewed node for HA{iv_note}")
+                            available = False
+                            for _ in range(25):   # ~75 s
+                                try:
+                                    g = await _ws_call(ws, "get_node", {"node_id": node}, "gn", 15)
+                                    n = g.get("result") if g else None
+                                    if isinstance(n, dict) and n.get("available") is True:
+                                        available = True
+                                        break
+                                except Exception:
+                                    pass
+                                await asyncio.sleep(3)
+                            if not available:
+                                print("[flash] FAILED: node never became available after re-interview "
+                                      f"(~75 s) -- subscription broken (#64{ref})")
+                                sys.exit(3)
+                            print(f"[flash] SUCCESS: device booted {shown(want)} and is subscribable "
+                                  "(available after re-interview)")
+                            return
+                    else:
+                        good = 0
+                        print(f"[flash] device reports {shown(got)} (want {want}) ...")
+        except Exception:
+            pass
+        await asyncio.sleep(12)
+    print(f"[flash] FAILED: device never sustained {shown(want)} -- {never}")
+    sys.exit(2)
+
+
+async def ws_read_attr(url, node, path):
+    """Print one fresh attribute read (the `verify` step)."""
+    import aiohttp
+    async with aiohttp.ClientSession() as s:
+        async with s.ws_connect(url) as ws:
+            await ws.receive(timeout=10)
+            print(await _ws_read(ws, node, path, "v", 40))
+
+
+async def ws_identity(url, node):
+    """One-shot Basic Information read for the pre-apply summary: proves the node id resolves to a
+    unit that is reachable NOW, and gives the operator something to match against the appliance."""
+    import aiohttp
+    out = {}
+    async with aiohttp.ClientSession() as s:
+        async with s.ws_connect(url, heartbeat=30) as ws:
+            await ws.receive(timeout=10)
+            for k, p in (("sw", "0/40/9"), ("vendor", "0/40/1"), ("product", "0/40/2"), ("label", "0/40/5")):
+                try:
+                    out[k] = await _ws_read(ws, node, p, k, 20)
+                except Exception:
+                    out[k] = "?"
+    print(f"softwareVersion={out.get('sw')} vendor={out.get('vendor')} product={out.get('product')} "
+          f"label={out.get('label')!r}")
+
+
+def ws_main(argv):
+    name, a = argv[0], argv[1:]
+    if name == "flash":
+        asyncio.run(ws_flash(a[0], int(a[1]), int(a[2]), a[3], a[4] if len(a) > 4 else ""))
+    elif name == "read":
+        asyncio.run(ws_read_attr(a[0], int(a[1]), a[2]))
+    elif name == "identity":
+        asyncio.run(ws_identity(a[0], int(a[1])))
+    elif name == "revert-apply":
+        asyncio.run(ws_revert_apply(a[0], int(a[1]), int(a[2]), a[3], a[4], int(a[5]), int(a[6])))
+    else:
+        die(f"unknown _ws program: {name}")
+
+
+# ---- revert to stock (issue #19), ported from ota-release.sh ---------------------------------
+# Ways back to the stock ConnectLife firmware without opening the case:
+#   --flip <ip>: 1.3.8+ carries a break-glass TCP listener on BREAKGLASS_PORT. `<token>:slots`
+#     reports both slots' FWHS serials; `<token>:revert` invalidates the running image's signature
+#     and resets. The bootloader boots the signature-valid slot with the HIGHEST serial, so
+#     invalidating the custom slot lets the stock slot (serial 100) win. A bare `<token>` with no
+#     colon still triggers the HTTPS OTA, so only the colon commands are used here.
+#   --repackage <dump>: carve the stock app out of a stock flash dump and re-sign it (serial patch
+#     + HMAC-SHA256 + bytesum trailer), then wrap it as a Matter .ota for the update_node channel.
+#   --apply: stage the repackaged image + drive update_node, then CLASSIFY the outcome (reverted /
+#     not reverted / ambiguous). Never infers success from silence: stock leaves this fabric and a
+#     bootloader-rejected module does too (#75).
+#   --slots <ip>: read-only :slots probe for triage (changes nothing).
+#   --backup <ip>: 1.3.9+ answers `<token>:backup` with `ok: backup <addr_hex> <len_dec>\r\n` +
+#     exactly <len> raw bytes of the INACTIVE slot. Fetch it once right after the first conversion
+#     and the unit keeps a way back even after later OTAs overwrite the stock slot.
+SLOTS_RE = r"ok:\s*fw1_sn=(\d+)\s+fw2_sn=(\d+)\s+cur=(\d+)"
+SLOT_MAX = 0x1AC000
+IMAGE_KEY = bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e5f")
+
+
+def serial_base(cfg):
+    return int(cfg.get("SERIAL_BASE") or 1100)
+
+
+def revert_version():
+    """The int the revert image must carry: strictly above BOTH version markers."""
+    return max(cur_version(), released_version()) + 1
+
+
+def breakglass_query(ip, port, message, timeout):
+    """One short break-glass exchange: send, read up to a newline (or 512 bytes). Raises OSError
+    when the unit cannot be reached. create_connection handles IPv6 link-local (fe80::..%if)."""
+    data = b""
+    with socket.create_connection((ip, port), timeout=timeout) as s:
+        s.sendall(message.encode())
+        s.settimeout(timeout)
+        try:
+            while b"\n" not in data and len(data) < 512:
+                b = s.recv(256)
+                if not b:
+                    break
+                data += b
+        except socket.timeout:
+            pass
+    return data.decode(errors="replace").strip()
+
+
+def breakglass_slots(ip, token, port, timeout=8):
+    """The raw `ok: ...` reply to `<token>:slots`, or None. Asymmetric on purpose: an answer is
+    decisive (only the custom firmware serves :slots), silence proves nothing. Stock has no
+    listener, so a healthy stock unit and a bootloader-rejected module are both silent here."""
+    if not ip or not token or not port:
+        return None
+    try:
+        r = breakglass_query(ip, int(port), f"{token}:slots", timeout)
+    except OSError:
+        return None
+    return r if r.startswith("ok:") else None
+
+
+def backup_file_tag(ip):
+    """The unit's part of a backup file name: last octet for IPv4, a sanitised address otherwise."""
+    tag = ip.split("%")[0]                         # drop an IPv6 zone id
+    if re.fullmatch(r"(\d{1,3}\.){3}\d{1,3}", tag):
+        return tag.rsplit(".", 1)[1]
+    return re.sub(r"[^0-9A-Za-z]+", "-", tag).strip("-")
+
+
+def revert_backup(args):
+    import amebaz2_image
+    cfg = load_env()
+    need(cfg, "BREAKGLASS_TOKEN", "BREAKGLASS_PORT")
+    ip = out = ""
+    for a in args:
+        if a.startswith("-"):
+            die(f"unknown flag for revert --backup: {a}")
+        elif not ip:
+            ip = a
+        elif not out:
+            out = a
+        else:
+            die(f"unexpected argument for revert --backup: {a}")
+    if not ip:
+        die("usage: dev.py ota amebaz2 revert --backup <unit-ip> [out.bin]")
+    token, port, base = cfg["BREAKGLASS_TOKEN"], int(cfg["BREAKGLASS_PORT"]), serial_base(cfg)
+    say(f"revert --backup {ip}:{port} (fetch + validate the inactive-slot stock image)")
+
+    def fail(msg):   # die loudly, save nothing
+        print(f"[revert] FAILED: {msg}")
+        sys.exit(1)
+
+    try:
+        s = socket.create_connection((ip, port), timeout=15)
+    except OSError as e:
+        fail(f"cannot reach {ip}:{port}: {e} -- if the unit is otherwise up, it likely runs pre-1.3.9 "
+             "firmware with no :backup support")
+    s.settimeout(60)
+    try:
+        s.sendall(f"{token}:backup".encode())
+        buf = b""
+        while b"\r\n" not in buf:
+            b = s.recv(256)
+            if not b:
+                fail("connection closed before the backup header")
+            buf += b
+            if len(buf) > 4096:
+                fail("no backup header in the first 4 KB")
+        hdr, buf = buf.split(b"\r\n", 1)
+        hdr = hdr.decode(errors="replace").strip()
+        if hdr.startswith("err:"):
+            fail(f"unit refused: {hdr}")
+        m = re.fullmatch(r"ok:\s*backup\s+(\S+)\s+(\d+)", hdr)
+        if not m:
+            fail(f"unexpected :backup reply: {hdr!r} -- pre-1.3.9 firmware has no :backup support")
+        addr, length = m.group(1), int(m.group(2))
+        if not 0 < length <= SLOT_MAX:
+            fail(f"implausible backup length {length:#x} (slot is {SLOT_MAX:#x} max)")
+        while len(buf) < length:
+            b = s.recv(min(65536, length - len(buf)))
+            if not b:
+                fail(f"connection closed at {len(buf):#x} of {length:#x} bytes")
+            buf += b
+        buf = buf[:length]
+    finally:
+        s.close()
+    print(f"[revert] backup received: addr={addr} len={length:#x}")
+    # Process like the repackage carve: image end = first 4096-byte 0xFF run, then a 4-byte trailer.
+    i = buf.find(b"\xff" * 4096)
+    if i < 0:
+        fail("no 4096-byte 0xFF run in the backup -- slot empty or not a stock image?")
+    imglen = i - 4
+    if not 0x100000 <= imglen <= 0x180000:
+        fail(f"carved length {imglen:#x} outside [0x100000,0x180000]")
+    image, trailer = buf[:imglen], buf[imglen:imglen + 4]
+    serial = amebaz2_image.read_serial(image)
+    if serial >= base:
+        fail(f"serial@0xF4={serial} >= {base} -- the inactive slot holds a CUSTOM image, not stock "
+             "(nothing to back up; a second custom OTA already overwrote it)")
+    good, lines = amebaz2_image.verify(image, trailer)   # manifest sig + EVERY sub-image trailer + byte-sum (#75)
+    for ln in lines:
+        print(f"[revert]   {ln}")
+    if not good:
+        fail("the backup does not verify: " + "; ".join(amebaz2_image.failures(lines)))
+    if not out:
+        out = str(REPO / "firmware/built-images" / f"stock-backup-{backup_file_tag(ip)}-sn{serial}.bin")
+    with open(out, "wb") as f:
+        f.write(buf)                               # raw slot bytes: image + trailer + 0xFF pad
+    print(f"[revert] saved {out} ({len(buf):#x} bytes, stock serial {serial})")
+    print(f"[revert] all checks passed: serial {serial} < {base}, manifest sig + every sub-image trailer + byte-sum OK")
+    print(f"[revert] next (when needed): dev.py ota amebaz2 revert --repackage {out}")
+
+
+def revert_flip(args):
+    cfg = load_env()
+    need(cfg, "BREAKGLASS_TOKEN", "BREAKGLASS_PORT")
+    ip, force = "", False
+    for a in args:
+        if a == "--force":
+            force = True
+        elif a.startswith("-"):
+            die(f"unknown flag for revert --flip: {a}")
+        elif not ip:
+            ip = a
+        else:
+            die(f"unexpected argument for revert --flip: {a}")
+    if not ip:
+        die("usage: dev.py ota amebaz2 revert --flip <unit-ip> [--force]")
+    token, port, base = cfg["BREAKGLASS_TOKEN"], int(cfg["BREAKGLASS_PORT"]), serial_base(cfg)
+    say(f"revert --flip {ip}:{port} (query slots, then invalidate the running slot)")
+    try:
+        r = breakglass_query(ip, port, f"{token}:slots", 10)
+    except OSError as e:
+        print(f"[revert] cannot reach {ip}:{port}: {e}")
+        print("[revert] if the unit is otherwise up, it likely runs pre-1.3.8 firmware with NO break-glass "
+              "listener -- use 'revert --repackage' + 'revert --apply' instead")
+        sys.exit(2)
+    m = re.match(SLOTS_RE, r)
+    if not m:
+        print(f"[revert] unexpected :slots reply: {r!r}")
+        print("[revert] pre-1.3.8 firmware has no :slots support (there a bare <token> with no colon triggers "
+              "HTTPS OTA) -- use 'revert --repackage' + 'revert --apply' instead")
+        sys.exit(2)
+    fw1, fw2, cur = (int(x) for x in m.groups())
+    other = fw2 if cur == 1 else fw1
+    print(f"[revert] slots: fw1_sn={fw1} fw2_sn={fw2} cur=fw{cur} -> other slot serial {other}")
+    if other >= base and not force:
+        print(f"[revert] REFUSED: other slot serial {other} >= {base} is a custom image, not stock (stock serial is 100)")
+        print("[revert] re-run with --force to flip to that older custom image anyway")
+        sys.exit(3)
+    r = breakglass_query(ip, port, f"{token}:revert", 10)
+    print(f"[revert] revert reply: {r!r}")
+    print("[revert] running image invalidated + reset issued; the bootloader now boots the other slot. "
+          "Give the unit ~30 s.")
+
+
+def revert_slots(args):
+    """Read-only break-glass probe: prints the slot map and changes NOTHING. An answer PROVES the
+    custom firmware is alive, silence proves nothing."""
+    cfg = load_env()
+    need(cfg, "BREAKGLASS_TOKEN", "BREAKGLASS_PORT")
+    ip = args[0] if args else ""
+    if not ip:
+        die("usage: dev.py ota amebaz2 revert --slots <unit-ip>")
+    port = cfg["BREAKGLASS_PORT"]
+    r = breakglass_slots(ip, cfg["BREAKGLASS_TOKEN"], port)
+    if r:
+        say(f"{ip}:{port} answered: {r}")
+        say("  ANSWERED = the CUSTOM firmware is running (only it serves :slots). The module is alive.")
+        return
+    say(f"{ip}:{port} did not answer.")
+    say("  This is NOT a verdict. Stock carries no break-glass listener, and stock also joins its")
+    say("  OWN factory-provisioned network, so a healthy reverted unit is not even at this address.")
+    say("  A bootloader-rejected module is equally silent. Discriminate with the flash QE bit:")
+    say(f"  python3 {REPO}/firmware/flasher/ch341_sr.py  (QE cleared = the bootloader rejected it).")
+    sys.exit(1)
+
+
+def _hmac(data):
+    return hmac.new(IMAGE_KEY, data, hashlib.sha256).digest()
+
+
+def image_chain(payload):
+    """Walk the sub-image chain: [(header, end, trailer_matches)] for EVERY trailer, or None when it
+    cannot be walked. For sub-image i at header H: S=u32le(img[H]) is the segment SIZE, the trailer
+    sits at END=H+0x60+S and covers img[START:END] with START=0 for i==0, else H. The next header is
+    H + u32le(img[H+4]) (RELATIVE; 0xFFFFFFFF terminates). Never hardcode the layout (stock ships two)
+    and never require the last trailer to end at EOF: elf2bin pads 0 or 0x20 trailing bytes. The walk
+    is slot-agnostic by construction, so never gate any of this on a slot index. (#75)"""
+    h, i, out = 0xE0, 0, []
+    while True:
+        if h + 0x60 > len(payload):
+            return None
+        size, nxt = struct.unpack_from("<I", payload, h)[0], struct.unpack_from("<I", payload, h + 4)[0]
+        end, start = h + 0x60 + size, (0 if i == 0 else h)
+        if end + 0x20 > len(payload):
+            return None
+        out.append((h, end, _hmac(payload[start:end]) == payload[end:end + 0x20]))
+        if nxt == 0xFFFFFFFF:
+            return out
+        if nxt == 0 or i > 15:
+            return None
+        h += nxt
+        i += 1
+
+
+def image_check(payload, trailer, name):
+    """Print one line for an image and return whether the bootloader would accept it: manifest
+    signature, every sub-image trailer, and the transport byte-sum."""
+    mac_ok = _hmac(payload[0xE0:0x140]) == payload[0:32]
+    c = image_chain(payload)
+    in_ok = c is not None and all(m for _, _, m in c)
+    sum_ok = struct.pack("<I", sum(payload) & 0xFFFFFFFF) == trailer
+    serial = struct.unpack_from("<I", payload, 0xF4)[0]
+    sub = "UNWALKABLE" if c is None else " ".join("%#x=%s" % (e, "OK" if m else "MISMATCH") for _, e, m in c)
+    print(f"  {name}: len={len(payload):#x} serial@0xF4={serial} hmac={'OK' if mac_ok else 'MISMATCH'} "
+          f"trailers[{sub}] bytesum={'OK' if sum_ok else 'MISMATCH'}")
+    return mac_ok and in_ok and sum_ok
+
+
+def carve_stock(dump):
+    """(image, length, offset) of the HMAC-valid image in a full flash dump (stock fw1 app at
+    0x10000) or a raw slot image from revert --backup (app at 0x0), else None. The image ends at the
+    first 4 KB run of erased flash, minus the 4-byte bytesum trailer."""
+    for off in (0x10000, 0):
+        c = dump[off:]
+        i = c.find(b"\xff" * 4096)
+        if i < 0:
+            continue
+        length = i - 4
+        if not 0x100000 <= length <= 0x180000:
+            continue
+        if _hmac(c[0xE0:0x140]) != c[0:32]:
+            continue
+        return c, length, off
+    return None
+
+
+def resign_stock(image, new_serial):
+    """The revert payload: the stock image with a serial the bootloader prefers, re-signed. Order
+    matters, each step's input includes the previous step's output. Sub-image 0's trailer (at
+    u32le(img[0xE0]) + 0x140) covers [0, END), so it reaches the serial and the manifest signature
+    and must be recomputed last. Leaving it stale is what bricked the office unit on 2026-07-21:
+    boot_load prints "Hash Result Incorrect!" and hangs with the flash QE bit cleared (#75)."""
+    payload = bytearray(image)
+    struct.pack_into("<I", payload, 0xF4, new_serial)
+    payload[0:32] = _hmac(bytes(payload[0xE0:0x140]))                    # manifest sig
+    end0 = struct.unpack_from("<I", payload, 0xE0)[0] + 0x140           # inner image HMAC (#75)
+    payload[end0:end0 + 0x20] = _hmac(bytes(payload[0:end0]))
+    payload += struct.pack("<I", sum(payload) & 0xFFFFFFFF)              # transport byte-sum
+    return bytes(payload)
+
+
+def revert_repackage(args):
+    cfg = load_env()
+    dump = args[0] if args else ""
+    if not dump:
+        die("usage: dev.py ota amebaz2 revert --repackage <stock-dump.bin>")
+    if not Path(dump).is_file():
+        die(f"stock dump not found: {dump}")
+    v = revert_version()
+    semver = f"{int_to_semver(v)}-stock"
+    base = serial_base(cfg)
+    new_serial = base + v
+    bi = REPO / "firmware/built-images"
+    payload_path, ota = bi / f"rac-stock-v{v}-payload.bin", bi / f"rac-stock-v{v}.ota"
+    # Self-check the recipe against known-good bytes BEFORE trusting the carve: every archived
+    # custom firmware_is-v*.bin and the dump's unpatched image must verify. A dump from a different
+    # build or a wrong key fails loudly here instead of on the device.
+    say(f"revert --repackage v{v} (serial {new_serial}): verify the signing recipe first")
+    refs = sorted(bi.glob("firmware_is-v*.bin"))
+    if not refs:
+        print("  no firmware_is-v*.bin in built-images/ -- cannot self-check the recipe")
+        sys.exit(1)
+    good = True
+    for f in refs:
+        d = f.read_bytes()
+        good &= image_check(d[:-4], d[-4:], f.name)
+    carved = carve_stock(Path(dump).read_bytes())
+    if carved is None:
+        print("  no HMAC-valid stock image at 0x10000 (dump) or 0x0 (backup) -- refusing")
+        sys.exit(1)
+    img, imglen, off = carved
+    # The carve proves "a signed image is here", NOT "that image is stock". A dump from an
+    # already-converted unit carves just as cleanly, and shipping that as a "revert to stock" .ota
+    # would push CUSTOM firmware under a stock label. Stock carries serial 100, custom carries
+    # SERIAL_BASE+versionInt. A SERIAL test, never a slot test: stock has booted fine from FW2.
+    carved_serial = struct.unpack_from("<I", img, 0xF4)[0]
+    if carved_serial >= base:
+        print(f"  carved image serial@0xF4={carved_serial} >= {base}: this is a CUSTOM image, not stock -- refusing")
+        sys.exit(1)
+    good &= image_check(img[:imglen], img[imglen:imglen + 4], f"input image @0x{off:x} (unpatched)")
+    if not good:
+        print("recipe self-check FAILED -- not building a revert image from unverified bytes")
+        sys.exit(1)
+    payload = resign_stock(img[:imglen], new_serial)
+    payload_path.write_bytes(payload)
+    print(f"  signed payload: {payload_path} ({len(payload):#x} bytes, serial {new_serial})")
+    r = subprocess.run(["python3", cfg["OTA_TOOL"], "create", "-v", cfg["VID"], "-p", cfg["PID"],
+                        "-vn", str(v), "-vs", semver, "-da", "sha256", "-mi", "1", "-ma", str(v - 1),
+                        str(payload_path), str(ota)], stdout=subprocess.DEVNULL)
+    if r.returncode != 0:
+        die("ota_image_tool.py create failed")
+    # Same manifest shape as package, plus payloadName so the carved stock payload behind the .ota
+    # stays identifiable. otaUrl is the staged file:// name (--apply uploads both under these names).
+    doc = ota_manifest(ota.read_bytes(), v, semver, f"file:///rac-stock-v{v}.ota")
+    doc["modelVersion"]["payloadName"] = payload_path.name
+    (bi / f"rac-stock-v{v}.json").write_text(json.dumps(doc) + "\n")
+    say(f"  ota:      {ota}  (+ .json manifest, payloadName={payload_path.name})")
+    say("  not staged. next: dev.py ota amebaz2 revert --apply")
+    say("  NOTE: the 2026-07-21 brick (docs/10 §17 'Path 2') is root-caused (#75): the old recipe left")
+    say("  sub-image 0's inner HMAC (at size@0xE0 + 0x140) stale. This payload recomputes it and")
+    say("  self-checks EVERY sub-image trailer, on this payload and on every archived image.")
+    say("  CONFIRMED ON HARDWARE 2026-07-27: a repackaged stock image booted (VID 5004 / PID 13825 / sw 2).")
+    say("  Recovery if it ever does fail is still the CH341A clip; a rejected image hangs with QE CLEARED.")
+    # Version-consumption guard: the revert image carries serial SERIAL_BASE+v, so once it is applied
+    # the next custom OTA must EXCEED v or the bootloader ties and the stock slot wins. Keep
+    # version.txt ahead of every revert int ever handed out here.
+    if cur_version() <= v:
+        nv = int_to_semver(v + 1)
+        VERSION_FILE.write_text(nv + "\n")
+        set_header_version(cfg)
+        say(f"WARNING: the revert consumed fleet version {v} -- version.txt bumped to {nv} (int {v + 1})")
+        say(f"         so the next custom build beats serial {new_serial}. COMMIT firmware/src/version.txt.")
+
+
+def revert_triage(cfg, ip):
+    """Printed whenever --apply cannot tell "stock is running" from "the bootloader rejected the
+    image". Network silence is NOT a verdict: stock leaves this fabric, joins its own network and
+    has no break-glass listener, so a healthy revert and a #75-class rejection look identical from
+    here. Two healthy units were declared bricked on 2026-07-26 for exactly this reason."""
+    for ln in f"""----------------------------------------------------------------------
+TRIAGE: the unit is silent. Silence alone means NOTHING. Run these, in order.
+
+1. VENDOR APP (no tools). A reverted unit IS stock: it rejoins ConnectLife by itself
+   and reappears in the ConnectLife app as the same appliance. If the app sees it, the
+   revert WORKED. Note the A/C keeps working from the IR remote either way, so 'the
+   A/C responds' says nothing about the Wi-Fi module.
+
+2. BREAK-GLASS (no tools, read-only). Stock does not carry the listener, so:
+     dev.py ota amebaz2 revert --slots {ip}
+   ANSWERS -> the CUSTOM firmware is still running: the revert did not take, the unit
+              is healthy, nothing is bricked. Retry --apply, or flip if stock is in the
+              other slot. SILENT -> consistent with stock AND with a rejected image;
+              not a verdict.
+
+3. FLASH QE BIT (CH341A clip; the definitive test). boot_load routes every image
+   rejection through its shared failure sink (hal_flash_return_spi), which CLEARS the
+   GD25Q32 QE bit; a healthy boot leaves it SET (docs/10 §17 Path 2, issue #75).
+     python3 {REPO}/firmware/flasher/ch341_sr.py
+   QE=0 -> the bootloader REJECTED the image (bricked, and it will NOT fall back to the
+           other slot). QE=1 -> it did not reject anything; chase the network instead.
+
+4. READ THE SLOTS OUT OF A DUMP (CH341A clip; settles it definitively).
+     python3 {REPO}/firmware/flasher/ch341dump.py /tmp/unit.bin
+   fw1 app @0x10000, fw2 app @0x190000; serial = u32le at app+0xF4 (stock 100, custom
+   {serial_base(cfg)}+versionInt). 'revert --repackage /tmp/unit.bin' re-verifies the
+   FULL acceptance recipe (manifest sig + #75 inner HMAC + bytesum) on fw1; for fw2,
+   slice it out first: dd if=/tmp/unit.bin of=/tmp/fw2.bin bs=4096 skip=400.
+
+5. RECOVERY, only if 3/4 say rejected: clip-write the unit's own dump with fw1 replaced
+   by ORIGINAL stock slot bytes (factory signature, from 'revert --backup') and fw2
+   erased to 0xFF, via ch341flash-full.py (it re-sets QE). docs/10 §17.
+----------------------------------------------------------------------""".splitlines():
+        say(ln)
+
+
+def newest_stock_pair(bi):
+    """The highest int N with both rac-stock-vN.ota and rac-stock-vN.json on disk, or None. --apply
+    must NOT recompute revert_version(): --repackage consumes int v and bumps version.txt to v+1,
+    so a separately-invoked apply would compute v+2 and look for a pair that was never built."""
+    best = None
+    for f in Path(bi).glob("rac-stock-v*.ota"):
+        n = f.name[len("rac-stock-v"):-len(".ota")]
+        if re.fullmatch(r"[0-9]+", n) and (Path(bi) / f"rac-stock-v{n}.json").is_file():
+            best = int(n) if best is None else max(best, int(n))
+    return best
+
+
+def verify_stock_payload(bi, manifest):
+    """Re-verify the payload behind a revert .ota BEFORE it goes near a device. --apply picks the
+    newest pair on disk, which may come from an older revision: built-images/ still holds pre-#75
+    payloads that bricked a unit, and a version accident is all it takes for one to be "newest".
+    Returns (ok, message)."""
+    m = json.loads(Path(manifest).read_text())["modelVersion"]
+    pn = m.get("payloadName")
+    if not pn:
+        return False, f"{Path(manifest).name} has no payloadName -- built by a pre-#75 script revision. REFUSING."
+    p = Path(bi) / pn
+    if not p.exists():
+        return False, f"payload {pn} missing -- cannot verify what this .ota carries. REFUSING."
+    d = p.read_bytes()
+    img, trailer = d[:-4], d[-4:]
+    if _hmac(img[0xE0:0x140]) != img[0:32]:
+        return False, "manifest signature MISMATCH -- REFUSING"
+    if struct.pack("<I", sum(img) & 0xFFFFFFFF) != trailer:
+        return False, "bytesum trailer MISMATCH -- REFUSING"
+    h, i = 0xE0, 0
+    while True:
+        if h + 0x60 > len(img):
+            return False, "chain UNWALKABLE -- REFUSING"
+        size, nxt = struct.unpack_from("<I", img, h)[0], struct.unpack_from("<I", img, h + 4)[0]
+        end, start = h + 0x60 + size, (0 if i == 0 else h)
+        if end + 0x20 > len(img):
+            return False, "chain trailer past EOF -- REFUSING"
+        if _hmac(img[start:end]) != img[end:end + 0x20]:
+            return False, f"sub-image {i} trailer @{end:#x} MISMATCH (issue #75 signature) -- REFUSING to stage a brick"
+        if nxt == 0xFFFFFFFF:
+            break
+        if nxt == 0 or i > 15:
+            return False, "malformed chain -- REFUSING"
+        h += nxt
+        i += 1
+    return True, (f"{pn}: manifest sig OK, {i + 1} sub-image trailers OK, bytesum OK, "
+                  f"serial@0xF4={struct.unpack_from('<I', img, 0xF4)[0]}")
+
+
+def revert_apply(args):
+    cfg = load_env()
+    need(cfg, "OTAENV_PY", "MS_WS", "NODE_ID", "PI_HOST", "PI_OTA_DIR", "PI_SSH_KEY")
+    # --ip is optional but strongly recommended: the break-glass listener is the ONLY no-clip signal
+    # that separates "stock is running" from "the bootloader rejected the image", so without it the
+    # verdict can never be better than AMBIGUOUS. --yes skips the prompt (scripted runs only).
+    ip, assume_yes, i = "", False, 0
+    usage_hint = "(usage: revert --apply [--ip <unit-ip>] [--yes])"
+    while i < len(args):
+        a = args[i]
+        if a == "--ip":
+            ip = args[i + 1] if i + 1 < len(args) else ""
+            if not ip:
+                die("--ip needs the unit's IP")
+            i += 2
+        elif a.startswith("--ip="):
+            ip = a[len("--ip="):]
+            i += 1
+        elif a in ("--yes", "-y"):
+            assume_yes = True
+            i += 1
+        else:
+            die(f"unknown argument for revert --apply: {a} {usage_hint}")
+    bi = REPO / "firmware/built-images"
+    v = newest_stock_pair(bi)
+    if v is None:
+        die(f"no rac-stock-v*.{{ota,json}} pair in {bi} -- run 'revert --repackage <stock-dump.bin>' first")
+    src_ota, src_json = bi / f"rac-stock-v{v}.ota", bi / f"rac-stock-v{v}.json"
+    node, base = cfg["NODE_ID"], serial_base(cfg)
+    token, port = cfg.get("BREAKGLASS_TOKEN", ""), cfg.get("BREAKGLASS_PORT", "")
+
+    # Pre-apply confirmation. State, before anything is written: which node, which physical unit,
+    # which slot the image lands in, and that the unit leaves this fabric.
+    slots = fw1 = fw2 = cur = tgt = other = None
+    if ip:
+        slots = breakglass_slots(ip, token, port)
+        m = re.search(r"fw1_sn=(\d+)", slots or ""), re.search(r"fw2_sn=(\d+)", slots or ""), \
+            re.search(r"cur=(\d+)", slots or "")
+        if slots:
+            fw1, fw2, cur = (x.group(1) if x else "" for x in m)
+            tgt, other = (2, fw2) if cur == "1" else (1, fw1)
+        else:
+            say(f"WARNING: {ip}:{port or '?'} did not answer :slots. Wrong IP, BREAKGLASS_TOKEN/PORT")
+            say(f"         unset in {ENVF}, or the unit is already not running custom firmware. Fix it")
+            say("         BEFORE applying: with no working break-glass probe the post-apply verdict")
+            say("         can only ever be AMBIGUOUS.")
+    pre = ws_program(cfg, "identity", cfg["MS_WS"], node, capture=True)[1]
+    no_answer = f"NO ANSWER (node {node} unreachable through matter-server; update_node will likely fail)"
+    say("----------------------------------------------------------------------")
+    say("revert --apply: about to push STOCK firmware onto a LIVE unit.")
+    say(f"  env file       : {ENVF}")
+    say(f"  target node    : {node}  (read from {ENVF} -- an exported NODE_ID is IGNORED, the env file")
+    say("                   is sourced AFTER the environment. To target another unit,")
+    say("                   copy the env file and run with ENVF=<copy>.)")
+    say(f"  node reads now : {pre or no_answer}")
+    say(f"  matter-server  : {cfg['MS_WS']}  (staging on {cfg['PI_HOST']}:{cfg['PI_OTA_DIR']})")
+    say(f"  image          : {src_ota.name}  softwareVersion int {v}, FWHS serial {base + v}")
+    say(f"  unit ip        : {ip or 'NOT GIVEN -- no break-glass probe, verdicts will be weaker'}")
+    if slots:
+        say(f"  slots now      : fw1_sn={fw1} fw2_sn={fw2} running=fw{cur}")
+        say(f"  OTA lands in   : fw{tgt} (the INACTIVE slot; whatever it holds now is overwritten)")
+        if other and int(other) < base:
+            say(f"  NOTE: fw{tgt} ALREADY holds a stock image (serial {other} < {base}). Prefer")
+            say(f"        'dev.py ota amebaz2 revert --flip {ip}': it boots that slot with NO flash write and")
+            say("        NO re-signed payload, so it carries none of the #75 image-rejection risk. It")
+            say("        also keeps the factory-signed stock bytes instead of overwriting them.")
+    say("  after this     : the unit LEAVES this Matter fabric, rejoins ConnectLife on its own")
+    say("                   network, and loses the break-glass listener and the :2323 console.")
+    say("                   Silence afterwards is EXPECTED and is NOT proof of success.")
+    say("----------------------------------------------------------------------")
+    if assume_yes:
+        say("--yes given: proceeding without confirmation")
+    else:
+        # Fails CLOSED: no usable /dev/tty aborts here rather than pushing firmware at a unit
+        # nobody is watching.
+        try:
+            with open("/dev/tty", "r+") as tty:
+                tty.write(f"[dev] type 'revert node {node}' to proceed: ")
+                tty.flush()
+                reply = tty.readline().rstrip("\n")
+        except OSError:
+            die("no interactive terminal for the confirmation prompt -- re-run with --yes if you are sure")
+        if reply != f"revert node {node}":
+            die(f"aborted (got '{reply}')")
+
+    say(f"applying newest repackaged revert image on disk: rac-stock-v{v}")
+    say("  re-verifying the payload (manifest sig + EVERY sub-image HMAC + bytesum)")
+    good, msg = verify_stock_payload(bi, src_json)
+    print(f"  {msg}")
+    if not good:
+        sys.exit(1)
+    # stage is keyed to the cur_version rac-v* names, so this does its own scp + junk prune +
+    # matter-server restart for the rac-stock-* pair.
+    say(f"stage rac-stock-v{v} on {cfg['PI_HOST']}:{cfg['PI_OTA_DIR']} + restart matter-server")
+    if pi_scp(cfg, [src_ota, src_json], f"{cfg['PI_OTA_DIR']}/") != 0:
+        die(f"scp to {cfg['PI_HOST']}:{cfg['PI_OTA_DIR']} failed")
+    rc = subprocess.run(["ssh", "-o", "BatchMode=yes", "-i", cfg["PI_SSH_KEY"], cfg["PI_HOST"],
+                         f"rm -f {cfg['PI_OTA_DIR']}/chip_kvs_ota_provider_* {cfg['PI_OTA_DIR']}/ota_provider_*.log "
+                         "2>/dev/null;      docker restart matter-server >/dev/null 2>&1"]).returncode
+    if rc != 0:
+        die(f"matter-server restart on {cfg['PI_HOST']} failed")
+    say("  staged + provider junk pruned + matter-server restarted (manifest cache reloaded)")
+    say(f"apply rac-stock-v{v} to node {node} (update_node with retries, then classify the outcome)")
+    rc = ws_program(cfg, "revert-apply", cfg["MS_WS"], node, v, ip, token, port or 0, base)[0]
+    if rc == 0:
+        say(f"revert applied: the unit runs STOCK firmware now (it will NOT report v{v} -- expected).")
+        say("next steps: the unit speaks ConnectLife again. To put it back on custom firmware,")
+        say("re-flash the custom image over CH341 (firmware/docs/10-firmware-ota-procedure.md).")
+        say("if you re-commission afterwards and the stack takes the 'already commissioned' branch")
+        say("and never advertises BLE, run the break-glass ':wipekv' first: the Matter DCT")
+        say("(0x3E0000/0x3ED000) survives the stock round trip, so a stale fabric can linger.")
+        # Deliberately NOT writing .released-version: it tracks the CUSTOM line, and a later custom
+        # OTA must still be strictly greater than the version that was rolled back.
+    elif rc == 3:
+        die("revert did NOT take -- the unit is still running the custom firmware (healthy, not "
+            "bricked); see the [revert] lines above")
+    elif rc == 4:
+        revert_triage(cfg, ip or "<unit-ip>")
+        print(f"{C['red']}[dev] AMBIGUOUS:{C['off']} revert outcome UNKNOWN -- silence is neither success "
+              "nor a brick; run the triage checks above", file=sys.stderr)
+        sys.exit(4)
+    else:
+        die(f"revert --apply failed unexpectedly (exit {rc}) -- see the [revert] lines above")
+
+
+async def ws_revert_apply(url, node, v, ip, token, port, base):
+    """update_node with the stock image, then classify. Exit 0 = CONFIRMED on stock, 3 = CONFIRMED
+    still on custom (revert did not take, unit healthy), 4 = AMBIGUOUS. Never reports success from
+    silence: a healthy stock unit and a bootloader-rejected module both vanish from this fabric."""
+    import aiohttp
+
+    def slots_note(r):
+        m = re.match(SLOTS_RE, r)
+        if not m:
+            return f"break-glass answered {r!r}"
+        f1, f2, c = (int(x) for x in m.groups())
+        running = f1 if c == 1 else f2
+        return (f"break-glass answered: fw1_sn={f1} fw2_sn={f2} running=fw{c} "
+                f"(serial {running} = {'CUSTOM' if running >= base else 'stock'})")
+
+    def not_reverted(why):
+        print(f"[revert] VERDICT: NOT REVERTED -- {why}")
+        print("[revert] the module is HEALTHY and still running the custom firmware; nothing is bricked.")
+        print("[revert] retry 'revert --apply', or use 'revert --flip <ip>' if the other slot holds stock.")
+        sys.exit(3)
+
+    async def read_ident():
+        """Fresh (softwareVersion, vendorId) read, or (None, None) when the node is silent."""
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.ws_connect(url, heartbeat=30) as ws:
+                    await ws.receive(timeout=8)
+                    return await _ws_read(ws, node, "0/40/9", "g", 30), await _ws_read(ws, node, "0/40/1", "gv", 30)
+        except Exception:
+            return None, None
+
+    async def node_unavailable():
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.ws_connect(url, heartbeat=30) as ws:
+                    await ws.receive(timeout=8)
+                    g = await _ws_call(ws, "get_node", {"node_id": node}, "gn", 15)
+                    n = g.get("result") if g else None
+                    return isinstance(n, dict) and n.get("available") is False
+        except Exception:
+            return False
+
+    await _ws_update_node(url, node, v, "revert", f"v{v}")
+    # Classify. Stock reports softwareVersion 4 / vendor 5004 (0xFFF1 is the custom line), so a
+    # SUSTAINED 4 is a real confirmation. Nothing else is: this loop only gathers evidence and never
+    # concludes from silence. The decision happens after it.
+    good = cust = silent = 0
+    for _ in range(30):
+        got, vend = await read_ident()
+        if got == 4:
+            good, cust, silent = good + 1, 0, 0
+            print(f"[revert] unit reports stock softwareVersion 4 (vendor {vend}) ({good}/3)", flush=True)
+            if good >= 3:
+                print("[revert] VERDICT: REVERTED -- unit is on stock firmware (softwareVersion 4 sustained)")
+                return
+        elif got is not None:
+            good, silent, cust = 0, 0, cust + 1
+            print(f"[revert] unit still answers on softwareVersion {got} (vendor {vend}) ({cust} in a row) ...",
+                  flush=True)
+        else:
+            good, cust, silent = 0, 0, silent + 1
+            print(f"[revert] no answer from node {node} ({silent} in a row) -- expected on stock, "
+                  "equally expected on a dead module. Not a verdict.", flush=True)
+        await asyncio.sleep(12)
+    # No sustained stock version. Use the one signal that discriminates without a clip.
+    print("[revert] ~6 min without a sustained stock version; probing the break-glass listener", flush=True)
+    r = breakglass_slots(ip, token, port)
+    if r:
+        not_reverted(slots_note(r) + " -- so the custom firmware is still running and the OTA never took")
+    # A unit whose OTA failed can take a while to rejoin the fabric, and that comeback is a decisive
+    # negative. Give it one more window before declaring ambiguity.
+    print("[revert] silent. Waiting 180 s for a late comeback, then re-probing", flush=True)
+    await asyncio.sleep(180)
+    got, vend = await read_ident()
+    if got == 4:
+        print(f"[revert] VERDICT: REVERTED -- unit answered on stock softwareVersion 4 (vendor {vend}) after the wait")
+        return
+    if got is not None:
+        not_reverted(f"node {node} came back on softwareVersion {got} (vendor {vend}) -- the OTA never took")
+    r = breakglass_slots(ip, token, port)
+    if r:
+        not_reverted(slots_note(r) + " (after the wait) -- so the custom firmware is still running")
+    unavail = await node_unavailable()
+    print("[revert] VERDICT: AMBIGUOUS -- the unit is silent on every channel we own.")
+    print(f"[revert]   matter-server reports node {node} available=False: {unavail}. That is expected")
+    print("[revert]   for BOTH a healthy stock unit and a dead module, so it is NOT a verdict.")
+    if not ip or not token:
+        print("[revert]   no --ip (or no BREAKGLASS_TOKEN), so the one no-clip discriminator never ran.")
+    else:
+        print(f"[revert]   break-glass at {ip}:{port} did not answer: consistent with stock (which has")
+        print("[revert]   no listener) AND with a bootloader rejection.")
+    print("[revert] Stock also joins its OWN factory-provisioned network, so it may be invisible to")
+    print("[revert] us while perfectly healthy: absence from our VLAN is NOT evidence either.")
+    print("[revert] Do not record this as success and do not record it as a brick. Triage below.")
+    sys.exit(4)
+
+
+def revert(args):
+    sub = {"--backup": revert_backup, "--flip": revert_flip, "--repackage": revert_repackage,
+           "--apply": revert_apply, "--slots": revert_slots}.get(args[0] if args else "")
+    if not sub:
+        die("usage: dev.py ota amebaz2 revert {--backup <unit-ip> [out.bin]|--flip <unit-ip> [--force]|"
+            "--slots <unit-ip>|--repackage <stock-dump.bin>|--apply [--ip <unit-ip>] [--yes]}")
+    sub(args[1:])
+
+
+def release_amebaz2(args):
+    """build + package + stage (+ tag, + flash)."""
+    bump, debug, flash_after, tag_after = None, False, False, False
     for a in args:
         if a in ("--bump", "--bump-patch", "--bump-minor", "--bump-major"):
-            build_args = [a] + [b for b in build_args if b == "--debug"]
+            bump = a
         elif a == "--debug":
-            build_args.append(a)
-            flavour = "debug"
+            debug = True
         elif a == "--flash":
             flash_after = True
         elif a == "--tag":
@@ -1413,104 +2515,82 @@ def release_amebaz2(script, args):
             # Almost certainly a typo. Silently ignoring it is how a build ends up the wrong
             # flavour: `release --debug` once dropped the flag and shipped a console-less image.
             die(f"unknown flag for release: {a}")
-    build_amebaz2(build_args)
+    flavour = "debug" if debug else None
+    build_amebaz2(([bump] if bump else []) + (["--debug"] if debug else []))
     package_amebaz2(flavour)
-    env = dict(os.environ, HISENSE_FLAVOUR=flavour) if flavour else None
-    run(["bash", script, "stage"], env=env)
+    stage_amebaz2(flavour)
     if tag_after:
         tag_release()
     if flash_after:
-        run(["bash", script, "flash"], env=env)
+        flash_amebaz2()
     else:
         say("staged, not flashed. run: dev.py ota amebaz2 flash")
 
 
-# ---- ota: preflight/verify here; unported steps forward to the release scripts ---------------
-def _guards_bash(target, snippet):
-    """Run a snippet with ota-release.env sourced and ota-guards.sh available (its say/die/pi_now/
-    guard_* helpers). The guard logic stays in bash on purpose -- that is the engine. ota-guards.sh
-    reads HERE/REPO/ESP and calls say/die, so define them exactly as the release scripts do."""
-    script = (f'HERE="{HERE}"; REPO="{REPO}"; ESP="{ESP}"; '
-              f'set -a; . "{ENVF}"; set +a; '
-              f'''say() {{ printf '\\033[1;36m[dev]\\033[0m %s\\n' "$*"; }}; '''
-              f'''die() {{ printf '\\033[1;31m[dev] ERROR:\\033[0m %s\\n' "$*" >&2; exit 1; }}; '''
-              f'. "{HERE}/ota-guards.sh"; {snippet}')
-    return subprocess.run(["bash", "-c", script]).returncode
+# ---- ota: the AmebaZ2 steps run here; the ESP32 release steps still forward to its script -----
+def ota_preflight(node_key):
+    cfg = load_env(())
+    need(cfg, node_key, "MS_WS")
+    run(["bash", TEST / "run_tests.sh"], check=False)
+    ok("host QA incl. OTA guard tests")
+    guard_tools(cfg)
+    guard_link(cfg, cfg[node_key])
+    say(f"Pi clock reachable: {pi_now(cfg)}")
+
+
+def ota_verify(node_key, attr, want, also):
+    """Read the node's live version and compare it with the tree. `also` is a second accepted
+    spelling (the int form of the same version)."""
+    cfg = load_env(())
+    need(cfg, node_key, "MS_WS", "OTAENV_PY")
+    node = cfg[node_key]
+    got = ws_program(cfg, "read", cfg["MS_WS"], node, attr, capture=True)[1]
+    link = subprocess.run([cfg["OTAENV_PY"], str(HERE / "ota_guards.py"), "link", cfg["MS_WS"], str(node), "-200"],
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout.strip()
+    say(f"node {node} live version: {got}   (tree: {want})")
+    say(f"link: {link}")
+    if got not in (want, also):
+        die(f"node {node} reports {got}, expected {want}")
+    ok(f"node {node} is running {got}")
 
 
 def ota(ctx, step, rest):
-    rel = HERE / ("ota-release.sh" if ctx.target == "amebaz2" else "esp32-release.sh")
     if ctx.target == "esphome":
         die("ota is Matter-only (amebaz2 or esp32); ESPHome updates go through esphome run")
-    node_var = "ESP32_NODE_ID" if ctx.target == "esp32" else "NODE_ID"
-    if ctx.target == "amebaz2" and step in ("lint", "verint", "epoch", "tag", "build", "package", "release"):
-        if step == "lint":
-            lint()
-        elif step == "build":
-            build_amebaz2(rest)
-        elif step == "package":
-            package_amebaz2()
-        elif step == "release":
-            release_amebaz2(rel, rest)
-        elif step == "verint":   # an empty argument falls back to version.txt, as `${1:-...}` did
-            print(semver_to_int(rest[0] if rest and rest[0] else cur_semver()))
-        elif step == "epoch":
-            print(image_epoch())
-        else:
-            tag_release()
-    elif step == "preflight":
-        run(["bash", TEST / "run_tests.sh"], check=False)
-        ok("host QA incl. OTA guard tests")
-        rc = _guards_bash(ctx.target,
-                          f'node="${{{node_var}:?}}"; guard_tools; guard_link "$node"; '
-                          'say "Pi clock reachable: $(pi_now)"')
-        if rc != 0:
-            die("preflight failed (see above)")
+    if ctx.target == "amebaz2":
+        steps = {
+            "lint": lint,
+            "verint": lambda: print(semver_to_int(rest[0] if rest and rest[0] else cur_semver())),
+            "epoch": lambda: print(image_epoch()),
+            "tag": tag_release,
+            "build": lambda: build_amebaz2(rest),
+            "package": package_amebaz2,
+            "stage": stage_amebaz2,
+            "flash": flash_amebaz2,
+            "release": lambda: release_amebaz2(rest),
+            "publish": publish_amebaz2,
+            "revert": lambda: revert(rest),
+            "preflight": lambda: ota_preflight("NODE_ID"),
+            "verify": lambda: ota_verify("NODE_ID", "0/40/9", cur_semver(), str(cur_version())),
+        }
+        if step not in steps:
+            die("ota amebaz2 step must be one of: " + ", ".join(steps))
+        steps[step]()
+        return
+    rel = HERE / "esp32-release.sh"
+    if step == "preflight":
+        ota_preflight("ESP32_NODE_ID")
     elif step == "verify":
-        if ctx.target == "esp32":
-            attr = "0/40/10"
-            m = re.search(r'^set\(PROJECT_VER "(.*)"\)', (ESP / "CMakeLists.txt").read_text(), re.M)
-            want = m.group(1) if m else ""
-        else:
-            attr = "0/40/9"
-            want = (REPO / "firmware/src/version.txt").read_text().strip()
-        read_ver = (
-            'import asyncio,json,sys,aiohttp\n'
-            'U,N,A=sys.argv[1],int(sys.argv[2]),sys.argv[3]\n'
-            'async def m():\n'
-            ' async with aiohttp.ClientSession() as s:\n'
-            '  async with s.ws_connect(U) as ws:\n'
-            '   await ws.receive(timeout=10)\n'
-            '   await ws.send_json({"message_id":"v","command":"read_attribute","args":{"node_id":N,"attribute_path":A}})\n'
-            '   while True:\n'
-            '    d=json.loads((await ws.receive(timeout=40)).data)\n'
-            '    if d.get("message_id")=="v":\n'
-            '     r=d.get("result"); print(r.get(A) if isinstance(r,dict) else r); return\n'
-            'asyncio.run(m())\n')
-        # verint gives the same value in the ameba int form; accept either the semver or the int.
-        if ctx.target == "amebaz2":
-            verint = str(cur_version())
-        else:
-            verint = subprocess.run(["bash", str(rel), "verint"], stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, text=True).stdout.strip()
-        snippet = (
-            f'node="${{{node_var}:?}}"; '
-            f'got="$("$OTAENV_PY" -c \'{read_ver}\' "$MS_WS" "$node" "{attr}")"; '
-            f'rssi="$("$OTAENV_PY" "{HERE}/ota_guards.py" link "$MS_WS" "$node" -200 2>/dev/null || true)"; '
-            f'say "node $node live version: $got   (tree: {want})"; say "link: $rssi"; '
-            f'if [ "$got" = "{want}" ] || [ "$got" = "{verint}" ]; then '
-            f'printf \'  \\033[32mok\\033[0m    node %s is running %s\\n\' "$node" "$got"; '
-            f'else echo "node $node reports $got, expected {want}" >&2; exit 1; fi')
-        if _guards_bash(ctx.target, snippet) != 0:
-            die(f"node reports an unexpected version (expected {want})")
-    elif step in ("package", "stage", "flash", "release", "build", "publish", "tag", "verint", "revert"):
-        if step == "revert" and ctx.target != "amebaz2":
-            die("revert is AmebaZ2-only (back to the stock firmware, #19)")
-        rc = subprocess.run(["bash", str(rel), step, *rest]).returncode
-        sys.exit(rc)
+        m = re.search(r'^set\(PROJECT_VER "(.*)"\)', (ESP / "CMakeLists.txt").read_text(), re.M)
+        want = m.group(1) if m else ""
+        verint = subprocess.run(["bash", str(rel), "verint"], stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True).stdout.strip()
+        ota_verify("ESP32_NODE_ID", "0/40/10", want, verint)
+    elif step in ("package", "stage", "flash", "release", "build", "publish", "tag", "verint"):
+        sys.exit(subprocess.run(["bash", str(rel), step, *rest]).returncode)
     else:
-        die("ota step must be lint, verint, epoch, tag, preflight, verify, build, package, stage, "
-            "flash, release, publish or revert (lint and epoch are amebaz2-only)")
+        die("ota esp32 step must be preflight, verify, build, package, stage, flash, release, publish, "
+            "tag or verint")
 
 
 # ---- argument parsing + dispatch -------------------------------------------------------------
@@ -1556,6 +2636,9 @@ def main(argv):
     if argv[0] in ("-h", "--help", "help"):
         usage(0)
     cmd = argv[0]
+    if cmd == "_ws":   # internal: a websocket program, re-run under OTAENV_PY (see ws_program)
+        ws_main(argv[1:])
+        return
     target = argv[1] if len(argv) > 1 else ""
     if target not in ("amebaz2", "esp32", "esphome"):
         die(f"target must be amebaz2, esp32 or esphome (got '{target}')")

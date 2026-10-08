@@ -5,6 +5,7 @@ No SDK, no env file, no network. While ota-release.sh still exists its `verint` 
 dev.py on every input here, so the port cannot drift from the script it replaces.
 """
 
+import os
 import pathlib
 import subprocess
 import sys
@@ -136,6 +137,77 @@ check(m["otaFileSize"] == 3 and m["otaChecksum"] == "ungWv48Bz+pBQUDeXa4iI7ADYaO
 check(m["softwareVersion"] == 10344 and m["maxApplicableSoftwareVersion"] == 10343
       and m["minApplicableSoftwareVersion"] == 1, "manifest applies to every version below this one")
 check(list(m)[:4] == ["vid", "pid", "softwareVersion", "softwareVersionString"], "manifest key order is stable")
+
+# --- revert: the image recipe agrees with amebaz2_image.py, the format's reference module ---
+import amebaz2_image as az  # noqa: E402
+import json  # noqa: E402
+import struct  # noqa: E402
+import tempfile  # noqa: E402
+
+
+def synth_image(sizes, serial):
+    """A signature-valid image with len(sizes) sub-images, built by the reference module."""
+    body, offs = bytearray(0xE0), []
+    for n in sizes:
+        offs.append(len(body))
+        body += bytearray(0x60) + bytes(range(256)) * (n // 256) + bytes(0x20)
+    for i, off in enumerate(offs):
+        struct.pack_into("<I", body, off, sizes[i])
+        struct.pack_into("<I", body, off + 4, 0xFFFFFFFF if i == len(offs) - 1 else offs[i + 1] - off)
+    return az.resign(bytes(body), serial=serial)
+
+
+img = synth_image([0x400, 0x800, 0x300], 100)
+chain = dev.image_chain(img)
+check(chain is not None and all(m for _, _, m in chain) and len(chain) == 3, "a valid 3-sub-image chain walks and verifies")
+check([(h, e) for h, e, _ in chain] == [(hdr, end) for _, hdr, _, end in az.sub_images(img)],
+      "the chain walk finds the same headers and trailers as amebaz2_image")
+signed = dev.resign_stock(img, 11445)
+ref = az.resign(img, serial=11445)
+check(signed == ref + az.bytesum(ref), "resign_stock == amebaz2_image.resign + bytesum, byte for byte")
+check(az.verify(signed[:-4], signed[-4:])[0] and az.read_serial(signed) == 11445,
+      "the re-signed payload verifies in full and carries the new serial")
+stale = bytearray(img)
+struct.pack_into("<I", stale, 0xF4, 11445)   # the #75 brick: serial patched, trailers left alone
+check(not all(m for _, _, m in dev.image_chain(bytes(stale))), "a serial patch without re-signing is caught (#75)")
+check(dev.image_chain(img[:0x100]) is None, "a truncated image is unwalkable, not a crash")
+dump = b"\x00" * 0x10000 + b"\xff" * 0x2000
+check(dev.carve_stock(dump) is None, "a dump with no signed image carves nothing")
+
+with tempfile.TemporaryDirectory() as td:
+    bi = pathlib.Path(td)
+    check(dev.newest_stock_pair(bi) is None, "no revert pair on disk -> None")
+    for n in ("10340", "10345", "10350", "x1"):
+        (bi / f"rac-stock-v{n}.ota").write_bytes(b"o")
+    for n in ("10340", "10345"):
+        (bi / f"rac-stock-v{n}.json").write_text("{}")
+    check(dev.newest_stock_pair(bi) == 10345, "newest revert pair needs BOTH files (10350 has no manifest)")
+    (bi / "p.bin").write_bytes(signed)
+    (bi / "good.json").write_text(json.dumps({"modelVersion": {"payloadName": "p.bin"}}))
+    (bi / "old.json").write_text(json.dumps({"modelVersion": {}}))
+    (bi / "stale.bin").write_bytes(bytes(stale) + az.bytesum(bytes(stale)))
+    (bi / "stale.json").write_text(json.dumps({"modelVersion": {"payloadName": "stale.bin"}}))
+    (bi / "gone.json").write_text(json.dumps({"modelVersion": {"payloadName": "missing.bin"}}))
+    check(dev.verify_stock_payload(bi, bi / "good.json")[0], "apply accepts a fully verified payload")
+    check(not dev.verify_stock_payload(bi, bi / "old.json")[0], "apply refuses a manifest with no payloadName (pre-#75)")
+    good, why = dev.verify_stock_payload(bi, bi / "stale.json")
+    check(not good and "MISMATCH" in why, "apply refuses a payload with a stale trailer")
+    check(not dev.verify_stock_payload(bi, bi / "gone.json")[0], "apply refuses when the payload file is missing")
+
+check(dev.backup_file_tag("192.168.1.37") == "37", "IPv4 backup file tag is the last octet")
+check(dev.backup_file_tag("fe80::1ff:fe23:4567%wlan0") == "fe80-1ff-fe23-4567", "IPv6 tag drops the zone and sanitises")
+
+# --- staging: stale outputs are refused ---
+with tempfile.TemporaryDirectory() as td:
+    src, out = pathlib.Path(td) / "fw.bin", pathlib.Path(td) / "x.ota"
+    out.write_bytes(b"o")
+    src.write_bytes(b"f")
+    os.utime(out, (1000, 1000))
+    os.utime(src, (2000, 2000))
+    check(refused(dev.guard_fresh, src, out), "an .ota older than the image it came from is not staged")
+    os.utime(out, (3000, 3000))
+    check(not refused(dev.guard_fresh, src, out), "a fresh .ota passes")
+    check(refused(dev.guard_fresh, src, out, pathlib.Path(td) / "missing.json"), "a missing manifest is refused")
 
 # --- CLI, and parity with the script it replaces ---
 devpy = [sys.executable, str(SCRIPTS / "dev.py"), "ota", "amebaz2", "verint"]
