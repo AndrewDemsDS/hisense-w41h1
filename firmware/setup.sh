@@ -63,13 +63,14 @@ echo "== 2/4 clone connectedhomeip (Matter ${CHIP_BRANCH:-v1.4.2-branch}) @ ${CH
 checkout_pin "$ROOT/connectedhomeip" "${CHIP_PIN:-}"
 ( cd connectedhomeip && git submodule update --init --recursive --depth 1 )
 
-echo "== 3/4 place ameba-rtos-matter into the z2 component slot (${AMEBA_MATTER_BRANCH:-release/v1.4.2}) =="
+echo "== 3/4 place ameba-rtos-matter into the z2 component slot (${AMEBA_MATTER_BRANCH:-release/v1.4.2}) @ ${AMEBA_MATTER_PIN:-tip} =="
 MATTER_DIR="$ROOT/ameba-rtos-z2/component/common/application/matter"
 if [ ! -d "$MATTER_DIR/.git" ]; then
   mkdir -p "$(dirname "$MATTER_DIR")"
   git clone --branch "${AMEBA_MATTER_BRANCH:-release/v1.4.2}" --depth 1 \
       "${AMEBA_MATTER_REPO:-https://github.com/Ameba-AIoT/ameba-rtos-matter.git}" "$MATTER_DIR"
 fi
+checkout_pin "$MATTER_DIR" "${AMEBA_MATTER_PIN:-}"
 
 echo "== 4/4 wire it up: third_party symlink + version selection + ENABLE_MATTER =="
 ( cd "$ROOT/ameba-rtos-z2" && chmod u+x matter_setup.sh && ./matter_setup.sh amebaz2 )
