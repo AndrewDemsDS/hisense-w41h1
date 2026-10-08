@@ -1430,13 +1430,44 @@ def guard_tools(cfg, delta=False):
             die(f"IDF_PYTHON ({idf_py}) cannot import detools -- {idf_py} -m pip install detools")
 
 
+def read_link(cfg, node, min_rssi):
+    """(ok, text) from the link guard CLI, run under OTAENV_PY (it needs aiohttp)."""
+    r = subprocess.run([cfg["OTAENV_PY"], str(HERE / "ota_guards.py"), "link", cfg["MS_WS"], str(node),
+                        str(min_rssi)], stdout=subprocess.PIPE, text=True)
+    return r.returncode == 0, r.stdout.strip()
+
+
+def wait_for_node(cfg, node, timeout_s=300, pause_s=10, sleep=time.sleep):
+    """Block until the node answers a read through matter-server. `stage` restarts matter-server,
+    which reopens its port long before it can serve a node: a flash started in that window failed
+    its link check with "Server disconnected" (node 14, 1.3.45) or began update_node against a
+    server that was not ready (node 80, 1.1.17). Returns the last link text, or dies."""
+    waited, text = 0, ""
+    while True:
+        _, text = read_link(cfg, node, -200)   # any reading counts here, the guard judges it next
+        if ota_guards.NO_READING not in text and "link read failed" not in text:
+            if waited:
+                say(f"  node {node} answered after ~{waited} s")
+            return text
+        if waited >= timeout_s:
+            die(f"node {node} did not answer through matter-server within {timeout_s} s: {text}")
+        if not waited:
+            say(f"  waiting for node {node} to answer through matter-server (up to {timeout_s} s)")
+        sleep(pause_s)
+        waited += pause_s
+
+
 def guard_link(cfg, node):
     """RSSI (0/54/4) and read latency through matter-server, before any update_node."""
-    r = subprocess.run([cfg["OTAENV_PY"], str(HERE / "ota_guards.py"), "link", cfg["MS_WS"], str(node),
-                        cfg.get("OTA_MIN_RSSI") or "-70"], stdout=subprocess.PIPE, text=True)
-    out = r.stdout.strip()
-    if r.returncode == 0:
+    wait_for_node(cfg, node)
+    good, out = read_link(cfg, node, cfg.get("OTA_MIN_RSSI") or "-70")
+    if good:
         say(f"  link ok: {out}")
+    elif ota_guards.NO_READING in out:
+        # The override accepts a WEAK link. No reading at all is an unreachable node, and
+        # update_node against it only burns the retries.
+        die(f"link pre-flight failed for node {node}: {out}\n"
+            "     OTA_ALLOW_WEAK_LINK=1 covers a weak signal, not a node that does not answer.")
     elif cfg.get("OTA_ALLOW_WEAK_LINK") == "1":
         say(f"  WARNING: OTA_ALLOW_WEAK_LINK=1 -- {out}")
     else:

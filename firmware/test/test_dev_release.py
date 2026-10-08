@@ -225,6 +225,46 @@ check(m["pid"] == 0x8000 and m["minApplicableSoftwareVersion"] == 0 and m["maxAp
 d = subprocess.run([sys.executable, str(SCRIPTS / "dev.py"), "ota", "esp32", "verint"], capture_output=True, text=True)
 check(d.returncode == 0 and d.stdout.strip() == str(dev.esp_int()), "CLI esp32 verint prints only the int")
 
+# --- flash pre-flight: wait for the node, and what the weak-link override may excuse ---
+import ota_guards as og  # noqa: E402
+
+
+def with_link(answers, fn, *args, **kw):
+    """Run fn with dev.read_link replaced by a script of (ok, text) answers; the last one repeats."""
+    calls = []
+
+    def fake(cfg, node, min_rssi):
+        calls.append(min_rssi)
+        return answers[min(len(calls) - 1, len(answers) - 1)]
+    real, dev.read_link = dev.read_link, fake
+    try:
+        return fn(*args, **kw), calls
+    except dev.Die as e:
+        return e, calls
+    finally:
+        dev.read_link = real
+
+
+dead = (False, f"link read failed: ServerDisconnectedError\n{og.NO_READING} (node unreachable or 0/54/4 null)")
+weak = (False, "RSSI -73 dBm is below -70 dBm (OTA announce/BDX fails on this link)")
+fine = (True, "RSSI -60 dBm, read 0.10 s")
+res, calls = with_link([dead, dead, fine], dev.wait_for_node, {}, 14, sleep=lambda s: None)
+check(res == fine[1] and len(calls) == 3, "wait_for_node keeps polling through a restarting matter-server")
+res, calls = with_link([dead], dev.wait_for_node, {}, 14, timeout_s=30, sleep=lambda s: None)
+check(isinstance(res, dev.Die) and len(calls) == 4, "wait_for_node gives up after the timeout")
+res, _ = with_link([weak], dev.wait_for_node, {}, 80, sleep=lambda s: None)
+check(res == weak[1], "a weak reading still counts as the node answering")
+res, _ = with_link([weak], dev.guard_link, {"OTA_ALLOW_WEAK_LINK": "1"}, 80)
+check(not isinstance(res, dev.Die), "OTA_ALLOW_WEAK_LINK=1 lets a weak link through")
+res, _ = with_link([weak], dev.guard_link, {}, 80)
+check(isinstance(res, dev.Die), "a weak link is refused without the override")
+real_wait, dev.wait_for_node = dev.wait_for_node, lambda cfg, node: ""
+res, _ = with_link([dead], dev.guard_link, {"OTA_ALLOW_WEAK_LINK": "1"}, 80)
+dev.wait_for_node = real_wait
+check(isinstance(res, dev.Die) and "does not answer" in str(res),
+      "the override does not excuse a node with no reading at all")
+check(og.link_verdict(None, None)[1].startswith(og.NO_READING), "the no-reading verdict uses the shared marker")
+
 # --- CLI ---
 devpy = [sys.executable, str(SCRIPTS / "dev.py"), "ota", "amebaz2", "verint"]
 for arg in ("1.3.44", "1.0.0", "34", "0", "1.100.0", "1.2", "bogus"):
