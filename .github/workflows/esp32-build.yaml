@@ -1,0 +1,108 @@
+name: ESP32 build
+
+# Compile check for the ESP32 (esp-matter) firmware on a GitHub-hosted runner, at the ESP-IDF and
+# esp-matter pins in versions.env. It is the gate for SDK pin bumps: a PR that moves IDF_PIN or
+# ESP_MATTER_PIN builds against the proposed versions here, with no self-hosted runner involved.
+# Both SDKs are open source, so nothing proprietary is fetched (the AmebaZ2 build cannot do this).
+#
+# Compile-only. It proves the tree builds for both architectures. It does not measure the delta-OTA
+# patch size against the deployed base (that image is not in CI), and its output is never shipped:
+# releases still come from `dev.py ota esp32 release` on the box that holds the archived base.
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'firmware/esp32-matter/**'
+      - 'firmware/src/rs485-driver/**'
+      - 'versions.env'
+      - '.github/workflows/esp32-build.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/esp32-matter/**'
+      - 'firmware/src/rs485-driver/**'
+      - 'versions.env'
+      - '.github/workflows/esp32-build.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: esp32-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pins:
+    runs-on: ubuntu-latest
+    outputs:
+      idf: ${{ steps.read.outputs.idf }}
+      esp_matter: ${{ steps.read.outputs.esp_matter }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: read
+        run: |
+          # shellcheck source=/dev/null
+          . ./versions.env
+          echo "idf=${IDF_PIN:?}" >> "$GITHUB_OUTPUT"
+          echo "esp_matter=${ESP_MATTER_PIN:?}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: pins
+    runs-on: ubuntu-latest
+    # Espressif's own image for the pinned IDF tag: toolchains and the IDF Python env preinstalled.
+    container: espressif/idf:${{ needs.pins.outputs.idf }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Not interchangeable: Xtensa dev board vs the RISC-V C3 module that is deployed.
+        target: [esp32, esp32c3]
+    env:
+      ESP_MATTER_PATH: /opt/esp/esp-matter
+      ESP_MATTER_PIN: ${{ needs.pins.outputs.esp_matter }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # connectedhomeip's Linux prerequisites (esp-matter's install.sh bootstraps its environment).
+      - name: Host packages
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git gcc g++ pkg-config cmake curl libssl-dev \
+            libdbus-1-dev libglib2.0-dev libavahi-client-dev ninja-build python3-venv python3-dev \
+            python3-pip unzip libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev
+          git config --global --add safe.directory '*'
+
+      # esp-matter with its connectedhomeip submodule and bootstrapped environment is several GB and
+      # takes most of the job to prepare, so keep it per pin pair. A pin bump is a cache miss by design.
+      - name: Cache esp-matter
+        id: cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /opt/esp/esp-matter
+          key: esp-matter-${{ needs.pins.outputs.idf }}-${{ needs.pins.outputs.esp_matter }}
+
+      - name: Fetch esp-matter at the pin
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          . "$IDF_PATH/export.sh"
+          git init -q "$ESP_MATTER_PATH"
+          cd "$ESP_MATTER_PATH"
+          git remote add origin https://github.com/espressif/esp-matter.git
+          git fetch -q --depth 1 origin "$ESP_MATTER_PIN"
+          git checkout -q FETCH_HEAD
+          git submodule update --init --depth 1
+          (cd connectedhomeip/connectedhomeip && ./scripts/checkout_submodules.py --platform esp32 linux --shallow)
+          # --no-host-tool skips chip-tool/chip-cert, which the firmware build does not use.
+          ./install.sh --no-host-tool
+
+      - name: Build ${{ matrix.target }}
+        run: |
+          . "$IDF_PATH/export.sh"
+          . "$ESP_MATTER_PATH/export.sh"
+          cd firmware/esp32-matter
+          idf.py set-target "${{ matrix.target }}"
+          idf.py build
+          ls -l build/hisense_ac_matter.bin
