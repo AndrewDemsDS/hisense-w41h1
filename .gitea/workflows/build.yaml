@@ -34,4 +34,4 @@ jobs:
         run: python3 firmware/scripts/dev.py ota amebaz2 lint
 
       - name: Full AmebaZ2 SDK build (verifies serial + endpoints)
-        run: bash firmware/scripts/ota-release.sh build
+        run: python3 firmware/scripts/dev.py ota amebaz2 build

@@ -361,12 +361,14 @@ apply_build_info_order() {
 }
 # ---- build clock (SOURCE_DATE_EPOCH, #137) ---------------------------------
 # Every tracked path whose content can reach the AmebaZ2 image: the mirrored sources and
-# version.txt, the sync list, this script (it injects defines and SDK edits at build time), and
+# version.txt, the sync list, this script and dev.py (both inject defines and SDK edits at build
+# time, and dev.py is the builder CI uses as of #143), and
 # the SDK setup (pins, patches, overlay edits). Markdown under firmware/src never compiles in,
 # the same exclusion the CI version gate uses. ota-guards.sh only gates staging, so it is not
 # here; ota-release.env feeds the image too (break-glass host/token) but is untracked by design.
 IMAGE_INPUTS=(
   firmware/src ':(exclude)firmware/src/*.md'
+  firmware/scripts/dev.py
   firmware/scripts/ota-release.sh
   firmware/scripts/sync-files.sh
   firmware/setup.sh
