@@ -57,7 +57,6 @@ firmware/scripts/ota-release.env; the self-hosted runner copies its secrets file
 """
 
 import asyncio
-import atexit
 import base64
 import hashlib
 import hmac
@@ -434,7 +433,9 @@ def fetch(ctx):
                  "https://github.com/espressif/esp-idf.git", idf_path])
         else:
             say(f"{idf_path} exists; checking out {v['IDF_PIN']}")
-            run(["git", "-C", idf_path, "fetch", "--tags", "origin"])
+            # Not recursing: an on-demand submodule fetch dies on refs the submodule remotes no
+            # longer serve ("not our ref"), and the submodule update below fetches what the tag needs.
+            run(["git", "-C", idf_path, "fetch", "--tags", "--no-recurse-submodules", "origin"])
             run(["git", "-C", idf_path, "checkout", v["IDF_PIN"]])
             run(["git", "-C", idf_path, "submodule", "update", "--init", "--recursive"])
         run(["./install.sh", "esp32,esp32c3"], cwd=idf_path)
@@ -2957,10 +2958,19 @@ def use_esp_python():
             return
     if not (os.path.isfile(py) and os.access(py, os.X_OK)):
         die(f"ESP_PYTHON={py} is not an executable file")
-    shim = tempfile.mkdtemp(prefix="dev-esp-python.")
-    atexit.register(shutil.rmtree, shim, True)
+    # A PERMANENT directory, never a temp one: ESP-IDF's install.sh creates its Python env from
+    # the first python3 on PATH, and a venv's interpreter is a symlink to exactly that path. A shim
+    # removed at exit leaves every env built through it with a dangling python3, and the next
+    # install.sh then fails to recreate it.
+    shim = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+                        "w41h1-dev", "esp-python")
+    os.makedirs(shim, exist_ok=True)
     for name in ("python3", "python"):
-        os.symlink(py, os.path.join(shim, name))
+        link = os.path.join(shim, name)
+        if os.path.realpath(link) != os.path.realpath(py) or not os.path.islink(link):
+            if os.path.lexists(link):
+                os.remove(link)
+            os.symlink(py, link)
     os.environ["PATH"] = f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"
     say(f"ESP python: {py_minor(py) or '?'} ({py})")
 
