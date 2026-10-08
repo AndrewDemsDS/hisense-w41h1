@@ -31,7 +31,7 @@ jobs:
           cp "$W41H1_OTA_ENV" firmware/scripts/ota-release.env
 
       - name: Host lint (codec/map tests + .zap contiguity + version)
-        run: bash firmware/scripts/ota-release.sh lint
+        run: python3 firmware/scripts/dev.py ota amebaz2 lint
 
       - name: Full AmebaZ2 SDK build (verifies serial + endpoints)
         run: bash firmware/scripts/ota-release.sh build

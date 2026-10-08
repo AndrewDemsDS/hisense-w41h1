@@ -1,7 +1,7 @@
 name: QA
 
 # Hardware-free gate: the same checks the pre-commit hook runs (host codec + Matter<->A/C mapping +
-# virtual-AC round-trip, .zap endpoint contiguity, softwareVersion sanity via `ota-release.sh lint`),
+# virtual-AC round-trip, .zap endpoint contiguity, softwareVersion sanity via `dev.py ota amebaz2 lint`),
 # plus a PR-only check that firmware/src/version.txt strictly increases. No SDK, Pi, or chip.
 on:
   push:
@@ -54,7 +54,7 @@ jobs:
         run: bash firmware/scripts/esp32-lint.sh
 
       - name: Host QA + lint
-        run: bash firmware/scripts/ota-release.sh lint
+        run: python3 firmware/scripts/dev.py ota amebaz2 lint
 
       # The ESPHome variant has no other gate: its component is Python + C++ that the host tests
       # only reach through esphome_aircon_map.h, so a broken schema or a renamed option would
@@ -90,9 +90,9 @@ jobs:
           if git diff --quiet "$MERGE_BASE" -- firmware/src ':(exclude)firmware/src/**/*.md'; then
             echo "no firmware/src code change vs $BASE (merge-base $(git rev-parse --short "$MERGE_BASE")) -- bump not required"; exit 0
           fi
-          new=$(bash firmware/scripts/ota-release.sh verint "$(cat firmware/src/version.txt)")
+          new=$(python3 firmware/scripts/dev.py ota amebaz2 verint "$(cat firmware/src/version.txt)")
           oldsem=$(git show "$MERGE_BASE:firmware/src/version.txt" 2>/dev/null | tr -d '[:space:]' || true)
-          old=$(bash firmware/scripts/ota-release.sh verint "${oldsem:-0}" 2>/dev/null || echo 0)
+          old=$(python3 firmware/scripts/dev.py ota amebaz2 verint "${oldsem:-0}" 2>/dev/null || echo 0)
           echo "softwareVersion int: base($BASE)=$old  head=$new"
           if [ "${new:-0}" -le "$old" ]; then
             echo "::error::softwareVersion must strictly increase ($new <= $old) -- bump firmware/src/version.txt"
