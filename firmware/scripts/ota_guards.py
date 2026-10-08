@@ -42,6 +42,7 @@ import time
 MIN_RSSI_DBM = -70     # AnnounceOTAProvider / BDX failed at -76; succeeded at -58
 MAX_READ_S = 1.0       # healthy node answers in ~0.1 s; the failing one took 14 s
 ARCHIVE_SUFFIX = ".archived"
+NO_READING = "no RSSI reading"   # the link verdict when the node did not answer at all
 
 
 def image_flavour(data: bytes, marker: bytes) -> str:
@@ -68,7 +69,7 @@ def stale_outputs(input_mtime: float, outputs: dict) -> list:
 def link_verdict(rssi, read_s, min_rssi=MIN_RSSI_DBM, max_s=MAX_READ_S):
     """(ok, reason). rssi None means the read failed or the attribute is null."""
     if rssi is None:
-        return False, "no RSSI reading (node unreachable or 0/54/4 null)"
+        return False, f"{NO_READING} (node unreachable or 0/54/4 null)"
     if rssi < min_rssi:
         return False, f"RSSI {rssi} dBm is below {min_rssi} dBm (OTA announce/BDX fails on this link)"
     if read_s is not None and read_s > max_s:
