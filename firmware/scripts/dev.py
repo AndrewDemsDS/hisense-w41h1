@@ -6,8 +6,9 @@ It is becoming the release engine too (#143). The AmebaZ2 steps that need no SDK
 and every other AmebaZ2 step (build, package, stage, flash, release, publish, revert) are
 implemented here. Their decisions are plain functions with host tests
 (firmware/test/test_dev_release.py, test_image_epoch.sh); ota_guards.py keeps the guard verdicts
-both targets share. The ESP32 release steps still forward to esp32-release.sh, and ota-release.sh
-stays until nothing references it. The helpers dev.py calls (run_tests.sh, esp32-lint.sh,
+both targets share. The ESP32 release steps (delta OTA against the archived deployed base, #82)
+are implemented here as well. ota-release.sh and esp32-release.sh stay until nothing references
+them. The helpers dev.py calls (run_tests.sh, esp32-lint.sh,
 firmware/setup.sh, scripts/setup.sh) are separate tools, not release logic. Every external command
 is printed before it runs. Run it as
 `python3 firmware/scripts/dev.py <cmd> <target> [opts]`.
@@ -42,9 +43,12 @@ OTA steps, `dev.py ota amebaz2 <step>`:
   stage | flash | publish               Pi staging | OTA + verify | upload the deployed files
   revert --backup <ip> [out.bin] | --flip <ip> [--force] | --slots <ip> |
          --repackage <stock-dump.bin> | --apply [--ip <ip>] [--yes]   back to stock firmware (#19)
-OTA steps, `dev.py ota esp32 <step>`:
-  preflight | verify, and build | package | stage | flash | release | publish | tag | verint,
-  forwarded to esp32-release.sh
+OTA steps, `dev.py ota esp32 <step>` (the IDF + esp-matter env is sourced when idf.py is not on PATH):
+  build                                  refuse unless the deployed base is archived, build, archive
+  package [--full]                       delta patch vs the archived base -> .ota + manifest
+  stage | flash | tag | publish | verint | release [--flash] | preflight | verify
+ESP32 env switches: ESP32_FLAVOUR=release|debug (default debug), ESP32_TARGET, ESP32_NODE_FLAVOUR,
+ESP32_ALLOW_IDF_MISMATCH=1, ESP32_ALLOW_NO_RECOVERY=1.
 
 Targets: amebaz2 | esp32 | esphome. Board (esp32/esphome): --board c3 (ESP32-C3 SuperMini, default)
 or --board classic (ESP32-D0WDQ6). Env: IDF_PATH / ESP_MATTER_PATH (esp32; default ~/esp/esp-idf and
@@ -492,7 +496,7 @@ def build(ctx):
         env = esp_env()
         ensure_target(ESP, ctx.idf_tgt, env)
         run(["idf.py", "build"], env=env, cwd=ESP)
-        say("dev build only. A shippable OTA goes through esp32-release.sh (delta base archive, #82).")
+        say("dev build only. A shippable OTA goes through `dev.py ota esp32 build` (delta base archive, #82).")
     elif ctx.target == "esphome":
         ctx.esphome_run("compile")
 
@@ -842,18 +846,21 @@ def guard_runner(slug=""):
     say(f"           then push. Check: gh api repos/{slug}/actions/runners --jq '.runners[] | {{name, status}}'")
 
 
-def tag_release():
-    """Create the path-prefixed semver tag amebaz2-vX.Y.Z locally (#77). Never pushed here."""
-    semver = cur_semver()
-    tag = f"amebaz2-v{semver}"
+def make_tag(tag, message, done):
+    """Create a signed, path-prefixed semver tag locally (#77). Never pushed here."""
     if git_out("rev-parse", "-q", "--verify", f"refs/tags/{tag}")[0] == 0:
         say(f"tag {tag} already exists -- leaving it")
     else:
-        run(["git", "-C", REPO, "tag", "-s", tag, "-m",
-             f"AmebaZ2 firmware {semver} (softwareVersion {cur_version()})"])
-        say(f"tagged {tag} (softwareVersion {cur_version()})")
+        run(["git", "-C", REPO, "tag", "-s", tag, "-m", message])
+        say(done)
     guard_runner()
     say(f"push with: git push origin {tag}")
+
+
+def tag_release():
+    semver, v = cur_semver(), cur_version()
+    make_tag(f"amebaz2-v{semver}", f"AmebaZ2 firmware {semver} (softwareVersion {v})",
+             f"tagged amebaz2-v{semver} (softwareVersion {v})")
 
 
 # ---- release engine: AmebaZ2 build + package, ported from ota-release.sh (#143) ----------------
@@ -1337,14 +1344,14 @@ AMEBA_CONSOLE_MARK = b"diag console listening"   # the :2323 console's own log s
 CLIP_SIZE = 4194304                               # the module's 4 MB SPI flash
 
 
-def ota_manifest(ota_bytes, v, semver, otaurl):
+def ota_manifest(ota_bytes, v, semver, otaurl, vid=0xFFF1, pid=0x8001, min_version=1):
     """The python-matter-server provider manifest for one .ota (key order is the wire order)."""
     return {"modelVersion": {
-        "vid": 0xFFF1, "pid": 0x8001, "softwareVersion": v, "softwareVersionString": semver,
+        "vid": vid, "pid": pid, "softwareVersion": v, "softwareVersionString": semver,
         "cdVersionNumber": 1, "firmwareInformation": "", "softwareVersionValid": True,
         "otaUrl": otaurl, "otaFileSize": len(ota_bytes),
         "otaChecksum": base64.b64encode(hashlib.sha256(ota_bytes).digest()).decode(),
-        "otaChecksumType": 1, "minApplicableSoftwareVersion": 1,
+        "otaChecksumType": 1, "minApplicableSoftwareVersion": min_version,
         "maxApplicableSoftwareVersion": v - 1, "releaseNotesUrl": ""}}
 
 
@@ -2527,7 +2534,337 @@ def release_amebaz2(args):
         say("staged, not flashed. run: dev.py ota amebaz2 flash")
 
 
-# ---- ota: the AmebaZ2 steps run here; the ESP32 release steps still forward to its script -----
+# ---- ESP32 (esp-matter) release engine, ported from esp32-release.sh (#143) -------------------
+# It mechanises the two things that have gone wrong on this target:
+#   * #82: ESP-IDF builds are NOT byte-reproducible and `idf.py build` overwrites build/, so the
+#     exact DEPLOYED image (the delta base) is easily lost. `build` REFUSES to run unless the
+#     currently-released base is archived in built-images/, then archives the fresh image itself.
+#     Losing the 1.0.3 base once stranded the node on USB-only flashing.
+#   * delta-only OTA: CONFIG_ENABLE_DELTA_OTA=y makes the device REJECT a full image, so `package`
+#     builds a delta patch against the archived base and wraps THAT as the .ota.
+# The version comes from CMakeLists.txt PROJECT_VER, same int scheme as AmebaZ2 (#77);
+# esp32-lint.sh enforces PROJECT_VER <-> sdkconfig sync.
+ESP_IMG = REPO / "firmware/built-images"
+ESP_NEW_BIN = ESP / "build/hisense_ac_matter.bin"
+ESP_CONSOLE_MARK = b"diagnostic console listening"
+
+
+def esp_semver():
+    m = re.search(r'^set\(PROJECT_VER "(.*)"\)', (ESP / "CMakeLists.txt").read_text(), re.M)
+    if not m or not m.group(1):
+        die(f"could not parse PROJECT_VER from {ESP / 'CMakeLists.txt'}")
+    return m.group(1)
+
+
+def esp_semver_to_int(s):
+    s = "".join(str(s).split())
+    m = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", s)
+    if not m:
+        die(f"PROJECT_VER '{s}' is not semver MAJOR.MINOR.PATCH")
+    major, minor, patch = (int(x) for x in m.groups())
+    if minor >= 100 or patch >= 100:
+        die(f"minor/patch must be < 100 for the int mapping: '{s}'")
+    return major * 10000 + minor * 100 + patch
+
+
+def esp_int():
+    return esp_semver_to_int(esp_semver())
+
+
+def esp_target():
+    """The archive namespace is PER-TARGET: an esp32 (Xtensa) and an esp32c3 (RISC-V) build can
+    carry the same PROJECT_VER, and a delta against the wrong architecture's base is meaningless.
+    Taken from the generated sdkconfig so the base lookup, the archive name and the patch
+    generator's --chip all agree. esp32 when sdkconfig is absent (fresh checkout)."""
+    return sdkconfig_target(ESP) or "esp32"
+
+
+def esp_released_mark():
+    """softwareVersion int last CONFIRMED booted, PER TARGET. One shared file was wrong the moment
+    two architectures existed: releasing to the C3 wrote its version into the mark the esp32 path
+    reads. A function, not a constant: the target is only known once sdkconfig exists."""
+    return ESP_IMG / f".released-version-{esp_target()}"
+
+
+def esp_released_int():
+    mark = esp_released_mark()
+    return int(mark.read_text().strip()) if mark.is_file() else 0
+
+
+def lock_idf_version(text):
+    """The `version:` under dependencies.lock's top-level `idf:` block, '' when absent."""
+    inside = False
+    for ln in text.splitlines():
+        if ln == "  idf:":
+            inside = True
+        elif inside and ln.startswith("    version:"):
+            return re.sub(r"""[\r"']""", "", ln.split("version:", 1)[1]).strip()
+    return ""
+
+
+def live_idf_version(env):
+    """'ESP-IDF v5.5.4' / 'ESP-IDF v5.5.4-dirty' -> 5.5.4"""
+    out = subprocess.run(["idf.py", "--version"], env=env, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, text=True).stdout
+    found = re.findall(r"ESP-IDF v([0-9][0-9.]*)", out)
+    return found[-1] if found else ""
+
+
+def assert_idf_matches_lock(env):
+    """dependencies.lock records the IDF that produced the last committed build. Another IDF still
+    boots, but the whole binary shifts: the delta patch balloons (45 KB became 854 KB) and the lock
+    is silently rewritten. Checked BEFORE the build, because the build itself rewrites the lock."""
+    lock = ESP / "dependencies.lock"
+    want = lock_idf_version(lock.read_text()) if lock.is_file() else ""
+    live = live_idf_version(env)
+    if not want:
+        say("no IDF version in dependencies.lock -- skipping toolchain check")
+        return
+    if not live:
+        die("could not determine the live IDF version from 'idf.py --version'")
+    if want != live:
+        die(f"IDF MISMATCH: dependencies.lock expects v{want} but the sourced IDF is v{live} "
+            f"(IDF_PATH={env.get('IDF_PATH', 'unset')}).\n"
+            f"     Source the matching export.sh and rebuild, e.g.  source ~/esp/esp-idf-v{want}/export.sh\n"
+            "     Building on the wrong IDF still boots but shifts the whole binary: the delta-OTA patch\n"
+            "     balloons and dependencies.lock is silently rewritten. If the bump is INTENTIONAL, re-run with\n"
+            "     ESP32_ALLOW_IDF_MISMATCH=1 and commit the resulting dependencies.lock change deliberately.")
+    say(f"IDF v{live} matches dependencies.lock")
+
+
+def esp_archived_image(want):
+    """The archived full image for a version int in this target's namespace, or None."""
+    for f in sorted(ESP_IMG.glob(f"{esp_target()}-hisense_ac_matter-v*.bin")):
+        m = re.search(r"-v([0-9]*\.[0-9]*\.[0-9]*)(-DELTA-BASE)?\.bin$", str(f))
+        try:
+            if m and esp_semver_to_int(m.group(1)) == want:
+                return f
+        except Die:
+            continue
+    return None
+
+
+def esp_release_env():
+    """The IDF + esp-matter environment: the caller's when it already has idf.py (CI sources
+    export.sh first), else sourced here."""
+    return dict(os.environ) if have("idf.py") else esp_env()
+
+
+def build_esp32():
+    # The env file is loaded here too: the recovery-credential guard below must see BREAKGLASS_TOKEN.
+    cfg = load_env(("VID", "PID"))
+    env = esp_release_env()
+    if not shutil.which("idf.py", path=env.get("PATH")):
+        die("idf.py not on PATH -- source the IDF + esp-matter env first")
+    if cfg.get("ESP32_ALLOW_IDF_MISMATCH") == "1":
+        lock = ESP / "dependencies.lock"
+        say("WARNING: ESP32_ALLOW_IDF_MISMATCH=1 -- toolchain check skipped (lock "
+            f"v{lock_idf_version(lock.read_text()) if lock.is_file() else ''} vs live v{live_idf_version(env)})")
+    else:
+        assert_idf_matches_lock(env)
+    semver, v, rel = esp_semver(), esp_int(), esp_released_int()
+    run(["bash", HERE / "esp32-lint.sh"])   # PROJECT_VER <-> sdkconfig sync + semver bounds
+    if v <= rel:
+        die(f"PROJECT_VER {semver} (int {v}) is not > last released ({rel}) -- bump PROJECT_VER + sdkconfig (#77)")
+    # #82 gate: the currently-DEPLOYED image is the delta base for the NEXT release. It must be
+    # archived before this build overwrites build/.
+    if rel > 0:
+        if esp_archived_image(rel) is None:
+            die(f"released image (int {rel}) not archived in built-images/ -- recover the exact deployed "
+                ".bin FIRST (#82); refusing to overwrite build/")
+        say(f"#82 ok: released base (int {rel}) is archived")
+    else:
+        say("#82: no prior release recorded -- first build, nothing to preserve")
+    # Recovery credentials. The Identify=88 OTA fetch target and the :2324 break-glass listener are
+    # baked at BUILD time and are the only two remote ways back into this node. Without them the
+    # image looks healthy and is quietly USB-only (node 35, 2026-07-20). ota-release.env defines
+    # BREAKGLASS_TOKEN / BREAKGLASS_PORT but CMakeLists.txt consumes the HISENSE_* names, so accept
+    # either spelling and export the names the build reads. Export only the ones that carry a
+    # value: CMake gates on DEFINED ENV{...}, and an exported-but-EMPTY port becomes htons() with
+    # no argument and kills the build.
+    creds = {"HISENSE_OTA_URL": cfg.get("HISENSE_OTA_URL", ""),
+             "HISENSE_BREAKGLASS_TOKEN": cfg.get("HISENSE_BREAKGLASS_TOKEN") or cfg.get("BREAKGLASS_TOKEN", ""),
+             "HISENSE_BREAKGLASS_PORT": cfg.get("HISENSE_BREAKGLASS_PORT") or cfg.get("BREAKGLASS_PORT", "")}
+    for k, val in creds.items():
+        if val:
+            env[k] = val
+        else:
+            env.pop(k, None)
+    if cfg.get("ESP32_ALLOW_NO_RECOVERY") != "1":
+        if not creds["HISENSE_OTA_URL"]:
+            die("HISENSE_OTA_URL is unset -- the Identify=88 OTA fetch would bake a placeholder URL and\n"
+                "     the image would be USB-only. Set it (ota-release.env or the environment), or pass\n"
+                "     ESP32_ALLOW_NO_RECOVERY=1 if you really want a bench image with no remote recovery.")
+        if not creds["HISENSE_BREAKGLASS_TOKEN"]:
+            die("no break-glass token (set BREAKGLASS_TOKEN or HISENSE_BREAKGLASS_TOKEN) -- the :2324\n"
+                "     listener fails closed and never opens, so the image would be USB-only. Set it, or pass\n"
+                "     ESP32_ALLOW_NO_RECOVERY=1.")
+        say("recovery credentials present (OTA URL + break-glass token exported to the build)")
+    else:
+        say("WARNING: ESP32_ALLOW_NO_RECOVERY=1 -- image will have NO remote recovery path (USB only)")
+    # Flavour. The dev node runs DEBUG on purpose, and the :2323 console is gated on
+    # CONFIG_HISENSE_DEBUG_BUILD, which lives only in sdkconfig.debug. Debug is the default here;
+    # opt out with ESP32_FLAVOUR=release (an env var, there is no --release flag).
+    flavour = cfg.get("ESP32_FLAVOUR") or "debug"
+    sdkdef = "sdkconfig.defaults"
+    if flavour == "debug":
+        sdkdef = "sdkconfig.defaults;sdkconfig.debug"
+        say("flavour: DEBUG (:2323 console + tx probe)")
+    else:
+        say("flavour: RELEASE (no console) -- node 28 normally wants debug")
+    # The target comes from the existing sdkconfig (ESP32_TARGET overrides). A hardcoded esp32 once
+    # flipped an esp32c3 tree back to Xtensa and wiped its build/ with nothing in the log saying so.
+    target = cfg.get("ESP32_TARGET") or esp_target()
+    say(f"idf.py build ({semver}, int {v}, target {target})")
+    run(["idf.py", f"-DSDKCONFIG_DEFAULTS={sdkdef}", "set-target", target], env=env, cwd=ESP)
+    run(["idf.py", f"-DSDKCONFIG_DEFAULTS={sdkdef}", "build"], env=env, cwd=ESP)
+    if not ESP_NEW_BIN.is_file():
+        die(f"build produced no {ESP_NEW_BIN}")
+    if flavour == "debug":   # fail loudly rather than ship a consoleless image by accident
+        if not re.search(r"^CONFIG_HISENSE_DEBUG_BUILD=y", (ESP / "sdkconfig").read_text(), re.M):
+            die("debug flavour requested but CONFIG_HISENSE_DEBUG_BUILD is not set in the generated "
+                "sdkconfig -- the :2323 console would be MISSING from this image")
+        say("verified: CONFIG_HISENSE_DEBUG_BUILD=y (console present)")
+    ESP_IMG.mkdir(parents=True, exist_ok=True)
+    archive = ESP_IMG / f"{esp_target()}-hisense_ac_matter-v{semver}.bin"
+    shutil.copyfile(ESP_NEW_BIN, archive)
+    say(f"archived fresh image -> {archive}")
+
+
+def package_esp32(args=()):
+    cfg = load_env(("VID", "PID"))
+    full = bool(args) and args[0] == "--full"
+    semver, v, rel = esp_semver(), esp_int(), esp_released_int()
+    # The ESP32 commissions with esp-matter's TEST PID 0x8000, DISTINCT from the AmebaZ2's 0x8001.
+    # matter-server only serves an OTA whose manifest pid matches the device's.
+    pid = cfg.get("ESP32_PID") or "0x8000"
+    if not ESP_NEW_BIN.is_file():
+        die(f"no {ESP_NEW_BIN} -- run build first")
+    tool = cfg.get("OTA_IMAGE_TOOL") or die("set OTA_IMAGE_TOOL to the connectedhomeip src/app/ota_image_tool.py path")
+    ota, manifest, patch = ESP_IMG / f"esp32-v{v}.ota", ESP_IMG / f"esp32-v{v}.json", ESP_IMG / f"esp32-v{v}.patch"
+    otaurl = f"file:///esp32-v{v}.ota"
+    # The flavour is read from the image bytes, the only place it can be read: nothing on the wire
+    # reports a running node's flavour, so ESP32_NODE_FLAVOUR records what the target node runs.
+    want = cfg.get("ESP32_FLAVOUR") or "debug"
+    node_flavour = cfg.get("ESP32_NODE_FLAVOUR", "")
+    if node_flavour and node_flavour != want:
+        die(f"node {cfg.get('ESP32_NODE_ID', '')} runs the {node_flavour} flavour but ESP32_FLAVOUR is {want} "
+            f"-- rebuild with ESP32_FLAVOUR={node_flavour}")
+    have_flavour = ota_guards.image_flavour(ESP_NEW_BIN.read_bytes(), ESP_CONSOLE_MARK)
+    why = ota_guards.flavour_mismatch(have_flavour, want)
+    if why:
+        die(f"{why} ({ESP_NEW_BIN})")
+    say(f"  flavour ok: {have_flavour}")
+    guard_functional_delta("esp32-v*", "firmware/esp32-matter/main", "firmware/esp32-matter/components",
+                           "firmware/src/rs485-driver")
+    # Clear this int's old outputs, so a package that dies half way cannot leave an older build's
+    # .ota/.json for stage to ship.
+    ESP_IMG.mkdir(parents=True, exist_ok=True)
+    for f in (ota, manifest, patch):
+        f.unlink(missing_ok=True)
+    if cfg.get("OTA_RELEASE_BASE"):
+        otaurl = f"{cfg['OTA_RELEASE_BASE'].rstrip('/')}/esp32-v{semver}/esp32-v{v}.ota"
+    if full or rel == 0:
+        say("packaging FULL image (--full)" if full else "packaging FULL image (no prior release to delta against)")
+        say("NOTE: a delta-OTA-enabled device REJECTS a full image -- only use --full for the first flash / "
+            "a base recovery")
+        payload = ESP_NEW_BIN
+    else:
+        gen = cfg.get("DELTA_PATCH_GEN") or die("set DELTA_PATCH_GEN to esp_delta_ota_patch_gen.py")
+        idf_py = cfg.get("IDF_PYTHON") or die("set IDF_PYTHON to the IDF python env (has detools+esptool)")
+        if subprocess.run([idf_py, "-c", "import detools"], stderr=subprocess.DEVNULL).returncode != 0:
+            die(f"IDF_PYTHON ({idf_py}) cannot import detools -- {idf_py} -m pip install detools")
+        base = esp_archived_image(rel) or die(f"delta base for int {rel} not in built-images/ (#82)")
+        payload = patch
+        say(f"delta patch vs base {base.name} -> {payload.name}")
+        run([idf_py, gen, "create_patch", "--chip", esp_target(), "--base_binary", base,
+             "--new_binary", ESP_NEW_BIN, "--patch_file_name", payload])
+    # minApplicableSoftwareVersion=0 (NOT 1 like AmebaZ2): this firmware leaves the softwareVersion
+    # INT unwired (reports 0), so an OTA with min=1 is never offered to it.
+    say(f"wrap {payload.name} as {ota.name} (vn={v} vs={semver} vid={cfg['VID']} pid={pid})")
+    r = subprocess.run(["python3", tool, "create", "-v", cfg["VID"], "-p", pid, "-vn", str(v), "-vs", semver,
+                        "-da", "sha256", "-mi", "0", "-ma", str(v - 1), str(payload), str(ota)],
+                       stdout=subprocess.DEVNULL)
+    if r.returncode != 0:
+        die("ota_image_tool.py create failed")
+    manifest.write_text(json.dumps(ota_manifest(ota.read_bytes(), v, semver, otaurl, int(cfg["VID"], 0),
+                                                int(pid, 0), 0)) + "\n")
+    say(f"  ota:  {ota}")
+    say(f"  json: {manifest}  (otaUrl={otaurl})")
+
+
+def stage_esp32():
+    cfg = load_env(("VID", "PID"))
+    need(cfg, "PI_HOST", "PI_OTA_DIR", "PI_SSH_KEY")
+    v = esp_int()
+    ota, manifest = ESP_IMG / f"esp32-v{v}.ota", ESP_IMG / f"esp32-v{v}.json"
+    say(f"stage esp32-v{v} on {cfg['PI_HOST']}:{cfg['PI_OTA_DIR']} + restart matter-server")
+    guard_fresh(ESP_NEW_BIN, ota, manifest)
+    pi_stage(cfg, manifest, ota)
+    # Mirror the RAW image too, so the break-glass full-image path always has the deployed bin
+    # (losing it stranded node 80). esp32-ota.bin is the compile-time URL C3 nodes fetch.
+    flavour = cfg.get("ESP32_FLAVOUR") or "debug"
+    pi_http_publish(cfg, ESP_NEW_BIN, "esp32-ota.bin", f"{esp_target()}-v{v}-{flavour}.bin", ESP_CONSOLE_MARK)
+
+
+def flash_esp32():
+    cfg = load_env(("VID", "PID"))
+    need(cfg, "OTAENV_PY", "MS_WS")
+    node = cfg.get("ESP32_NODE_ID") or die("set ESP32_NODE_ID in ota-release.env (the ESP32 node, e.g. 28)")
+    v, semver = esp_int(), esp_semver()
+    say(f"pre-flight: tools + link to node {node}")
+    guard_tools(cfg)
+    guard_link(cfg, node)
+    since = pi_now(cfg)
+    say(f"flash esp32-v{v} ({semver}) to node {node} (retries; verify the reported version changed)")
+    # update_node selects the OTA by the INT, but the result is verified by the STRING (0/40/10):
+    # this firmware leaves the int (0/40/9) unwired, so checking it would never confirm success.
+    if ws_program(cfg, "flash", cfg["MS_WS"], node, v, "esp32", semver)[0] != 0:
+        die(f"flash verification failed for v{v} -- version string not sustained or the subscription "
+            "gate failed (#64); see the [flash] lines above")
+    esp_released_mark().write_text(f"{v}\n")
+    say(f"recorded on-device version {v} ({esp_target()})")
+    check_subscription_log(cfg, node, since)
+
+
+def tag_esp32():
+    semver = esp_semver()
+    make_tag(f"esp32-v{semver}", f"ESP32 firmware {semver} (softwareVersion {esp_int()})", f"tagged esp32-v{semver}")
+
+
+def publish_esp32():
+    """Upload the DEPLOYED artifacts (#89). Most acute here: delta OTA embeds the BASE image's hash
+    and the device verifies it against its running partition, so a patch built against a CI rebuild
+    is rejected. The release asset has to be the archived deployed .bin."""
+    if not shutil.which("gh"):
+        die("gh not on PATH -- needed to upload release assets")
+    rel = esp_released_int()
+    if rel == 0:
+        die("no on-device version recorded -- run 'flash' first")
+    tag = f"esp32-v{int_to_semver(rel)}"
+    if subprocess.run(["gh", "release", "view", tag], cwd=str(REPO), stdout=subprocess.DEVNULL,
+                      stderr=subprocess.DEVNULL).returncode != 0:
+        die(f"no release {tag} -- push the tag first")
+    base = esp_archived_image(rel) or die(f"deployed image (int {rel}) not archived in built-images/ (#82) "
+                                          "-- nothing trustworthy to publish")
+    n = gh_release_upload(tag, [base, ESP_IMG / f"esp32-v{rel}.ota", ESP_IMG / f"esp32-v{rel}.json"])
+    say(f"published {n} deployed artifact(s) to {tag} -- THIS is the valid delta base for the next release")
+
+
+def release_esp32(args):
+    for a in args:
+        if a != "--flash":
+            die(f"unknown flag for release: {a}")
+    build_esp32()
+    package_esp32()
+    stage_esp32()
+    if "--flash" in args:
+        flash_esp32()
+    else:
+        say("staged, not flashed. run: dev.py ota esp32 flash")
+
+
+# ---- ota: every release step of both Matter targets ----------------------------------------
 def ota_preflight(node_key):
     cfg = load_env(())
     need(cfg, node_key, "MS_WS")
@@ -2577,20 +2914,21 @@ def ota(ctx, step, rest):
             die("ota amebaz2 step must be one of: " + ", ".join(steps))
         steps[step]()
         return
-    rel = HERE / "esp32-release.sh"
-    if step == "preflight":
-        ota_preflight("ESP32_NODE_ID")
-    elif step == "verify":
-        m = re.search(r'^set\(PROJECT_VER "(.*)"\)', (ESP / "CMakeLists.txt").read_text(), re.M)
-        want = m.group(1) if m else ""
-        verint = subprocess.run(["bash", str(rel), "verint"], stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True).stdout.strip()
-        ota_verify("ESP32_NODE_ID", "0/40/10", want, verint)
-    elif step in ("package", "stage", "flash", "release", "build", "publish", "tag", "verint"):
-        sys.exit(subprocess.run(["bash", str(rel), step, *rest]).returncode)
-    else:
-        die("ota esp32 step must be preflight, verify, build, package, stage, flash, release, publish, "
-            "tag or verint")
+    steps = {
+        "verint": lambda: print(esp_int()),
+        "tag": tag_esp32,
+        "build": build_esp32,
+        "package": lambda: package_esp32(rest),
+        "stage": stage_esp32,
+        "flash": flash_esp32,
+        "release": lambda: release_esp32(rest),
+        "publish": publish_esp32,
+        "preflight": lambda: ota_preflight("ESP32_NODE_ID"),
+        "verify": lambda: ota_verify("ESP32_NODE_ID", "0/40/10", esp_semver(), str(esp_int())),
+    }
+    if step not in steps:
+        die("ota esp32 step must be one of: " + ", ".join(steps))
+    steps[step]()
 
 
 # ---- argument parsing + dispatch -------------------------------------------------------------
@@ -2643,7 +2981,8 @@ def main(argv):
     if target not in ("amebaz2", "esp32", "esphome"):
         die(f"target must be amebaz2, esp32 or esphome (got '{target}')")
     rest = argv[2:]
-    if target == "esp32":
+    # Only where a build can follow: the note it prints must not land in `ota esp32 verint` output.
+    if target == "esp32" and (cmd != "ota" or (rest[:1] or [""])[0] in ("build", "release")):
         use_esp_python()
 
     # `ota` forwards everything after the step to the release script, so parse it before the

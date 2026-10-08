@@ -209,6 +209,22 @@ with tempfile.TemporaryDirectory() as td:
     check(not refused(dev.guard_fresh, src, out), "a fresh .ota passes")
     check(refused(dev.guard_fresh, src, out, pathlib.Path(td) / "missing.json"), "a missing manifest is refused")
 
+# --- ESP32: version, toolchain lock, manifest ---
+check(dev.esp_semver_to_int("1.1.16") == 10116, "ESP32 1.1.16 -> 10116")
+check(refused(dev.esp_semver_to_int, "34"), "ESP32 has no legacy raw-int form")
+check(refused(dev.esp_semver_to_int, "1.1.100"), "ESP32 patch 100 is refused")
+check(dev.esp_int() == dev.esp_semver_to_int(dev.esp_semver()), "PROJECT_VER parses from CMakeLists.txt")
+LOCK = ("dependencies:\n  espressif/esp_delta_ota:\n    version: 1.1.4\n  idf:\n    source:\n      type: idf\n"
+        "    version: 5.5.4\ndirect_dependencies:\n- idf\n")
+check(dev.lock_idf_version(LOCK) == "5.5.4", "the IDF version is the one under the idf: block, not a component's")
+check(dev.lock_idf_version(LOCK.replace("5.5.4", "'5.5.4'\r")) == "5.5.4", "quotes and CR are stripped")
+check(dev.lock_idf_version("dependencies:\n  other:\n    version: 1.0.0\n") == "", "no idf: block gives no version")
+m = dev.ota_manifest(b"abc", 10116, "1.1.16", "file:///esp32-v10116.ota", 0xFFF1, 0x8000, 0)["modelVersion"]
+check(m["pid"] == 0x8000 and m["minApplicableSoftwareVersion"] == 0 and m["maxApplicableSoftwareVersion"] == 10115,
+      "ESP32 manifest carries its own pid and min 0 (the int is unwired and reads 0)")
+d = subprocess.run([sys.executable, str(SCRIPTS / "dev.py"), "ota", "esp32", "verint"], capture_output=True, text=True)
+check(d.returncode == 0 and d.stdout.strip() == str(dev.esp_int()), "CLI esp32 verint prints only the int")
+
 # --- CLI, and parity with the script it replaces ---
 devpy = [sys.executable, str(SCRIPTS / "dev.py"), "ota", "amebaz2", "verint"]
 script = SCRIPTS / "ota-release.sh"
