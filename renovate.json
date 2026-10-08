@@ -1,0 +1,110 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "SDK pin updates only. Dependabot keeps pip and GitHub Actions (.github/dependabot.yml).",
+    "Every pin lives in a plain file, so each one is a regex manager. Commit pins track a branch head (git-refs).",
+    "Automerge is limited to pins whose gate is a hosted build. AmebaZ2 pins need the self-hosted SDK build, so a person merges those."
+  ],
+  "extends": ["config:recommended"],
+  "enabledManagers": ["custom.regex"],
+  "timezone": "Europe/Nicosia",
+  "schedule": ["before 7am on monday"],
+  "prHourlyLimit": 2,
+  "prConcurrentLimit": 6,
+  "commitMessagePrefix": "build(sdk):",
+  "labels": ["sdk-pin"],
+  "automergeStrategy": "merge-commit",
+  "platformAutomerge": false,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "ESPHome version: the CI pin, the dev.py pin and the install commands in the guides",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/qa\\.yaml$/",
+        "/^firmware/scripts/dev\\.py$/",
+        "/^docs/guide/.+\\.md$/"
+      ],
+      "matchStrings": [
+        "esphome==(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "ESPHOME_PIN = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "esphome",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "customType": "regex",
+      "description": "ESP-IDF release tag",
+      "managerFilePatterns": ["/^versions\\.env$/"],
+      "matchStrings": ["IDF_PIN=\"(?<currentValue>v\\d+\\.\\d+(?:\\.\\d+)?)\""],
+      "depNameTemplate": "esp-idf",
+      "packageNameTemplate": "espressif/esp-idf",
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "semver-coerced"
+    },
+    {
+      "customType": "regex",
+      "description": "esp-matter commit on its release branch (main now needs IDF 6, so it is not tracked)",
+      "managerFilePatterns": ["/^versions\\.env$/"],
+      "matchStrings": ["ESP_MATTER_PIN=\"(?<currentDigest>[a-f0-9]{40})\""],
+      "depNameTemplate": "esp-matter",
+      "packageNameTemplate": "https://github.com/espressif/esp-matter",
+      "datasourceTemplate": "git-refs",
+      "currentValueTemplate": "release/v1.6"
+    },
+    {
+      "customType": "regex",
+      "description": "connectedhomeip commit for the AmebaZ2 build (patches/connectedhomeip.patch targets it)",
+      "managerFilePatterns": ["/^versions\\.env$/"],
+      "matchStrings": ["CHIP_PIN=\"(?<currentDigest>[a-f0-9]{40})\""],
+      "depNameTemplate": "connectedhomeip",
+      "packageNameTemplate": "https://github.com/project-chip/connectedhomeip",
+      "datasourceTemplate": "git-refs",
+      "currentValueTemplate": "v1.4.2-branch"
+    },
+    {
+      "customType": "regex",
+      "description": "Realtek AmebaZ2 base SDK commit (no tags upstream; patches/ameba-rtos-z2.patch targets it)",
+      "managerFilePatterns": ["/^versions\\.env$/"],
+      "matchStrings": ["AMEBA_Z2_PIN=\"(?<currentDigest>[a-f0-9]{40})\""],
+      "depNameTemplate": "ameba-rtos-z2",
+      "packageNameTemplate": "https://github.com/Ameba-AIoT/ameba-rtos-z2",
+      "datasourceTemplate": "git-refs",
+      "currentValueTemplate": "main"
+    },
+    {
+      "customType": "regex",
+      "description": "Realtek AmebaZ2 Matter overlay commit (no tags upstream)",
+      "managerFilePatterns": ["/^versions\\.env$/"],
+      "matchStrings": ["AMEBA_MATTER_PIN=\"(?<currentDigest>[a-f0-9]{40})\""],
+      "depNameTemplate": "ameba-rtos-matter",
+      "packageNameTemplate": "https://github.com/Ameba-AIoT/ameba-rtos-matter",
+      "datasourceTemplate": "git-refs",
+      "currentValueTemplate": "release/v1.4.2"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "ESPHome: gated by `esphome config` in the QA workflow",
+      "matchDepNames": ["esphome"],
+      "automerge": true
+    },
+    {
+      "description": "ESP32 SDKs: gated by the hosted ESP32 build. A major IDF line is a migration, so it waits for approval on the dashboard.",
+      "matchDepNames": ["esp-idf", "esp-matter"],
+      "automerge": true
+    },
+    {
+      "matchDepNames": ["esp-idf"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "AmebaZ2 SDKs: the real gate is the self-hosted SDK build, and a bump changes the reproducible image. PR only.",
+      "matchDepNames": ["connectedhomeip", "ameba-rtos-z2", "ameba-rtos-matter"],
+      "automerge": false,
+      "groupName": null
+    }
+  ]
+}
