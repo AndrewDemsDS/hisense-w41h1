@@ -1,0 +1,86 @@
+name: SDK pins
+
+# Two gates for the AmebaZ2 SDK pins in versions.env.
+#
+# patch-check (hosted): the pinned connectedhomeip and ameba-rtos-z2 commits are public, so a hosted
+# runner can fetch just the files our patches touch and prove the patches still apply. That is the
+# most likely way a pin bump breaks, and it needs no SDK install. Fetching a public repo to test a
+# patch does not redistribute it, and nothing fetched leaves the job.
+#
+# sdk-build (self-hosted): the full AmebaZ2 build needs the proprietary Realtek SDK, which cannot go
+# in a public image, so it runs on the `sdk-builder` runner against the SDK installed there. It is
+# started by workflow_dispatch only: never by pull_request, so a fork PR cannot reach the runner.
+# The runner is normally off. A weekly timer on the runner host starts it and dispatches this
+# workflow (docs/guide/Repo-Map-and-Build-Pipeline.md), which avoids a cron job sitting in `queued`
+# when that host is powered down.
+on:
+  pull_request:
+    branches: [main, dev]
+    paths: ['versions.env', 'patches/**', '.github/workflows/sdk-pins.yaml']
+  push:
+    branches: [main]
+    paths: ['versions.env', 'patches/**', '.github/workflows/sdk-pins.yaml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  patch-check:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: connectedhomeip, repo_var: CHIP_REPO, pin_var: CHIP_PIN}
+          - {name: ameba-rtos-z2, repo_var: AMEBA_Z2_REPO, pin_var: AMEBA_Z2_PIN}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: patches/${{ matrix.name }}.patch applies to the pinned commit
+        env:
+          NAME: ${{ matrix.name }}
+          REPO_VAR: ${{ matrix.repo_var }}
+          PIN_VAR: ${{ matrix.pin_var }}
+        run: |
+          # shellcheck source=/dev/null
+          . ./versions.env
+          repo="${!REPO_VAR:?}"; pin="${!PIN_VAR:?}"
+          patch="$PWD/patches/$NAME.patch"
+          git init -q sdk && cd sdk
+          git remote add origin "$repo"
+          # Only the files the patch touches: the full trees are several hundred MB each.
+          git sparse-checkout init --no-cone
+          git apply --numstat "$patch" | cut -f3 | sed 's#^#/#' | git sparse-checkout set --stdin
+          git fetch -q --depth 1 --filter=blob:none origin "$pin"
+          git checkout -q FETCH_HEAD
+          echo "$NAME @ $pin"
+          git apply --check --verbose "$patch"
+
+  sdk-build:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.server_url == 'https://github.com' }}
+    runs-on: [self-hosted, sdk-builder]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # the build clock needs the image inputs' history (#137)
+
+      - name: Provision build env from the runner host
+        run: |
+          : "${W41H1_OTA_ENV:?set W41H1_OTA_ENV on the runner to the ota-release.env path}"
+          cp "$W41H1_OTA_ENV" firmware/scripts/ota-release.env
+          # The runner's own SDK install, the same one release builds use.
+          sdk_root="$(bash -c '. firmware/scripts/ota-release.env; echo "$SDK_ROOT"')"
+          ln -sfn "$sdk_root" sdk
+
+      # The installed SDK must be AT the pins this ref asks for. After a pin bump merges, this fails
+      # until the SDK on the runner host is re-pinned (dev.py fetch amebaz2), instead of building
+      # the new tree against the old SDK and calling it green.
+      - name: Installed SDK matches versions.env
+        run: python3 firmware/scripts/dev.py doctor amebaz2
+
+      - name: Host lint
+        run: python3 firmware/scripts/dev.py ota amebaz2 lint
+
+      - name: Full AmebaZ2 SDK build (verifies serial + endpoints)
+        run: python3 firmware/scripts/dev.py ota amebaz2 build
