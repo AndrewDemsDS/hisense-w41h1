@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # esp32-lint.sh -- host-only consistency gate for the ESP32 (esp-matter) firmware tree.
 # No IDF/toolchain needed: pure text parsing, so it runs in the hardware-free CI and pre-commit.
-# It gives the ESP32 path the version discipline that ota-release.sh already enforces for AmebaZ2
-# (issue #77), which ota-release.sh does NOT cover:
+# It gives the ESP32 path the version discipline that dev.py already enforces for AmebaZ2
+# (issue #77), which dev.py does NOT cover:
 #   1. PROJECT_VER (CMakeLists.txt) is MAJOR.MINOR.PATCH with minor/patch < 100 -- the bound that
 #      keeps the derived int (MAJOR*10000+MINOR*100+PATCH) monotonic + collision-free.
 #   2. sdkconfig.defaults' CONFIG_DEVICE_SOFTWARE_VERSION_{NUMBER,STRING} equal PROJECT_VER. The int

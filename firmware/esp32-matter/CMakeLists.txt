@@ -7,7 +7,7 @@ set(PROJECT_VER "1.1.16")
 # Unified versioning (issue #77): the Matter softwareVersion INT is DERIVED from PROJECT_VER --
 # MAJOR*10000+MINOR*100+PATCH -> a readable, strictly-monotonic uint32. This keeps the human
 # semver in PROJECT_VER + git tags (esp32-vX.Y.Z) while the int keeps climbing (the OTA provider
-# only serves a strictly-greater int; 1.0.3 -> 10003 > the deployed sw3). Mirrors ota-release.sh's
+# only serves a strictly-greater int; 1.0.3 -> 10003 > the deployed sw3). Mirrors dev.py's
 # semver_to_int for the AmebaZ2 path so both firmware paths share one policy.
 string(REPLACE "." ";" _ver_parts "${PROJECT_VER}")
 list(GET _ver_parts 0 _ver_major)

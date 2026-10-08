@@ -7,6 +7,14 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 
 ## Unreleased
 
+### Tooling
+- `firmware/scripts/dev.py` is now the release engine for both Matter targets. The logic of
+  `ota-release.sh`, `esp32-release.sh` and `ota-guards.sh` was ported into it and the three scripts
+  are removed (#143). Use `dev.py ota amebaz2 <step>` and `dev.py ota esp32 <step>`; the steps and
+  flags keep their names. `dev.py` is a build-clock input for AmebaZ2, so the port moves
+  `SOURCE_DATE_EPOCH` for the tree. AmebaZ2 images were byte-identical between the script and
+  `dev.py` at a fixed clock.
+
 ### Firmware
 - ESPHome: the `bus_link` binary sensor now shows the link going down (it could only ever publish
   on), and the post-command holdoff no longer sticks on for ~24.8 days after the `millis()` sign

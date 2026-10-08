@@ -125,7 +125,7 @@ More: [ESP32 Replacement Build](ESP32-Replacement-Build).
 python3 firmware/scripts/dev.py doctor amebaz2
 # firmware/setup.sh then scripts/setup.sh, ~15 GB
 python3 firmware/scripts/dev.py fetch amebaz2
-# host tests + ota-release.sh lint
+# host tests + dev.py ota amebaz2 lint
 python3 firmware/scripts/dev.py test amebaz2
 # full clean, FWHS serial, verify
 python3 firmware/scripts/dev.py build amebaz2

@@ -15,7 +15,7 @@ is_matter` in `ameba-rtos-z2/project/realtek_amebaz2_v0_example/GCC-RELEASE`.
   break-glass** (Identify=88 → `http_update_ota()` → reboot; host/port/path are the
   `HISENSE_OTA_*` macros; serve the build's `firmware_is.bin` for the FWHS serial).
 - `chip-ameba-ota-hardening.h` → **appended** to
-  `connectedhomeip/src/platform/Ameba/CHIPPlatformConfig.h` by `ota-release.sh build`
+  `connectedhomeip/src/platform/Ameba/CHIPPlatformConfig.h` by `dev.py ota amebaz2 build`
   (`apply_ota_hardening()`, idempotent + self-healing; marker `HISENSE_OTA_HARDENING`).
   The **#76 MRP tuning** (RETRANS 4→8, active 300→500, idle 500→800, sender-boost 300)
   so the long BDX OTA survives marginal Wi-Fi. This file is the canonical copy; the SDK
@@ -63,7 +63,7 @@ are ember-RAM stored; writes reach the uplink handler via the global attribute-c
    endpoint-counted by codegen, see docs/01).
 3. `make room_air_conditioner_port && make is_matter`.
 
-`ota-release.sh build` re-applies the MRP OTA-hardening append (`apply_ota_hardening`) on every run,
+`dev.py ota amebaz2 build` re-applies the MRP OTA-hardening append (`apply_ota_hardening`) on every run,
 so a fresh/reinstalled SDK self-heals, no manual step for `chip-ameba-ota-hardening.h`.
 
 ## Editing the data model

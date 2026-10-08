@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """dev.py release engine: the pure rules behind `dev.py ota amebaz2 lint|verint|tag` (#143).
 
-No SDK, no env file, no network. While ota-release.sh still exists its `verint` must agree with
-dev.py on every input here, so the port cannot drift from the script it replaces.
+No SDK, no env file, no network. The goldens for the SDK edits and the version rules were taken
+from ota-release.sh, the script dev.py replaced, before it was removed.
 """
 
 import os
@@ -225,18 +225,13 @@ check(m["pid"] == 0x8000 and m["minApplicableSoftwareVersion"] == 0 and m["maxAp
 d = subprocess.run([sys.executable, str(SCRIPTS / "dev.py"), "ota", "esp32", "verint"], capture_output=True, text=True)
 check(d.returncode == 0 and d.stdout.strip() == str(dev.esp_int()), "CLI esp32 verint prints only the int")
 
-# --- CLI, and parity with the script it replaces ---
+# --- CLI ---
 devpy = [sys.executable, str(SCRIPTS / "dev.py"), "ota", "amebaz2", "verint"]
-script = SCRIPTS / "ota-release.sh"
 for arg in ("1.3.44", "1.0.0", "34", "0", "1.100.0", "1.2", "bogus"):
     d = subprocess.run(devpy + [arg], capture_output=True, text=True)
     want_rc = 1 if refused(dev.semver_to_int, arg) else 0
     check(d.returncode == want_rc and (want_rc == 1 or d.stdout.strip() == str(dev.semver_to_int(arg))),
           f"CLI verint {arg}: exit {d.returncode}, stdout '{d.stdout.strip()}'")
-    if script.is_file():
-        s = subprocess.run(["bash", str(script), "verint", arg], capture_output=True, text=True)
-        check((s.returncode, s.stdout.strip()) == (d.returncode, d.stdout.strip()),
-              f"verint {arg}: dev.py and ota-release.sh agree")
 d = subprocess.run(devpy, capture_output=True, text=True)
 check(d.returncode == 0 and d.stdout.strip() == str(dev.cur_version()), "CLI verint with no argument reads version.txt")
 d = subprocess.run(devpy + [""], capture_output=True, text=True)

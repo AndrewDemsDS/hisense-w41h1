@@ -149,8 +149,8 @@ By hand, from `firmware/esp32-matter/`:
 idf.py set-target esp32c3 && idf.py build flash monitor   # esp32 for the classic board
 ```
 
-That is a development build. Images that go out over OTA come from `dev.py ota esp32 release`
-(which runs `esp32-release.sh`), which archives the delta base first ([OTA Updates](OTA-Updates#esp32-delta-ota)).
+That is a development build. Images that go out over OTA come from `dev.py ota esp32 release`,
+which archives the delta base first ([OTA Updates](OTA-Updates#esp32-delta-ota)).
 
 ## Status & remaining work
 
