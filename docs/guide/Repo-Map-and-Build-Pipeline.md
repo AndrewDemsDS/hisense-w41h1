@@ -163,6 +163,49 @@ online. If none is, they warn before printing the push command: start the self-h
 (`run.sh` in its install dir) first. The check only warns, and it is skipped with a note when `gh` is
 missing, not logged in, or lacks admin access to the repo (listing runners needs it).
 
+### SDK pins: the weekly build and the patch check
+
+`sdk-pins.yaml` guards the AmebaZ2 pins in `versions.env` with two jobs:
+
+- **`patch-check`** runs on a GitHub-hosted runner for any PR or push that touches `versions.env`
+  or `patches/`. It fetches only the files our patches touch from the pinned `connectedhomeip` and
+  `ameba-rtos-z2` commits and runs `git apply --check`. A pin bump that breaks a patch fails here in
+  under a minute, with no SDK install.
+- **`sdk-build`** is the full AmebaZ2 build on the `sdk-builder` runner. It starts only from
+  `workflow_dispatch`, never from a pull request, so a fork cannot reach the runner. It first runs
+  `dev.py doctor amebaz2`, which fails when the SDK installed on the runner is not at the pins the
+  tree asks for. After a pin bump merges, re-pin that SDK (`dev.py fetch amebaz2`) before expecting
+  a green build.
+
+The runner is normally off, and a cron trigger would leave a job in `queued` whenever its host is
+powered down. So the schedule lives on the runner host: a weekly systemd user timer dispatches the
+workflow and then runs the runner for one job.
+
+```ini
+# ~/.config/systemd/user/w41h1-sdk-weekly.service
+[Unit]
+Description=Weekly AmebaZ2 SDK build (dispatch the workflow, run the runner for one job)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=3h
+ExecStart=/bin/sh -c 'gh workflow run sdk-pins.yaml --repo <owner>/<repo> --ref main && cd /home/you/actions-runner && ./run.sh --once'
+
+# ~/.config/systemd/user/w41h1-sdk-weekly.timer
+[Timer]
+OnCalendar=Mon 10:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+`Persistent=true` runs a missed week at the next login. Enable it with
+`systemctl --user enable --now w41h1-sdk-weekly.timer`. The build syncs `main` into the SDK and does
+the usual full clean, so it replaces whatever build output the SDK held.
+
 ## The three build traps (summary: docs/10 is canonical)
 
 Three failure modes each **ship a broken or rolling-back image with no error**. Full analysis,
