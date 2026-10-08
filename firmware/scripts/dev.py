@@ -3,9 +3,9 @@
 (issues #118, #143).
 
 It is becoming the release engine too (#143). The AmebaZ2 steps that need no SDK and no env file
-are implemented here: lint, verint, epoch and tag. Their decisions are plain functions with host
-tests (firmware/test/test_dev_release.py, test_image_epoch.sh); ota_guards.py keeps the guard
-verdicts both targets share. The steps not ported yet (build, package, stage, flash, release,
+are implemented here (lint, verint, epoch, tag), and so are build and package. Their decisions are
+plain functions with host tests (firmware/test/test_dev_release.py, test_image_epoch.sh);
+ota_guards.py keeps the guard verdicts both targets share. The steps not ported yet (stage, flash,
 publish, revert, and every ESP32 step) still forward to ota-release.sh / esp32-release.sh, which
 stay until nothing references them. The helpers dev.py calls (run_tests.sh, esp32-lint.sh,
 firmware/setup.sh, scripts/setup.sh) are separate tools, not release logic. Every external command
@@ -36,7 +36,10 @@ OTA steps, `dev.py ota amebaz2 <step>`:
   epoch                                  print the build clock (SOURCE_DATE_EPOCH) build would use
   tag                                    signed local tag amebaz2-v<semver> + release-runner check
   preflight | verify                     tools + link pre-flight | read the node's live version
-  build | package | stage | flash | release | publish | revert [...]   forwarded to ota-release.sh
+  build [--bump[-patch|-minor|-major]] [--debug]   sync mirror -> SDK, FULL clean, build, verify
+  package                                pad clip image + .ota + manifest (HISENSE_FLAVOUR=debug: debug)
+  release [--bump[-minor|-major]] [--tag] [--flash] [--debug]   build + package + stage (+ tag, flash)
+  stage | flash | publish | revert [...]  forwarded to ota-release.sh
 OTA steps, `dev.py ota esp32 <step>`:
   preflight | verify, and build | package | stage | flash | release | publish | tag | verint,
   forwarded to esp32-release.sh
@@ -48,6 +51,8 @@ firmware/scripts/ota-release.env; the self-hosted runner copies its secrets file
 """
 
 import atexit
+import base64
+import hashlib
 import json
 import os
 import re
@@ -56,6 +61,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import ctypes.util
 from pathlib import Path
 
@@ -475,7 +481,7 @@ def test_target(ctx):
 
 def build(ctx):
     if ctx.target == "amebaz2":
-        run(["bash", HERE / "ota-release.sh", "build"])   # full clean, FWHS serial, verify: docs/10
+        build_amebaz2([])   # full clean, FWHS serial, verify: docs/10
     elif ctx.target == "esp32":
         env = esp_env()
         ensure_target(ESP, ctx.idf_tgt, env)
@@ -722,10 +728,11 @@ def git_out(*args):
 # the SDK setup (pins, patches, overlay edits). Markdown under firmware/src never compiles in, the
 # same exclusion the CI version gate uses. ota-release.env feeds the image too (break-glass
 # host/token) but is untracked by design.
-# ota-release.sh is still the builder, so this list must stay equal to its IMAGE_INPUTS
-# (test_image_epoch.sh compares the two). It names dev.py instead once `build` is ported.
+# dev.py is the builder. ota-release.sh still carries its own `build` until it is retired, so it
+# stays listed and its IMAGE_INPUTS must equal this list (test_image_epoch.sh compares the two).
 IMAGE_INPUTS = [
     "firmware/src", ":(exclude)firmware/src/*.md",
+    "firmware/scripts/dev.py",
     "firmware/scripts/ota-release.sh",
     "firmware/scripts/sync-files.sh",
     "firmware/setup.sh",
@@ -842,6 +849,582 @@ def tag_release():
     say(f"push with: git push origin {tag}")
 
 
+# ---- release engine: AmebaZ2 build + package, ported from ota-release.sh (#143) ----------------
+def _env0(args, env=None, cwd=None):
+    """(returncode, env dict) from a command whose stdout is `env -0`."""
+    p = subprocess.run(args, stdout=subprocess.PIPE, env=env, cwd=str(cwd) if cwd else None)
+    out = {}
+    for chunk in p.stdout.split(b"\0"):
+        if b"=" in chunk:
+            k, v = chunk.split(b"=", 1)
+            out[k.decode("utf-8", "replace")] = v.decode("utf-8", "replace")
+    return p.returncode, out
+
+
+BUILD_ENV_KEYS = ("SDK_ROOT", "GCC_RELEASE", "CHIP_CONFIG_H", "EXAMPLE_DIR", "OTA_TOOL", "VID", "PID")
+
+
+def load_env(required=BUILD_ENV_KEYS):
+    """The release settings: this process's environment with ota-release.env sourced over it (the
+    file is bash, with $HOME and cross-references). Returned as a lookup dict only. It is NOT handed
+    to child processes: the script never exported the file's variables either, so make and the SDK
+    tools see the caller's environment plus the few variables build() exports by name."""
+    if not ENVF.is_file():
+        die(f"missing {ENVF} -- copy ota-release.env.example and fill it in")
+    rc, cfg = _env0(["bash", "-c", 'set -a; . "$1" >/dev/null || exit 97; set +a; env -0', "bash", str(ENVF)])
+    if rc != 0:
+        die(f"could not source {ENVF}")
+    for k in required:
+        if not cfg.get(k):
+            die(f"{k} is not set (in {ENVF})")
+    return cfg
+
+
+def sync_file_lists():
+    """(required, optional) repo-relative paths from sync-files.sh, the single definition of what
+    is copied into the SDK example dir. scripts/setup.sh sources the same file, so the two cannot
+    drift (matter_aircon_map.h once went missing from one of them)."""
+    text = (HERE / "sync-files.sh").read_text()
+    out = []
+    for name in ("SYNC_FILES_REQUIRED", "SYNC_FILES_OPTIONAL"):
+        m = re.search(rf"^{name}=\(([^)]*)\)", text, re.M)
+        if not m:
+            die(f"{name} not found in sync-files.sh")
+        out.append([ln.split("#")[0].strip() for ln in m.group(1).splitlines() if ln.split("#")[0].strip()])
+    return out[0], out[1]
+
+
+def sed_first(text, old, new):
+    """Literal `sed 's/old/new/'`: the first occurrence on every line, nothing else."""
+    return "\n".join(ln.replace(old, new, 1) for ln in text.split("\n"))
+
+
+# The SDK edits build() applies. Each is a pure text transform returning the new text (unchanged
+# when already applied), so a full clean or an SDK reinstall heals itself and the host tests can
+# hold every one against a golden. The reasons live with the callers in apply_sdk_edits().
+def edit_ota_hardening(hdr, block):
+    return hdr if "HISENSE_OTA_HARDENING" in hdr else hdr + block
+
+
+def edit_example_task_stack(text):
+    return sed_first(text, 'example_matter_room_air_conditioner_task"), 2048',
+                     'example_matter_room_air_conditioner_task"), 8192')
+
+
+def edit_downlink_stack(text):
+    return sed_first(text, 'xTaskCreate(DownlinkTask, "Downlink", 1024', 'xTaskCreate(DownlinkTask, "Downlink", 4096')
+
+
+def edit_mode_select_span_guard(text):
+    if "mSpan.data() == nullptr" in text:
+        return text
+    probe = "        if (endpointSpanPair.mEndpointId == endpointId)"
+    guard = ("        if (endpointSpanPair.mSpan.data() == nullptr) { continue; }"
+             "  // orphaned endpoint type pads this array\n")
+    return sed_first(text, probe, guard + probe)
+
+
+def edit_build_info_determinism(text):
+    if "SOURCE_DATE_EPOCH" in text:
+        return text
+    text = text.replace("`date +", "`date -u -d @$${SOURCE_DATE_EPOCH:-0} +")
+    text = text.replace("`id -u -n`", "builder")
+    return text.replace("`$(HOSTNAME_APP)`", "")
+
+
+def edit_build_info_order(text):
+    return "\n".join("prerequirement: build_info" if ln == "prerequirement:" else ln
+                     for ln in text.split("\n"))
+
+
+PREFIX_MAP = "-ffile-prefix-map=$(HOME)=/build"   # $(HOME) stays literal: make expands it
+
+
+def edit_prefix_map(text):
+    if "ffile-prefix-map" in text:
+        return text
+    head = "CHIP_CXXFLAGS += $(INCLUDES)"
+    add = f"\nCHIP_CFLAGS += {PREFIX_MAP}\nCHIP_CXXFLAGS += {PREFIX_MAP}"
+    return "\n".join(head + add + ln[len(head):] if ln.startswith(head) else ln for ln in text.split("\n"))
+
+
+def edit_ccache_launcher(text):
+    if "pw_command_launcher" in text:
+        return text
+    probe = 'echo ameba_cpu = \\"ameba\\" >> $(OUTPUT_DIR)/args.gn && \\'
+    return sed_first(text, probe, probe + '\n\techo pw_command_launcher = \\"ccache\\" >> $(OUTPUT_DIR)/args.gn && \\')
+
+
+def _read_raw(path):
+    """SDK text with its line endings untouched (parts of the Realtek tree are CRLF)."""
+    with open(path, newline="") as f:
+        return f.read()
+
+
+def _write_raw(path, text):
+    with open(path, "w", newline="") as f:
+        f.write(text)
+
+
+def _edit_file(path, fn, done, applied, marker=None, missing_ok=False):
+    """Apply one transform in place. `marker` must be in the result, or the SDK changed under us."""
+    path = Path(path)
+    if not path.is_file():
+        if missing_ok:
+            return
+        die(f"SDK file not found: {path}")
+    old = _read_raw(path)
+    new = fn(old)
+    if marker and marker not in new:
+        die(f"failed to apply an SDK edit to {path} (expected '{marker}' afterwards)")
+    if new == old:
+        if done:
+            say(f"  {done}")
+        return
+    _write_raw(path, new)
+    if applied:
+        say(f"  {applied}")
+
+
+def apply_sdk_edits(cfg):
+    sdk, ex = cfg["SDK_ROOT"], cfg["EXAMPLE_DIR"]
+    # #76: AmebaZ2 has no Kconfig, so CHIP uses the weak upstream MRP defaults (RETRANS=4, active
+    # 300, idle 500) that drop the long BDX OTA transfer on marginal Wi-Fi. Append our overrides
+    # (firmware/src/sdk-edits/chip-ameba-ota-hardening.h) to the Ameba CHIP platform config, which
+    # CHIPConfig.h includes before ReliableMessageProtocolConfig.h applies its #ifndef defaults.
+    block = REPO / "firmware/src/sdk-edits/chip-ameba-ota-hardening.h"
+    if not block.is_file():
+        die(f"OTA-hardening block not found: {block}")
+    _edit_file(f"{sdk}/connectedhomeip/src/platform/Ameba/CHIPPlatformConfig.h",
+               lambda t: edit_ota_hardening(t, block.read_text()),
+               "MRP OTA-hardening already present in Ameba CHIPPlatformConfig.h (#76)",
+               "injected MRP OTA-hardening into Ameba CHIPPlatformConfig.h (#76): RETRANS 4->8, "
+               "active 300->500, idle 500->800ms", "HISENSE_OTA_HARDENING")
+    # The SDK creates DownlinkTask with a 1024-WORD (4 KB) stack, sized for stock examples whose
+    # handlers set one or two attributes. Ours writes dozens of ember attributes, drives the EPM
+    # delegate and logs. An overflow kills the task silently: PostDownlinkEvent keeps "succeeding"
+    # until the 10-slot queue fills, then every status-derived attribute sits frozen at its .zap
+    # default while the bus and the diag console look healthy. Seen on node 14 (docs/10 §17).
+    _edit_file(f"{sdk}/ameba-rtos-z2/component/common/application/matter/core/matter_interaction.cpp",
+               edit_downlink_stack, "DownlinkTask stack already raised to 4096 words",
+               "raised DownlinkTask stack 1024 -> 4096 words (our downlink handler is far heavier "
+               "than the stock examples')", 'xTaskCreate(DownlinkTask, "Downlink", 4096')
+    # The example init task gets 2048 WORDS (8 KB), copied from the stock light example. Ours does
+    # nine UserLabel writes, an ember write, the EPM delegate + Instance init and the ModeSelect
+    # manager on it. Overflowing kills the task part-way, so matter_interaction_start_downlink()
+    # never runs and there is no downlink queue at all (docs/10 §17).
+    _edit_file(f"{ex}/example_matter_room_air_conditioner.cpp", edit_example_task_stack,
+               "example init task stack already raised to 8192 words",
+               "raised example init task stack 2048 -> 8192 words (our init is far heavier than the "
+               "stock example's)", 'example_matter_room_air_conditioner_task"), 8192')
+    # ZAP sizes supportedOptionsByEndpoints[] by endpoint TYPES, not endpoints. Our .zap carries an
+    # orphaned endpoint type with ModeSelect enabled, so the array has a zero-filled second entry
+    # (endpoint 0, null Span) that getModeOptionsProvider iterates. Defence in depth: skip it.
+    _edit_file(f"{sdk}/ameba-rtos-z2/component/common/application/matter/drivers/matter_drivers/"
+               "mode_select/ameba_mode_select_manager.cpp", edit_mode_select_span_guard,
+               "ModeSelect span guard already applied",
+               "applied ModeSelect null-span guard (orphaned endpoint type inflates the generated count)",
+               "mSpan.data() == nullptr")
+    gcc_rel = f"{sdk}/ameba-rtos-z2/project/realtek_amebaz2_v0_example/GCC-RELEASE"
+    for mk in ("application.is.matter.mk", "application.is.mk"):
+        # The SDK's build_info target regenerates .ver on EVERY build by shelling out to `date`, so
+        # the image carries the wall-clock second the build started, and `id -u -n` leaks the
+        # builder's username into a public image. Pin the clock to SOURCE_DATE_EPOCH and the
+        # identity to a constant.
+        _edit_file(f"{gcc_rel}/{mk}", edit_build_info_determinism,
+                   f"build_info determinism already applied ({mk})",
+                   f"pinned build_info clock+identity in {mk}", "SOURCE_DATE_EPOCH", missing_ok=True)
+        # `all: build_info application_is ...` makes build_info.h a SIBLING of the object compiles,
+        # so under make -j the first build of a fresh SDK fails with "build_info.h: No such file".
+        # Every object rule waits on `| prerequirement`, so hang build_info off that.
+        _edit_file(f"{gcc_rel}/{mk}", edit_build_info_order,
+                   f"build_info ordering already applied ({mk})",
+                   f"ordered build_info before the object compiles in {mk}",
+                   "\nprerequirement: build_info", missing_ok=True)
+
+
+def sync_mirror(cfg, flavour):
+    """Copy the mirror (firmware/src) into the SDK example dir and write the generated headers."""
+    say("sync mirror -> SDK example dir")
+    ex = Path(cfg["EXAMPLE_DIR"])
+    required, optional = sync_file_lists()
+    for f in required:   # a missing required file hard-fails the build: a stale copy would ship
+        shutil.copy(REPO / f, ex)
+    # #22/#23 build flavour. Release is the DEFAULT: the debug header is generated only for
+    # `build --debug` and removed otherwise, so the unauthenticated :2323 console cannot ship by
+    # forgetting a flag. Only logging/console/diagnostics may differ between flavours.
+    flav_h = ex / "hisense_flavour.h"
+    if flavour == "debug":
+        flav_h.write_text("// GENERATED by dev.py build --debug -- do not commit.\n"
+                          "#define HISENSE_DEBUG_BUILD 1\n")
+        say("  flavour: DEBUG (:2323 console compiled in -- bench only, do not deploy)")
+    else:
+        flav_h.unlink(missing_ok=True)
+        say("  flavour: release (no diagnostic console)")
+    # #78 break-glass OTA target. Generated, never committed: the repo is public, so the real
+    # server address lives in ota-release.env. Without OTA_HTTP_HOST the header is omitted and
+    # matter_drivers.cpp keeps its inert placeholder.
+    ota_h = ex / "hisense_ota_config.h"
+    host = cfg.get("OTA_HTTP_HOST", "")
+    if host:
+        port = cfg.get("OTA_HTTP_PORT") or "8070"
+        res = cfg.get("OTA_HTTP_RESOURCE") or "/rac-ota.bin"
+        lines = ["// GENERATED by dev.py from ota-release.env -- do not commit.",
+                 f'#define HISENSE_OTA_HOST     "{host}"',
+                 f"#define HISENSE_OTA_PORT     {port}",
+                 f'#define HISENSE_OTA_RESOURCE "{res}"']
+        # #61: break-glass TRIGGER token. Ships in both flavours, so it is authenticated and fails
+        # closed: no token means the listener is never opened. There is deliberately no default.
+        token = cfg.get("BREAKGLASS_TOKEN", "")
+        bg_port = cfg.get("BREAKGLASS_PORT") or "2324"
+        if token:
+            lines += [f'#define HISENSE_BREAKGLASS_TOKEN "{token}"',
+                      f"#define HISENSE_BREAKGLASS_PORT  {bg_port}"]
+        ota_h.write_text("\n".join(lines) + "\n")
+        say(f"  break-glass OTA target: {host}:{port}{res}")
+        if token:
+            say(f"  break-glass trigger: listening on :{bg_port} (token set, both flavours)")
+        else:
+            say("  break-glass trigger: DISABLED (BREAKGLASS_TOKEN unset -- recovery needs a healthy Matter layer)")
+    else:
+        ota_h.unlink(missing_ok=True)
+        say("  OTA_HTTP_HOST unset -- break-glass OTA keeps the inert placeholder host")
+    for f in optional:
+        if (REPO / f).is_file():
+            shutil.copy(REPO / f, ex)
+    # The mfg-cluster id header lives in connectedhomeip's zzz_generated tree, not the example dir.
+    # scripts/setup.sh places it once, but a plain rebuild must re-sync it or a header change never
+    # reaches the driver.
+    cid = Path(cfg["SDK_ROOT"]) / "connectedhomeip/zzz_generated/app-common/clusters/HisenseAircon"
+    cid.mkdir(parents=True, exist_ok=True)
+    shutil.copy(REPO / "firmware/src/sdk-edits/HisenseAircon-ClusterId.h", cid / "ClusterId.h")
+    # The cluster's ZCL definition is what the ZAP GUI reads for the available attributes.
+    zcl = Path(cfg["SDK_ROOT"]) / "connectedhomeip/src/app/zap-templates/zcl/data-model/chip"
+    if zcl.is_dir():
+        shutil.copy(REPO / "firmware/src/sdk-edits/hisense-aircon-cluster.xml", zcl / "hisense-aircon-cluster.xml")
+
+
+def header_with_version(text, vint, semver):
+    """CHIPDeviceConfig.h with the softwareVersion int and string set (the header is derived)."""
+    text = re.sub(r"(#define CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION )[0-9]+", rf"\g<1>{vint}", text)
+    return re.sub(r'(DEVICE_SOFTWARE_VERSION_STRING ")[^"\n]*(")', rf"\g<1>{semver}\g<2>", text)
+
+
+def set_header_version(cfg):
+    h = cfg["CHIP_CONFIG_H"]
+    _write_raw(h, header_with_version(_read_raw(h), cur_version(), cur_semver()))
+
+
+def bumped(semver, level):
+    m = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", semver)
+    if not m:
+        die(f"cannot bump non-semver version.txt '{semver}' (issue #77)")
+    major, minor, patch = (int(x) for x in m.groups())
+    if level == "major":
+        return f"{major + 1}.0.0"
+    if level == "minor":
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def bump_version(cfg, level):
+    old = cur_semver()
+    new = bumped(old, level)
+    VERSION_FILE.write_text(new + "\n")
+    set_header_version(cfg)
+    say(f"version bumped {old} -> {new} (softwareVersion int {semver_to_int(new)}); "
+        "firmware/src/version.txt + CHIPDeviceConfig.h -- commit version.txt")
+
+
+def fwhs_serial(cfg):
+    """The bootloader boots the signature-valid slot with the HIGHER FWHS serial. The Matter
+    softwareVersion is irrelevant to it, so the serial must rise with every version or the OTA
+    applies and then 'rolls back' (docs/10 §11)."""
+    return int(cfg.get("SERIAL_BASE") or 1100) + cur_version()
+
+
+DET_TIME_SHIM_C = """#include <time.h>
+#include <stdlib.h>
+time_t time(time_t *t) {
+    const char *e = getenv("SOURCE_DATE_EPOCH");
+    time_t v = e ? (time_t) strtoll(e, 0, 10) : 0;
+    if (t) *t = v;
+    return v;
+}
+"""
+
+
+def det_time_shim():
+    """Realtek's elf2bin.linux seeds srand(time(NULL)) and derives part of the image header from it,
+    so packaging the SAME .axf twice gives two images. It is a closed prebuilt binary, so the only
+    lever is the clock it seeds from: an LD_PRELOAD time() reading SOURCE_DATE_EPOCH. Built fresh
+    into a private dir every run, since a predictable /tmp path would preload whatever sits there."""
+    if not shutil.which("gcc"):
+        die("host gcc needed to build the deterministic-clock shim")
+    d = tempfile.mkdtemp(prefix="ota-det-time.")
+    so = os.path.join(d, "shim.so")
+    r = subprocess.run(["gcc", "-shared", "-fPIC", "-O2", "-x", "c", "-o", so, "-"],
+                       input=DET_TIME_SHIM_C, text=True)
+    if r.returncode != 0:
+        shutil.rmtree(d, True)
+        die("failed to build the deterministic-clock shim")
+    return so
+
+
+def chip_env(cfg, base, cwd):
+    """`base` after sourcing connectedhomeip's activate.sh, checked for the one import the build
+    needs. activate.sh can print "Error during activate" and still return 0: after a host Python
+    upgrade the pigweed venv is dead and codegen dies on "No module named 'matter'" far from the
+    cause (#121)."""
+    act = f"{cfg['SDK_ROOT']}/connectedhomeip/scripts/activate.sh"
+    rc, env = _env0(["bash", "-c", 'source "$1" >/dev/null 2>&1 || exit 97; env -0', "bash", act],
+                    env=base, cwd=cwd)
+    if rc != 0 or "PATH" not in env:
+        die("activate.sh failed")
+    if subprocess.run(["python3", "-c", "import matter.idl"], env=env,
+                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+        die("CHIP python env is broken (python3 cannot import matter.idl). Usual cause: the host "
+            "python was upgraded under the pigweed venv. Rebuild it: cd $SDK_ROOT/connectedhomeip && "
+            "rm -rf .environment && source scripts/bootstrap.sh (with a python3 the SDK supports "
+            "first on PATH)")
+    return env
+
+
+def _make_tail(args, env, cwd, keep):
+    """Run make with stdout+stderr captured, print the last `keep` lines, return the whole log."""
+    print(f"{C['grey']}  $ {' '.join(args)}{C['off']}")
+    r = subprocess.run(args, env=env, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True, errors="replace")
+    lines = r.stdout.splitlines()
+    print("\n".join(lines[-(keep if r.returncode == 0 else 40):]))
+    if r.returncode != 0:
+        die(f"command failed ({r.returncode}): {' '.join(args)}")
+    return r.stdout
+
+
+def build_amebaz2(args):
+    cfg = load_env()
+    flavour = cfg.get("HISENSE_FLAVOUR") or "release"
+    for a in args:
+        # --debug selects the bench flavour (#22). Release is the default, so omitting the flag can
+        # never ship the console.
+        if a in ("--bump", "--bump-patch"):
+            bump_version(cfg, "patch")
+        elif a == "--bump-minor":
+            bump_version(cfg, "minor")
+        elif a == "--bump-major":
+            bump_version(cfg, "major")
+        elif a == "--debug":
+            flavour = "debug"
+        else:
+            die(f"unknown flag for build: {a}")
+    # Reproducible-build clock. The Realtek SDK bakes __DATE__/__TIME__ into the image, and the
+    # image header carries hashes over that content, so a 5-byte timestamp becomes ~574 differing
+    # bytes. GCC honours SOURCE_DATE_EPOCH for both macros: pin it to the image inputs' own date
+    # (image_epoch), deterministic per source state and unchanged by a merge or cherry-pick that
+    # leaves the inputs alone (#137). Override it only to reproduce an old image.
+    epoch = cfg.get("SOURCE_DATE_EPOCH") or str(image_epoch())
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(int(epoch)))
+    say(f"SOURCE_DATE_EPOCH={epoch} ({stamp}) -- __DATE__/__TIME__ pinned to the image inputs")
+    set_header_version(cfg)
+    lint_zap()
+    sync_mirror(cfg, flavour)
+    apply_sdk_edits(cfg)
+    # Path scrub: -ffile-prefix-map rewrites the absolute build path baked into __FILE__ and debug
+    # info, so the image carries /build/... instead of the developer's $HOME. The GN CHIP core gets
+    # it through CHIP_CFLAGS/CHIP_CXXFLAGS (injected here), the Ameba make app/main-lib through
+    # CC/CXX below.
+    mproj = f"{cfg['SDK_ROOT']}/ameba-rtos-z2/component/common/application/matter/project"
+    for variant in ("amebaz2", "amebaz2plus"):
+        _edit_file(f"{mproj}/{variant}/make/chip_core_sources.mk", edit_prefix_map, None, None,
+                   "ffile-prefix-map", missing_ok=True)
+    env = dict(os.environ, SOURCE_DATE_EPOCH=epoch)
+    cc, cxx = f"CC=$(CROSS_COMPILE)gcc {PREFIX_MAP}", f"CXX=$(CROSS_COMPILE)g++ {PREFIX_MAP}"
+    have_ccache = bool(shutil.which("ccache"))
+    if have_ccache:
+        # The GN core honours pw_command_launcher="ccache" (injected into args.gn through
+        # chip_core_rules.mk, both variants: the build reads the non-"plus" one); make uses a CC
+        # prefix. base_dir makes the hash stable across clean rebuilds, compiler_check=content
+        # survives toolchain mtime noise. `time_macros` is deliberately NOT in the sloppiness list:
+        # with it ccache replays a TU with a STALE __DATE__/__TIME__, which made two builds of one
+        # commit match only sometimes.
+        home = os.environ.get("HOME", "")
+        env.update(CCACHE_DIR=cfg.get("CCACHE_DIR") or f"{home}/.ccache", CCACHE_BASEDIR=home,
+                   CCACHE_COMPILERCHECK="content",
+                   CCACHE_SLOPPINESS="include_file_mtime,include_file_ctime,pch_defines,locale,system_headers")
+        subprocess.run(["ccache", "-M", cfg.get("CCACHE_MAXSIZE") or "25G"], env=env,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["ccache", "-z"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for variant in ("amebaz2", "amebaz2plus"):
+            _edit_file(f"{mproj}/{variant}/make/chip_core_rules.mk", edit_ccache_launcher, None, None,
+                       None, missing_ok=True)
+        cc, cxx = f"CC=ccache $(CROSS_COMPILE)gcc {PREFIX_MAP}", f"CXX=ccache $(CROSS_COMPILE)g++ {PREFIX_MAP}"
+        say(f"ccache ON (dir={env['CCACHE_DIR']}, base_dir={home}, check=content): GN core via "
+            "pw_command_launcher, make via CC prefix")
+    else:
+        say("ccache not installed (sudo apt install ccache, or sudo pacman -S ccache) -- building "
+            "without it (path-scrub still on via CC)")
+    gcc_rel, ex = cfg["GCC_RELEASE"], cfg["EXAMPLE_DIR"]
+    bsp = f"{cfg['SDK_ROOT']}/ameba-rtos-z2/component/soc/realtek/8710c/misc/bsp/lib/common/GCC"
+    env = chip_env(cfg, env, gcc_rel)
+    # MANDATORY full clean before EVERY build. The SDK's cache otherwise reuses a stale core
+    # (libCHIP.a) + main lib: a "~77-second" fake build that ships an INCONSISTENT image (rolled
+    # back on-device 3x). clean_matter_libs leaves the *copied* bsp libs and the gn out dir, so
+    # remove those too (docs/10 §4).
+    say("FULL CLEAN (mandatory -- defeats the stale-core cache)")
+    _make_tail(["make", "clean_matter_libs"], env, gcc_rel, 1)
+    _make_tail(["make", "clean_matter"], env, gcc_rel, 1)
+    for lib in ("libCHIP.a", "lib_main.a"):
+        Path(bsp, lib).unlink(missing_ok=True)
+    shutil.rmtree(Path(ex) / "build/chip", ignore_errors=True)
+    jobs = cfg.get("BUILD_JOBS") or str(len(os.sched_getaffinity(0)))
+    shim = det_time_shim()
+    try:
+        env["DET_SHIM"] = shim
+        say(f"BUILD (genuine recompile; ameba make -j{jobs}; verify by ninja [N/353] + fresh "
+            "libCHIP.a, NOT wall-clock)")
+        run(["make", "room_air_conditioner_port", f"-j{jobs}", cc, cxx], env=env, cwd=gcc_rel)
+        want = fwhs_serial(cfg)
+        fwjson = Path(gcc_rel) / "amebaz2_firmware_is.json"
+        doc = json.loads(fwjson.read_text())
+        doc["FWHS"]["header"]["serial"] = want
+        fwjson.write_text(json.dumps(doc, indent=2))
+        print(f"OTA FWHS serial set -> {want}")
+        # LD_PRELOAD pins the clock elf2bin seeds its RNG from (see det_time_shim).
+        log = _make_tail(["make", "is_matter", f"-j{jobs}", cc, cxx], dict(env, LD_PRELOAD=shim), gcc_rel, 2)
+    finally:
+        shutil.rmtree(os.path.dirname(shim), True)
+    if have_ccache:
+        stats = subprocess.run(["ccache", "-s"], env=env, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, text=True).stdout
+        hits = re.search(r"Hits:[^(\n]*\(([^)]*)\)", stats)
+        misses = re.search(r"Misses:[^(\n]*\(([^)]*)\)", stats)
+        say(f"ccache: {hits.group(1) if hits else '?'} hits / {misses.group(1) if misses else '?'} misses")
+    # The built image must actually carry the bumped serial (guard against a silent miss).
+    if f"header-serial {want}" not in log:
+        die(f"built image serial != {want} -- bootloader would roll back the OTA (docs/10 §11)")
+    say(f"OTA image serial verified: {want} (> on-device -> bootloader will keep the new slot)")
+    ec = Path(ex) / "build/chip/codegen/zap-generated/endpoint_config.h"
+    arr = " ".join(m for ln in ec.read_text().splitlines() if "FIXED_ENDPOINT_ARRAY" in ln
+                   for m in re.findall(r"\{[^}]*\}", ln))
+    say(f"built: FIXED_ENDPOINT_ARRAY = {arr}")
+    if "0x0000, 0x0001, 0x0002" not in arr:
+        die("endpoints not contiguous in build output -- refusing (boot-crash risk)")
+    say(f"build OK (v{cur_version()})")
+
+
+def guard_functional_delta(glob, *paths):
+    """Note (never refuse) when nothing that compiles into the image changed since the last tag:
+    version-only releases are legitimate, but they should be deliberate."""
+    rc, tag = git_out("describe", "--tags", "--abbrev=0", "--match", glob, "HEAD^")
+    if rc != 0 or not tag:
+        return
+    n = len(git_out("log", "--oneline", f"{tag}..HEAD", "--", *paths)[1].splitlines())
+    if n == 0:
+        say(f"  NOTE: no commits under {' '.join(paths)} since {tag} -- this release is version-only")
+    else:
+        say(f"  {n} commit(s) touch the image since {tag}")
+
+
+AMEBA_CONSOLE_MARK = b"diag console listening"   # the :2323 console's own log string
+CLIP_SIZE = 4194304                               # the module's 4 MB SPI flash
+
+
+def ota_manifest(ota_bytes, v, semver, otaurl):
+    """The python-matter-server provider manifest for one .ota (key order is the wire order)."""
+    return {"modelVersion": {
+        "vid": 0xFFF1, "pid": 0x8001, "softwareVersion": v, "softwareVersionString": semver,
+        "cdVersionNumber": 1, "firmwareInformation": "", "softwareVersionValid": True,
+        "otaUrl": otaurl, "otaFileSize": len(ota_bytes),
+        "otaChecksum": base64.b64encode(hashlib.sha256(ota_bytes).digest()).decode(),
+        "otaChecksumType": 1, "minApplicableSoftwareVersion": 1,
+        "maxApplicableSoftwareVersion": v - 1, "releaseNotesUrl": ""}}
+
+
+def package_amebaz2(flavour=None):
+    cfg = load_env()
+    flavour = flavour or cfg.get("HISENSE_FLAVOUR") or "release"
+    v, semver = cur_version(), cur_semver()
+    # Both flavours ship publicly, so their artifacts must be distinguishable. Same version int on
+    # purpose (#77): the FLAVOUR lives in the filename, never in the version. A debug and a release
+    # image at one version are DIFFERENT binaries, never each other's delta base or recovery image.
+    sfx = "-debug" if flavour == "debug" else ""
+    bindir = Path(cfg["GCC_RELEASE"]) / "application_is/Debug/bin"
+    fw, flash_img = bindir / "firmware_is.bin", bindir / "flash_is.bin"
+    out = REPO / "firmware/built-images"
+    fwarch, clip = out / f"firmware_is-v{v}{sfx}.bin", out / f"flash_rac-integrated-v{v}{sfx}.bin"
+    ota, manifest = out / f"rac-v{v}{sfx}.ota", out / f"rac-v{v}{sfx}.json"
+    if not fw.is_file():
+        die("no firmware_is.bin -- build first")
+    # The flavour is claimed by the caller but the CONTENT is whatever build/ holds, so a `package`
+    # after the wrong `build` would mislabel an image, and a debug image under a release name is
+    # exactly the mistake #22 exists to prevent. Check the bytes for the console's own log string.
+    fw_bytes = fw.read_bytes()
+    if AMEBA_CONSOLE_MARK in fw_bytes:
+        if flavour != "debug":
+            die("built image CONTAINS the :2323 console but flavour is release -- rebuild without "
+                "--debug, or package with HISENSE_FLAVOUR=debug")
+    elif flavour == "debug":
+        die("flavour is debug but the built image has NO console -- rebuild with 'build --debug' first")
+    guard_functional_delta("amebaz2-v*", "firmware/src")
+    # Clear this version's old outputs first: a package that dies half way must not leave an older
+    # build's .ota/.json for stage to ship.
+    out.mkdir(parents=True, exist_ok=True)
+    for f in (ota, manifest, clip, fwarch):
+        f.unlink(missing_ok=True)
+    # otaUrl (#79): a LOCAL file:// by default (staged into --ota-provider-dir). With
+    # OTA_RELEASE_BASE set it points at the GitHub release asset: python-matter-server downloads an
+    # http(s):// otaUrl (checksum-verified) and re-serves it over BDX.
+    otaurl = f"file:///rac-v{v}{sfx}.ota"
+    if cfg.get("OTA_RELEASE_BASE"):
+        otaurl = f"{cfg['OTA_RELEASE_BASE'].rstrip('/')}/amebaz2-v{semver}/rac-v{v}{sfx}.ota"
+    say(f"package v{semver} (softwareVersion {v}, {flavour} flavour): raw image + clip image + .ota + manifest")
+    flash_bytes = flash_img.read_bytes()
+    clip.write_bytes(flash_bytes + b"\xff" * (CLIP_SIZE - len(flash_bytes)))
+    r = subprocess.run(["python3", cfg["OTA_TOOL"], "create", "-v", cfg["VID"], "-p", cfg["PID"],
+                        "-vn", str(v), "-vs", semver, "-da", "sha256", "-mi", "1", "-ma", str(v - 1),
+                        str(fw), str(ota)], stdout=subprocess.DEVNULL)
+    if r.returncode != 0:
+        die("ota_image_tool.py create failed")
+    # Archive the RAW firmware_is.bin too: publish uploads it as the byte-exact deployed payload
+    # (it is what the break-glass HTTP OTA streams).
+    fwarch.write_bytes(fw_bytes)
+    manifest.write_text(json.dumps(ota_manifest(ota.read_bytes(), v, semver, otaurl)) + "\n")
+    say(f"  raw:      {fwarch}  (byte-exact deployed payload, what publish uploads)")
+    say(f"  clip:     {clip}")
+    say(f"  ota:      {ota}  (+ .json manifest, otaUrl={otaurl})")
+
+
+def release_amebaz2(script, args):
+    """build + package + stage (+ tag, + flash). stage and flash are not ported yet and run through
+    the script, told the flavour the same way it always read it (HISENSE_FLAVOUR)."""
+    build_args, flash_after, tag_after, flavour = [], False, False, None
+    for a in args:
+        if a in ("--bump", "--bump-patch", "--bump-minor", "--bump-major"):
+            build_args = [a] + [b for b in build_args if b == "--debug"]
+        elif a == "--debug":
+            build_args.append(a)
+            flavour = "debug"
+        elif a == "--flash":
+            flash_after = True
+        elif a == "--tag":
+            tag_after = True
+        else:
+            # Almost certainly a typo. Silently ignoring it is how a build ends up the wrong
+            # flavour: `release --debug` once dropped the flag and shipped a console-less image.
+            die(f"unknown flag for release: {a}")
+    build_amebaz2(build_args)
+    package_amebaz2(flavour)
+    env = dict(os.environ, HISENSE_FLAVOUR=flavour) if flavour else None
+    run(["bash", script, "stage"], env=env)
+    if tag_after:
+        tag_release()
+    if flash_after:
+        run(["bash", script, "flash"], env=env)
+    else:
+        say("staged, not flashed. run: dev.py ota amebaz2 flash")
+
+
 # ---- ota: preflight/verify here; unported steps forward to the release scripts ---------------
 def _guards_bash(target, snippet):
     """Run a snippet with ota-release.env sourced and ota-guards.sh available (its say/die/pi_now/
@@ -860,9 +1443,15 @@ def ota(ctx, step, rest):
     if ctx.target == "esphome":
         die("ota is Matter-only (amebaz2 or esp32); ESPHome updates go through esphome run")
     node_var = "ESP32_NODE_ID" if ctx.target == "esp32" else "NODE_ID"
-    if ctx.target == "amebaz2" and step in ("lint", "verint", "epoch", "tag"):
+    if ctx.target == "amebaz2" and step in ("lint", "verint", "epoch", "tag", "build", "package", "release"):
         if step == "lint":
             lint()
+        elif step == "build":
+            build_amebaz2(rest)
+        elif step == "package":
+            package_amebaz2()
+        elif step == "release":
+            release_amebaz2(rel, rest)
         elif step == "verint":   # an empty argument falls back to version.txt, as `${1:-...}` did
             print(semver_to_int(rest[0] if rest and rest[0] else cur_semver()))
         elif step == "epoch":

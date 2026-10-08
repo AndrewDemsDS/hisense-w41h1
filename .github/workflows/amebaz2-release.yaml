@@ -23,7 +23,7 @@ jobs:
         with:
           # Full history: the build clock is the author date of the newest commit touching the
           # image inputs (#137). A depth-1 clone makes the tag commit look like it touched every
-          # path, and ota-release.sh refuses to build from one rather than stamp the wrong date.
+          # path, and dev.py refuses to build from one rather than stamp the wrong date.
           fetch-depth: 0
 
       - name: Provision build env from the runner host
@@ -42,22 +42,22 @@ jobs:
       - name: Build + package DEBUG flavour (bench instrument, :2323 console)
         run: |
           mkdir -p firmware/built-images   # gitignored, absent on a fresh checkout
-          bash firmware/scripts/ota-release.sh build --debug
-          HISENSE_FLAVOUR=debug bash firmware/scripts/ota-release.sh package
+          python3 firmware/scripts/dev.py ota amebaz2 build --debug
+          HISENSE_FLAVOUR=debug python3 firmware/scripts/dev.py ota amebaz2 package
 
       - name: Build + package RELEASE flavour (default, no console)
         run: |
-          bash firmware/scripts/ota-release.sh build
-          bash firmware/scripts/ota-release.sh package
+          python3 firmware/scripts/dev.py ota amebaz2 build
+          python3 firmware/scripts/dev.py ota amebaz2 package
 
       # The build is reproducible as of v1.3.5, so CI output IS the deployed image, bit for bit,
       # and ships under the canonical names. Getting there took three separate clock/RNG pins,
-      # all in ota-release.sh: SOURCE_DATE_EPOCH for __DATE__/__TIME__, the SDK's build_info
+      # all in dev.py: SOURCE_DATE_EPOCH for __DATE__/__TIME__, the SDK's build_info
       # `date` call, and an LD_PRELOAD around elf2bin's srand(time(NULL)). Before that, a tag
       # rebuild differed from the flashed image in ~574 bytes purely from the wall clock, which
       # is why this step used to rename everything to *-CI-REBUILD.
       # SOURCE_DATE_EPOCH is the AUTHOR date of the newest commit touching the image inputs
-      # (`ota-release.sh epoch`), not the tag commit's time (#137). Author dates survive the merge,
+      # (`dev.py ota amebaz2 epoch`), not the tag commit's time (#137). Author dates survive the merge,
       # so an image built on the branch from a committed tree and flashed before merging matches
       # this rebuild of the merge commit. Squash merges rewrite author dates and break that.
       - name: Collect this version's artifacts + checksums

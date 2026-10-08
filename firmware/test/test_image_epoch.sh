@@ -7,8 +7,8 @@
 # throwaway repo with fixed dates and checks the rule: the author date of the newest commit that
 # touches the image inputs. No SDK, no env file.
 #
-# While ota-release.sh is still the builder (#143), its `epoch` must give the same answer in every
-# case below, so each check runs both and fails on any difference.
+# Until ota-release.sh is retired (#143) it carries its own `build`, so its `epoch` must give the
+# same answer in every case below: each check runs both and fails on any difference.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPTS="$HERE/../scripts"
@@ -91,6 +91,10 @@ check "a patches/ change moves the clock" "$(epoch "$R")" 6000
 echo '1.0.1' > "$R/firmware/src/version.txt"
 at 7000 7000 commit -qam 'bump'
 check "a version.txt bump moves the clock" "$(epoch "$R")" 7000
+# The builder is an input too: it injects defines and SDK edits into the image.
+echo '# edit' >> "$R/firmware/scripts/dev.py"
+at 8000 8000 commit -qam 'builder change'
+check "a dev.py change moves the clock" "$(epoch "$R")" 8000
 
 # A depth-1 clone makes HEAD look like it touched everything, so it must refuse, not guess.
 git clone -q --depth 1 "file://$R" "$T/shallow"
@@ -101,7 +105,7 @@ else echo "  ok   shallow clone refused"; fi
 # No .git at all (a source tarball): git archive stamps files with the commit time.
 mkdir "$T/tarball"
 git -C "$R" archive HEAD | tar -x -C "$T/tarball"
-check "tarball fallback uses the archived mtimes" "$(epoch "$T/tarball")" 7000
+check "tarball fallback uses the archived mtimes" "$(epoch "$T/tarball")" 8000
 
 [ "$fail" = 0 ] || { echo "image epoch rule FAILED"; exit 1; }
 echo "image epoch rule OK"
