@@ -41,8 +41,8 @@ python3 firmware/scripts/dev.py ota amebaz2 release --bump --flash  # build, pac
 python3 firmware/scripts/dev.py ota amebaz2 verify                  # the version the node reports
 ```
 
-`dev.py ota <target> <step>` hands the step and its arguments to the release script
-(`ota-release.sh` for `amebaz2`, `esp32-release.sh` for `esp32`), wrapped in the OTA guards.
+`dev.py ota <target> <step>` runs the release step for that target (`amebaz2` or `esp32`)
+behind the OTA guards.
 `release` runs **build → package → stage → flash** end to end:
 
 | Stage | What it does |
@@ -81,7 +81,7 @@ widespread `python-matter-server` behavior, not a fault in the image.
 AmebaZ2's bootloader A/B-selects the boot slot by the image's **`FWHS.header.serial`**, **not** the
 Matter `softwareVersion`. If the serial isn't bumped, an OTA transfers, applies, "finishes
 successfully", and the device reverts to the old version on reboot (looks like a
-rollback). This cost a whole debugging session. The build step (`ota-release.sh build`, which
+rollback). This cost a whole debugging session. The build step (`dev.py ota amebaz2 build`, which
 `dev.py build amebaz2` and `dev.py ota amebaz2 release` both run) sets
 `serial = SERIAL_BASE + softwareVersion` and log-verifies it, so **you never touch it, as long as
 you use the script and don't hand-build.** The gory detail is in
@@ -95,7 +95,7 @@ reload the Matter integration in HA. See [Commissioning & HA Setup](Commissionin
 
 ## ESP32 delta OTA
 
-`python3 firmware/scripts/dev.py ota esp32 release [--flash]` (which runs `esp32-release.sh`) does
+`python3 firmware/scripts/dev.py ota esp32 release [--flash]` does
 everything in this section for you:
 it refuses to build until the deployed base is archived, builds the patch against it, wraps it and
 stages it. The manual steps below are what it runs, for when you need to debug one.
@@ -145,7 +145,7 @@ envelope.
 
 Two things decide whether this works, and both are silent when wrong:
 
-- **The image's FWHS serial must exceed the running slot's.** `ota-release.sh build` sets it. Serve
+- **The image's FWHS serial must exceed the running slot's.** `dev.py ota amebaz2 build` sets it. Serve
   a stale file and the download succeeds, the write succeeds, and the device boots the old firmware
   anyway.
 - **The file server must be reachable FROM the device's VLAN.** This is the one that bites. If your

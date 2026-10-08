@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Pre-flight and staging guards shared by ota-release.sh and esp32-release.sh.
+"""Pre-flight and staging guards shared by both Matter targets' release steps in dev.py.
 
 Every decision here is a pure function with a host test (firmware/test/test_ota_guards.py);
-ota-guards.sh only moves files and calls this CLI. Each guard maps to a near miss from the
+dev.py only moves files and calls these. Each guard maps to a near miss from the
 2026-09-14 fleet update:
 
   flavour        the ESP32 release script defaulted to DEBUG while the node ran RELEASE, so the
@@ -108,7 +108,7 @@ def version_verdict(cur: int, on_device: int, purpose: str, allow_same: bool = F
                           "(another unit at this version? a node already on it will not update)")
         if cur <= on_device:
             return False, (f"CHIPDeviceConfig version ({cur}) <= last on-device version ({on_device}) "
-                           "-- bump it (docs/10 §1). 'ota-release.sh build --bump'. Same version to "
+                           "-- bump it (docs/10 §1). 'dev.py ota amebaz2 build --bump'. Same version to "
                            "another unit: OTA_ALLOW_SAME_VERSION=1")
         return True, f"version OK: config={cur} > on-device={on_device}"
     return False, f"unknown version gate purpose '{purpose}' (want commit or flash)"

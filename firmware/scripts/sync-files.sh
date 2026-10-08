@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sync-files.sh -- SINGLE SOURCE OF TRUTH for the set of repo source files copied into the
-# room_air_conditioner SDK example dir. Sourced by BOTH firmware/scripts/ota-release.sh
-# (sync_mirror) and scripts/setup.sh (copy loop) so the two can never drift out of lockstep.
+# room_air_conditioner SDK example dir. Read by firmware/scripts/dev.py
+# (sync_mirror, which parses the two arrays below) and sourced by scripts/setup.sh (copy loop) so the two can never drift out of lockstep.
 # (matter_aircon_map.h once went missing from ota-release -> Matter<->Hisense mapping edits
 # never reached a rebuild. Defining the list once makes that class of bug impossible.)
 #
@@ -24,5 +24,5 @@ SYNC_FILES_REQUIRED=(
 SYNC_FILES_OPTIONAL=(
   firmware/src/rs485-driver/power_estimate.h
 )
-# shellcheck disable=SC2034  # consumed by sourcing scripts (ota-release.sh, setup.sh), not this file
+# shellcheck disable=SC2034  # consumed by setup.sh (sourced) and dev.py (parsed), not this file
 SYNC_FILES=( "${SYNC_FILES_REQUIRED[@]}" "${SYNC_FILES_OPTIONAL[@]}" )

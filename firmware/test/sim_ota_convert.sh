@@ -29,7 +29,7 @@ for f in "$CT" "$OP" "$RQ"; do
 done
 [ -f "$OTA" ] || { cat <<EOF
 no .ota to serve. .ota images are build artifacts (gitignored), so a fresh clone has none. Either:
-  - build one:  firmware/scripts/ota-release.sh build && firmware/scripts/ota-release.sh package
+  - build one:  firmware/scripts/dev.py ota amebaz2 build && firmware/scripts/dev.py ota amebaz2 package
                 (drops firmware/built-images/rac-vN.ota, which this script auto-finds), or
   - pass one:   firmware/test/sim_ota_convert.sh /path/to/some.ota
 EOF

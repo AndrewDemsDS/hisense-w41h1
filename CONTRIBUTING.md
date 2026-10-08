@@ -51,7 +51,7 @@ that's out of scope (and can't be redistributed). `gen-creds.sh` handles per-uni
 - **AI assistance:** if you used an AI tool, add an `Assisted-by: AI` trailer (vendor-neutral). Do
   **not** use `Co-authored-by:` for AI.
 - Open an issue for anything non-trivial before a big PR, so we can agree on the approach.
-- CI is host-only (no hardware): `.github/workflows/qa.yaml` runs `ota-release.sh lint` (the same
+- CI is host-only (no hardware): `.github/workflows/qa.yaml` runs `dev.py ota amebaz2 lint` (the same
   gate as the pre-commit hook) on every push/PR, make sure it passes.
 - C/C++ style and lint: run `firmware/scripts/cpp-lint.sh fix` before committing C/C++ changes; CI
   runs `cpp-lint.sh check` (clang-format 13.0.1, clang-tidy 22.1.8, ESPHome-derived rules).

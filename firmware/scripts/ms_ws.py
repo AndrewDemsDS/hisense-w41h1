@@ -3,7 +3,7 @@
 One async call() (send a command, await the reply whose message_id matches) and
 one async connect() context manager (open the WS, consume the server_info hello
 frame). ws_url() and node_id() read $MS_WS / $NODE_ID, falling back to the same
-ota-release.env that ota-release.sh uses (so a bare `python3 <script>.py` targets
+ota-release.env that dev.py uses (so a bare `python3 <script>.py` targets
 the right Pi + node). There is NO silent default: matter-server runs on the Pi and
 the node id is per-device, so a wrong endpoint/node quietly drives nothing -- both
 raise a clear error instead (the old ws://localhost:5580 + node 9 defaults were

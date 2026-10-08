@@ -18,20 +18,20 @@ dev.py walk    esp32                 # guided doctor -> test -> build -> flash, 
 ```
 
 Targets: `amebaz2`, `esp32`, `esphome`. Run `dev.py --help` for every command. It needs only
-`python3`; the heavy work is delegated to the scripts below.
+`python3`. The release logic for both Matter targets lives in `dev.py` itself
+(`dev.py ota amebaz2|esp32 <step>`); it replaced `ota-release.sh`, `esp32-release.sh` and
+`ota-guards.sh` (#143).
 
-## The engines (called by `dev.py ota ...`; run directly only if you know why)
+## The helpers `dev.py` uses
 
-These carry the hard-won OTA traps in their comments (FWHS serial, delta base, flavour, brownout).
-Read `firmware/docs/10-firmware-ota-procedure.md` before driving them by hand.
+`dev.py` carries the hard-won OTA traps in its comments (FWHS serial, delta base, flavour, brownout).
+Read `firmware/docs/10-firmware-ota-procedure.md` before changing a release step.
 
 | Script | What it does |
 |---|---|
-| `ota-release.sh` | AmebaZ2 build + Matter-OTA: sync mirror, full clean, sign, package, stage, flash, revert. |
-| `esp32-release.sh` | ESP32 build + delta Matter-OTA: archive the delta base (#82), package, stage, flash. |
-| `ota-guards.sh` | Pre-flight + staging guards shared by both release scripts (flavour, link, freshness, Pi staging, HTTP mirror). Sourced, not run. |
-| `ota_guards.py` | The pure guard decisions behind `ota-guards.sh`, host-tested by `../test/test_ota_guards.py`. |
-| `sync-files.sh` | Single source of truth for which repo files are copied into the SDK example dir. Sourced by the release script and `scripts/setup.sh`. |
+| `ota_guards.py` | The pure guard decisions both targets share (flavour, link, freshness, manifest archiving, mirror repoint, version gate), host-tested by `../test/test_ota_guards.py`. |
+| `amebaz2_image.py` | The AmebaZ2 image format: sub-image chain walk, verify, re-sign (#75). |
+| `sync-files.sh` | Single source of truth for which repo files are copied into the SDK example dir. Read by `dev.py` and sourced by `scripts/setup.sh`. |
 | `esp32-lint.sh` | Host-only gate: `PROJECT_VER` vs `sdkconfig` consistency. |
 | `cpp-lint.sh` | C/C++ lint for every tree we own: `check` (clang-format, custom rules, clang-tidy; what CI runs) and `fix`. Rules and scope in `cpp-lint.py`; see `docs/guide/Testing-and-QA.md`. |
 

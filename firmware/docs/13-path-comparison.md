@@ -77,7 +77,7 @@ were never the problem. The clock was, in three independent places:
 
 Each of those is a handful of bytes, but the image header carries hashes over the payload, so a
 5-byte timestamp smeared into roughly 574 differing bytes and made a rebuild look like a completely
-different build. All three fixes live in `firmware/scripts/ota-release.sh`; two full clean builds at
+different build. All three fixes live in `firmware/scripts/dev.py`; two full clean builds at
 different wall-clock times now produce identical bytes, and the tag-time CI rebuild matches the
 image that was flashed.
 

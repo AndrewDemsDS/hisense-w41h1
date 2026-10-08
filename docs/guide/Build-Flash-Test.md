@@ -2,8 +2,8 @@
 
 Getting started from source, one section per firmware target, in order of preference: ESPHome,
 then ESP32 with Matter, then the stock AmebaZ2 module. Every step goes through
-`firmware/scripts/dev.py`, which wraps the real scripts (`ota-release.sh`, `esp32-release.sh`,
-`esp32-lint.sh`, the setup scripts) and prints each command before running it, so you can also
+`firmware/scripts/dev.py`, which holds the release logic, calls the helper scripts
+(`esp32-lint.sh`, the setup scripts) and prints each command before running it, so you can also
 copy the commands and run them by hand. The task-oriented walkthrough is the
 [User Guide](User-Guide); this page has the detail behind it.
 
@@ -115,15 +115,15 @@ python3 firmware/scripts/dev.py flash esp32 --board c3 --port /dev/ttyACM0
   `CHIP Error 0x000000AC` (full story in `firmware/esp32-matter/README.md`). Never erase a
   commissioned node: that wipes its fabric.
 - **Dev build vs release.** `dev.py build` is a plain `idf.py build`. An image that goes out over
-  OTA must come from `dev.py ota esp32 release`, which runs `esp32-release.sh` and archives the
+  OTA must come from `dev.py ota esp32 release`, which archives the
   delta base first ([OTA Updates](OTA-Updates#esp32-delta-ota)).
 
 ## AmebaZ2 (stock module)
 
 ```
 python3 firmware/scripts/dev.py fetch amebaz2      # firmware/setup.sh then scripts/setup.sh, ~25 GB
-python3 firmware/scripts/dev.py test amebaz2       # host QA + ota-release.sh lint
-python3 firmware/scripts/dev.py build amebaz2      # ota-release.sh build: full clean, FWHS serial, verify
+python3 firmware/scripts/dev.py test amebaz2       # host QA + dev.py ota amebaz2 lint
+python3 firmware/scripts/dev.py build amebaz2      # dev.py ota amebaz2 build: full clean, FWHS serial, verify
 ```
 
 `dev.py flash amebaz2` does not write anything. It prints the two real paths, because both carry
@@ -135,13 +135,13 @@ the first OTA.
 Two AmebaZ2 build failures seen while verifying, both with misleading symptoms:
 
 - **`No module named 'matter'` in AmebaZ2 codegen, zero ninja steps.** The connectedhomeip
-  pigweed venv is dead, usually because the host Python was upgraded underneath it. `ota-release.sh`
+  pigweed venv is dead, usually because the host Python was upgraded underneath it. `dev.py ota amebaz2 build`
   now stops earlier with that diagnosis. Rebuild the venv with a Python the SDK supports first on
   `PATH` (3.11 worked): `cd <sdk>/connectedhomeip && rm -rf .environment && source scripts/bootstrap.sh`.
 - **`make: *** [Makefile:49: is_matter] Error 2` with no visible cause.** The console shows only
   the tail of that step; the full output is in `/tmp/ota-ismatter.log`. On a fresh SDK it held
   `build_info.h: No such file or directory`: the SDK's makefile generated that header in parallel with
-  the objects that include it, so the first build ever raced. `ota-release.sh build` now orders the
+  the objects that include it, so the first build ever raced. `dev.py ota amebaz2 build` now orders the
   header first. Once it held
   `Segmentation fault` from the Realtek `arm-none-eabi-gcc` driver, crashing in its own license
   ("visa") check before compiling. An unchanged re-run passed, and the crash could not be

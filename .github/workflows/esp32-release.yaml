@@ -67,7 +67,7 @@ jobs:
           # #89: ESP-IDF builds are not byte-reproducible, so these are NOT the deployed images.
           # Critically, delta OTA verifies the BASE image's hash, so a patch built against these
           # files is rejected by the device. The valid delta base is uploaded under the canonical
-          # name by `esp32-release.sh publish` from the box that flashed the node. That warning
+          # name by `dev.py ota esp32 publish` from the box that flashed the node. That warning
           # used to live in a "-CI-REBUILD" filename; it now lives in the release body, so the
           # asset names can stay short without losing the caveat.
           cd firmware/esp32-matter
@@ -104,6 +104,6 @@ jobs:
             > These binaries are **CI rebuilds, not the deployed images**. ESP-IDF builds are not
             > byte-reproducible and delta OTA verifies the base image's hash, so a patch generated
             > against these files will be rejected by the device. The canonical delta base is
-            > published separately by `esp32-release.sh publish` from the machine that flashed the
+            > published separately by `dev.py ota esp32 publish` from the machine that flashed the
             > node (#89).
           files: firmware/esp32-matter/release-assets/*

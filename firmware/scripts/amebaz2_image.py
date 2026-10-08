@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """AmebaZ2 firmware image format: sub-image chain walk, verify, re-sign (issue #75).
 
-Single definition of the signing recipe, shared by firmware/scripts/ota-release.sh
+Single definition of the signing recipe, shared by firmware/scripts/dev.py
 (revert --backup / --repackage) and firmware/test/test_image_chain.py so the two cannot
 drift.
 

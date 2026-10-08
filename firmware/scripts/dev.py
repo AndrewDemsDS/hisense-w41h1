@@ -7,8 +7,8 @@ and every other AmebaZ2 step (build, package, stage, flash, release, publish, re
 implemented here. Their decisions are plain functions with host tests
 (firmware/test/test_dev_release.py, test_image_epoch.sh); ota_guards.py keeps the guard verdicts
 both targets share. The ESP32 release steps (delta OTA against the archived deployed base, #82)
-are implemented here as well. ota-release.sh and esp32-release.sh stay until nothing references
-them. The helpers dev.py calls (run_tests.sh, esp32-lint.sh,
+are implemented here as well. It replaced ota-release.sh, esp32-release.sh and ota-guards.sh.
+The helpers dev.py calls (run_tests.sh, esp32-lint.sh,
 firmware/setup.sh, scripts/setup.sh) are separate tools, not release logic. Every external command
 is printed before it runs. Run it as
 `python3 firmware/scripts/dev.py <cmd> <target> [opts]`.
@@ -333,7 +333,7 @@ def doctor(ctx):
             # Checkouts at the right pins without it build an unpatched SDK, which fails in codegen
             # with "Unhandled server cluster: HISENSE_AIRCON_CLUSTER". Only patches/connectedhomeip.patch
             # registers that cluster in zap_cluster_list.json; the cluster XML and ClusterId.h are no
-            # use as a marker, because ota-release.sh build copies those too.
+            # use as a marker, because `ota amebaz2 build` copies those too.
             reg = Path(f"{sdk}/connectedhomeip/src/app/zap_cluster_list.json")
             if reg.is_file() and "HISENSE_AIRCON_CLUSTER" in reg.read_text(errors="replace"):
                 ok("scripts/setup.sh applied (Hisense cluster registered in connectedhomeip)")
@@ -735,16 +735,13 @@ def git_out(*args):
 
 
 # Every tracked path whose content can reach the AmebaZ2 image: the mirrored sources and
-# version.txt, the sync list, the build script (it injects defines and SDK edits at build time), and
+# version.txt, the sync list, this script (it injects defines and SDK edits at build time), and
 # the SDK setup (pins, patches, overlay edits). Markdown under firmware/src never compiles in, the
 # same exclusion the CI version gate uses. ota-release.env feeds the image too (break-glass
 # host/token) but is untracked by design.
-# dev.py is the builder. ota-release.sh still carries its own `build` until it is retired, so it
-# stays listed and its IMAGE_INPUTS must equal this list (test_image_epoch.sh compares the two).
 IMAGE_INPUTS = [
     "firmware/src", ":(exclude)firmware/src/*.md",
     "firmware/scripts/dev.py",
-    "firmware/scripts/ota-release.sh",
     "firmware/scripts/sync-files.sh",
     "firmware/setup.sh",
     "scripts/setup.sh",

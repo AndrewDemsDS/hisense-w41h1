@@ -29,7 +29,7 @@ into Home Assistant. On the Matter path that transport costs, today:
 |---|---|---|
 | `main/app_main.cpp` (1961 lines) | endpoint/cluster construction, attribute I/O, echo guards, commissioning, OTA hooks, watchdogs | ~400 line hub component + entity classes |
 | `main/diag_console.cpp` (584 lines) + the `:2323` debug flavour | no other way to see decoded state on a deployed node | `logger:` + diagnostic entities, always on, no second flavour |
-| `scripts/esp32-release.sh` (441 lines) | delta-OTA base archiving (#82), version int discipline (#77), staged provider push | `esphome run` |
+| `scripts/dev.py ota esp32` release steps | delta-OTA base archiving (#82), version int discipline (#77), staged provider push | `esphome run` |
 | `scripts/esp32-lint.sh` | keeps `PROJECT_VER` and `sdkconfig` in sync | not applicable |
 | `ElectricalPowerMeasurementDelegate.{h,cpp}` | CHIP delegate so EPM reads route correctly | three `sensor:` declarations |
 | `integrations/hisense-unified-ac` (separate repo, submodule) + `test_diag_contract.py` | Matter cannot render a manufacturer cluster in HA without two upstream PRs, see [`14-diagnostics-ha-exposure.md`](14-diagnostics-ha-exposure.md) | native entities, no bitmap, no cross-repo contract |
@@ -262,7 +262,7 @@ carried is not what to hand a user (its payload byte map is unvalidated for this
 README and `05-esp32-replacement.md` now point at the in-repo firmwares too.
 
 Outstanding: an `esphome-vX.Y.Z` tag build, which stays optional. ESPHome has no delta-OTA base and
-no software version gate, so it needs none of `esp32-release.sh`.
+no software version gate, so it needs none of the `dev.py ota esp32` release steps.
 
 ## Testing
 

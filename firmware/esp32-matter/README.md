@@ -34,7 +34,7 @@ idf.py set-target esp32c3 && idf.py build flash monitor   # esp32 for the classi
 ```
 
 Or `firmware/scripts/dev.py build esp32 --board c3` from the repo root. Images that ship over OTA
-come from `firmware/scripts/esp32-release.sh`, never from a plain `idf.py build`.
+come from `firmware/scripts/dev.py ota esp32 release`, never from a plain `idf.py build`.
 
 ## Why a brand-new board must be erased first
 

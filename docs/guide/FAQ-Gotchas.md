@@ -50,7 +50,7 @@ recovers over USB. ([Recovery & Reflash](Recovery-and-Reflash#esp32-boards-espho
 ## The OTA "finished successfully" but the device is still on the old version. Did it roll back?
 
 On **AmebaZ2**, usually the serial trap: the bootloader picks the slot by `FWHS.header.serial`,
-not `softwareVersion`. `ota-release.sh build` sets it, so it only bites a hand-built image.
+not `softwareVersion`. `dev.py ota amebaz2 build` sets it, so it only bites a hand-built image.
 ([OTA Updates](OTA-Updates#the-ota-serial-trap-the-script-handles-it))
 
 On **ESP32**, a delta-OTA device rejects a full image and silently stays put.

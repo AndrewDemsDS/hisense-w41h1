@@ -18,7 +18,7 @@ SDKs you fetch yourself. It does **not** contain the SDKs.
 |---|---|
 | `firmware/src/rs485-driver/` | The A/C bus driver: `hisense_rs485.{h,cpp}`, the pure host-testable `matter_aircon_map.h`, `power_estimate.h`, and `INTEGRATION.md` (design ref + provenance). **Our code (MIT).** |
 | `firmware/src/sdk-edits/` | Capture of the Matter integration: `matter_drivers.cpp` glue, the `.zap`, the `0xFFF1FC00` mfg-cluster XML, and a `README.md` documenting every in-place SDK edit. |
-| `firmware/scripts/` | `dev.py` (guided build/flash/test entry point for all three targets, see [Build, Flash and Test](Build-Flash-Test)), `ota-release.sh` (build/package/flash/OTA), `esp32-release.sh`, `sync-files.sh`, `gen-creds.sh`, Matter helpers. |
+| `firmware/scripts/` | `dev.py` (the build/flash/test entry point for all three targets and the release engine for both Matter targets, see [Build, Flash and Test](Build-Flash-Test)), `ota_guards.py`, `sync-files.sh`, `gen-creds.sh`, Matter helpers. |
 | `firmware/flasher/` | pyusb CH341A flasher (per-sector verify + retry; use this, **not** flashrom). See [Installing the Custom Firmware](Installing-Custom-Firmware) for the two install paths (CH341A clip vs. OTA). |
 | `firmware/test/` | No-hardware QA: host codec + Matter-map tests + `virtual_ac.py`. See [Testing and QA](Testing-and-QA). |
 | `firmware/docs/` | Wiring plan, attestation, QA strategy, energy monitoring, and the canonical OTA/build procedure (`10-firmware-ota-procedure.md`). |
@@ -60,13 +60,13 @@ with full provenance + licensing in `UPSTREAM.md` and `NOTICE.md`.
 ## The MIRROR model (why editing a file can do nothing)
 
 `firmware/src/rs485-driver/` and `firmware/src/sdk-edits/` are **mirrors**. The real build
-consumes copies inside the SDK example dir. At build time, `ota-release.sh`
-`sync_mirror` copies the mirror files into
+consumes copies inside the SDK example dir. At build time, `dev.py ota amebaz2 build`
+copies the mirror files into
 `ameba-rtos-z2/.../examples/room_air_conditioner/`. **Editing a mirror alone has no build
 effect until you sync it.**
 
 The exact file set is defined **once**, in `sync-files.sh`,
-and shared by both `ota-release.sh sync_mirror` (build time) and `scripts/setup.sh` (the
+and shared by both `dev.py ota amebaz2 build` (build time) and `scripts/setup.sh` (the
 initial copy loop) so the two can never drift. (It exists because `matter_aircon_map.h`
 once went missing from `ota-release`, and mapping edits never reached a rebuild.)
 `REQUIRED` files hard-fail the build if absent; `OPTIONAL` are copied only if present.
@@ -74,18 +74,18 @@ once went missing from `ota-release`, and mapping edits never reached a rebuild.
 ## Build + ship: use the script
 
 The entry point for every target is `python3 firmware/scripts/dev.py` (see the
-[User Guide](User-Guide)). For AmebaZ2 it drives the engine `firmware/scripts/ota-release.sh`
+[User Guide](User-Guide)). For AmebaZ2 it is also the release engine
 (`dev.py test|build amebaz2`, `dev.py ota amebaz2 <stage>`), whose env comes from
 `ota-release.env` (gitignored; copy `.env.example`), which keeps real hostnames and paths out of
 git. The engine's stages:
 
 ```
-ota-release.sh lint                        # host tests + .zap contiguity + version check (the git hook)
-ota-release.sh build [--bump] [--debug]    # sync mirror→SDK, full-clean, build, verify serial+endpoints
-ota-release.sh package                     # pad clip image + create .ota + manifest
-ota-release.sh stage                       # scp to the matter-server host + restart matter-server
-ota-release.sh flash                       # update_node (retries) + verify device booted new version
-ota-release.sh release [--bump] [--flash]  # build + package + stage (+ flash)
+dev.py ota amebaz2 lint                        # host tests + .zap contiguity + version check (the git hook)
+dev.py ota amebaz2 build [--bump] [--debug]    # sync mirror→SDK, full-clean, build, verify serial+endpoints
+dev.py ota amebaz2 package                     # pad clip image + create .ota + manifest
+dev.py ota amebaz2 stage                       # scp to the matter-server host + restart matter-server
+dev.py ota amebaz2 flash                       # update_node (retries) + verify device booted new version
+dev.py ota amebaz2 release [--bump] [--flash]  # build + package + stage (+ flash)
 ```
 
 The one command, day to day:
@@ -129,7 +129,7 @@ Three things to keep straight:
 ## Hooks
 
 Hooks are opt-in per clone: `git config core.hooksPath firmware/.githooks`. The **pre-commit hook**
-runs `ota-release.sh lint` when `firmware/src`, `firmware/test`, or the `.zap` is staged,
+runs `dev.py ota amebaz2 lint` when `firmware/src`, `firmware/test`, or the `.zap` is staged,
 `esp32-lint.sh` when `firmware/esp32-matter/` is staged, `cpp-lint.sh check --no-tidy` on staged
 C/C++ files, and `stop-slop.sh` on staged markdown (bypass: `--no-verify`).
 
@@ -138,7 +138,7 @@ C/C++ files, and `stop-slop.sh` on staged markdown (bypass: `--no-verify`).
 `.github/workflows/` mirrors the local gate and automates release builds:
 
 - **`qa.yaml`** runs on every push/PR: shellcheck, ruff, `cpp-lint.sh check` (clang-format,
-  custom rules and clang-tidy on the C/C++ we own), `esp32-lint.sh` (ESP32 version consistency), `ota-release.sh lint` (host codec/map tests, `.zap` contiguity, version sanity),
+  custom rules and clang-tidy on the C/C++ we own), `esp32-lint.sh` (ESP32 version consistency), `dev.py ota amebaz2 lint` (host codec/map tests, `.zap` contiguity, version sanity),
   `esphome config` on `w41h1.yaml`, and a check that `firmware/src/version.txt` strictly increases
   when firmware changed. It is hardware-free, so it runs on a GitHub-hosted runner, using the same
   commands as the pre-commit hook so CI and local never drift.
@@ -157,7 +157,7 @@ whose version matches the tree: `amebaz2-v$(cat firmware/src/version.txt)` or `e
 `stage`/`flash` stay manual.
 
 A tag pushed while the `sdk-builder` runner is offline does not fail. It sits in `queued` until the
-runner starts. `ota-release.sh tag` and `esp32-release.sh tag` create the tag locally and then ask the
+runner starts. `dev.py ota amebaz2 tag` and `dev.py ota esp32 tag` create the tag locally and then ask the
 GitHub API (`gh api repos/<owner>/<repo>/actions/runners`) whether a runner with that label is
 online. If none is, they warn before printing the push command: start the self-hosted runner
 (`run.sh` in its install dir) first. The check only warns, and it is skipped with a note when `gh` is
@@ -176,7 +176,7 @@ Do not restate it; the summary:
    **activity, not wall-clock**: a genuine full build shows ninja compiling the core (hundreds
    of `[N/353] c++ …` lines) and rebuilds `libCHIP.a` fresh. The ameba make now runs
    `-j$(nproc)`, so a genuine full build is ~110 s; the old "under 2 min = fake" rule is retired
-   (it false-flags good parallel builds). `ota-release.sh build` cleans correctly.
+   (it false-flags good parallel builds). `dev.py ota amebaz2 build` cleans correctly.
 2. **OTA serial.** The bootloader selects the slot by `FWHS.header.serial`, not
    `softwareVersion`; `build` sets and verifies it. See
    [OTA Updates](OTA-Updates#the-ota-serial-trap-the-script-handles-it).

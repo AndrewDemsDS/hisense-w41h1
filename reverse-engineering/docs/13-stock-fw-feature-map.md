@@ -87,7 +87,7 @@ partition table). A re-signing recipe must reproduce **both**, in this order.
 
   ⚠️ **Naming trap.** `u32le(img[0xE0])` is the SIZE field `S`. It is **not** `next_img`.
   `next_img` lives at `H+4` and is a **relative** offset. An earlier revision of this section
-  and of `ota-release.sh` called `img[0xE0]` "next_img"; the code read the right offset so it
+  and of the old release script called `img[0xE0]` "next_img"; the code read the right offset so it
   worked, but generalising the wrong name to sub-images 1..N puts the trailer at
   `0x4060` instead of `0x3d80` on a real image, and every check then reports MISMATCH.
 
@@ -229,7 +229,7 @@ per-model gating ([11-model-capability-map.md](11-model-capability-map.md)).
    Step 3 was **missing until 2026-07-25** and is what bricked a unit (#75). Round-trip
    proof the recipe is now complete: running it with the serial left unchanged reproduces
    the original stock image byte-for-byte. Implemented and self-checked in
-   `firmware/scripts/ota-release.sh revert --repackage`; still awaiting one on-hardware
+   `firmware/scripts/dev.py ota amebaz2 revert --repackage`; still awaiting one on-hardware
    confirmation. Delivery via Matter OTA, `ATWO`, or `HOTA=`.
 3. **The cloud channel cannot be spoofed** (pinned CA + per-device dkey), and **no
    public stock image exists**: the example file on `download.hismarttv.com` is from

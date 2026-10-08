@@ -6,7 +6,7 @@ hit the hard way (unbumped versions, dep-tracking rebuilds, an endpoint gap that
 whole release, the OTA provider-discovery race, A/B rollback).
 
 **Do not run these steps by hand.** They are automated in
-[`firmware/scripts/ota-release.sh`](../scripts/ota-release.sh); a git pre-commit hook
+[`firmware/scripts/dev.py`](../scripts/dev.py) (`dev.py ota amebaz2 <step>`); a git pre-commit hook
 (`firmware/.githooks/`) runs the fast checks on every firmware change. This doc is the *why*.
 
 ---
@@ -20,15 +20,15 @@ whole release, the OTA provider-discovery race, A/B rollback).
   while the int keeps climbing. `build` force-syncs the SDK header from it, both
   `CHIP_DEVICE_CONFIG_DEVICE_SOFTWARE_VERSION` (int) **and** `…_STRING` (the semver) in
   `connectedhomeip/src/include/platform/CHIPDeviceConfig.h`. Never hand-edit the header or the int,
-  edit the semver in `version.txt` (or `ota-release.sh build --bump[-minor|-major]`) and commit it.
-- `ota-release.sh verint <semver>` prints the derived int (CI + tooling use this; no SDK needed).
+  edit the semver in `version.txt` (or `dev.py ota amebaz2 build --bump[-minor|-major]`) and commit it.
+- `dev.py ota amebaz2 verint <semver>` prints the derived int (CI + tooling use this; no SDK needed).
   It also accepts a legacy raw int, so a branch still on the old integer `version.txt` compares
   cleanly against a semver head. **Minor/patch must be `< 100`** (the `*10000+*100` mapping).
 - The int **must be strictly greater** than the version currently running, or the provider declines
   to serve (official CSA rule). The fleet is at Ameba **sw34**; `1.x.x → ≥10000 > 34` clears it, so
   the semver can start clean while the int still increases. Tag convention: **`amebaz2-vX.Y.Z`** and
-  **`esp32-vX.Y.Z`** (path-prefixed; the bare `v1.0.0`/`v1.1.0` tags are retired). `ota-release.sh tag`
-  (or `release --tag`) creates the AmebaZ2 tag locally, and `esp32-release.sh tag` the ESP32 one.
+  **`esp32-vX.Y.Z`** (path-prefixed; the bare `v1.0.0`/`v1.1.0` tags are retired). `dev.py ota amebaz2 tag`
+  (or `release --tag`) creates the AmebaZ2 tag locally, and `dev.py ota esp32 tag` the ESP32 one.
   Both then check through `gh api` that a runner with the `sdk-builder` label is online, and warn
   before printing the push command if none is: the release workflows run only there, and a tag
   pushed while it is down sits in `queued` with no error until the self-hosted runner is started
@@ -42,7 +42,7 @@ whole release, the OTA provider-discovery race, A/B rollback).
 - The version is **compiled in**: bumping it forces a rebuild (a core header, so a wide one).
 - Don't reuse a number for different bytes: if a build rolls back, the *next* attempt must be a
   **new** semver (higher int), not the same one, matter-server and the device cache by int.
-  `ota-release.sh` refuses to build an int ≤ the device's current one.
+  `dev.py` refuses to build an int ≤ the device's current one.
 
 ## 2. What you edit vs. what is generated (never hand-edit outputs)
 
@@ -73,7 +73,7 @@ whole release, the OTA provider-discovery race, A/B rollback).
   boots and runs on **two units** (nodes 11 + 14). A contiguous array is clearly *sufficient*; a
   gap has simply never been tested in isolation.
 - **Guidance:** treat contiguity as a **zero-cost precaution**: when removing an endpoint,
-  **renumber** to close the hole rather than risk it. `ota-release.sh lint` still blocks a
+  **renumber** to close the hole rather than risk it. `dev.py ota amebaz2 lint` still blocks a
   non-contiguous `.zap`. If you ever need to *disprove* the gap theory, build a gap-only image
   (correct serial, untouched FeatureMap) and see if it boots.
 - Adding endpoints (ep4–7 switches, the Electrical Sensor) works via hand-JSON in the `.zap`;
@@ -112,7 +112,7 @@ rm -rf ../../../component/common/application/matter/examples/room_air_conditione
 # --- then build (serial; ninja parallelizes the core internally): ---
 make room_air_conditioner_port && make is_matter
 ```
-`ota-release.sh build` does exactly this clean-then-build automatically. **Do not** use `-j` on the
+`dev.py ota amebaz2 build` does exactly this clean-then-build automatically. **Do not** use `-j` on the
 top-level make (races) and **do not** rely on incremental builds for anything you'll flash, the
 cache is not trustworthy here.
 Known SDK dep-tracking bugs (all handled by the script):
@@ -132,9 +132,9 @@ Known SDK dep-tracking bugs (all handled by the script):
 The image carries a build date (`__DATE__`/`__TIME__` and the SDK `build_info` stamp), and the
 header hashes smear that date across ~574 bytes. `build` pins it with `SOURCE_DATE_EPOCH`, set to
 the **author date of the newest commit that touches the image inputs**: `firmware/src/` (markdown
-excluded), `firmware/scripts/ota-release.sh`, `firmware/scripts/sync-files.sh`, `firmware/setup.sh`,
+excluded), `firmware/scripts/dev.py`, `firmware/scripts/sync-files.sh`, `firmware/setup.sh`,
 `scripts/setup.sh`, `scripts/apply-matter-edits.sh`, `patches/` and `versions.env`. The list is
-`IMAGE_INPUTS` in the script. Print the value without building with `ota-release.sh epoch`.
+`IMAGE_INPUTS` in the script. Print the value without building with `dev.py ota amebaz2 epoch`.
 
 It used to be the HEAD commit time, so an image built on a branch and flashed before merging never
 matched the tag rebuild of the merge commit. Author dates survive a merge, rebase or cherry-pick,
@@ -156,7 +156,7 @@ python3 ota_image_tool.py create -v 0xFFF1 -p 0x8001 -vn <N> -vs "<N>.0" \
     -da sha256 -mi 1 -ma <N-1> <…>/firmware_is.bin  rac-v<N>.ota
 ```
 Plus a sidecar manifest `rac-v<N>.json` matter-server reads (VID/PID/version/`otaFileSize`/
-`otaChecksum` = base64 SHA-256 of the `.ota`/`otaUrl`/min/max). `ota-release.sh` computes size +
+`otaChecksum` = base64 SHA-256 of the `.ota`/`otaUrl`/min/max). `dev.py` computes size +
 checksum so they can't drift.
 
 Also pad `flash_is.bin` → 4 MB `flash_rac-integrated-v<N>.bin` for the **clip** path (CH341A),
@@ -192,9 +192,9 @@ alongside `dumps/w41h1_dump1.bin`. Verify a fresh flash by commissioning into st
 ## 8. The one command
 
 ```
-firmware/scripts/ota-release.sh release --bump           # build + package + stage (no flash)
-firmware/scripts/ota-release.sh release --bump --flash    # + OTA it and verify the boot
-firmware/scripts/ota-release.sh lint                      # fast checks only (run by the git hook)
+firmware/scripts/dev.py ota amebaz2 release --bump           # build + package + stage (no flash)
+firmware/scripts/dev.py ota amebaz2 release --bump --flash    # + OTA it and verify the boot
+firmware/scripts/dev.py ota amebaz2 lint                      # fast checks only (run by the git hook)
 ```
 Environment-specific values (SDK path, Pi host, OTA dir, node id, VID/PID) live in
 `firmware/scripts/ota-release.env` (gitignored; copy from `.env.example`) so no real hostnames or
@@ -214,7 +214,7 @@ boot-crashing config or an unbumped version can't be committed. It chains the gl
    booted**, written by `flash`), not a filename, so it can't be fooled by our informal `rac-vN`
    labels. The pre-commit `lint` only refuses a version *below* it, so the tree you just flashed
    can be committed (#136). The mark is one per repo, not per node: to roll the same version out
-   to a second unit, run `OTA_ALLOW_SAME_VERSION=1 ota-release.sh flash` (equal only, it prints a
+   to a second unit, run `OTA_ALLOW_SAME_VERSION=1 dev.py ota amebaz2 flash` (equal only, it prints a
    warning; lower is never allowed).
 2. **matter-server manifest cache.** `load_local_updates()` runs **once at init**
    (`device_controller.py:186`), so a freshly-staged `.ota`/`.json` is invisible until the
@@ -240,7 +240,7 @@ in §4, handled by the `touch` + inline-include, not by these OTA-layer steps.
 ## 10. Build speed: ccache + parallelism (wired into `build`, no SDK edits)
 
 A version bump recompiles most of the CHIP core (~10–15 min cold). Two multipliers, both applied
-by `ota-release.sh build`:
+by `dev.py ota amebaz2 build`:
 
 - **Parallel:** 16 cores. The **GN core** build runs `ninja :ameba`, which already uses all cores
   by default (no change). The **make** main-lib/app build gets `-j$(nproc)` (its `%.oo` rule uses
@@ -304,8 +304,8 @@ Every tagged release publishes **two** images. They differ only in diagnostics.
 
 | flavour | build | contains |
 |---|---|---|
-| release (default) | `ota-release.sh build` | no console, no bring-up logging |
-| debug | `ota-release.sh build --debug` | `:2323` console (`features`, `poll`, `version`) + verbose logging |
+| release (default) | `dev.py ota amebaz2 build` | no console, no bring-up logging |
+| debug | `dev.py ota amebaz2 build --debug` | `:2323` console (`features`, `poll`, `version`) + verbose logging |
 
 `--debug` generates `hisense_flavour.h` into the SDK example dir; a plain build removes it, so
 release is what you get unless you ask, and the unauthenticated console cannot ship by forgetting a
@@ -334,7 +334,7 @@ Three traps specific to flavours:
 | endpoint gap (non-contiguous) | `.zap` contiguity check + build-output check | `lint` + `build` |
 | flash false-positive (stale cache) | fresh `read_attribute`, sustained ×3 | `flash` |
 | manifest/version cache | restart matter-server; unique versions | `stage` (§9) |
-| ESP32 built on the wrong IDF | live `idf.py --version` vs `dependencies.lock` | `esp32-release.sh build` |
+| ESP32 built on the wrong IDF | live `idf.py --version` vs `dependencies.lock` | `dev.py ota esp32 build` |
 
 **The IDF-mismatch guard (ESP32).** `dependencies.lock` records the IDF that produced the last
 committed build. Sourcing a different `export.sh` (easy to do: `~/esp/esp-idf` is **v5.3.1** while
@@ -440,7 +440,7 @@ next successful flash onward, so it cannot rescue an image that shipped without 
 
 ## 14. Trust the device, not the tool (four cases in one session)
 
-`ota-release.sh flash` reported the wrong outcome **four times** on 2026-07-19. The device's own
+`dev.py ota amebaz2 flash` reported the wrong outcome **four times** on 2026-07-19. The device's own
 report was correct every time.
 
 | tool said | reality |
@@ -500,7 +500,7 @@ while a subscription does one wildcard expansion across every server cluster.
 
 **Before re-landing a data-model change:** confirm `Subscription succeeded` in the matter-server log
 and `avail=True` after a re-interview. This gate is now **automated in the flash path** (issue #64):
-both `ota-release.sh flash` and `esp32-release.sh flash` treat the post-OTA re-interview as fatal,
+both `dev.py ota amebaz2 flash` and `dev.py ota esp32 flash` treat the post-OTA re-interview as fatal,
 poll the node over the websocket until `available` (~75 s timeout), and, when the matter-server log
 is reachable from the release box, require `Subscription succeeded` in it. A build that cannot be
 subscribed to now fails the flash step loudly instead of shipping. Pinning the exact culprit needs
@@ -565,7 +565,7 @@ firmware ≥ 1.3.8 has two break-glass commands (same listener as §13, token + 
   (`sys_update_ota_set_boot_fw_idx`) and resets; the bootloader falls back to the other slot
 
 ```
-ota-release.sh revert --flip <unit-ip> [--force]
+dev.py ota amebaz2 revert --flip <unit-ip> [--force]
 ```
 
 The script queries `:slots` first and refuses unless the other slot's serial is below
@@ -620,7 +620,7 @@ the caller then hangs forever, with **no fall-back to the other slot** (which is
 valid custom image in FW2 did not rescue the unit). Symptom matched exactly.
 
 Verified across 29 real images: the relationship holds on every genuine image and fails on exactly
-the four `rac-stock-v*-payload.bin` files the old `--repackage` produced. `ota-release.sh` now
+the four `rac-stock-v*-payload.bin` files the old `--repackage` produced. `dev.py` now
 recomputes the inner HMAC and **self-checks it on every archived image before building**, so this
 class of failure cannot ship silently again. Full analysis:
 [`reverse-engineering/analysis/bootloader.md`](../../reverse-engineering/analysis/bootloader.md).
@@ -684,12 +684,12 @@ image[0xE0:0x140])`, plus a 4-byte byte-sum trailer at EOF. No app-level cryptog
 signature. So:
 
 ```
-ota-release.sh revert --repackage <stock-dump.bin>   # carve fw1 @0x10000, patch serial @+0xF4,
+dev.py ota amebaz2 revert --repackage <stock-dump.bin>   # carve fw1 @0x10000, patch serial @+0xF4,
                                                      # re-HMAC (incl. the #75 inner HMAC), re-sum,
                                                      # wrap as rac-stock-v<N>.ota
-ota-release.sh revert --apply --ip <unit-ip>         # confirm, stage on the Pi, update_node,
+dev.py ota amebaz2 revert --apply --ip <unit-ip>         # confirm, stage on the Pi, update_node,
                                                      # then CLASSIFY the outcome (see below)
-ota-release.sh revert --slots <unit-ip>              # read-only slot probe (triage; changes nothing)
+dev.py ota amebaz2 revert --slots <unit-ip>              # read-only slot probe (triage; changes nothing)
 ```
 
 `--repackage` first re-verifies the recipe byte-exact against every archived
@@ -724,13 +724,13 @@ break-glass probe can run at all; without it the best verdict the script can rea
 image still sits intact in the inactive slot, fetch a copy of it once and keep the file:
 
 ```
-ota-release.sh revert --backup <unit-ip>    # needs custom firmware >= 1.3.9 (:backup command)
+dev.py ota amebaz2 revert --backup <unit-ip>    # needs custom firmware >= 1.3.9 (:backup command)
 ```
 
 `--backup` streams the inactive slot over the break-glass listener and saves it only after
 three checks pass (serial < `SERIAL_BASE`, HMAC, bytesum trailer). After that, any number of
 custom OTAs is safe: even once a second custom OTA overwrites the stock slot,
-`ota-release.sh revert --repackage <backup>` + `ota-release.sh revert --apply` restores
+`dev.py ota amebaz2 revert --repackage <backup>` + `dev.py ota amebaz2 revert --apply` restores
 stock over the air. Mind the **version-consumption rule**: each repackaged revert image
 carries serial `SERIAL_BASE + max(version.txt, .released-version) + 1`, burning one fleet
 version number, so `--repackage` bumps `version.txt` past the int it just used (commit the

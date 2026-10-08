@@ -20,7 +20,7 @@ chk "$AMEBA_SDK" "$AMEBA_BASE"; chk "$CHIP_SDK" "$CHIP_BASE"
 
 # The patches are `git -C $SDK diff` against the pinned base, so they already contain what earlier
 # steps did to those files (matter_setup.sh's ENABLE_MATTER flip and ctype.h removal) and values that
-# `ota-release.sh build` re-derives on every build (the version header, the FWHS serial). Reset exactly
+# `dev.py ota amebaz2 build` re-derives on every build (the version header, the FWHS serial). Reset exactly
 # the paths a patch touches to the pinned commit, then apply it: deterministic, and safe to re-run.
 # This used to be `git apply --3way ... && echo ok`. On a tree matter_setup.sh or a build had touched,
 # the apply failed ("does not match index"), and set -e does not stop on a failure inside an && list,
@@ -53,7 +53,7 @@ echo "== 3/4  copy our source into the example + custom cluster into CHIP =="
 EX="$AMEBA_SDK/component/common/application/matter/examples/room_air_conditioner"
 mkdir -p "$EX"
 # our driver + glue + config (MIT). Copy whatever exists (delegate is optional/inlined).
-# File set is defined ONCE in firmware/scripts/sync-files.sh (shared with ota-release.sh's
+# File set is defined ONCE in firmware/scripts/sync-files.sh (shared with dev.py's
 # sync_mirror) so the two lists can never drift out of lockstep.
 # shellcheck source=firmware/scripts/sync-files.sh
 . "$HERE/firmware/scripts/sync-files.sh"
