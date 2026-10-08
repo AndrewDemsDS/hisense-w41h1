@@ -58,7 +58,7 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 5.5.4
+    version: 5.5.5
 direct_dependencies:
 - espressif/cjson
 - espressif/esp_delta_ota
