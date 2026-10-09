@@ -28,6 +28,18 @@ CONF_INDOOR_TEMPERATURE = "indoor_temperature"
 CONF_COIL_TEMPERATURE = "coil_temperature"
 CONF_COMPRESSOR_FREQUENCY = "compressor_frequency"
 CONF_CHECKSUM_ERRORS = "checksum_errors"
+CONF_REPLY_TIMEOUTS = "reply_timeouts"
+CONF_UNANSWERED_COMMANDS = "unanswered_commands"
+CONF_LINK_LOSSES = "link_losses"
+
+
+def _counter(icon: str):
+    return sensor.sensor_schema(
+        accuracy_decimals=0,
+        state_class=STATE_CLASS_TOTAL_INCREASING,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        icon=icon,
+    )
 
 
 def _temperature(icon: str | None = None):
@@ -77,12 +89,13 @@ CONFIG_SCHEMA = cv.Schema(
             state_class=STATE_CLASS_MEASUREMENT,
         ),
         # Diagnostic: a climbing count means framing trouble on the bus.
-        cv.Optional(CONF_CHECKSUM_ERRORS): sensor.sensor_schema(
-            accuracy_decimals=0,
-            state_class=STATE_CLASS_TOTAL_INCREASING,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-            icon="mdi:alert-circle-outline",
-        ),
+        cv.Optional(CONF_CHECKSUM_ERRORS): _counter("mdi:alert-circle-outline"),
+        # Diagnostic counters since boot. A reply window that closed with nothing from the A/C
+        # (any frame); a command among those, which is a user write the unit never acknowledged
+        # and that is not sent again; and the number of times the link was declared lost.
+        cv.Optional(CONF_REPLY_TIMEOUTS): _counter("mdi:timer-alert-outline"),
+        cv.Optional(CONF_UNANSWERED_COMMANDS): _counter("mdi:message-alert-outline"),
+        cv.Optional(CONF_LINK_LOSSES): _counter("mdi:lan-disconnect"),
     }
 ).extend(HISENSE_AC_CLIENT_SCHEMA)
 
@@ -95,6 +108,9 @@ SENSORS = [
     CONF_VOLTAGE,
     CONF_CURRENT,
     CONF_CHECKSUM_ERRORS,
+    CONF_REPLY_TIMEOUTS,
+    CONF_UNANSWERED_COMMANDS,
+    CONF_LINK_LOSSES,
 ]
 
 
