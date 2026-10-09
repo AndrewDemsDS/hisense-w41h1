@@ -4,8 +4,8 @@
 //
 // esphome_aircon_map.h deliberately holds only the enum mapping; the fan ladder, setpoint
 // clamp and running-state derivation are reused from matter_aircon_map.h. So the interesting
-// cases here are the ones where ESPHome and Matter differ: Hisense AUTO maps to
-// HEAT_COOL (not ESPHome's AUTO, which means "a schedule decides"), and hvac_action is an
+// cases here are the ones where ESPHome and Matter differ: Hisense AUTO maps to ESPHome's
+// AUTO (not HEAT_COOL, which means "heat or cool to the target"), and hvac_action is an
 // enum rather than a bitmap, with a Dry state Matter has no running-state bit for.
 //
 // The ESPHOME_CLIMATE_* constants mirror esphome::climate::ClimateMode / ClimateAction /
@@ -42,15 +42,15 @@ int main() {
   CHECK(esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_HEAT, &hm) && hm == HISENSE_MODE_HEAT, "HEAT->HEAT");
   CHECK(esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_DRY, &hm) && hm == HISENSE_MODE_DRY, "DRY->DRY");
   CHECK(esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_FAN_ONLY, &hm) && hm == HISENSE_MODE_FAN, "FAN_ONLY->FAN");
-  CHECK(esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_HEAT_COOL, &hm) && hm == HISENSE_MODE_AUTO,
-        "HEAT_COOL->AUTO (the A/C's own auto)");
-  // OFF rides the separate power frame, and ESPHome's AUTO means a schedule decides, which
-  // this A/C has no concept of. Both must be rejected rather than silently mapped.
+  CHECK(esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_AUTO, &hm) && hm == HISENSE_MODE_AUTO,
+        "AUTO->AUTO (the A/C's own auto)");
+  // OFF rides the separate power frame, and HEAT_COOL means heat or cool to the target, which
+  // is not what the unit's auto does. Both must be rejected rather than silently mapped.
   CHECK(!esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_OFF, &hm), "OFF is not a HisenseMode");
-  CHECK(!esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_AUTO, &hm), "AUTO(schedule) rejected");
+  CHECK(!esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_HEAT_COOL, &hm), "HEAT_COOL rejected");
 
   for (int m = 0; m <= 6; m++) {
-    if (m == ESPHOME_CLIMATE_MODE_OFF || m == ESPHOME_CLIMATE_MODE_AUTO)
+    if (m == ESPHOME_CLIMATE_MODE_OFF || m == ESPHOME_CLIMATE_MODE_HEAT_COOL)
       continue;
     esphome_mode_to_hisense((uint8_t) m, &hm);
     CHECK(hisense_mode_to_esphome(hm) == m, "mode round-trip %d", m);
@@ -58,9 +58,9 @@ int main() {
 
   // ---- mode reaches the wire as the CONFIRMED command byte ----
   printf("[mode -> wire]\n");
-  esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_HEAT_COOL, &hm);
+  esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_AUTO, &hm);
   base.mode = hm;
-  CHECK(cmd_byte(base, 18) == 0x90, "HEAT_COOL -> byte18=0x90 (confirmed AUTO command)");
+  CHECK(cmd_byte(base, 18) == 0x90, "AUTO -> byte18=0x90 (confirmed AUTO command)");
   esphome_mode_to_hisense(ESPHOME_CLIMATE_MODE_COOL, &hm);
   base.mode = hm;
   CHECK(cmd_byte(base, 18) == 0x50, "COOL -> byte18=0x50");

@@ -251,9 +251,9 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
 
     # --- 4c. MODE SWEEP ----------------------------------------------------------------
     # HEAT is deliberately skipped: it would heat the room to prove a mapping the host tests
-    # already cover. Cool / dry / fan-only / heat-cool exercise the same code path.
+    # already cover. Cool / dry / fan-only / auto exercise the same code path.
     phase("mode sweep")
-    for label, mode_val in (("cool", 2), ("dry", 5), ("fan_only", 4), ("heat_cool", 1)):
+    for label, mode_val in (("cool", 2), ("dry", 5), ("fan_only", 4), ("auto", 6)):
         before = node.climate_snapshot()
         client.climate_command(key=node.climate.key, mode=mode_val)
         await asyncio.sleep(settle)

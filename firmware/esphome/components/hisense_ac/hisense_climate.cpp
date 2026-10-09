@@ -40,6 +40,7 @@ static_assert((int) climate::CLIMATE_MODE_COOL == CLIMATE_MODE_COOL_VALUE, "Clim
 static_assert((int) climate::CLIMATE_MODE_HEAT == CLIMATE_MODE_HEAT_VALUE, "ClimateMode drift");
 static_assert((int) climate::CLIMATE_MODE_FAN_ONLY == CLIMATE_MODE_FAN_ONLY_VALUE, "ClimateMode drift");
 static_assert((int) climate::CLIMATE_MODE_DRY == CLIMATE_MODE_DRY_VALUE, "ClimateMode drift");
+static_assert((int) climate::CLIMATE_MODE_AUTO == CLIMATE_MODE_AUTO_VALUE, "ClimateMode drift");
 static_assert((int) climate::CLIMATE_ACTION_OFF == CLIMATE_ACTION_OFF_VALUE, "ClimateAction drift");
 static_assert((int) climate::CLIMATE_ACTION_COOLING == CLIMATE_ACTION_COOLING_VALUE, "ClimateAction drift");
 static_assert((int) climate::CLIMATE_ACTION_HEATING == CLIMATE_ACTION_HEATING_VALUE, "ClimateAction drift");
@@ -84,7 +85,7 @@ climate::ClimateTraits HisenseClimate::traits() {
   auto traits = climate::ClimateTraits();
 
   traits.set_supported_modes({climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_COOL, climate::CLIMATE_MODE_DRY,
-                              climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_HEAT_COOL});
+                              climate::CLIMATE_MODE_FAN_ONLY, climate::CLIMATE_MODE_AUTO});
   if (this->supports_heat_)
     traits.add_supported_mode(climate::CLIMATE_MODE_HEAT);
 
