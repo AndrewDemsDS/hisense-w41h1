@@ -15,4 +15,4 @@ external_components:
     components: [hisense_ac]
 
 packages:
-  hisense_ac: !include hisense_ac/test.esp8266-ard.yaml
+  hisense_ac: !include components/hisense_ac/test.esp8266-ard.yaml

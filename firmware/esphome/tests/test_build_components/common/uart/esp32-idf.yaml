@@ -1,0 +1,12 @@
+# Stand-in for ESPHome's tests/test_build_components/common/uart/esp32-idf.yaml, so the component
+# test next door resolves the same relative include here as it will upstream. Same bus id, pins
+# and baud rate as the upstream file.
+substitutions:
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+
+uart:
+  - id: uart_bus
+    tx_pin: ${tx_pin}
+    rx_pin: ${rx_pin}
+    baud_rate: 9600

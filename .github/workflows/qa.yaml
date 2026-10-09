@@ -66,7 +66,7 @@ jobs:
           cd firmware/esphome
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
           pipx run esphome==2026.7.4 config w41h1.yaml
-          # The upstream-shaped component test (tests/hisense_ac/) sets every option of every
+          # The upstream-shaped component test (tests/components/hisense_ac/) sets every option of every
           # platform, which w41h1.yaml does not.
           for t in tests/build*.yaml; do pipx run esphome==2026.7.4 config "$t"; done
 
@@ -98,3 +98,25 @@ jobs:
             echo "::error::softwareVersion must strictly increase ($new <= $old) -- bump firmware/src/version.txt"
             exit 1
           fi
+
+  # ESPHome's own CI gates, run against the hisense_ac component placed in a checkout of
+  # esphome/esphome (see firmware/scripts/esphome-upstream-check.sh). The pinned-release run is
+  # required. The dev run is informational: their rules move ahead of the release this repo builds
+  # with (dev wants ESPHOME_LOG_TAG, which the pinned release does not define), so it shows what
+  # an upstream pull request would still have to change without blocking work here.
+  esphome-upstream:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [pinned, dev]
+    continue-on-error: ${{ matrix.ref == 'dev' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ESPHome upstream gates (${{ matrix.ref }})
+        env:
+          REF: ${{ matrix.ref }}
+        run: |
+          if [ "$REF" = dev ]; then export ESPHOME_UPSTREAM_REF=dev; fi
+          bash firmware/scripts/esphome-upstream-check.sh

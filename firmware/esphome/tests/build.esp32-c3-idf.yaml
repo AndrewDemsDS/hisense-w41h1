@@ -17,4 +17,4 @@ external_components:
     components: [hisense_ac]
 
 packages:
-  hisense_ac: !include hisense_ac/test.esp32-c3-idf.yaml
+  hisense_ac: !include components/hisense_ac/test.esp32-c3-idf.yaml

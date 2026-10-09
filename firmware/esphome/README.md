@@ -30,7 +30,8 @@ Or `firmware/scripts/dev.py flash esphome --board c3 --port <port>` from the rep
 |---|---|
 | `w41h1.yaml` | reference config; board and pins are substitutions |
 | `components/hisense_ac/` | the custom component: hub, climate, switches, select, sensors |
-| `tests/hisense_ac/` | every option of every platform, in the layout of ESPHome's own `tests/components/<name>/` |
+| `tests/components/hisense_ac/` | every option of every platform, at the path and in the shape ESPHome's own `tests/components/<name>/` uses, so it moves upstream unchanged |
+| `tests/test_build_components/` | stand-ins for ESPHome's shared UART test packages, so the relative include in the test resolves here too |
 | `tests/build.*.yaml` | repo-only harness so `esphome config` and `esphome compile` can run those tests (CI runs `config`) |
 | `secrets.yaml.example` | template for the gitignored `secrets.yaml` |
 

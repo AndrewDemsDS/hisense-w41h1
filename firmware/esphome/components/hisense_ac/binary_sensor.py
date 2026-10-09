@@ -63,8 +63,16 @@ CAPABILITY_BITS = {
     "capability_humidity": (7, "Capability humidity", "mdi:water-percent"),
     "capability_heat_8c": (8, "Capability 8C frost guard", "mdi:snowflake-thermometer"),
     "capability_purify": (9, "Capability purify", "mdi:air-purifier"),
-    "capability_q_display": (10, "Capability display control", "mdi:television-ambient-light"),
-    "capability_enable_8heat": (11, "Capability enable 8C heat", "mdi:snowflake-thermometer"),
+    "capability_q_display": (
+        10,
+        "Capability display control",
+        "mdi:television-ambient-light",
+    ),
+    "capability_enable_8heat": (
+        11,
+        "Capability enable 8C heat",
+        "mdi:snowflake-thermometer",
+    ),
     "capability_trans_102_64": (12, "Capability trans 102-64", "mdi:swap-horizontal"),
 }
 
@@ -93,7 +101,12 @@ CONFIG_SCHEMA = (
         }
     )
     .extend({cv.Optional(key): _diagnostic(DEVICE_CLASS_PROBLEM) for key in FAULT_BITS})
-    .extend({cv.Optional(key): _diagnostic(icon=icon) for key, (_, _, icon) in CAPABILITY_BITS.items()})
+    .extend(
+        {
+            cv.Optional(key): _diagnostic(icon=icon)
+            for key, (_, _, icon) in CAPABILITY_BITS.items()
+        }
+    )
     .extend(HISENSE_AC_CLIENT_SCHEMA)
 )
 
