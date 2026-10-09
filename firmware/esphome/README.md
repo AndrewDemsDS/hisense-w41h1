@@ -37,6 +37,10 @@ Or `firmware/scripts/dev.py flash esphome --board c3 --port <port>` from the rep
 Every file in the component passes ESPHome's own gates as of their `dev` branch in September 2026:
 `script/ci-custom.py`, their `.clang-format` and `.clang-tidy`, ruff format, and pylint.
 
+[`upstream/hisense_ac.mdx`](upstream/hisense_ac.mdx) is the draft of the component's page for
+ESPHome's documentation repository (`esphome-docs`, `src/content/docs/components/`), which an
+upstream pull request has to be paired with. Keep it in step with the option schemas.
+
 ### The codec port (`hisense_protocol.*`, `hisense_map.h`)
 
 The shared driver under `firmware/src/rs485-driver/` cannot pass those gates and is not meant to:
