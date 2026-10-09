@@ -1695,7 +1695,9 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
             // still settling after our own command -- don't trust a (possibly
             // pre-command) status frame yet (#61)
         } else {
-            s_cmd.mode     = st.mode;
+            // An unknown status mode nibble keeps the last good mode: copied into the shadow
+            // it wraps onto a different mode on the wire (matter_shadow_mode_from_status).
+            s_cmd.mode     = matter_shadow_mode_from_status(s_cmd.mode, st.mode);
             // NEVER copy an out-of-range setpoint into the shadow. The A/C legitimately
             // reports them (this unit answers ac_8heat=1, and the bench saw it accept and
             // hold 5 C), and an out-of-range shadow makes hisense_build_command() return 0

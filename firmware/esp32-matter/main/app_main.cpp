@@ -580,7 +580,9 @@ static void on_status(const HisenseState *st) {
   // reboot). Held off for a settle window after our own commands so an in-flight command
   // isn't reverted by a pre-command status frame (#61). Mirrors matter_drivers.cpp:732-749.
   if (chip::System::SystemClock().GetMonotonicTimestamp() >= s_sync_hold_until) {
-    s_cmd.mode = st->mode;
+    // An unknown status mode nibble keeps the last good mode: copied into the shadow it wraps
+    // onto a different mode on the wire (matter_shadow_mode_from_status).
+    s_cmd.mode = matter_shadow_mode_from_status(s_cmd.mode, st->mode);
     // NEVER copy an out-of-range setpoint into the shadow. The A/C legitimately reports
     // them (this unit answers ac_8heat=1, and the bench saw it accept and hold 5 C), and
     // an out-of-range shadow makes hisense_build_command() return 0 for EVERY later

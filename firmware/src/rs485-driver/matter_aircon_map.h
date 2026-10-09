@@ -58,6 +58,25 @@ static inline uint8_t hisense_mode_to_matter(HisenseMode m) {
   }
 }
 
+/* Command-shadow mode after a status frame.
+ *
+ * The status mode is a 4-bit nibble and hisense_parse_status casts it into HisenseMode unchecked:
+ * 0..3 and 5/6 (AUTO) are the modes seen on the wire, anything else arrives as a number outside
+ * the enum. The glue copied it into the command shadow, and the builder encodes the mode as
+ * (mode*2+1)<<4 in one byte, so an out-of-enum value wraps onto a real command: 8 packs as
+ * 0x10 (Fan), 9 as 0x30 (Heat), 10 as 0x50 (Cool). The next setpoint, fan or swing write would
+ * then have switched the unit to a mode nobody chose.
+ *
+ * So the shadow follows the status only for a mode the builder can encode, and keeps its last
+ * good mode otherwise. Same rule as the fan (#59) and the setpoint. */
+static inline bool hisense_mode_is_known(HisenseMode m) {
+  return (int) m >= (int) HISENSE_MODE_FAN && (int) m <= (int) HISENSE_MODE_AUTO;
+}
+
+static inline HisenseMode matter_shadow_mode_from_status(HisenseMode shadow, HisenseMode status) {
+  return hisense_mode_is_known(status) ? status : shadow;
+}
+
 /* ---- Fan --------------------------------------------------------------------
  * Single source of truth for the six discrete W41H1 fan speeds. Every raw<->X
  * conversion below indexes THIS table instead of duplicating the ladder:

@@ -9,6 +9,7 @@
 #include "hisense_rs485.h"
 #include "test_common.h"
 #include <cstdio>
+#include <cstring>
 #include <initializer_list>
 
 // build a command from a shadow and return byte @off
@@ -16,6 +17,26 @@ static uint8_t cmd_byte(HisenseCommand c, int off) {
   uint8_t f[64];
   hisense_build_command(&c, f, sizeof(f));
   return f[off];
+}
+
+// A 160-byte status frame (unit on, 24 C, fan auto) carrying a RAW mode nibble, checksummed the
+// way the A/C does. Layout as test_codec.cpp's make_status, which only takes enum modes.
+static void status_with_mode_nibble(uint8_t *out, uint8_t nibble) {
+  static const uint8_t hdr[16] = {0xF4, 0xF5, 0x01, 0x40, 0x97, 0x01, 0x00, 0xFE,
+                                  0x01, 0x01, 0x01, 0x01, 0x00, 0x66, 0x00, 0x01};
+  memset(out, 0, 160);
+  memcpy(out, hdr, 16);
+  out[16] = 0x01;                              // fan auto
+  out[18] = (uint8_t) ((nibble << 4) | 0x08);  // mode<<4 | run<<2
+  out[19] = 24;
+  out[20] = 25;
+  uint16_t ck = 0;
+  for (int i = 2; i < 156; i++)
+    ck = (uint16_t) (ck + out[i]);
+  out[156] = (uint8_t) (ck >> 8);
+  out[157] = (uint8_t) (ck & 0xFF);
+  out[158] = 0xF4;
+  out[159] = 0xFB;
 }
 
 int main() {
@@ -476,6 +497,38 @@ int main() {
       frames++;
     }
     CHECK(frames == 0 && shadow == HISENSE_FAN_AUTO, "guarded: publishing Auto sends no frame");
+  }
+
+  // ---- an unknown status mode nibble must not reach the command shadow --------------------------
+  printf("[shadow sync: unknown status mode]\n");
+  {
+    // Every nibble the parser can hand over, run through parse -> shadow -> builder.
+    for (int nib = 0; nib < 16; nib++) {
+      uint8_t sf[160];
+      HisenseState st;
+      status_with_mode_nibble(sf, (uint8_t) nib);
+      CHECK(hisense_parse_status(sf, sizeof(sf), &st), "status frame with mode nibble %d parses", nib);
+      const bool wire_mode = (nib <= 3) || nib == 4 || nib == 5 || nib == 6;  // 4 is the AUTO enum value itself
+      CHECK(hisense_mode_is_known(st.mode) == wire_mode, "nibble %d known=%d", nib, (int) wire_mode);
+
+      HisenseCommand sh = base;  // shadow holds COOL
+      sh.mode = matter_shadow_mode_from_status(sh.mode, st.mode);
+      if (wire_mode) {
+        CHECK(sh.mode == st.mode, "nibble %d: shadow follows the status", nib);
+      } else {
+        CHECK(sh.mode == HISENSE_MODE_COOL, "nibble %d: shadow keeps its last good mode", nib);
+        CHECK(cmd_byte(sh, 18) == 0x50, "nibble %d: next command still carries COOL (0x50)", nib);
+      }
+    }
+
+    // What the unguarded copy put on the wire for the next single-field write.
+    HisenseCommand raw = base;
+    raw.mode = (HisenseMode) 8;
+    CHECK(cmd_byte(raw, 18) == 0x10, "unguarded: status nibble 8 was re-sent as Fan (0x10)");
+    raw.mode = (HisenseMode) 9;
+    CHECK(cmd_byte(raw, 18) == 0x30, "unguarded: status nibble 9 was re-sent as Heat (0x30)");
+    raw.mode = (HisenseMode) 12;
+    CHECK(cmd_byte(raw, 18) == 0x90, "unguarded: status nibble 12 was re-sent as Auto (0x90)");
   }
 
   printf("== %d passed, %d failed ==\n", g_pass, g_fail);
