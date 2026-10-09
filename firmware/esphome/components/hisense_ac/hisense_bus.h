@@ -44,6 +44,14 @@ class BusListener {
   virtual void on_bus_status(const AcState &state) = 0;
   virtual void on_bus_features(const AcFeatures &features) = 0;
   virtual void on_bus_link(bool up) = 0;
+  // Diagnostics, all optional. They exist so the owner of the bus can log at the level it likes;
+  // the scheduler itself has no logger, which keeps it buildable in the host tests.
+  // Every complete frame received, of any class, before its checksum is judged.
+  virtual void on_bus_frame(const uint8_t *frame, size_t len) {}
+  // A status-class frame whose checksum did not match. It is counted and not parsed.
+  virtual void on_bus_checksum_error(const uint8_t *frame, size_t len) {}
+  // The reply window closed with no frame of the expected class (0 = any class was acceptable).
+  virtual void on_bus_timeout(uint8_t expect_class) {}
 };
 
 // Timing, from the stock byte-writer and transaction primitive (RE docs/09).

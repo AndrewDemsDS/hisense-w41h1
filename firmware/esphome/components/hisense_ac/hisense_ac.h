@@ -100,6 +100,9 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   void on_bus_status(const AcState &state) override;
   void on_bus_features(const AcFeatures &features) override;
   void on_bus_link(bool up) override;
+  void on_bus_frame(const uint8_t *frame, size_t len) override;
+  void on_bus_checksum_error(const uint8_t *frame, size_t len) override;
+  void on_bus_timeout(uint8_t expect_class) override;
 
   // BusIO, over uart::UARTDevice and the DE pin.
   void bus_set_de(bool high) override;
@@ -172,6 +175,9 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   bool special_sent_{false};
   SpecialState projected_{};
   bool features_published_{false};
+  // Last fault bitmap logged, so a fault is reported when it appears and when it clears, not on
+  // every status frame that still carries it.
+  uint32_t logged_faults_{0};
   // Status frames arrive about once a second and almost never differ, so telemetry goes out on
   // change plus one refresh per TELEMETRY_REFRESH_MS.
   uint32_t last_refresh_ms_{0};

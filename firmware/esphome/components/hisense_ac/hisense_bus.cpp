@@ -129,6 +129,8 @@ void BusScheduler::poll(uint32_t now) {
           if (n == 0)
             continue;
           const uint8_t *f = this->rx_.data();
+          if (this->listener_ != nullptr)
+            this->listener_->on_bus_frame(f, n);
           // A completed frame of the wrong class is a late reply to something else (#60): drop
           // it and keep listening within this window.
           if (n > FRAME_CLASS_OFFSET && reply_class_ok(f[FRAME_CLASS_OFFSET], this->expect_class_)) {
@@ -149,6 +151,8 @@ void BusScheduler::poll(uint32_t now) {
           continue;
         if (!reached(now, this->phase_until_))
           return;
+        if (this->listener_ != nullptr)
+          this->listener_->on_bus_timeout(this->expect_class_);
         this->finish_transaction_(0, now);  // timeout, no reply
         continue;
       }
@@ -300,6 +304,8 @@ bool BusScheduler::consume_(size_t n) {
     return false;
   if (!status_checksum_ok(f, n)) {
     this->chk_mismatch_++;
+    if (this->listener_ != nullptr)
+      this->listener_->on_bus_checksum_error(f, n);
     return false;
   }
   if (f[14] == SUBTYPE_PRODUCT_TYPE) {

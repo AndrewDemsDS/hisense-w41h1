@@ -142,7 +142,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
       if (!this->parent_->last_state().power_on)
         powering_on = true;
     } else {
-      ESP_LOGW(TAG, "unsupported climate mode %d", (int) mode);
+      ESP_LOGW(TAG, "Unsupported climate mode %d", (int) mode);
     }
   }
 
@@ -174,7 +174,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   // later. Refuse instead of acknowledging a change that undoes itself, and keep showing the
   // pinned speed. Same rule as the wrapper's fan_mode_forced_by_preset.
   if (wanted_index >= 0 && !fan_request_allowed(this->parent_->projected_special(), (uint8_t) wanted_index)) {
-    ESP_LOGW(TAG, "fan change refused: an active special mode (turbo/quiet/sleep) owns the fan");
+    ESP_LOGW(TAG, "Fan change refused: turbo, quiet or sleep is holding the fan speed");
     wanted_index = -1;
   }
   if (wanted_index >= 0) {
@@ -300,7 +300,7 @@ int HisenseClimate::preset_request_index_(const climate::ClimateCall &call) cons
   }
   if (idx < 0 || !preset_available((uint8_t) idx, this->preset_support_)) {
     if (call.has_custom_preset() || call.get_preset().has_value()) {
-      ESP_LOGW(TAG, "unsupported preset requested");
+      ESP_LOGW(TAG, "Unsupported preset requested");
     }
     return -1;
   }

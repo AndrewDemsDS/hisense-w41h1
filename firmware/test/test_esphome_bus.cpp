@@ -173,6 +173,14 @@ class Recorder : public H::BusListener {
   }
   void on_bus_features(const H::AcFeatures &) override { features++; }
   void on_bus_link(bool up) override { links.push_back({g_now, up}); }
+  // The diagnostic hooks the hub logs from.
+  int frames = 0, checksum_errors = 0, timeouts = 0;
+  void on_bus_frame(const uint8_t *, size_t len) override {
+    if (len > 0)
+      frames++;
+  }
+  void on_bus_checksum_error(const uint8_t *, size_t) override { checksum_errors++; }
+  void on_bus_timeout(uint8_t) override { timeouts++; }
 };
 
 static void run(H::BusScheduler &bus, uint32_t ms) {
@@ -282,10 +290,15 @@ static void test_link_loss_and_recovery() {
   H::BusScheduler bus;
   bus.setup(&ac, &rec, true);
   run(bus, 3000);
+  CHECK(rec.frames >= rec.statuses && rec.statuses > 0, "every delivered status was first reported as a frame");
   ac.responsive = false;
   size_t before = ac.writes.size();
   uint32_t silent_at = g_now;
+  int frames_before = rec.frames, timeouts_before = rec.timeouts;
   run(bus, 12000);
+  CHECK(rec.frames == frames_before, "a silent A/C reports no frames");
+  CHECK(rec.timeouts - timeouts_before >= 10, "and every unanswered transaction reports a timeout (%d)",
+        rec.timeouts - timeouts_before);
   CHECK(rec.links.size() == 1 && !rec.links[0].second, "exactly one link-lost edge");
   // Five status polls unanswered: each costs heartbeat 500 + status 500 (+ TX), so the edge lands
   // after the fifth poll, ~5 cycles in.
@@ -347,6 +360,8 @@ static void test_correlation_and_checksum() {
     run(bus, 7000);
     CHECK(rec.statuses == ok_before, "corrupt status frames are not delivered");
     CHECK(bus.checksum_mismatches() >= 5, "mismatches counted (%u)", (unsigned) bus.checksum_mismatches());
+    CHECK(rec.checksum_errors == (int) bus.checksum_mismatches(), "each mismatch reaches the listener (%d)",
+          rec.checksum_errors);
     CHECK(rec.links.size() == 1 && !rec.links[0].second, "and count as link misses");
   }
 }
