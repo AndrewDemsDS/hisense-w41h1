@@ -161,6 +161,23 @@ sensor:
 Each takes all options from [Sensor](/components/sensor#config-sensor). Values are published when
 they change and at least once a minute.
 
+To get energy from the power estimate, add a
+[Total Daily Energy](/components/sensor/total_daily_energy) sensor and set its `method` to `left`.
+Power is published on change, so the value that held between two updates is the earlier one.
+
+```yaml
+sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    power:
+      name: Power
+      id: ac_power
+  - platform: total_daily_energy
+    name: Energy today
+    power_id: ac_power
+    method: left
+```
+
 ## Binary Sensor
 
 ```yaml
