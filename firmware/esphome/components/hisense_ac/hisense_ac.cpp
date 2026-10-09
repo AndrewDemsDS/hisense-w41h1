@@ -25,10 +25,21 @@ void HisenseAC::on_bus_status(const AcState &state) {
 
 void HisenseAC::on_bus_features(const AcFeatures &features) {}  // polled in publish_diagnostics_
 
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
+// A status frame is about 160 bytes, more than one log line holds, so frames go out in rows.
+static void log_frame(const char *direction, const uint8_t *frame, size_t len) {
+  static const size_t ROW = 32;
+  char hex[format_hex_pretty_size(ROW)];
+  for (size_t at = 0; at < len; at += ROW) {
+    const size_t n = len - at < ROW ? len - at : ROW;
+    ESP_LOGVV(TAG, "%s %3u: %s", direction, (unsigned) at, format_hex_pretty_to(hex, frame + at, n, ' '));
+  }
+}
+#endif
+
 void HisenseAC::on_bus_frame(const uint8_t *frame, size_t len) {
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
-  char hex[format_hex_pretty_size(RX_FRAME_MAX)];
-  ESP_LOGVV(TAG, "RX %s", format_hex_pretty_to(hex, frame, len, ' '));
+  log_frame("RX", frame, len);
 #endif
 }
 
@@ -373,8 +384,7 @@ void HisenseAC::bus_set_de(bool high) {
 }
 void HisenseAC::bus_write(const uint8_t *data, size_t len) {
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
-  char hex[format_hex_pretty_size(TX_FRAME_MAX + 2)];
-  ESP_LOGVV(TAG, "TX %s", format_hex_pretty_to(hex, data, len, ' '));
+  log_frame("TX", data, len);
 #endif
   this->write_array(data, len);
 }
