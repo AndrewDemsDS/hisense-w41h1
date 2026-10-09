@@ -219,6 +219,16 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
 }
 
 void HisenseClimate::update_from_bus(const AcState &state, bool holdoff) {
+  // A status frame arrives about once a second and is nearly always identical to the last, so
+  // the entity is published only when something it shows actually moved.
+  const float prev_current = this->current_temperature;
+  const float prev_target = this->target_temperature;
+  const climate::ClimateAction prev_action = this->action;
+  const climate::ClimateMode prev_mode = this->mode;
+  const climate::ClimateSwingMode prev_swing = this->swing_mode;
+  const uint8_t prev_fan = this->fan_index_;
+  const uint8_t prev_preset = this->preset_index_;
+
   this->current_temperature = state.indoor_temp_c;
   this->action = (climate::ClimateAction) climate_action(state.power_on, state.mode, state.compressor_freq);
   // During the hold-off the frame may predate the user's command, so only telemetry is taken
@@ -239,11 +249,21 @@ void HisenseClimate::update_from_bus(const AcState &state, bool holdoff) {
     SpecialState special = special_from_status(state.eco_on, state.turbo_on, state.mute_on, state.sleep_raw);
     this->publish_preset_index(preset_detect(special, this->preset_support_));
   }
+  // Written as negated equalities so the first frame, where the temperatures are still NaN,
+  // counts as a change.
+  const bool changed = !this->bus_state_published_ || !(prev_current == this->current_temperature) ||
+                       !(prev_target == this->target_temperature) || prev_action != this->action ||
+                       prev_mode != this->mode || prev_swing != this->swing_mode || prev_fan != this->fan_index_ ||
+                       prev_preset != this->preset_index_;
+  if (!changed)
+    return;
+  this->bus_state_published_ = true;
   this->publish_state();
 }
 
 void HisenseClimate::publish_fan_index(uint8_t idx) {
-  idx = fan_published_index(idx);  // quiet (1) shows as low; see esphome_aircon_map.h
+  idx = fan_published_index(idx);  // quiet (1) shows as low; see hisense_map.h
+  this->fan_index_ = idx;
   if (fan_index_is_custom(idx)) {
     this->set_custom_fan_mode_(idx == 3 ? FAN_CUSTOM_MEDIUM_LOW : FAN_CUSTOM_MEDIUM_HIGH);
   } else {
@@ -288,6 +308,7 @@ int HisenseClimate::preset_request_index_(const climate::ClimateCall &call) cons
 }
 
 void HisenseClimate::publish_preset_index(uint8_t idx) {
+  this->preset_index_ = idx;
   if (idx >= PRESET_FIRST_CUSTOM) {
     this->set_custom_preset_(PRESETS[idx].name);
   } else {

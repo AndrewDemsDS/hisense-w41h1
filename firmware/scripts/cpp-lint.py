@@ -287,7 +287,7 @@ HDR = ["-x", "c++-header"]
 
 # (file, flags). Headers are listed as their own units so each is checked under the .clang-tidy
 # of its own directory, not the one of whichever test happens to include it. The ESPHome glue
-# (hisense_ac.cpp, climate, select, switch, legacy) needs ESPHome's headers and is gated by
+# (hisense_ac.cpp, climate, select, switch) needs ESPHome's headers and is gated by
 # ESPHome's own tooling instead; the esp32-matter and esp32-recon trees need ESP-IDF.
 TIDY_UNITS = [
     ("firmware/src/rs485-driver/hisense_rs485.cpp", C11),

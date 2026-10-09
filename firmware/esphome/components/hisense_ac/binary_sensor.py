@@ -65,7 +65,7 @@ CAPABILITY_BITS = {
     "capability_purify": (9, "Capability purify", "mdi:air-purifier"),
     "capability_q_display": (10, "Capability display control", "mdi:television-ambient-light"),
     "capability_enable_8heat": (11, "Capability enable 8C heat", "mdi:snowflake-thermometer"),
-    "capability_trans_102_64": (12, "Capability trans 102/64", "mdi:swap-horizontal"),
+    "capability_trans_102_64": (12, "Capability trans 102-64", "mdi:swap-horizontal"),
 }
 
 

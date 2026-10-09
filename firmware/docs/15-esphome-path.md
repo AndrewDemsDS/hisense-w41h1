@@ -9,6 +9,14 @@ The design goal is **simplicity**, measured concretely: fewer moving parts betwe
 their HA dashboard, and less project-specific machinery to maintain. Parity with the existing
 feature set is a hard constraint, not a goal to trade away.
 
+> **Status, October 2026.** This is the original design. Two of its decisions were later reversed
+> so the component can go to upstream ESPHome, which cannot depend on files outside the component.
+> The component now carries its own port of the codec (held equal to the shared driver by
+> `firmware/test/test_esphome_codec_parity.cpp`) and talks through ESPHome's `uart:` component.
+> The route described under Phase 0, registering the shared driver and its HAL as local ESP-IDF
+> components, has been removed. [`firmware/esphome/README.md`](../esphome/README.md) describes the
+> component as it is today.
+
 ## Scope
 
 - **Target:** ESP32 and ESP32-C3, the same boards and wiring as `firmware/esp32-matter/`

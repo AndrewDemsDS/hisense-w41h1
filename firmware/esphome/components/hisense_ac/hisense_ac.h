@@ -3,12 +3,8 @@
 // onto the bus. The protocol lives in hisense_protocol.* and hisense_map.h (the codec, held equal
 // to the shared driver by a parity test) and hisense_bus.* (the transaction scheduler).
 //
-// Two transports, chosen in YAML:
-//   uart_id (+ optional de_pin)  ESPHome's uart component carries the bytes and the scheduler
-//                                runs in loop(). No task, no global state.
-//   tx_pin / rx_pin / de_pin     LEGACY: the shared driver's own FreeRTOS bus task over its IDF
-//                                HAL, compiled in only with USE_HISENSE_AC_LEGACY_DRIVER. Kept as a
-//                                fallback while the uart path proves itself on hardware.
+// ESPHome's uart component carries the bytes and the scheduler runs in loop(). No task, no
+// global state.
 #include "esphome/core/component.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/hal.h"
@@ -22,9 +18,7 @@
 #ifdef USE_TEXT_SENSOR
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
-#ifndef USE_HISENSE_AC_LEGACY_DRIVER
 #include "esphome/components/uart/uart.h"
-#endif
 
 #include "hisense_bus.h"
 #include "hisense_map.h"
@@ -40,22 +34,15 @@ class StatusListener {
   virtual void on_status(const AcState &state) = 0;
 };
 
-class HisenseAC : public Component,
-#ifndef USE_HISENSE_AC_LEGACY_DRIVER
-                  public uart::UARTDevice,
-                  public BusIO,
-#endif
-                  public BusListener {
+class HisenseAC : public Component, public uart::UARTDevice, public BusIO, public BusListener {
  public:
   void setup() override;
   void loop() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
 
-#ifndef USE_HISENSE_AC_LEGACY_DRIVER
   /// Optional: without it the UART's flow_control_pin (or the transceiver) owns DE.
   void set_de_pin(GPIOPin *pin) { this->de_pin_ = pin; }
-#endif
 
   void set_climate(HisenseClimate *climate) { this->climate_ = climate; }
   void add_status_listener(StatusListener *listener) { this->listeners_.push_back(listener); }
@@ -87,17 +74,6 @@ class HisenseAC : public Component,
   void set_display_pref(bool on) { this->display_pref_ = on ? DISPLAY_ON : DISPLAY_OFF; }
   bool display_pref_on() const { return this->display_pref_ != DISPLAY_OFF; }
 
-  /// BENCH PROBE. Send the current combined frame with exactly ONE pre-checksum byte replaced.
-  /// Every other byte stays at the shadow's known-good state, which is what makes an offset
-  /// sweep safe to run against a live A/C: a failed probe is a no-op rather than a surprise
-  /// mode or setpoint change. The ESPHome analogue of the Matter build's `tx` diag command
-  /// (#52). Offsets outside the payload are rejected by the builder.
-  void tx_override(int offset, int value);
-  /// Two-byte variant: some controls are not a single field write (sleep + mute together).
-  void tx_override2(int off1, int val1, int off2, int val2);
-  /// Send the MINIMAL (single-field) frame: one field set, everything else 'leave alone'.
-  void tx_single(int offset, int value);
-
   /// The command shadow. Entities mutate this, then call send_command().
   AcCommand &cmd() { return this->cmd_; }
 
@@ -120,19 +96,16 @@ class HisenseAC : public Component,
   bool has_state() const { return this->last_.valid; }
   const AcState &last_state() const { return this->last_; }
 
-  // BusListener. With the uart transport these arrive from poll() on the main loop; the legacy
-  // transport calls them from its bus task, hence the lock around the hand-off.
+  // BusListener. These arrive from poll() on the main loop.
   void on_bus_status(const AcState &state) override;
   void on_bus_features(const AcFeatures &features) override;
   void on_bus_link(bool up) override;
 
-#ifndef USE_HISENSE_AC_LEGACY_DRIVER
   // BusIO, over uart::UARTDevice and the DE pin.
   void bus_set_de(bool high) override;
   void bus_write(const uint8_t *data, size_t len) override;
   void bus_flush() override;
   int bus_read() override;
-#endif
 
 #ifdef USE_SENSOR
   SUB_SENSOR(indoor_temperature)
@@ -163,31 +136,26 @@ class HisenseAC : public Component,
 #endif
 
  protected:
-  // Transport seam: the only places the two transports differ.
-  bool transport_start_();
-  bool send_frame_(const uint8_t *frame, size_t len);
-  bool transport_faults_(AcFaults *out);
-  bool transport_features_(AcFeatures *out);
-  void transport_link_token_(uint8_t *hi, uint8_t *lo);
-  uint32_t transport_checksum_mismatches_();
+  bool send_frame_(const uint8_t *frame, size_t len) { return this->bus_.enqueue(frame, len); }
 
   void process_status_(const AcState &state);
   void publish_telemetry_(const AcState &state);
+#ifdef USE_SENSOR
+  void publish_sensor_(sensor::Sensor *sensor, float value, bool refresh_due);
+#endif
   void drain_special_queue_();
   void execute_special_(const SpecialOp &op);
   void publish_diagnostics_();
 
-  Mutex lock_;
+  // A decoded frame is parked here by poll() and published by loop() once the queue has drained.
   AcState pending_{};
   bool pending_valid_{false};
-  volatile bool link_up_{false};
-  volatile bool link_dirty_{false};
+  bool link_up_{false};
+  bool link_dirty_{false};
 
-#ifndef USE_HISENSE_AC_LEGACY_DRIVER
   BusScheduler bus_;
   GPIOPin *de_pin_{nullptr};
   HighFrequencyLoopRequester fast_loop_;
-#endif
 
   AcState last_{};
   AcCommand cmd_{};
@@ -204,6 +172,10 @@ class HisenseAC : public Component,
   bool special_sent_{false};
   SpecialState projected_{};
   bool features_published_{false};
+  // Status frames arrive about once a second and almost never differ, so telemetry goes out on
+  // change plus one refresh per TELEMETRY_REFRESH_MS.
+  uint32_t last_refresh_ms_{0};
+  bool telemetry_refreshed_{false};
   // Defaults to ON to match the switch's boot state; the A/C ships with the panel lit.
   Display display_pref_{DISPLAY_ON};
 #ifdef USE_BINARY_SENSOR

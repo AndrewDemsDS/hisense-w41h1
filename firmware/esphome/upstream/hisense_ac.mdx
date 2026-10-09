@@ -1,0 +1,211 @@
+---
+description: "Instructions for setting up Hisense air conditioners that take the AEH-W41H1 Wi-Fi module."
+title: "Hisense A/C"
+---
+
+import APIRef from '@components/APIRef.astro';
+
+The `hisense_ac` component controls Hisense split air conditioners over the RS-485 port that the
+stock **AEH-W41H1** Wi-Fi module plugs into. An ESP board with an RS-485 transceiver replaces the
+module and talks to the indoor unit directly, so the unit works without the vendor cloud.
+
+It has been tested on ESP32 and ESP32-C3 against units that ship with the AEH-W41H1. Other Hisense
+modules use different protocols and are not supported.
+
+## Hardware
+
+The indoor unit's module connector carries a half-duplex RS-485 bus at 9600 baud, 8N1. You need:
+
+- An ESP board.
+- A **3.3 V** RS-485 transceiver (MAX3485, SP3485 or SN65HVD75). A 5 V MAX485 module drives its
+  receiver output at 5 V and can damage the ESP's RX pin.
+- A ~10 kΩ pull-down on the transceiver's DE line. The pin floats until the firmware starts, and a
+  floating DE can enable the driver and hold the bus against the A/C.
+
+| Transceiver | ESP                |
+| ----------- | ------------------ |
+| DI          | UART TX            |
+| RO          | UART RX            |
+| DE and RE   | `de_pin`           |
+| A, B        | A/C module port    |
+
+While the board is powered from USB, connect only A and B to the A/C. Joining the A/C's ground to a
+board that is grounded through a computer can brown the board out.
+
+This component requires a [UART bus](/components/uart) to be set up.
+
+```yaml
+# Example configuration entry
+uart:
+  id: uart_bus
+  tx_pin: GPIO19
+  rx_pin: GPIO18
+  baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: GPIO4
+
+climate:
+  - platform: hisense_ac
+    name: Air Conditioner
+    hisense_ac_id: ac_bus
+```
+
+## Configuration variables
+
+- **id** (*Optional*, [ID](/guides/configuration-types#id)): Manually specify the ID of the hub.
+- **uart_id** (*Optional*, [ID](/guides/configuration-types#id)): ID of the UART bus connected to
+  the transceiver. The bus must be 9600 baud, 8 data bits, no parity, 1 stop bit.
+- **de_pin** (*Optional*, [Pin Schema](/guides/configuration-types#pin-schema)): The pin wired to
+  the transceiver's DE (and RE) line. The component raises it 5 ms before each frame and lowers it
+  25 ms after the last byte. Leave it out only if the UART's `flow_control_pin` or the transceiver
+  itself switches direction.
+
+## Climate
+
+```yaml
+climate:
+  - platform: hisense_ac
+    name: Air Conditioner
+    hisense_ac_id: ac_bus
+    supports_heat: true
+    supports_horizontal_swing: false
+```
+
+- **hisense_ac_id** (*Optional*, [ID](/guides/configuration-types#id)): ID of the hub.
+- **supports_heat** (*Optional*, boolean): Set to `false` on a cooling-only unit. Defaults to `true`.
+- **supports_horizontal_swing** (*Optional*, boolean): Set to `true` if the unit has a left/right
+  louvre motor. Defaults to `false`.
+- **supports_eco** (*Optional*, boolean): Offer the presets that need eco mode. Defaults to `true`.
+- **supports_quiet** (*Optional*, boolean): Offer the presets that need quiet mode. Defaults to `true`.
+- **supports_turbo** (*Optional*, boolean): Offer the presets that need turbo mode. Defaults to `true`.
+- **supports_sleep** (*Optional*, boolean): Offer the sleep presets. Defaults to `true`.
+- **min_temperature** (*Optional*, temperature): Lowest setpoint shown. Defaults to `16 °C`.
+- **max_temperature** (*Optional*, temperature): Highest setpoint shown. Defaults to `32 °C`.
+- All other options from [Climate](/components/climate#config-climate).
+
+The entity offers the modes off, heat/cool, cool, heat, fan only and dry, six fan speeds (`auto`,
+`low`, `medium_low`, `medium`, `medium_high`, `high`) and vertical swing.
+
+### Presets
+
+The unit's special modes appear as presets: `eco`, `quiet`, `turbo`, `eco_quiet`, one preset per
+sleep profile (`sleep_general`, `sleep_old`, `sleep_young`, `sleep_kids`) and each sleep profile
+combined with eco (`eco_sleep_general` and so on). Eco and turbo cannot be active together.
+
+The A/C ignores a special-mode command that arrives within a few seconds of the previous one, so
+the component sends them about 10 seconds apart. A preset that changes several modes can take up to
+half a minute to settle. The entity shows the requested preset during that time.
+
+## Switch
+
+```yaml
+switch:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    eco:
+      name: Eco
+    turbo:
+      name: Turbo
+    quiet:
+      name: Quiet
+    display:
+      name: Panel display
+```
+
+- **eco** (*Optional*): Eco mode. All options from [Switch](/components/switch#config-switch).
+- **turbo** (*Optional*): Turbo mode. All options from [Switch](/components/switch#config-switch).
+- **quiet** (*Optional*): Quiet mode. All options from [Switch](/components/switch#config-switch).
+- **display** (*Optional*): The indoor unit's front panel display. The A/C does not report this
+  setting, so the switch shows what was last commanded.
+  All options from [Switch](/components/switch#config-switch).
+
+## Select
+
+```yaml
+select:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    sleep_profile:
+      name: Sleep profile
+```
+
+- **sleep_profile** (*Optional*): The sleep profile: `Off`, `General`, `Old`, `Young` or `Kids`.
+  All options from [Select](/components/select#config-select).
+
+## Sensor
+
+```yaml
+sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    outdoor_temperature:
+      name: Outdoor temperature
+    power:
+      name: Power
+```
+
+- **indoor_temperature** (*Optional*): Temperature at the indoor unit, in °C.
+- **outdoor_temperature** (*Optional*): Temperature at the outdoor unit, in °C. Only meaningful
+  while the unit is running.
+- **coil_temperature** (*Optional*): Indoor coil temperature, in °C.
+- **compressor_frequency** (*Optional*): Compressor frequency, in Hz.
+- **power** (*Optional*): Active power, in W. This is an estimate derived from the current value
+  the unit reports, not a metered reading.
+- **voltage** (*Optional*): Mains voltage, in V.
+- **current** (*Optional*): Estimated current, in A.
+- **checksum_errors** (*Optional*): Number of frames received with a bad checksum since boot.
+
+Each takes all options from [Sensor](/components/sensor#config-sensor). Values are published when
+they change and at least once a minute.
+
+## Binary Sensor
+
+```yaml
+binary_sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    bus_link:
+      name: AC bus link
+    problem:
+      name: Fault
+```
+
+- **bus_link** (*Optional*): On while the A/C is answering on the bus.
+- **problem** (*Optional*): On while the unit reports any fault.
+- **aux_heat** (*Optional*): On while the auxiliary heater relay is closed.
+- **fault_\*** (*Optional*): One sensor per fault the unit can report: `fault_indoor_temp`,
+  `fault_indoor_coil_temp`, `fault_indoor_humidity`, `fault_water_full`, `fault_indoor_fan_motor`,
+  `fault_grille`, `fault_indoor_vzero`, `fault_indoor_comms`, `fault_indoor_display`,
+  `fault_indoor_keys`, `fault_indoor_wifi`, `fault_indoor_ele`, `fault_indoor_eeprom`,
+  `fault_outdoor_eeprom`, `fault_outdoor_coil_temp`, `fault_outdoor_gas_temp`,
+  `fault_outdoor_temp`, `fault_over_temp`.
+- **capability_\*** (*Optional*): What the unit says it supports. Use these to decide which
+  `supports_*` options and switches to declare: `capability_cool_heat`, `capability_ai`,
+  `capability_infinite_fan`, `capability_power_save`, `capability_fan_mute`,
+  `capability_swing_dir_8`, `capability_swing_follow`, `capability_humidity`, `capability_heat_8c`,
+  `capability_purify`, `capability_q_display`, `capability_enable_8heat`,
+  `capability_trans_102_64`.
+
+Each takes all options from [Binary Sensor](/components/binary_sensor#config-binary_sensor).
+
+## Text Sensor
+
+```yaml
+text_sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    link_token:
+      name: AC device type
+```
+
+- **link_token** (*Optional*): The two-byte device type the unit reports when the link comes up.
+  All options from [Text Sensor](/components/text_sensor#config-text_sensor).
+
+## See Also
+
+- [UART Bus](/components/uart)
+- [Climate Component](/components/climate/)
+- <APIRef text="hisense_ac.h" path="hisense_ac/hisense_ac.h" />

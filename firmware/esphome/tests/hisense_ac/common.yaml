@@ -126,7 +126,7 @@ binary_sensor:
     capability_enable_8heat:
       name: Capability enable 8C heat
     capability_trans_102_64:
-      name: Capability trans 102/64
+      name: Capability trans 102-64
 
 text_sensor:
   - platform: hisense_ac

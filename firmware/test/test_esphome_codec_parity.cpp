@@ -9,6 +9,7 @@
 // (link heartbeat, frame reassembler) cannot be called from outside, so those two are checked
 // against the captured templates and hand-built streams instead.
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -202,37 +203,6 @@ static void test_build_command() {
     CHECK(hisense_build_command(&o, a, cap) == H::build_command(n, b, cap), "build_command cap %zu", cap);
   }
   printf("  build_command: %ld commands compared\n", built);
-}
-
-static void test_overrides() {
-  H::AcCommand n;
-  n.mode = H::MODE_HEAT;
-  n.setpoint = 23;
-  n.fan = H::FAN_SPEED_MID;
-  HisenseCommand o;
-  to_old(n, &o);
-  static const uint8_t vals[] = {0x00, 0x01, 0x30, 0x7F, 0xF4, 0xFF};
-  for (int off = -2; off < 60; off++) {
-    for (uint8_t v : vals) {
-      uint8_t a[64], b[64];
-      size_t na = hisense_build_command_override(&o, a, sizeof(a), off, v);
-      size_t nb = H::build_command_override(n, b, sizeof(b), off, v);
-      CHECK(same_bytes(a, na, b, nb), "override off=%d v=0x%02X", off, v);
-    }
-  }
-  for (int o1 = 10; o1 < 52; o1 += 3) {
-    for (int o2 = 10; o2 < 52; o2++) {
-      uint8_t a[64], b[64];
-      size_t na = hisense_build_command_override2(&o, a, sizeof(a), o1, 0x5A, o2, 0xF4);
-      size_t nb = H::build_command_override(n, b, sizeof(b), o1, 0x5A, o2, 0xF4);
-      CHECK(same_bytes(a, na, b, nb), "override2 %d %d", o1, o2);
-    }
-  }
-  // The two-byte override must not leak into a later plain command (the original uses a global).
-  uint8_t a[64], b[64];
-  size_t na = hisense_build_command(&o, a, sizeof(a));
-  size_t nb = H::build_command(n, b, sizeof(b));
-  CHECK(same_bytes(a, na, b, nb), "plain command after override2");
 }
 
 static void test_fixed_builders() {
@@ -634,11 +604,22 @@ static void test_frame_assembler() {
   CHECK(got == 0, "assembler: oversize LEN dropped");
 }
 
+// Port-only rule, no counterpart in the shared driver: when a sensor value is worth publishing.
+static void test_telemetry_pacing() {
+  const float nan = std::nanf("");
+  CHECK(H::telemetry_publish_due(false, 0.0f, 0.0f, false), "first value always publishes");
+  CHECK(!H::telemetry_publish_due(true, 24.0f, 24.0f, false), "unchanged value is held back");
+  CHECK(H::telemetry_publish_due(true, 24.0f, 25.0f, false), "changed value publishes");
+  CHECK(H::telemetry_publish_due(true, 24.0f, 24.0f, true), "unchanged value publishes on refresh");
+  CHECK(H::telemetry_publish_due(true, nan, 24.0f, false), "NaN -> value publishes");
+  CHECK(H::telemetry_publish_due(true, 24.0f, nan, false), "value -> NaN publishes");
+  CHECK(H::TELEMETRY_REFRESH_MS == 60000, "refresh period is one minute");
+}
+
 int main() {
   printf("== ESPHome codec parity (port vs original driver) ==\n");
   test_constants();
   test_build_command();
-  test_overrides();
   test_fixed_builders();
   test_link_heartbeat();
   test_stamp_link_token();
@@ -649,6 +630,7 @@ int main() {
   test_presets();
   test_power();
   test_frame_assembler();
+  test_telemetry_pacing();
   printf("  %ld checks, %d failed\n", g_checks, g_fail);
   printf(g_fail ? "== CODEC PARITY FAILED ==\n" : "== CODEC PARITY OK ==\n");
   return g_fail ? 1 : 0;

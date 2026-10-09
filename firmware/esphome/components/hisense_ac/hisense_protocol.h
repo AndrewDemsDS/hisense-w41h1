@@ -290,10 +290,6 @@ inline bool reply_class_ok(uint8_t got_class, uint8_t expect_class) {
 
 // ---- Builders: each returns the on-the-wire length (stuffing included), or 0 on error ----------
 size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap);
-// BENCH ONLY. The combined frame with up to two pre-checksum payload bytes replaced. Offsets must
-// lie in [CMD_HEADER_LEN, CMD_CHK_OFFSET); a negative second offset means "no second patch".
-size_t build_command_override(const AcCommand &cmd, uint8_t *out, size_t out_cap, int off1, uint8_t val1, int off2 = -1,
-                              uint8_t val2 = 0);
 // Literal on/off frames ported byte for byte from messages.h on[] / off[].
 size_t build_power_frame(bool power_on, uint8_t *out, size_t out_cap);
 // Minimal single-field 0x65 frame: header, 0x04 at byte 23, 0x01 at byte 31, one named byte.

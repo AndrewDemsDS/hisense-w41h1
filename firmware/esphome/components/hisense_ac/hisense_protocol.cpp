@@ -245,14 +245,7 @@ size_t build_sleep_frame(uint8_t profile, uint8_t *out, size_t out_cap) {
   return build_single_field(17, v, out, out_cap);
 }
 
-static bool override_offset_ok(int off) {
-  return off >= static_cast<int>(CMD_HEADER_LEN) && off < static_cast<int>(CMD_CHK_OFFSET);
-}
-
-// Shared body of build_command() and build_command_override(). Negative offsets mean no patch, which
-// reproduces the plain command byte for byte.
-static size_t build_command_impl(const AcCommand &cmd, uint8_t *out, size_t out_cap, int off1, uint8_t val1, int off2,
-                                 uint8_t val2) {
+size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap) {
   if (out == nullptr || out_cap < CMD_FRAME_MAX)
     return 0;
 
@@ -326,27 +319,8 @@ static size_t build_command_impl(const AcCommand &cmd, uint8_t *out, size_t out_
       break;
   }
 
-  // Bench patches go after the packing and before the checksum, so the frame stays valid.
-  if (off1 >= 0 && static_cast<size_t>(off1) < CMD_FRAME_LEN)
-    frame[off1] = val1;
-  if (off2 >= 0 && static_cast<size_t>(off2) < CMD_FRAME_LEN)
-    frame[off2] = val2;
-
   finalize_frame(frame, CMD_CHK_OFFSET, CMD_END_OFFSET);
   return stuff_checksum(frame, CMD_FRAME_LEN, out, out_cap);
-}
-
-size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap) {
-  return build_command_impl(cmd, out, out_cap, -1, 0, -1, 0);
-}
-
-size_t build_command_override(const AcCommand &cmd, uint8_t *out, size_t out_cap, int off1, uint8_t val1, int off2,
-                              uint8_t val2) {
-  // Patching the header or checksum gives a frame the A/C drops, which reads as "this offset does
-  // nothing" and would poison a sweep, so those are refused.
-  if (!override_offset_ok(off1) || (off2 >= 0 && !override_offset_ok(off2)))
-    return 0;
-  return build_command_impl(cmd, out, out_cap, off1, val1, off2, val2);
 }
 
 size_t build_link_heartbeat(bool heard_ac, uint8_t *out, size_t out_cap) {

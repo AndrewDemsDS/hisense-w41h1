@@ -52,6 +52,11 @@ class HisenseClimate : public climate::Climate, public Component {
   bool supports_heat_{true};
   bool supports_hswing_{false};
   uint8_t preset_support_{0};
+  // What publish_fan_index() / publish_preset_index() last set. The entity holds each as either
+  // an enum or a custom string, so the index is the one value that compares across both.
+  uint8_t fan_index_{0xFF};
+  uint8_t preset_index_{0xFF};
+  bool bus_state_published_{false};
   /// The custom preset names this unit offers, pointers into PRESETS. ESPHome matches
   /// custom presets by pointer into this vector, so it must outlive the entity (it is a member).
   std::vector<const char *> custom_presets_;

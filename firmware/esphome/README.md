@@ -37,6 +37,10 @@ Or `firmware/scripts/dev.py flash esphome --board c3 --port <port>` from the rep
 Every file in the component passes ESPHome's own gates as of their `dev` branch in September 2026:
 `script/ci-custom.py`, their `.clang-format` and `.clang-tidy`, ruff format, and pylint.
 
+[`upstream/hisense_ac.mdx`](upstream/hisense_ac.mdx) is the draft of the component's page for
+ESPHome's documentation repository (`esphome-docs`, `src/content/docs/components/`), which an
+upstream pull request has to be paired with. Keep it in step with the option schemas.
+
 ### The codec port (`hisense_protocol.*`, `hisense_map.h`)
 
 The shared driver under `firmware/src/rs485-driver/` cannot pass those gates and is not meant to:
@@ -51,14 +55,8 @@ exhaustive small domains, and seeded random frames) and compares them byte for b
 field. It runs in `run_tests.sh`, so the lint gate and CI fail on any divergence. A protocol fix
 lands in the shared driver first, then gets ported here until the parity test passes again.
 
-The port is what the component runs by default: `w41h1.yaml` has a `uart:` block and the bus is
-scheduled in `loop()` (`hisense_bus.*`). It passed the hardware-in-loop actuation test on a live
-A/C (48/49 on 2026-09-25; the one miss, heat_cool readback, is an intermittent A/C-side flake also
-seen on the legacy transport). The shared driver's own bus task stays available as the legacy
-transport (give `hisense_ac:` `tx_pin` / `rx_pin` / `de_pin` and no `uart_id`).
-
-For the legacy transport the component registers `firmware/src/rs485-driver/` and
-`../esp32-matter/components/hisense_hal` as local IDF components, so the driver compiles in place
-with no copy, and the HAL opens the port itself. ESPHome forwards only `-D` and `-W` flags on the
-ESP-IDF framework, so an `-I` flag cannot reach the shared headers; registering real IDF
-components is what makes `<platform_stdlib.h>` resolve.
+The port is the only transport: `w41h1.yaml` has a `uart:` block and the bus is scheduled in
+`loop()` (`hisense_bus.*`). It passed the hardware-in-loop actuation test on a live A/C (48/49 on
+2026-09-25; the one miss, heat_cool readback, is an intermittent A/C-side flake). The earlier
+fallback that ran the shared driver's own FreeRTOS bus task was removed: it pulled in files from
+outside the component, which upstream ESPHome cannot accept.

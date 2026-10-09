@@ -20,6 +20,8 @@ class HisenseSleepSelect : public select::Select, public Component, public Statu
   void control(const std::string &value) override;
 
   HisenseAC *parent_{nullptr};
+  /// Profile last published, so an unchanged status frame does not republish it.
+  uint8_t published_profile_{0xFF};
 };
 
 }  // namespace esphome::hisense_ac

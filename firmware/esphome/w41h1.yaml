@@ -50,30 +50,6 @@ api:
   # a log stream plus a test client get refused mid-handshake ("EOF received"), which reads like
   # a broken device rather than a full table. Bench work needs the room.
   max_connections: 8
-  services:
-    # Bench probe: send the combined frame with ONE byte patched, to locate an unknown field
-    # (the sleep command byte is the open one). Writes an arbitrary payload byte, so it is a
-    # bench instrument, not something to bind to a dashboard button.
-    - service: tx_override
-      variables:
-        offset: int
-        value: int
-      then:
-        - lambda: 'id(ac_bus).tx_override(offset, value);'
-    - service: tx_override2
-      variables:
-        offset: int
-        value: int
-        offset2: int
-        value2: int
-      then:
-        - lambda: 'id(ac_bus).tx_override2(offset, value, offset2, value2);'
-    - service: tx_single
-      variables:
-        offset: int
-        value: int
-      then:
-        - lambda: 'id(ac_bus).tx_single(offset, value);' 
 
 ota:
   - platform: esphome
@@ -103,11 +79,6 @@ hisense_ac:
   id: ac_bus
   uart_id: uart_bus
   de_pin: ${de_pin}
-  # LEGACY fallback (the shared driver's own bus task, as before the uart transport): delete the
-  # uart: block above and replace uart_id + de_pin here with
-  #   tx_pin: ${tx_pin}
-  #   rx_pin: ${rx_pin}
-  #   de_pin: ${de_pin}
 
 climate:
   - platform: hisense_ac
