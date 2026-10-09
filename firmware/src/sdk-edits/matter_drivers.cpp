@@ -130,6 +130,9 @@ static HisenseCommand s_cmd = { HISENSE_MODE_COOL, 24, false,
 // FanMode values the uplink has written and our own downlink handler must ignore (#11). Written on
 // the uplink path, consumed on the downlink event path: guarded with taskENTER_CRITICAL.
 static MatterEchoLedger s_fanmode_echo = { { 0 }, 0 };
+// The same for SystemMode (#168): a readback of the mode the A/C held BEFORE a command, handled
+// after the status moved on, was taken for a client write and commanded (Auto went back to Cool).
+static MatterEchoLedger s_sysmode_echo = { { 0 }, 0 };
 
 /* Latest parsed A/C status, written by the bus task, read by the downlink
  * handler. Poll cadence is seconds apart so a plain snapshot copy is adequate. */
@@ -1371,10 +1374,15 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
             // uplink queue. If it already matches the A/C's reported state it is
             // our own echo -- re-commanding it is what made setpoint/mode bounce
             // (docs/07 HIL regression). Only act on a genuine change.
-            if (st.valid) {
-                uint8_t cur = st.power_on ? hisense_mode_to_matter(st.mode) : 0;
-                if (matter_mode == cur) break;
-            }
+            // Matching the status at handling time is not enough: a readback of the mode the
+            // A/C held before a command no longer matches once the command lands, and was
+            // commanded as if a client had asked for it (#168). The downlink notes what it
+            // writes; matter_sysmode_should_command skips a noted value first.
+            bool act;
+            taskENTER_CRITICAL();
+            act = matter_sysmode_should_command(&s_sysmode_echo, matter_mode, st.valid, st.power_on, st.mode);
+            taskEXIT_CRITICAL();
+            if (!act) break;
             if (matter_mode == 0) {           // Off
                 hisense_send_power(false);
             } else {
@@ -1723,8 +1731,22 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         ThermAttr::LocalTemperature::Set(kAirconEp, (int16_t)(st.indoor_temp_c * 100));
 
         // Thermostat SystemMode (Off if the unit reports powered down)
-        uint8_t mm = st.power_on ? hisense_mode_to_matter(st.mode) : 0;
-        ThermAttr::SystemMode::Set(kAirconEp, (SystemModeEnum)mm);
+        // This write is queued to our own SystemMode handler like a client's. Note it there
+        // (#168), only when it changes the attribute: an unchanged write posts no event. The
+        // handler takes the CHIP stack lock held here before it looks, so noting after Set is safe.
+        uint8_t mm = hisense_status_to_system_mode(st.power_on, st.mode);
+        {
+            SystemModeEnum cur;
+            const bool known = ThermAttr::SystemMode::Get(kAirconEp, &cur) ==
+                               chip::Protocols::InteractionModel::Status::Success;
+            if (ThermAttr::SystemMode::Set(kAirconEp, (SystemModeEnum) mm) ==
+                    chip::Protocols::InteractionModel::Status::Success &&
+                (!known || (uint8_t) cur != mm)) {
+                taskENTER_CRITICAL();
+                matter_echo_note(&s_sysmode_echo, mm);
+                taskEXIT_CRITICAL();
+            }
+        }
 
         // OnOff MUST track the A/C's power state: HA's Matter climate forces
         // hvac_mode=OFF whenever the OnOff cluster reads False, *regardless* of

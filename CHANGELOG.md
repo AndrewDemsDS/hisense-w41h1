@@ -54,6 +54,12 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   every status frame.
 
 ### Fixed
+- AmebaZ2 1.3.47: the node no longer commands its own stale SystemMode readback. A status frame
+  parsed before the A/C applied a mode change is published over the client's value, and if the
+  status had moved on by the time that readback was handled it was sent to the A/C as a new
+  request: Auto could go back to Cool, or the unit could be switched off again. The node now notes
+  the values it publishes and never commands them. The decision is a pure function in
+  `matter_aircon_map.h` with a host test. Not yet confirmed on hardware as the cause of #168.
 - ESPHome: `w41h1.yaml` now integrates energy with `method: left`. Since power is published on
   change, the default `right` method misplaced up to a minute of energy at each compressor start
   and stop. Nodes built from an older copy of the YAML need the same line.

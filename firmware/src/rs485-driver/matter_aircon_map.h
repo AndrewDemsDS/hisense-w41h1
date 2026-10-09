@@ -194,6 +194,36 @@ static inline bool matter_echo_consume(MatterEchoLedger *l, uint8_t v) {
   return false;
 }
 
+/* SystemMode the node publishes for a status frame: Off (0) while the unit is powered down,
+ * otherwise the reported mode. One definition for the publisher and for the guard below. */
+static inline uint8_t hisense_status_to_system_mode(bool power_on, HisenseMode mode) {
+  return power_on ? hisense_mode_to_matter(mode) : 0;
+}
+
+/* Should a queued SystemMode event be commanded to the A/C? (#168)
+ *
+ * The AmebaZ2 handler sees a client's write and the node's own status readback as the same
+ * queued event. It used to tell them apart by comparing the value with the A/C's status AT
+ * HANDLING TIME, which is only right while the status has not moved since the readback was
+ * published. After a mode command it does move: a frame parsed before the A/C applied the
+ * command still carries the previous mode (or powered-down), it is published over the client's
+ * value, and by the time that readback is handled the status shows the new mode. The stale
+ * value then looked like a client asking for the old mode and was commanded: Auto went back to
+ * Cool, or the unit was powered off again.
+ *
+ * So the publisher notes each SystemMode value it writes (only when the write changes the
+ * attribute, as an unchanged write posts no event) and a noted value is never commanded,
+ * whatever the status says by then. The status comparison stays as the second test: a client
+ * write naming what the A/C already reports needs no frame. */
+static inline bool matter_sysmode_should_command(MatterEchoLedger *own, uint8_t value, bool status_valid, bool power_on,
+                                                 HisenseMode mode) {
+  if (matter_echo_consume(own, value))
+    return false;  // our own readback
+  if (status_valid && value == hisense_status_to_system_mode(power_on, mode))
+    return false;  // already what the A/C reports
+  return true;
+}
+
 /* status wind_status byte -> SpeedCurrent (1..6), 0 = auto/unknown. */
 static inline uint8_t hisense_fan_raw_to_speed(uint8_t raw) {
   const HisenseFanRow *r = hisense_fan_row_by_raw(raw);
