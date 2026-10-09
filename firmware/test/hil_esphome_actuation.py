@@ -428,7 +428,9 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
             await asyncio.sleep(2)
     # Turbo forces cool at 16 C and the unit stays in cool once turbo is off, so the mode can
     # have moved again since the sweep put it back.
-    if not powered_off and base_mode not in (None, 0, 3) and node.mode() != base_mode:
+    # Not when this run switched the unit on: it is off again by now, and base_mode is the mode it
+    # came up in, so "restoring" it would switch the unit back on and leave it running.
+    if not powered_off and not powered_here and base_mode not in (None, 0, 3) and node.mode() != base_mode:
         client.climate_command(key=node.climate.key, mode=base_mode)
         await asyncio.sleep(settle)
     if baseline.get("target_temperature") and (powered_off or node.mode() in (2, 3)):
