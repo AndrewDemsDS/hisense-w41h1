@@ -12,6 +12,9 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   `hisense_ac` component in a checkout of `esphome/esphome`. CI requires it to pass against the
   pinned ESPHome release and also reports the result against their `dev` branch. The component
   tests moved to `firmware/esphome/tests/components/hisense_ac/`, the path they take upstream.
+- ESP32 1.1.18: carries the Matter glue fixes from the feedback-loop audit (writes that follow the
+  node's own command inside the status lag, out-of-range status modes, the 3-bit status mode
+  field). First build of that code for the ESP32 targets.
 - ESP32 1.1.17: no firmware source change. First release built with ESP-IDF v5.5.5 and esp-matter
   `release/v1.6`, and the first ESP32 release through `dev.py`. Its delta patch against 1.1.16 is
   large because the toolchain changed.
