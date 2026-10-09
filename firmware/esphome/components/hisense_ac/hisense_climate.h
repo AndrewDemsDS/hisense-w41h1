@@ -2,11 +2,10 @@
 // The A/C as a single ESPHome climate entity: power, mode, setpoint, 6-speed fan, swing,
 // current temperature and action.
 //
-// Unlike the Matter glue there are no per-field echo guards here, and they are not an
-// oversight: control() is only ever called by Home Assistant, never by our own publish_state(),
-// so the downlink -> readback -> uplink feedback loop that the Matter builds have to defend
-// against cannot form. The only timing defence needed is the hub's command hold-off, which stops
-// a poll already in flight from visibly reverting a control the user just moved.
+// There are no per-field echo guards here, and that is not an oversight: control() is only ever
+// called by Home Assistant, never by our own publish_state(), so a downlink -> readback -> uplink
+// feedback loop cannot form. The only timing defence needed is the hub's command hold-off, which
+// stops a poll already in flight from visibly reverting a control the user just moved.
 #include "esphome/components/climate/climate.h"
 #include "hisense_ac.h"
 

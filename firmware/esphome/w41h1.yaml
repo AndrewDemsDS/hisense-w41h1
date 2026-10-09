@@ -38,9 +38,10 @@ external_components:
     components: [hisense_ac]
 
 logger:
-  # INFO is the deployed default. Raise to DEBUG on the bench to see the decoded status frames
-  # and the outgoing command shadow (hisense_ac logs both), which is how the fan-command and
-  # setpoint bugs were pinned down on 2026-08-18.
+  # INFO is the deployed default: link and fault changes only. DEBUG adds each status change and
+  # every command sent. VERBOSE adds every status frame and every poll that got no reply.
+  # VERY_VERBOSE adds the raw bytes of every frame in both directions, which is the level to use
+  # when the A/C is not answering.
   level: INFO
 
 api:

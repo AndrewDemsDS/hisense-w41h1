@@ -2,9 +2,18 @@
 #include "hisense_climate.h"
 #include "esphome/core/log.h"
 
+#include <cinttypes>
+
 namespace esphome::hisense_ac {
 
 static const char *const TAG = "hisense_ac";
+
+// What each log level shows:
+//   WARN          the bus link dropping, a frame that could not be sent, a bad checksum, a fault
+//   INFO          the bus link coming back, a fault clearing
+//   DEBUG         a status change, every command sent, the unit's capabilities
+//   VERBOSE       every decoded status frame, every poll that got no reply
+//   VERY_VERBOSE  the raw bytes of every frame sent and received
 
 // ---- Bus results ------------------------------------------------------------------------------
 // These run inside bus_.poll(). Entities are not touched here: the frame is parked and loop()
@@ -15,6 +24,32 @@ void HisenseAC::on_bus_status(const AcState &state) {
 }
 
 void HisenseAC::on_bus_features(const AcFeatures &features) {}  // polled in publish_diagnostics_
+
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
+// A status frame is about 160 bytes, more than one log line holds, so frames go out in rows.
+static void log_frame(const char *direction, const uint8_t *frame, size_t len) {
+  static const size_t ROW = 32;
+  char hex[format_hex_pretty_size(ROW)];
+  for (size_t at = 0; at < len; at += ROW) {
+    const size_t n = len - at < ROW ? len - at : ROW;
+    ESP_LOGVV(TAG, "%s %3u: %s", direction, (unsigned) at, format_hex_pretty_to(hex, frame + at, n, ' '));
+  }
+}
+#endif
+
+void HisenseAC::on_bus_frame(const uint8_t *frame, size_t len) {
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
+  log_frame("RX", frame, len);
+#endif
+}
+
+void HisenseAC::on_bus_checksum_error(const uint8_t *frame, size_t len) {
+  ESP_LOGW(TAG, "Status frame with a bad checksum dropped (%" PRIu32 " since boot)", this->bus_.checksum_mismatches());
+}
+
+void HisenseAC::on_bus_timeout(uint8_t expect_class) {
+  ESP_LOGV(TAG, "No reply within the window (expected class 0x%02X)", expect_class);
+}
 
 void HisenseAC::on_bus_link(bool up) {
   if (!up) {
@@ -56,7 +91,11 @@ void HisenseAC::loop() {
 
   if (this->link_dirty_) {
     this->link_dirty_ = false;
-    ESP_LOGW(TAG, "A/C bus link %s", this->link_up_ ? LOG_STR_LITERAL("restored") : LOG_STR_LITERAL("LOST"));
+    if (this->link_up_) {
+      ESP_LOGI(TAG, "A/C bus link restored");
+    } else {
+      ESP_LOGW(TAG, "A/C bus link lost: the unit is not answering");
+    }
 #ifdef USE_BINARY_SENSOR
     // publish_telemetry_() only runs on a decoded frame, so it can only ever publish true; the
     // loss edge has to be published here or the sensor never shows the link down.
@@ -72,18 +111,23 @@ void HisenseAC::loop() {
 void HisenseAC::process_status_(const AcState &state) {
   // A decoded frame IS the link being up. The link callback only fires on EDGES, so a link that
   // is healthy from boot never produces a "restored" edge and link_up_ would sit at its initial
-  // false forever, reporting a working bus as down. Seen on a real A/C 2026-08-19.
+  // false forever, reporting a working bus as down.
   this->link_up_ = true;
-  ESP_LOGD(TAG, "RX status: power=%d mode=%d setpoint=%d indoor=%d fan_raw=0x%02X holdoff=%d", state.power_on,
+  ESP_LOGV(TAG, "Status: power=%d mode=%d setpoint=%d indoor=%d fan_raw=0x%02X holdoff=%d", state.power_on,
            (int) state.mode, state.setpoint_c, state.indoor_temp_c, state.fan_raw, this->in_command_holdoff());
-  // Edge-logged at INFO because these two are how the A/C answers a mute or sleep command, and
-  // a command that is accepted-then-ignored looks identical to one that was never sent unless
-  // you can see the raw byte move. Silent in steady state.
-  if (this->last_.valid && state.sleep_raw != this->last_.sleep_raw) {
-    ESP_LOGI(TAG, "A/C sleep_raw %u -> %u", this->last_.sleep_raw, state.sleep_raw);
-  }
-  if (this->last_.valid && state.mute_on != this->last_.mute_on) {
-    ESP_LOGI(TAG, "A/C mute %d -> %d (fan_raw 0x%02X)", this->last_.mute_on, state.mute_on, state.fan_raw);
+  // A frame arrives about once a second, so DEBUG gets it only when something a user would
+  // recognise moved. The sleep and mute bytes are in the list because they are how the unit
+  // answers those two commands: one that is accepted and then ignored looks the same as one that
+  // was never sent unless the raw value is seen to move.
+  const AcState &was = this->last_;
+  if (!was.valid || was.power_on != state.power_on || was.mode != state.mode || was.setpoint_c != state.setpoint_c ||
+      was.indoor_temp_c != state.indoor_temp_c || was.fan_raw != state.fan_raw || was.sleep_raw != state.sleep_raw ||
+      was.mute_on != state.mute_on || was.eco_on != state.eco_on || was.turbo_on != state.turbo_on) {
+    ESP_LOGD(
+        TAG,
+        "Status changed: power=%d mode=%d setpoint=%d indoor=%d fan_raw=0x%02X eco=%d turbo=%d mute=%d sleep_raw=%u",
+        state.power_on, (int) state.mode, state.setpoint_c, state.indoor_temp_c, state.fan_raw, state.eco_on,
+        state.turbo_on, state.mute_on, state.sleep_raw);
   }
   this->last_ = state;
 
@@ -95,15 +139,15 @@ void HisenseAC::process_status_(const AcState &state) {
     if (fan != FAN_SPEED_NOCHANGE)
       this->cmd_.fan = fan;
     this->cmd_.mode = state.mode;
-    // Validated in the wire unit: a raw copy dropped the F flag and let an out-of-range report
-    // poison the shadow, which silently killed every later Cool/Heat/Auto frame (#117).
+    // Validated in the wire unit: a raw copy would drop the F flag and let an out-of-range report
+    // poison the shadow, which silently kills every later Cool/Heat/Auto frame.
     if (!sync_shadow_setpoint(state.setpoint_c, state.temp_unit_f, &this->cmd_)) {
-      ESP_LOGD(TAG, "status setpoint %d C out of command range, shadow kept", state.setpoint_c);
+      ESP_LOGV(TAG, "Status setpoint %d C is outside the command range, shadow kept", state.setpoint_c);
     }
     this->cmd_.vswing = state.vswing_on ? SWING_MODE_SWING : SWING_MODE_OFF;
     this->cmd_.hswing = state.hswing_on ? SWING_MODE_SWING : SWING_MODE_OFF;
-    // Without this a Turbo/Eco set from HA re-asserted on every later combined frame, even
-    // after the remote cleared it. Ported from the esp32 Matter sync.
+    // Without this a Turbo/Eco set from HA is re-asserted on every later combined frame, even
+    // after the remote cleared it.
     this->cmd_.feature = feature_from_status(state.eco_on, state.turbo_on);
   }
   // The projection only follows the A/C while nothing of ours is queued or settling; otherwise
@@ -160,24 +204,33 @@ void HisenseAC::publish_telemetry_(const AcState &state) {
 }
 
 void HisenseAC::publish_diagnostics_() {
-#ifdef USE_BINARY_SENSOR
   AcFaults faults;
   if (this->bus_.faults(&faults)) {
     uint32_t bitmap = faults_to_bitmap32(faults);
+    if (bitmap != this->logged_faults_) {
+      if (bitmap != 0) {
+        ESP_LOGW(TAG, "A/C reports a fault: bitmap 0x%08" PRIX32, bitmap);
+      } else {
+        ESP_LOGI(TAG, "A/C fault cleared");
+      }
+      this->logged_faults_ = bitmap;
+    }
+#ifdef USE_BINARY_SENSOR
     if (this->problem_binary_sensor_ != nullptr)
       this->problem_binary_sensor_->publish_state(faults.any);
     for (auto &entry : this->fault_sensors_)
       entry.second->publish_state((bitmap >> entry.first) & 1u);
-  }
 #endif
+  }
 
   // Capabilities answer once, after the 0x66/40 ProductType exchange, and never change.
   AcFeatures features;
   if (this->features_published_ || !this->bus_.features(&features) || !features.valid)
     return;
   this->features_published_ = true;
-#ifdef USE_BINARY_SENSOR
   uint32_t bitmap = features_to_bitmap32(features);
+  ESP_LOGD(TAG, "A/C capabilities: bitmap 0x%08" PRIX32, bitmap);
+#ifdef USE_BINARY_SENSOR
   for (auto &entry : this->capability_sensors_)
     entry.second->publish_state((bitmap >> entry.first) & 1u);
 #endif
@@ -204,11 +257,11 @@ void HisenseAC::send_command() {
   this->cmd_.display = this->display_pref_;
   size_t len = build_command(this->cmd_, frame, sizeof(frame));
   if (len == 0) {
-    ESP_LOGW(TAG, "command frame build failed");
+    ESP_LOGW(TAG, "Command frame could not be built");
     return;
   }
   if (!this->send_frame_(frame, len)) {
-    ESP_LOGW(TAG, "command frame dropped: TX queue full");
+    ESP_LOGW(TAG, "Command frame dropped: TX queue full");
   }
 }
 
@@ -216,17 +269,17 @@ void HisenseAC::send_power(bool on) {
   uint8_t frame[CMD_FRAME_MAX];
   size_t len = build_power_frame(on, frame, sizeof(frame));
   if (len == 0 || !this->send_frame_(frame, len)) {
-    ESP_LOGW(TAG, "power %s frame not sent", on ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
+    ESP_LOGW(TAG, "Power %s frame not sent", on ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
   }
 }
 
-/* Mute and sleep use the MINIMAL single-field frame, which is what the stock module's generic
+/* Mute and sleep use the MINIMAL single-field frame, which is what the vendor module's generic
  * attribute setter sends: one field set, every other byte left at 0x00, "leave alone".
  *
- * That frame was ignored by the A/C until 2026-08-19, when the cause turned out to be a single
- * missing byte: frame[31] = 0x01, which every combined command writes and the zeroed buffer
- * omitted. With the marker added in build_single_field(), both attributes work: all four sleep
- * profiles select (sleep_raw 2/4/6/8) and mute engages with fan_raw 0x02.
+ * The A/C ignores that frame unless it also carries frame[31] = 0x01, the marker every combined
+ * command writes and a zeroed buffer omits. With the marker added in build_single_field(), both
+ * attributes work: all four sleep profiles select (sleep_raw 2/4/6/8) and mute engages with
+ * fan_raw 0x02.
  *
  * The minimal frame is preferable to patching the combined one, because it leaves mode,
  * setpoint, fan and swing alone instead of re-asserting the shadow on every mute or sleep. */
@@ -234,7 +287,7 @@ void HisenseAC::send_mute(bool on) {
   uint8_t frame[CMD_FRAME_MAX];
   size_t len = build_mute_frame(on, frame, sizeof(frame));
   if (len == 0 || !this->send_frame_(frame, len)) {
-    ESP_LOGW(TAG, "mute frame not sent");
+    ESP_LOGW(TAG, "Mute frame not sent");
   }
 }
 
@@ -242,14 +295,14 @@ void HisenseAC::send_sleep(uint8_t profile) {
   uint8_t frame[CMD_FRAME_MAX];
   size_t len = build_sleep_frame(profile, frame, sizeof(frame));
   if (len == 0 || !this->send_frame_(frame, len)) {
-    ESP_LOGW(TAG, "sleep frame not sent");
+    ESP_LOGW(TAG, "Sleep frame not sent");
   }
 }
 
 // ---- Special-mode queue -----------------------------------------------------------------------
 void HisenseAC::enqueue_special(const SpecialOp &op) {
   if (this->special_len_ >= SPECIAL_QUEUE_CAP) {
-    ESP_LOGW(TAG, "special-mode queue full, op %u dropped", op.kind);
+    ESP_LOGW(TAG, "Special-mode queue full, op %u dropped", op.kind);
     return;
   }
   this->special_queue_[this->special_len_++] = op;
@@ -265,7 +318,7 @@ void HisenseAC::request_preset(uint8_t target) {
   SpecialOp ops[PRESET_PLAN_MAX];
   size_t n = preset_plan(this->projected_, target, ops);
   this->special_len_ = 0;
-  ESP_LOGD(TAG, "preset -> %s: %u op(s)", PRESETS[target].name, (unsigned) n);
+  ESP_LOGD(TAG, "Preset %s: %u command(s) queued", PRESETS[target].name, (unsigned) n);
   for (size_t i = 0; i < n; i++)
     this->enqueue_special(ops[i]);
   this->note_user_command();
@@ -329,7 +382,12 @@ void HisenseAC::bus_set_de(bool high) {
   if (this->de_pin_ != nullptr)
     this->de_pin_->digital_write(high);
 }
-void HisenseAC::bus_write(const uint8_t *data, size_t len) { this->write_array(data, len); }
+void HisenseAC::bus_write(const uint8_t *data, size_t len) {
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
+  log_frame("TX", data, len);
+#endif
+  this->write_array(data, len);
+}
 void HisenseAC::bus_flush() { this->flush(); }
 int HisenseAC::bus_read() {
   uint8_t b;

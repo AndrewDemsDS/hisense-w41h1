@@ -42,6 +42,21 @@ Every file in the component passes ESPHome's own gates as of their `dev` branch 
 ESPHome's documentation repository (`esphome-docs`, `src/content/docs/components/`), which an
 upstream pull request has to be paired with. Keep it in step with the option schemas.
 
+### Log levels
+
+The component logs under the tag `hisense_ac`. Set the level with ESPHome's `logger:` component.
+
+| Level | What it shows |
+|---|---|
+| `WARN` | the bus link dropping, a command that could not be sent, a status frame with a bad checksum, a fault reported by the unit |
+| `INFO` | the bus link coming back, a fault clearing |
+| `DEBUG` | each status change, every command sent, the unit's capability bitmap |
+| `VERBOSE` | every decoded status frame, every poll that got no reply |
+| `VERY_VERBOSE` | the raw bytes of every frame sent and received |
+
+Use `VERY_VERBOSE` when the link is down. It shows whether the A/C sends anything at all, and you
+do not need to add a `debug:` block to the UART.
+
 ### The codec port (`hisense_protocol.*`, `hisense_map.h`)
 
 The shared driver under `firmware/src/rs485-driver/` cannot pass those gates and is not meant to:

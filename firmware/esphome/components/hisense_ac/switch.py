@@ -14,7 +14,7 @@ CONF_ECO = "eco"
 CONF_TURBO = "turbo"
 CONF_QUIET = "quiet"
 
-# Declare only the ones your unit has: the `capabilities` text sensor reports what the A/C
+# Declare only the ones your unit has: the capability_* binary sensors report what the A/C
 # answers to the ProductType poll, and an absent capability means the switch does nothing.
 SWITCHES = {
     CONF_ECO: (SwitchKind.SWITCH_ECO, "mdi:leaf"),

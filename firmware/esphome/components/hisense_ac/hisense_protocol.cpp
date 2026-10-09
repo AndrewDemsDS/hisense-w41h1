@@ -2,14 +2,11 @@
 
 #include <cstring>
 
-// Port of the codec half of firmware/src/rs485-driver/hisense_rs485.cpp. Kept equal to it by
-// firmware/test/test_esphome_codec_parity.cpp; see hisense_protocol.h.
-
 namespace esphome::hisense_ac {
 
-// Literal power frames, byte for byte from messages.h on[] / off[]. Several bytes of `off` differ
-// from every other single-purpose command and are not understood field by field, only that this
-// exact sequence powers the unit off. Neither checksum low byte is 0xF4, so no stuffing.
+// Literal power frames. Several bytes of `off` differ from every other single-purpose command and
+// are not understood field by field, only that this exact sequence powers the unit off. Neither
+// checksum low byte is 0xF4, so no stuffing.
 static const uint8_t FRAME_ON[CMD_FRAME_LEN] = {
     0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x65, 0x00, 0x00, 0x00,
     0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -110,7 +107,7 @@ int8_t f_to_c(int f) {
 }
 
 // Needed on the command side: the A/C reads the setpoint byte in its display unit. A Celsius 23
-// sent to an F panel made it target 23 F (hardware, 2026-07-19).
+// sent to an F panel makes it target 23 F.
 int8_t c_to_f(int c) {
   int n = c * 9;
   int f = ((n >= 0) ? (n + 2) / 5 : (n - 2) / 5) + 32;
@@ -136,8 +133,7 @@ bool shadow_setpoint_from_status(int8_t setpoint_c, bool temp_unit_f, int8_t *ou
 }
 
 // ---- Checksum and stuffing ---------------------------------------------------------------------
-// Confirmed against the stock parser (a plain running byte sum, Thumb `ldrb; add` loop) and
-// re-derived against all ~75 sample frames in esphome_airconintl messages.h.
+// A plain running byte sum, confirmed against the vendor module's parser and against sample frames.
 uint16_t checksum_range(const uint8_t *frame, size_t start, size_t end) {
   uint32_t sum = 0;
   for (size_t i = start; i < end; i++)
@@ -165,7 +161,7 @@ static void finalize_frame(uint8_t *frame, size_t chk_offset, size_t end_offset)
 }
 
 // 0xF4 inside a frame (only ever a checksum byte) is doubled so the receiver does not take it for a
-// marker. messages.h temp_16_C proves it: checksum 0x01F4 goes out as 01 F4 F4, then F4 FB.
+// marker. For example, checksum 0x01F4 goes out as 01 F4 F4, then F4 FB.
 static size_t stuff_checksum(const uint8_t *frame, size_t len, uint8_t *out, size_t out_cap) {
   if (len < 4 || out_cap < len + 2)
     return 0;
@@ -182,8 +178,8 @@ static size_t stuff_checksum(const uint8_t *frame, size_t len, uint8_t *out, siz
   return o;
 }
 
-// Stock writes envelope bytes 7/8 before the checksum (0x9b6f09dc), and the checksum covers them, so
-// a re-stamp is re-finalised. The unstuffed length comes from LEN + 9 (RE docs/10 3.2).
+// The vendor module writes envelope bytes 7/8 before the checksum, and the checksum covers them, so
+// a re-stamp is re-finalised. The unstuffed length comes from LEN + 9.
 size_t stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8_t lo, uint8_t *out, size_t out_cap) {
   if (in == nullptr || out == nullptr || len < 13)
     return 0;
@@ -205,7 +201,7 @@ size_t build_producttype_request(uint8_t *out, size_t out_cap) {
   if (out == nullptr || out_cap < STATUS_REQUEST_LEN)
     return 0;
   std::memcpy(out, STATUS_REQUEST, STATUS_REQUEST_LEN);
-  out[14] = SUBTYPE_PRODUCT_TYPE;  // stock body `66 40 00 00`
+  out[14] = SUBTYPE_PRODUCT_TYPE;  // body `66 40 00 00`
   finalize_frame(out, 17, 19);
   return STATUS_REQUEST_LEN;
 }
@@ -218,8 +214,8 @@ size_t build_power_frame(bool power_on, uint8_t *out, size_t out_cap) {
 }
 
 // VERIFY: only the named byte is hardware-confirmed (mute 35 = 0x30 / 0x10, sleep 17 = profile*2+1);
-// the rest is the minimal baseline. Byte 31 = 0x01 is the marker every combined frame writes; both
-// single-field frames were accepted and ignored by a real A/C until it was added (2026-08-19).
+// the rest is the minimal baseline. Byte 31 = 0x01 is the marker every combined frame writes; without
+// it a real A/C accepts both single-field frames and ignores them.
 size_t build_single_field(uint8_t offset, uint8_t value, uint8_t *out, size_t out_cap) {
   if (out == nullptr || out_cap < CMD_FRAME_MAX || offset >= CMD_FRAME_LEN)
     return 0;
@@ -249,7 +245,7 @@ size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap) {
   if (out == nullptr || out_cap < CMD_FRAME_MAX)
     return 0;
 
-  // Dry and Fan-only strip the setpoint from the wire (#53), so a stale or out-of-range one must not
+  // Dry and Fan-only strip the setpoint from the wire, so a stale or out-of-range one must not
   // drop the whole frame there.
   if (cmd.mode != MODE_DRY && cmd.mode != MODE_FAN && !setpoint_in_range(cmd.setpoint, cmd.fahrenheit))
     return 0;
@@ -265,7 +261,7 @@ size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap) {
   frame[18] = static_cast<uint8_t>((cmd.mode * 2 + 1) << 4);
   // 19: setpoint, value * 2 + 1 in whichever unit the panel uses.
   frame[19] = static_cast<uint8_t>(cmd.setpoint * 2 + 1);
-  // #53 lockouts, matching the stock app: Dry and Fan-only carry no setpoint, Dry no fan change.
+  // Lockouts, matching the vendor app: Dry and Fan-only carry no setpoint, Dry no fan change.
   if (cmd.mode == MODE_DRY || cmd.mode == MODE_FAN)
     frame[19] = 0x00;
   if (cmd.mode == MODE_DRY)
@@ -328,7 +324,7 @@ size_t build_link_heartbeat(bool heard_ac, uint8_t *out, size_t out_cap) {
     return 0;
   uint8_t f[LINK_HEARTBEAT_LEN];
   std::memcpy(f, LINK_HEARTBEAT, LINK_HEARTBEAT_LEN);
-  f[16] = heard_ac ? 0xB0 : 0xF0;  // bit 6 = "not yet heard the A/C's 0x1E" (stock recv_num30_flag)
+  f[16] = heard_ac ? 0xB0 : 0xF0;  // bit 6 = "not yet heard the A/C's 0x1E"
   finalize_frame(f, 24, 26);
   return stuff_checksum(f, LINK_HEARTBEAT_LEN, out, out_cap);
 }
@@ -352,7 +348,7 @@ bool parse_status(const uint8_t *buf, size_t len, AcState *out) {
   uint8_t packed = buf[18];  // direction:2, run:2, mode:4
   uint8_t run_status = (packed >> 2) & 0x3;
   uint8_t mode_status = (packed >> 4) & 0xF;
-  // AUTO is status nibble 5 or 6 (bus tap 2026-07-08: the stock AUTO command lands on 6).
+  // AUTO is status nibble 5 or 6 (the vendor module's AUTO command lands on 6).
   if (mode_status == 5 || mode_status == 6)
     mode_status = MODE_AUTO;
   uint8_t flags1 = buf[35];
@@ -388,8 +384,8 @@ bool parse_status(const uint8_t *buf, size_t len, AcState *out) {
   return true;
 }
 
-// Offsets are frame[13 + N] per the stock parser (FUN_9b6f0c4c). The extended tier (frame 38/39) is
-// gated on length, as stock does (RE docs/10 5a), instead of rejecting a shorter reply.
+// Offsets are frame[13 + N], as in the vendor module's parser. The extended tier (frame 38/39) is
+// gated on length, as the vendor module does, instead of rejecting a shorter reply.
 bool parse_features(const uint8_t *buf, size_t len, AcFeatures *out) {
   if (buf == nullptr || out == nullptr)
     return false;
@@ -417,7 +413,7 @@ bool parse_features(const uint8_t *buf, size_t len, AcFeatures *out) {
 }
 
 // Each byte group is gated on its own, since short frames occur and the outdoor/protection bytes
-// sit well past the indoor pair. Validated against induced faults 2026-07-22 (RE docs/10 7.6).
+// sit well past the indoor pair. Validated against induced faults.
 bool parse_faults(const uint8_t *buf, size_t len, AcFaults *out) {
   if (buf == nullptr || out == nullptr)
     return false;
@@ -460,8 +456,8 @@ bool parse_faults(const uint8_t *buf, size_t len, AcFaults *out) {
   return true;
 }
 
-// Mirrors handle_devType_cmd_result (0x9b6f2194). NOT the envelope 9/10 "session token": stamping
-// that killed the link on hardware (v10207).
+// The device type is the pair at frame 16/17, NOT the envelope 9/10 "session token": stamping that
+// one kills the link on hardware.
 bool devtype_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo) {
   if (reply == nullptr || n <= 17 || reply[FRAME_CLASS_OFFSET] != CLASS_DEVTYPE)
     return false;

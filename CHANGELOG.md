@@ -36,6 +36,10 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   New `supports_eco/quiet/turbo/sleep` options on the climate platform. The preset table, detection
   and write plan are pure functions in `esphome_aircon_map.h` with host tests. It lives under
   `firmware/src/` but changes no Matter image.
+- ESPHome: log levels are used consistently. `WARN` for a lost link, an unsent command, a bad
+  checksum or a fault. `INFO` for recovery. `DEBUG` for status changes and commands. `VERBOSE` for
+  every status frame and unanswered poll. `VERY_VERBOSE` for the raw bytes of every frame. The
+  once-a-second status line is no longer logged at `DEBUG`.
 - ESPHome, **breaking**: fan modes are now `auto`, `low`, `medium_low`, `medium`, `medium_high`,
   `high`, matching `hisense-unified-ac`. `Medium-low` / `Medium-high` are renamed, and `quiet` is
   no longer a fan mode (use the `quiet` preset; the quiet step reads back as `low`). Update

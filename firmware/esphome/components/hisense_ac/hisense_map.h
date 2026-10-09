@@ -2,11 +2,9 @@
 // Pure Hisense <-> ESPHome translation: climate enums, the six-speed fan ladder, special-mode
 // presets and the power estimate.
 //
-// ESPHome-style port of firmware/src/rs485-driver/esphome_aircon_map.h plus the parts of
-// matter_aircon_map.h and power_estimate.h that it uses. Kept equal to them by
-// firmware/test/test_esphome_codec_parity.cpp. Plain integers only, no ESPHome types, so the host
-// tests compile it without ESPHome; the climate constants below mirror esphome::climate's enums and
-// hisense_climate.cpp static_asserts each one against the real enum.
+// Plain integers only, no ESPHome types, so this file can be compiled and tested on a host without
+// ESPHome. The climate constants below mirror esphome::climate's enums and hisense_climate.cpp
+// static_asserts each one against the real enum.
 
 #include <cstddef>
 #include <cstdint>
@@ -91,8 +89,8 @@ inline uint8_t hisense_mode_to_climate(Mode m) {
   }
 }
 
-// Matter ThermostatRunningState bitmap (Heat = 1, Cool = 2, Fan = 4). Compressor Hz decides whether a
-// heat/cool mode is working or idle. Shared with the Matter builds so both agree on "active".
+// Bitmap of what is running (Heat = 1, Cool = 2, Fan = 4). Compressor Hz decides whether a heat/cool
+// mode is working or idle.
 inline uint16_t running_state(bool power_on, Mode mode, uint8_t comp_freq) {
   if (!power_on)
     return 0;
@@ -139,8 +137,8 @@ inline void climate_swing_to_hisense(uint8_t swing, SwingMode *vswing, SwingMode
 }
 
 // ---- Fan ladder --------------------------------------------------------------------------------
-// The six discrete W41H1 speeds. raw = status byte 16, speed = 1..6, percent = Matter
-// PercentCurrent, cmd = command enum. Auto (raw 0x01) is not a row: the A/C picks the speed.
+// The six discrete W41H1 speeds. raw = status byte 16, speed = 1..6, percent = the speed as a
+// percentage, cmd = command enum. Auto (raw 0x01) is not a row: the A/C picks the speed.
 struct FanRow {
   uint8_t raw;
   uint8_t speed;
@@ -181,7 +179,7 @@ inline uint8_t fan_raw_to_index(uint8_t raw) {
 }
 
 // Status byte 16 -> command enum, for syncing the command shadow. Unknown -> NOCHANGE, so a garbled
-// frame cannot clobber the user's fan setting (#59).
+// frame cannot clobber the user's fan setting.
 inline FanSpeed fan_raw_to_cmd(uint8_t raw) {
   if (raw == FAN_RAW_AUTO)
     return FAN_SPEED_AUTO;
@@ -218,8 +216,8 @@ inline uint8_t climate_fan_to_index(uint8_t fan_mode) {
   }
 }
 
-// Quiet (index 1) is only reachable through the mute flag, i.e. the `quiet` preset, and the Matter
-// path reads it back as low, so it is published as low.
+// Quiet (index 1) is only reachable through the mute flag, i.e. the `quiet` preset, so as a fan mode
+// it is published as low.
 inline uint8_t fan_published_index(uint8_t idx) { return idx == 1 ? 2 : idx; }
 
 // ---- Setpoint ----------------------------------------------------------------------------------
@@ -231,7 +229,7 @@ inline int clamp_setpoint_c(int c) {
   return c;
 }
 
-// ESPHome speaks Celsius but the A/C reads the byte in its panel unit (#117). Clamp in C, convert,
+// ESPHome speaks Celsius but the A/C reads the byte in its panel unit. Clamp in C, convert,
 // and tell the builder which unit it holds. Returns the clamped Celsius value to publish.
 inline int setpoint_to_cmd(int wanted_c, bool panel_f, AcCommand *cmd) {
   auto c = static_cast<int8_t>(clamp_setpoint_c(wanted_c));
@@ -264,10 +262,9 @@ inline Feature feature_from_status(bool eco_on, bool turbo_on) {
 inline Feature feature_after_send(Feature sent) { return sent == FEATURE_ECO_OFF ? FEATURE_NONE : sent; }
 
 // ---- Special modes as presets ------------------------------------------------------------------
-// Same names the hisense-unified-ac wrapper gives the Matter builds, so a climate group syncs them.
-// Hardware (measured for the wrapper): eco + each sleep profile coexist; quiet + sleep do not;
-// turbo combines with nothing; eco + quiet coexist. The first two rows are ESPHome built-ins
-// (NONE, ECO); no custom name may equal a built-in, since set_preset(const char *) converts those.
+// Measured on hardware: eco + each sleep profile coexist; quiet + sleep do not; turbo combines with
+// nothing; eco + quiet coexist. The first two rows are ESPHome built-ins (NONE, ECO); no custom
+// name may equal a built-in, since set_preset(const char *) converts those.
 struct SpecialState {
   bool eco{false};
   bool turbo{false};
@@ -337,13 +334,13 @@ inline SpecialState special_from_status(bool eco_on, bool turbo_on, bool mute_on
   s.eco = eco_on;
   s.turbo = turbo_on;
   s.mute = mute_on;
-  s.sleep = static_cast<uint8_t>(sleep_raw / 2);  // status carries profile * 2 (RE docs/03, byte 17)
+  s.sleep = static_cast<uint8_t>(sleep_raw / 2);  // status byte 17 carries profile * 2
   return s;
 }
 
 // An exact row wins. Otherwise an arbitration is in flight (the A/C drops one of an illegal pair a
-// second or two later), so report the strongest mode really on: turbo, eco, quiet, then sleep. Same
-// order as the wrapper's _detect_preset. A preset the unit does not offer degrades to none.
+// second or two later), so report the strongest mode really on: turbo, eco, quiet, then sleep. A
+// preset the unit does not offer degrades to none.
 inline uint8_t preset_detect(const SpecialState &s, uint8_t support) {
   for (size_t i = 0; i < PRESET_COUNT; i++) {
     const PresetRow &r = PRESETS[i];
@@ -376,8 +373,8 @@ struct SpecialOp {
 };
 static constexpr size_t PRESET_PLAN_MAX = 5;
 
-// The A/C swallows a special-mode command that arrives too soon after the previous one. Measured for
-// the wrapper: 6 s failed repeatedly, 8 s and 12 s engaged. 10 s is 8 with margin.
+// The A/C swallows a special-mode command that arrives too soon after the previous one. Measured:
+// 6 s failed repeatedly, 8 s and 12 s engaged. 10 s is 8 with margin.
 static constexpr uint32_t SPECIAL_SETTLE_MS = 10000;
 
 // Ordered writes taking the unit from `now` to preset `target`; only writes that change something.
@@ -443,8 +440,8 @@ inline void special_apply(SpecialState *s, const SpecialOp &op) {
 }
 
 // The fan index a special mode pins the A/C to, or -1 when free. Turbo forces high; quiet and sleep
-// force their low profile (firmware/docs/05). A request for another speed would be overwritten by
-// the next status frame, so the glue refuses it instead.
+// force their low profile. A request for another speed would be overwritten by the next status
+// frame, so the climate entity refuses it instead.
 inline int forced_fan_index(const SpecialState &s) {
   if (s.turbo)
     return 6;
@@ -464,8 +461,8 @@ inline bool fan_request_allowed(const SpecialState &s, uint8_t wanted_idx) {
 }
 
 // ---- Power estimate ----------------------------------------------------------------------------
-// Calibrated 2026-07-07 against a panel meter (firmware/docs/09): status byte 55 tracks sqrt(power),
-// P[W] = 4.15 * raw^2. Byte 50 is supply voltage in whole volts, about 6% low.
+// Calibrated against a panel meter: status byte 55 tracks sqrt(power), P[W] = 4.15 * raw^2. Byte 50
+// is supply voltage in whole volts, about 6% low.
 static constexpr uint64_t POWER_MW_PER_COUNT2 = 4150;  // milliwatts per byte-55 count squared
 static constexpr int64_t POWER_PF_PERMIL = 950;        // assumed inverter power factor * 1000
 static constexpr int64_t POWER_MW_MAX = 50000000;      // 50 kW; a glitched byte must not reach HA
