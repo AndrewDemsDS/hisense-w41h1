@@ -389,6 +389,47 @@ int main() {
   CHECK(percent_to_hisense_fan(42) == HISENSE_FAN_MED_LOW && percent_to_hisense_fan(75) == HISENSE_FAN_MED_HIGH,
         "42 / 75 percent -> medium-low / medium-high");
 
+  // ---- SystemMode: a stale readback must not be commanded (#168) -------------------------------
+  printf("[systemmode: own readback vs client write]\n");
+  {
+    CHECK(hisense_status_to_system_mode(false, HISENSE_MODE_COOL) == 0, "powered down -> Off(0)");
+    CHECK(hisense_status_to_system_mode(true, HISENSE_MODE_AUTO) == 1, "on + AUTO -> Auto(1)");
+    CHECK(hisense_status_to_system_mode(true, HISENSE_MODE_COOL) == 3, "on + COOL -> Cool(3)");
+
+    // The comparison the handler used before: a value differing from the status at handling
+    // time was taken for a client write.
+    auto status_only = [](uint8_t v, bool on, HisenseMode m) { return v != hisense_status_to_system_mode(on, m); };
+
+    // Unit on in Cool, client writes Auto.
+    MatterEchoLedger l = {{0}, 0};
+    CHECK(matter_sysmode_should_command(&l, 1, true, true, HISENSE_MODE_COOL), "client Auto over Cool is commanded");
+    // A frame from before the A/C applied it still says Cool: published over the client's 1.
+    matter_echo_note(&l, hisense_status_to_system_mode(true, HISENSE_MODE_COOL));
+    // The A/C reaches Auto before that readback is handled.
+    CHECK(status_only(3, true, HISENSE_MODE_AUTO), "status-only guard takes the stale Cool for a client write");
+    CHECK(!matter_sysmode_should_command(&l, 3, true, true, HISENSE_MODE_AUTO),
+          "stale Cool readback is not commanded once the A/C is in Auto");
+    // The Auto readback follows and is skipped too.
+    matter_echo_note(&l, hisense_status_to_system_mode(true, HISENSE_MODE_AUTO));
+    CHECK(!matter_sysmode_should_command(&l, 1, true, true, HISENSE_MODE_AUTO) && l.len == 0, "Auto readback skipped");
+    // A real Cool request afterwards still goes out.
+    CHECK(matter_sysmode_should_command(&l, 3, true, true, HISENSE_MODE_AUTO), "later client Cool is commanded");
+
+    // Unit off, client writes Auto: a powered-down frame is published as Off over the client's 1.
+    MatterEchoLedger o = {{0}, 0};
+    CHECK(matter_sysmode_should_command(&o, 1, true, false, HISENSE_MODE_COOL), "client Auto on an off unit");
+    matter_echo_note(&o, hisense_status_to_system_mode(false, HISENSE_MODE_COOL));
+    CHECK(status_only(0, true, HISENSE_MODE_AUTO), "status-only guard would power the unit off again");
+    CHECK(!matter_sysmode_should_command(&o, 0, true, true, HISENSE_MODE_AUTO), "stale Off readback is not commanded");
+    CHECK(matter_sysmode_should_command(&o, 0, true, true, HISENSE_MODE_AUTO), "a client Off afterwards is commanded");
+
+    // Nothing noted: unchanged behaviour.
+    MatterEchoLedger e = {{0}, 0};
+    CHECK(!matter_sysmode_should_command(&e, 3, true, true, HISENSE_MODE_COOL), "write of the reported mode: no frame");
+    CHECK(!matter_sysmode_should_command(&e, 0, true, false, HISENSE_MODE_COOL), "Off on an off unit: no frame");
+    CHECK(matter_sysmode_should_command(&e, 4, false, false, HISENSE_MODE_FAN), "no status yet: command the write");
+  }
+
   printf("== %d passed, %d failed ==\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }
