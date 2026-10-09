@@ -286,6 +286,40 @@ static void test_stamp_link_token() {
   }
 }
 
+// The buzzer bit: frame byte 23 bit 2 of a 0x65 command (stock get_dev_control_cmd, t_beep << 2).
+static void test_stamp_beep() {
+  H::AcCommand c;
+  c.mode = H::MODE_COOL;
+  c.setpoint = 22;
+  uint8_t in[H::CMD_FRAME_MAX], out[H::CMD_FRAME_MAX], back[H::CMD_FRAME_MAX];
+  size_t l = H::build_command(c, in, sizeof(in));
+  CHECK(l != 0 && (in[H::CMD_BEEP_BYTE] & H::CMD_BEEP_BIT) != 0, "builders write the buzzer bit set");
+  size_t n = H::stamp_beep(in, l, false, out, sizeof(out));
+  CHECK(n != 0 && (out[H::CMD_BEEP_BYTE] & H::CMD_BEEP_BIT) == 0, "stamp_beep(false) clears the bit");
+  bool same = true;
+  for (size_t i = 0; i < H::CMD_FRAME_LEN - 4; i++) {
+    if (i != H::CMD_BEEP_BYTE && in[i] != out[i])
+      same = false;
+  }
+  CHECK(same && (out[H::CMD_BEEP_BYTE] | H::CMD_BEEP_BIT) == in[H::CMD_BEEP_BYTE], "nothing else in the frame moves");
+  uint16_t chk = H::checksum_range(out, 2, H::CMD_FRAME_LEN - 4);
+  CHECK(out[H::CMD_FRAME_LEN - 4] == (chk >> 8) && out[H::CMD_FRAME_LEN - 3] == (chk & 0xFF),
+        "checksum follows the bit");
+  size_t m = H::stamp_beep(out, n, true, back, sizeof(back));
+  CHECK(m == l && std::memcmp(back, in, l) == 0, "stamp_beep(true) gives the original frame back");
+  for (int on = 0; on < 2; on++) {
+    l = H::build_power_frame(on != 0, in, sizeof(in));
+    n = H::stamp_beep(in, l, false, out, sizeof(out));
+    CHECK(n != 0 && (out[H::CMD_BEEP_BYTE] & H::CMD_BEEP_BIT) == 0 && out[18] == in[18],
+          "power frame: bit clear, power byte kept");
+  }
+  // Not a command: the status request goes through untouched.
+  n = H::stamp_beep(H::STATUS_REQUEST, H::STATUS_REQUEST_LEN, false, out, sizeof(out));
+  CHECK(n == H::STATUS_REQUEST_LEN && std::memcmp(out, H::STATUS_REQUEST, n) == 0,
+        "other frame classes are copied through");
+  CHECK(H::stamp_beep(in, 5, false, out, sizeof(out)) == 0, "a truncated frame is refused");
+}
+
 static void test_parsers() {
   // Random well-formed status frames, lengths around the real 160, plus deliberately broken ones.
   for (int i = 0; i < 60000; i++) {
@@ -650,6 +684,7 @@ int main() {
   test_fixed_builders();
   test_link_heartbeat();
   test_stamp_link_token();
+  test_stamp_beep();
   test_parsers();
   test_bitmaps();
   test_temperatures();

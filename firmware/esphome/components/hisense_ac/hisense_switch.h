@@ -12,6 +12,7 @@ enum SwitchKind : uint8_t {
   SWITCH_TURBO,
   SWITCH_QUIET,
   SWITCH_DISPLAY,
+  SWITCH_BEEPER,
 };
 
 class HisenseSwitch : public switch_::Switch, public Component, public StatusListener {

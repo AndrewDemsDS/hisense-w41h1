@@ -113,6 +113,8 @@ switch:
       name: Quiet
     display:
       name: Panel display
+    beeper:
+      name: Beeper
 ```
 
 - **eco** (*Optional*): Eco mode. All options from [Switch](/components/switch#config-switch).
@@ -121,6 +123,10 @@ switch:
 - **display** (*Optional*): The indoor unit's front panel display. The A/C does not report this
   setting, so the switch shows what was last commanded.
   All options from [Switch](/components/switch#config-switch).
+- **beeper** (*Optional*): Whether the indoor unit beeps when it takes a command from this node.
+  Each command frame carries the request, so turning the switch off sends nothing and takes effect
+  from the next command. The setting is stored on the node and restored at boot (on by default).
+  The remote control still beeps. All options from [Switch](/components/switch#config-switch).
 
 ## Select
 

@@ -104,6 +104,8 @@ switch:
       name: Quiet
     display:
       name: Panel display
+    beeper:
+      name: Beeper
 
 # Sleep works as of 2026-08-19. All four profiles verified on a live A/C (sleep_raw 2/4/6/8),
 # once the minimal command frame gained frame[31] = 0x01, the marker it had been missing.

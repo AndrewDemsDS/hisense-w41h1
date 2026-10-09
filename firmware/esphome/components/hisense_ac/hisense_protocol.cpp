@@ -197,6 +197,27 @@ size_t stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8_t lo, u
 }
 
 // ---- Builders ----------------------------------------------------------------------------------
+size_t stamp_beep(const uint8_t *in, size_t len, bool beep, uint8_t *out, size_t out_cap) {
+  if (in == nullptr || out == nullptr || len < 13)
+    return 0;
+  if (in[0] != FRAME_STX1 || in[1] != FRAME_STX2)
+    return 0;
+  size_t unstuffed = static_cast<size_t>(in[4]) + FRAME_LEN_OVERHEAD;
+  if (unstuffed < 13 || unstuffed > len || unstuffed > TX_FRAME_MAX)
+    return 0;
+  uint8_t f[TX_FRAME_MAX];
+  std::memcpy(f, in, unstuffed);
+  if (f[13] == 0x65 && unstuffed >= CMD_FRAME_LEN) {
+    if (beep) {
+      f[CMD_BEEP_BYTE] |= CMD_BEEP_BIT;
+    } else {
+      f[CMD_BEEP_BYTE] &= static_cast<uint8_t>(~CMD_BEEP_BIT);
+    }
+    finalize_frame(f, unstuffed - 4, unstuffed - 2);
+  }
+  return stuff_checksum(f, unstuffed, out, out_cap);
+}
+
 size_t build_producttype_request(uint8_t *out, size_t out_cap) {
   if (out == nullptr || out_cap < STATUS_REQUEST_LEN)
     return 0;
