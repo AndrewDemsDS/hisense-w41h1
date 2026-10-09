@@ -7,6 +7,11 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 
 ## Unreleased
 
+### ESPHome
+- `beeper` switch: clears the buzzer bit (frame byte 23 bit 2) on every command frame the node
+  sends. The bit comes from the stock module's `t_beep` handling, found by static analysis of the
+  stock image. Stored on the node, on by default.
+
 ### Tooling
 - `firmware/scripts/esphome-upstream-check.sh` runs ESPHome's own CI scripts against the
   `hisense_ac` component in a checkout of `esphome/esphome`. CI requires it to pass against the

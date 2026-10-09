@@ -73,6 +73,10 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   /// hardware to do what they are named for.
   void set_display_pref(bool on) { this->display_pref_ = on ? DISPLAY_ON : DISPLAY_OFF; }
   bool display_pref_on() const { return this->display_pref_ != DISPLAY_OFF; }
+  /// Whether command frames ask the unit to beep. Applied to every command frame from then on;
+  /// nothing is sent when it changes.
+  void set_beeper(bool on) { this->beeper_ = on; }
+  bool beeper() const { return this->beeper_; }
 
   /// The command shadow. Entities mutate this, then call send_command().
   AcCommand &cmd() { return this->cmd_; }
@@ -145,7 +149,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
 #endif
 
  protected:
-  bool send_frame_(const uint8_t *frame, size_t len) { return this->bus_.enqueue(frame, len); }
+  bool send_frame_(const uint8_t *frame, size_t len);
 
   void process_status_(const AcState &state);
   void publish_telemetry_(const AcState &state);
@@ -192,6 +196,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   bool telemetry_refreshed_{false};
   // Defaults to ON to match the switch's boot state; the A/C ships with the panel lit.
   Display display_pref_{DISPLAY_ON};
+  bool beeper_{true};
 #ifdef USE_BINARY_SENSOR
   std::vector<std::pair<uint8_t, binary_sensor::BinarySensor *>> fault_sensors_;
   std::vector<std::pair<uint8_t, binary_sensor::BinarySensor *>> capability_sensors_;

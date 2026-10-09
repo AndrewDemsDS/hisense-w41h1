@@ -274,6 +274,15 @@ void HisenseAC::publish_diagnostics_() {
 }
 
 // ---- Commands ---------------------------------------------------------------------------------
+bool HisenseAC::send_frame_(const uint8_t *frame, size_t len) {
+  // Builders write the buzzer bit set, as the stock module does by default.
+  if (this->beeper_)
+    return this->bus_.enqueue(frame, len);
+  uint8_t quiet[CMD_FRAME_MAX];
+  size_t n = stamp_beep(frame, len, false, quiet, sizeof(quiet));
+  return n != 0 && this->bus_.enqueue(quiet, n);
+}
+
 void HisenseAC::send_command() {
   if (!combined_frame_allowed(this->last_.valid)) {
     ESP_LOGW(TAG, "Command not sent: no status from the unit yet, so the frame would carry defaults");

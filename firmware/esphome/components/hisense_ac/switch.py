@@ -13,6 +13,7 @@ SwitchKind = hisense_ac_ns.enum("SwitchKind")
 CONF_ECO = "eco"
 CONF_TURBO = "turbo"
 CONF_QUIET = "quiet"
+CONF_BEEPER = "beeper"
 
 # Declare only the ones your unit has: the capability_* binary sensors report what the A/C
 # answers to the ProductType poll, and an absent capability means the switch does nothing.
@@ -21,6 +22,8 @@ SWITCHES = {
     CONF_TURBO: (SwitchKind.SWITCH_TURBO, "mdi:fan-plus"),
     CONF_QUIET: (SwitchKind.SWITCH_QUIET, "mdi:volume-off"),
     CONF_DISPLAY: (SwitchKind.SWITCH_DISPLAY, "mdi:television-ambient-light"),
+    # Whether the unit beeps when it takes a command from this node. Stored on the node.
+    CONF_BEEPER: (SwitchKind.SWITCH_BEEPER, "mdi:volume-high"),
 }
 
 CONFIG_SCHEMA = cv.Schema(
@@ -29,6 +32,7 @@ CONFIG_SCHEMA = cv.Schema(
             HisenseSwitch,
             icon=icon,
             entity_category=ENTITY_CATEGORY_CONFIG,
+            default_restore_mode="RESTORE_DEFAULT_ON" if key == CONF_BEEPER else cv.UNDEFINED,
         ).extend(cv.COMPONENT_SCHEMA)
         for key, (_, icon) in SWITCHES.items()
     }

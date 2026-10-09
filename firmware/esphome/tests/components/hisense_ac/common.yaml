@@ -29,6 +29,8 @@ switch:
       name: Quiet
     display:
       name: Panel display
+    beeper:
+      name: Beeper
 
 select:
   - platform: hisense_ac

@@ -295,6 +295,14 @@ size_t build_link_heartbeat(bool heard_ac, uint8_t *out, size_t out_cap);
 // Re-stamp a finished frame's envelope bytes 7/8 with the A/C's device type and fix the checksum.
 // 0 when the envelope is not recognised.
 size_t stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8_t lo, uint8_t *out, size_t out_cap);
+// Set or clear the buzzer bit of a finished 0x65 command frame and fix the checksum. The stock
+// module ORs `t_beep << 2` into payload byte 10, which is frame byte 23 (get_dev_control_cmd, stock
+// image file 0x1f96e), and defaults it to 1; every builder here writes it as 1 too. It is a flag
+// on the one frame, not a stored setting. VERIFY on hardware: that the unit stays silent with the
+// bit clear. Any other frame class is copied through unchanged. 0 on error.
+static constexpr uint8_t CMD_BEEP_BYTE = 23;
+static constexpr uint8_t CMD_BEEP_BIT = 0x04;
+size_t stamp_beep(const uint8_t *in, size_t len, bool beep, uint8_t *out, size_t out_cap);
 
 // ---- Parsers (input already un-stuffed) --------------------------------------------------------
 bool parse_status(const uint8_t *buf, size_t len, AcState *out);
