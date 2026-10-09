@@ -669,9 +669,14 @@ bool hisense_parse_status(const uint8_t *buf, size_t len, HisenseState *out_stat
   memset(out_state, 0, sizeof(*out_state));
 
   uint8_t wind_status = buf[16];
-  uint8_t packed = buf[18];  // direction:2, run:2, mode:4
+  uint8_t packed = buf[18];  // direction:2, run:2, mode:3, bit 7 not part of the mode
   uint8_t run_status = (packed >> 2) & 0x3;
-  uint8_t mode_status = (packed >> 4) & 0xF;
+  // The work mode is a 3-bit field, bits 4-6. From the stock capability table: the
+  // `t_work_mode` record decodes to byte 18, bit 4, width 3 (RE docs/10 7.4a and 7.4d, the
+  // same rule that reproduces six fields confirmed on hardware). Reading four bits took bit 7
+  // into the mode, so a frame with that bit set decoded to a value outside the enum and was
+  // published as Cool. What bit 7 carries is unknown: no status record in the table claims it.
+  uint8_t mode_status = (packed >> 4) & 0x7;
   // Status reports AUTO as nibble 5 OR 6 (value 4 is skipped) -> remap to the
   // HISENSE_MODE_AUTO enum (=4, the command index). Bus-tap-confirmed 2026-07-08:
   // the stock AUTO command (byte18=0x90) drives the A/C to status nibble **6**

@@ -9,6 +9,7 @@
 #include "hisense_rs485.h"
 #include "test_common.h"
 #include <cstdio>
+#include <cstring>
 #include <initializer_list>
 
 // build a command from a shadow and return byte @off
@@ -16,6 +17,26 @@ static uint8_t cmd_byte(HisenseCommand c, int off) {
   uint8_t f[64];
   hisense_build_command(&c, f, sizeof(f));
   return f[off];
+}
+
+// A 160-byte status frame (unit on, 24 C, fan auto) carrying a RAW mode nibble, checksummed the
+// way the A/C does. Layout as test_codec.cpp's make_status, which only takes enum modes.
+static void status_with_mode_nibble(uint8_t *out, uint8_t nibble) {
+  static const uint8_t hdr[16] = {0xF4, 0xF5, 0x01, 0x40, 0x97, 0x01, 0x00, 0xFE,
+                                  0x01, 0x01, 0x01, 0x01, 0x00, 0x66, 0x00, 0x01};
+  memset(out, 0, 160);
+  memcpy(out, hdr, 16);
+  out[16] = 0x01;                              // fan auto
+  out[18] = (uint8_t) ((nibble << 4) | 0x08);  // mode<<4 | run<<2
+  out[19] = 24;
+  out[20] = 25;
+  uint16_t ck = 0;
+  for (int i = 2; i < 156; i++)
+    ck = (uint16_t) (ck + out[i]);
+  out[156] = (uint8_t) (ck >> 8);
+  out[157] = (uint8_t) (ck & 0xFF);
+  out[158] = 0xF4;
+  out[159] = 0xFB;
 }
 
 int main() {
@@ -428,6 +449,215 @@ int main() {
     CHECK(!matter_sysmode_should_command(&e, 3, true, true, HISENSE_MODE_COOL), "write of the reported mode: no frame");
     CHECK(!matter_sysmode_should_command(&e, 0, true, false, HISENSE_MODE_COOL), "Off on an off unit: no frame");
     CHECK(matter_sysmode_should_command(&e, 4, false, false, HISENSE_MODE_FAN), "no status yet: command the write");
+  }
+
+  // ---- PercentSetting / SpeedSetting: null is not a fan request ---------------------------------
+  printf("[fan settings: null and out-of-range]\n");
+  {
+    HisenseFanSpeed f = HISENSE_FAN_LOW;
+    // What the glue did before: the raw byte went straight into the percentage ladder.
+    CHECK(percent_to_hisense_fan(0xFF) == HISENSE_FAN_HIGH, "unguarded: a null PercentSetting reads as HIGH");
+    CHECK(speed_to_hisense_fan(0xFF) == HISENSE_FAN_AUTO, "unguarded: a null SpeedSetting reads as AUTO");
+
+    CHECK(!matter_percent_setting_to_fan(0xFF, &f) && f == HISENSE_FAN_LOW, "null PercentSetting: no request");
+    CHECK(!matter_percent_setting_to_fan(101, &f) && f == HISENSE_FAN_LOW, "PercentSetting 101: no request");
+    CHECK(!matter_speed_setting_to_fan(0xFF, &f) && f == HISENSE_FAN_LOW, "null SpeedSetting: no request");
+    CHECK(!matter_speed_setting_to_fan(7, &f) && f == HISENSE_FAN_LOW, "SpeedSetting above SpeedMax: no request");
+
+    // In-range values keep the existing ladders, ends included.
+    for (int p = 0; p <= 100; p++) {
+      HisenseFanSpeed g = HISENSE_FAN_NOCHANGE;
+      CHECK(matter_percent_setting_to_fan((uint8_t) p, &g) && g == percent_to_hisense_fan((uint8_t) p),
+            "PercentSetting %d keeps its ladder step", p);
+    }
+    for (int s = 0; s <= 6; s++) {
+      HisenseFanSpeed g = HISENSE_FAN_NOCHANGE;
+      CHECK(matter_speed_setting_to_fan((uint8_t) s, &g) && g == speed_to_hisense_fan((uint8_t) s),
+            "SpeedSetting %d keeps its speed", s);
+    }
+
+    // The sequence on AmebaZ2 when the A/C reports fan Auto and the node publishes FanMode=Auto:
+    // the server nulls PercentSetting then SpeedSetting, and both reach the handler.
+    HisenseFanSpeed shadow = HISENSE_FAN_AUTO;
+    int frames = 0;
+    HisenseFanSpeed nf = percent_to_hisense_fan(0xFF);
+    if (nf != shadow) {
+      shadow = nf;
+      frames++;
+    }
+    CHECK(frames == 1 && shadow == HISENSE_FAN_HIGH, "unguarded: publishing Auto commanded the fan to HIGH");
+    shadow = HISENSE_FAN_AUTO;
+    frames = 0;
+    if (matter_percent_setting_to_fan(0xFF, &nf) && nf != shadow) {
+      shadow = nf;
+      frames++;
+    }
+    if (matter_speed_setting_to_fan(0xFF, &nf) && nf != shadow) {
+      shadow = nf;
+      frames++;
+    }
+    CHECK(frames == 0 && shadow == HISENSE_FAN_AUTO, "guarded: publishing Auto sends no frame");
+  }
+
+  // ---- an unknown status mode nibble must not reach the command shadow --------------------------
+  printf("[shadow sync: unknown status mode]\n");
+  {
+    // Every nibble the parser can hand over, run through parse -> shadow -> builder.
+    for (int nib = 0; nib < 16; nib++) {
+      uint8_t sf[160];
+      HisenseState st;
+      status_with_mode_nibble(sf, (uint8_t) nib);
+      CHECK(hisense_parse_status(sf, sizeof(sf), &st), "status frame with mode nibble %d parses", nib);
+      // The mode is the 3-bit field in bits 4-6 (stock t_work_mode record, RE docs/10 7.4a).
+      // Bit 7 is not part of it: with it set, the mode must decode as it does without it.
+      const int field = nib & 0x7;
+      const bool wire_mode = field != 7;  // 0..3, 4 (the AUTO enum value itself), 5/6 (AUTO)
+      CHECK(hisense_mode_is_known(st.mode) == wire_mode, "nibble %d known=%d", nib, (int) wire_mode);
+      if (nib >= 8) {
+        uint8_t lo[160];
+        HisenseState st_lo;
+        status_with_mode_nibble(lo, (uint8_t) field);
+        CHECK(hisense_parse_status(lo, sizeof(lo), &st_lo) && st_lo.mode == st.mode,
+              "nibble %d: bit 7 does not change the decoded mode", nib);
+      }
+
+      HisenseCommand sh = base;  // shadow holds COOL
+      sh.mode = matter_shadow_mode_from_status(sh.mode, st.mode);
+      if (wire_mode) {
+        CHECK(sh.mode == st.mode, "nibble %d: shadow follows the status", nib);
+      } else {
+        CHECK(sh.mode == HISENSE_MODE_COOL, "nibble %d: shadow keeps its last good mode", nib);
+        CHECK(cmd_byte(sh, 18) == 0x50, "nibble %d: next command still carries COOL (0x50)", nib);
+      }
+    }
+
+    // Auto with bit 7 set: a 4-bit read made this 13 or 14, published as Cool.
+    {
+      uint8_t sf[160];
+      HisenseState st;
+      status_with_mode_nibble(sf, 0x8 | 5);
+      CHECK(hisense_parse_status(sf, sizeof(sf), &st) && st.mode == HISENSE_MODE_AUTO &&
+                hisense_mode_to_matter(st.mode) == 1,
+            "Auto (5) with bit 7 set still reads as Auto");
+      status_with_mode_nibble(sf, 0x8 | 6);
+      CHECK(hisense_parse_status(sf, sizeof(sf), &st) && st.mode == HISENSE_MODE_AUTO, "Auto (6) with bit 7 set too");
+    }
+
+    // What an out-of-enum shadow mode puts on the wire for the next single-field write. The
+    // parser can now only produce 7; the guard stays for it and for any other source.
+    HisenseCommand raw = base;
+    raw.mode = (HisenseMode) 8;
+    CHECK(cmd_byte(raw, 18) == 0x10, "unguarded: a shadow mode of 8 goes out as Fan (0x10)");
+    raw.mode = (HisenseMode) 9;
+    CHECK(cmd_byte(raw, 18) == 0x30, "unguarded: a shadow mode of 9 goes out as Heat (0x30)");
+    raw.mode = (HisenseMode) 12;
+    CHECK(cmd_byte(raw, 18) == 0x90, "unguarded: a shadow mode of 12 goes out as Auto (0x90)");
+  }
+
+  // ---- writes judged against the pending command, not a status that has not caught up -----------
+  printf("[pending command: power, mode, setpoint]\n");
+  {
+    // The guards as they were: every one compared with the status at handling time.
+    auto old_power_redundant = [](bool valid, bool status_on, bool want) { return valid && want == status_on; };
+    auto old_setpoint_applies = [](bool valid, bool status_on, HisenseMode status_mode, bool attr_heat) {
+      if (valid && !status_on)
+        return false;
+      return !(valid && attr_heat != (status_mode == HISENSE_MODE_HEAT));
+    };
+
+    // -- On, then Off before the status shows the unit running --
+    MatterPowerIntent pi = {false, false};
+    bool hold = false;
+    bool st_on = false;  // unit powered down
+    CHECK(!matter_power_write_is_redundant(true, matter_expected_power(&pi, hold, st_on), true), "On is commanded");
+    matter_power_intent_note(&pi, true);
+    hold = true;
+    CHECK(old_power_redundant(true, st_on, false), "status-only guard drops the Off that follows: unit stays on");
+    CHECK(!matter_power_write_is_redundant(true, matter_expected_power(&pi, hold, st_on), false),
+          "Off after a pending On is commanded");
+    CHECK(matter_power_write_is_redundant(true, matter_expected_power(&pi, hold, st_on), true),
+          "a repeated On while one is pending needs no second frame");
+    matter_power_intent_note(&pi, false);
+    CHECK(matter_expected_power(&pi, hold, true) == false, "pending Off wins over a status that still says on");
+
+    // -- Off, then On while the status still shows the unit running --
+    MatterPowerIntent po = {false, false};
+    matter_power_intent_note(&po, false);
+    CHECK(old_power_redundant(true, true, true), "status-only guard drops the On that follows: unit stays off");
+    CHECK(!matter_power_write_is_redundant(true, matter_expected_power(&po, true, true), true),
+          "On after a pending Off is commanded");
+
+    // -- The intent is spent with the hold-off: an ignored command must not be masked --
+    MatterPowerIntent ps = {false, false};
+    matter_power_intent_note(&ps, true);
+    matter_power_intent_tick(&ps, true);
+    CHECK(ps.pending, "intent survives while the hold-off runs");
+    CHECK(matter_expected_power(&ps, false, false) == false, "hold-off over: the status decides, even before the tick");
+    matter_power_intent_tick(&ps, false);
+    CHECK(!ps.pending, "intent cleared once the hold-off is over");
+    CHECK(matter_expected_power(&ps, true, false) == false, "a later hold-off does not revive a spent intent");
+    CHECK(!matter_power_write_is_redundant(false, true, true), "no status yet: every power write is commanded");
+
+    // -- Mode: Cool -> Auto -> Cool inside the lag. Shadow holds the commanded Auto. --
+    MatterEchoLedger none = {{0}, 0};
+    CHECK(!matter_sysmode_should_command(&none, 3, true, true, HISENSE_MODE_COOL),
+          "status-only view drops the return to Cool: unit goes to Auto");
+    CHECK(matter_sysmode_should_command(&none, 3, true, true,
+                                        matter_expected_mode(true, HISENSE_MODE_AUTO, HISENSE_MODE_COOL)),
+          "return to Cool after a pending Auto is commanded");
+    CHECK(!matter_sysmode_should_command(&none, 1, true, true,
+                                         matter_expected_mode(true, HISENSE_MODE_AUTO, HISENSE_MODE_COOL)),
+          "a repeated Auto while one is pending needs no frame");
+    CHECK(matter_expected_mode(false, HISENSE_MODE_AUTO, HISENSE_MODE_COOL) == HISENSE_MODE_COOL,
+          "hold-off over: the status mode decides (an ignored Auto reads back as Cool)");
+
+    // -- Mode then Off inside the lag, from a powered-down unit --
+    MatterPowerIntent pm = {false, false};
+    matter_power_intent_note(&pm, true);  // the mode write powers the unit on
+    CHECK(!matter_sysmode_should_command(&none, 0, true, false, HISENSE_MODE_COOL),
+          "status-only view drops the Off: unit comes on");
+    CHECK(matter_sysmode_should_command(&none, 0, true, matter_expected_power(&pm, true, false), HISENSE_MODE_COOL),
+          "Off after a pending power-on is commanded");
+
+    // -- Mode on a powered-down unit, then its setpoint (one climate call) --
+    CHECK(!old_setpoint_applies(true, false, HISENSE_MODE_COOL, false),
+          "status-only guard drops the setpoint that follows a power-on");
+    CHECK(matter_setpoint_write_applies(true, matter_expected_power(&pm, true, false), HISENSE_MODE_COOL, false),
+          "setpoint after a pending power-on applies");
+    CHECK(!matter_setpoint_write_applies(true, false, HISENSE_MODE_COOL, false), "setpoint on an off unit: no frame");
+
+    // -- Cool -> Heat, then the heating setpoint --
+    HisenseMode exp = matter_expected_mode(true, HISENSE_MODE_HEAT, HISENSE_MODE_COOL);
+    CHECK(!old_setpoint_applies(true, true, HISENSE_MODE_COOL, true),
+          "status-only guard drops the heating setpoint while the status still says Cool");
+    CHECK(matter_setpoint_write_applies(true, true, exp, true), "heating setpoint after a pending Heat applies");
+    CHECK(!matter_setpoint_write_applies(true, true, exp, false), "cooling setpoint is the inactive one in Heat");
+    for (HisenseMode m : {HISENSE_MODE_COOL, HISENSE_MODE_DRY, HISENSE_MODE_FAN, HISENSE_MODE_AUTO}) {
+      CHECK(matter_setpoint_write_applies(true, true, m, false) && !matter_setpoint_write_applies(true, true, m, true),
+            "mode %d reads the cooling setpoint only", (int) m);
+    }
+    CHECK(matter_setpoint_write_applies(false, false, HISENSE_MODE_FAN, true), "no status yet: setpoint is commanded");
+
+    // -- Readback while a power-on settles (AmebaZ2: that write is queued to the handler) --
+    // Client wrote OnOff=true on a powered-down unit; a frame parsed before the A/C applied it
+    // still says off.
+    MatterPowerIntent pr = {false, false};
+    matter_power_intent_note(&pr, true);
+    bool attr_onoff = true;
+    bool published_old = false;  // st.power_on, as published before
+    CHECK(published_old != attr_onoff, "status-only readback moves OnOff back to false: an event is queued");
+    // ...and once the status shows the unit running, that queued false is a power-off command.
+    CHECK(!old_power_redundant(true, true, published_old), "status-only guard commands the stale Off");
+    bool published_new = matter_expected_power(&pr, true, false);
+    CHECK(published_new == attr_onoff, "pending power is published: OnOff does not move, nothing is queued");
+    CHECK(hisense_status_to_system_mode(published_new,
+                                        matter_expected_mode(true, HISENSE_MODE_AUTO, HISENSE_MODE_COOL)) == 1,
+          "SystemMode keeps the commanded Auto over a stale powered-down Cool frame");
+    // After the hold-off, an A/C that never switched on is published as it is.
+    matter_power_intent_tick(&pr, false);
+    CHECK(matter_expected_power(&pr, false, false) == false, "hold-off over: OnOff follows the status again");
+    CHECK(old_power_redundant(true, false, false) && matter_power_write_is_redundant(true, false, false),
+          "that readback matches the status and is not commanded");
   }
 
   printf("== %d passed, %d failed ==\n", g_pass, g_fail);

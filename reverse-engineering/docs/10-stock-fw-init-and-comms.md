@@ -320,6 +320,44 @@ Also: `payload[3]` (frame 16) → raw global `0x100096c9` (bits1,3 feed a state 
 | [4],[0x13],[0x14],[0x15],[0x1C] | set/`|=` when `[0x1000054c] ≤ 0x211` (legacy-compat) | `0x9b6f2cec-2d0e` |
 | [0x0A] | `|=4` (or `=5` if arg0==3 && arg1==0) | `0x9b6f2d10/2d48` |
 
+### 5b-2. What the stock Matter path puts in a `0x65` frame (2026-10 re-read) **[PROVEN by disassembly, not on hardware]**
+
+Read from the stock dump of 2026-08-19. Addresses are **file offsets** in that image, because the
+function addresses above come from an older dump and do not line up. The packer is at file
+`0x205c8` (it logs under the name `matter_pack_devType_cmd`), and its only caller chain is
+`matter_uart_process` at file `0x25a48`, through the wrapper at `0x259d8`. Payload index N is frame
+byte 13+N, so `payload[5]` is frame byte 18 and `payload[6]` is frame byte 19.
+
+`matter_uart_process(kind, data)`:
+
+| kind | Matter write | frame byte 18 | frame byte 19 | site |
+|---|---|---|---|---|
+| 2 | SystemMode Off (0) | `0x04` | untouched | `0x25bee` |
+| 2 | SystemMode Cool (3) | `0x5C` | untouched | `0x25bf2` |
+| 2 | SystemMode Heat (4) | `0x3C` | untouched | `0x25bdc` |
+| 2 | any other SystemMode | `0x0C` | untouched | `0x25be2` |
+| 0 | cooling setpoint | `0x5C` | `value*2+1` | `0x206e8`, `0x20732` |
+| 1 | heating setpoint | `0x3C` | `value*2+1` | `0x206e8`, `0x20732` |
+| 3 | display unit | byte 23 = `0x05` (C) or `0x07` (F) | | `0x206aa` |
+
+What this settles:
+
+- **Power and mode travel in one frame.** `0x5C` is Cool (`0x50`) with power-on (`0x0C`) in the
+  same byte, `0x3C` is Heat with power-on. The stock module never sends a power frame followed by
+  a mode frame. `0x0C` and `0x04` alone are the power-on and power-off values our literal frames
+  carry, so those two literals are now traced to the stock image too.
+- **A setpoint write also forces the mode and switches the unit on.** Cooling setpoint means Cool,
+  heating setpoint means Heat, always with power-on.
+- **The stock Matter path has no Auto, Dry or Fan.** Any SystemMode other than Off, Cool and Heat
+  sends `0x0C` only: the unit comes on in its last mode.
+- The setpoint is clamped to 1600..3200 hundredths before packing (`0x25ade`, `0x25b60`).
+- Every frame sets byte 23 bit 2 (`0x04`, site `0x20678`). When the A/C's protocol version is
+  `0x211` or lower the packer also ORs in frame 17 = `0x01`, 32 |= `0x01`, 33 |= `0x14`,
+  34 |= `0x05`, 41 |= `0x40` (site `0x20654`).
+
+Not determined in this pass: whether the queue consumer re-sends a command whose reply fails the
+echo and ACK check of §4.6, and what the cloud JSON path strips per mode.
+
 ### 5c. num30 `0x1E`: builder `0x9b6f225c`, handler `0x9b6f2778` **[PROVEN]** (full Wi-Fi coupling in §6)
 
 Builder packs three flag structs into `payload[3/4/5]`, sets `payload[9]|=0x40`, `payload[0]=0x1E`, `[1]=[2]=0`; returns 11. Handler parses A/C reply (`payload[0]==0x1E && payload[1]==0`, with `0x1D` OTA sibling handled first) and reads **request bits** in `payload[4]`, `payload[5]`, `payload[0xB]` (§6.5).

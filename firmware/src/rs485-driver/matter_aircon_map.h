@@ -58,6 +58,25 @@ static inline uint8_t hisense_mode_to_matter(HisenseMode m) {
   }
 }
 
+/* Command-shadow mode after a status frame.
+ *
+ * The status mode is a 4-bit nibble and hisense_parse_status casts it into HisenseMode unchecked:
+ * 0..3 and 5/6 (AUTO) are the modes seen on the wire, anything else arrives as a number outside
+ * the enum. The glue copied it into the command shadow, and the builder encodes the mode as
+ * (mode*2+1)<<4 in one byte, so an out-of-enum value wraps onto a real command: 8 packs as
+ * 0x10 (Fan), 9 as 0x30 (Heat), 10 as 0x50 (Cool). The next setpoint, fan or swing write would
+ * then have switched the unit to a mode nobody chose.
+ *
+ * So the shadow follows the status only for a mode the builder can encode, and keeps its last
+ * good mode otherwise. Same rule as the fan (#59) and the setpoint. */
+static inline bool hisense_mode_is_known(HisenseMode m) {
+  return (int) m >= (int) HISENSE_MODE_FAN && (int) m <= (int) HISENSE_MODE_AUTO;
+}
+
+static inline HisenseMode matter_shadow_mode_from_status(HisenseMode shadow, HisenseMode status) {
+  return hisense_mode_is_known(status) ? status : shadow;
+}
+
 /* ---- Fan --------------------------------------------------------------------
  * Single source of truth for the six discrete W41H1 fan speeds. Every raw<->X
  * conversion below indexes THIS table instead of duplicating the ladder:
@@ -124,6 +143,35 @@ static inline HisenseFanSpeed percent_to_hisense_fan(uint8_t pct) {
 static inline HisenseFanSpeed speed_to_hisense_fan(uint8_t speed) {
   const HisenseFanRow *r = hisense_fan_row_by_speed(speed);
   return r ? r->cmd : HISENSE_FAN_AUTO;
+}
+
+/* PercentSetting / SpeedSetting as they reach the glue: a raw byte that may be NULL.
+ *
+ * Both attributes are nullable and the null value of a nullable uint8 is 0xFF. The FanControl
+ * server nulls both whenever FanMode becomes Auto, whether a client picked the Auto preset or the
+ * node published Auto from the A/C's status. On AmebaZ2 that server write is queued to the glue
+ * like any other attribute change, and read as a number 0xFF is "above 83 %": the fan was
+ * commanded to HIGH, then put back by the SpeedSetting null that follows (0xFF is no table row,
+ * so AUTO). Two frames the user never asked for on every change to Auto, and a fan left on HIGH
+ * if the A/C drops the second one.
+ *
+ * Null carries no request: FanMode=Auto has its own event and commands AUTO there. So null, and
+ * any other value outside the attribute's range, returns false and the caller sends nothing. */
+#define MATTER_FAN_PERCENT_MAX 100
+#define MATTER_FAN_SPEED_MAX 6 /* SpeedMax in the data model: the six W41H1 speeds */
+
+static inline bool matter_percent_setting_to_fan(uint8_t raw, HisenseFanSpeed *out) {
+  if (raw > MATTER_FAN_PERCENT_MAX)
+    return false;  // 0xFF null, or out of range
+  *out = percent_to_hisense_fan(raw);
+  return true;
+}
+
+static inline bool matter_speed_setting_to_fan(uint8_t raw, HisenseFanSpeed *out) {
+  if (raw > MATTER_FAN_SPEED_MAX)
+    return false;  // 0xFF null, or out of range
+  *out = speed_to_hisense_fan(raw);
+  return true;
 }
 
 /* FanControl FanMode preset (Matter FanModeEnum: Off=0 Low=1 Medium=2 High=3 On=4
@@ -222,6 +270,71 @@ static inline bool matter_sysmode_should_command(MatterEchoLedger *own, uint8_t 
   if (status_valid && value == hisense_status_to_system_mode(power_on, mode))
     return false;  // already what the A/C reports
   return true;
+}
+
+/* ---- The pending command: what the write guards and the readback compare against -------------
+ *
+ * A command reaches the A/C up to a second after it is queued (the bus task runs one cycle per
+ * second) and the status follows after that. Until then the status still describes the state the
+ * client just asked to leave, and both Matter glues judged the next write against it:
+ *
+ *   - On, then Off inside that lag: Off equals the reported state, so it was dropped as a
+ *     redundant write and the unit came on and stayed on. The mirror case leaves it off.
+ *   - A mode, then back to the previous mode: dropped the same way, the first mode wins.
+ *   - A mode chosen on a powered-down unit, then a setpoint (one climate call in Home
+ *     Assistant): the setpoint met "the unit is off" and was dropped. Cool to Heat followed by
+ *     the heating setpoint met "the unit is not in Heat" and was dropped too.
+ *
+ * And on AmebaZ2, where the node's own readback is queued to the same handler as a client write
+ * (#168): a powered-down frame published during a power-on moved OnOff back to false, and that
+ * readback was a power-off command once the status showed the unit running.
+ *
+ * So while one of the node's own commands is settling (the shadow-sync hold-off), power and mode
+ * are taken from what was commanded, for the guards and for what is published. Once the hold-off
+ * has run out the status is the only truth again, so a command the A/C ignored shows up as the
+ * old state after the hold-off instead of being masked. */
+typedef struct {
+  bool pending; /* a power frame was queued and its hold-off is still running */
+  bool on;      /* what that frame asked for */
+} MatterPowerIntent;
+
+static inline void matter_power_intent_note(MatterPowerIntent *p, bool on) {
+  p->pending = true;
+  p->on = on;
+}
+
+/* Call with the hold-off state before reading the intent: outside the hold-off it is spent. */
+static inline void matter_power_intent_tick(MatterPowerIntent *p, bool hold_active) {
+  if (!hold_active)
+    p->pending = false;
+}
+
+static inline bool matter_expected_power(const MatterPowerIntent *p, bool hold_active, bool status_power_on) {
+  return (hold_active && p->pending) ? p->on : status_power_on;
+}
+
+/* During the hold-off the shadow holds the commanded mode (or the last synced one, when the
+ * command in flight was not a mode change). */
+static inline HisenseMode matter_expected_mode(bool hold_active, HisenseMode shadow_mode, HisenseMode status_mode) {
+  return hold_active ? shadow_mode : status_mode;
+}
+
+/* An OnOff write that names the power state the unit has, or is being switched to, needs no
+ * frame. Before the first status frame nothing is known and every write is commanded. */
+static inline bool matter_power_write_is_redundant(bool status_valid, bool expected_on, bool want_on) {
+  return status_valid && want_on == expected_on;
+}
+
+/* Does a setpoint write reach the A/C? Not while the unit is off (select a mode first), and
+ * only the attribute that is live for the mode: the A/C has one setpoint, Heat reads the
+ * heating attribute and every other mode the cooling one. */
+static inline bool matter_setpoint_write_applies(bool status_valid, bool expected_on, HisenseMode expected_mode,
+                                                 bool attr_is_heat) {
+  if (!status_valid)
+    return true;
+  if (!expected_on)
+    return false;
+  return attr_is_heat == (expected_mode == HISENSE_MODE_HEAT);
 }
 
 /* status wind_status byte -> SpeedCurrent (1..6), 0 = auto/unknown. */
