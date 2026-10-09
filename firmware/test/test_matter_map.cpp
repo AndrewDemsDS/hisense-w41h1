@@ -508,8 +508,18 @@ int main() {
       HisenseState st;
       status_with_mode_nibble(sf, (uint8_t) nib);
       CHECK(hisense_parse_status(sf, sizeof(sf), &st), "status frame with mode nibble %d parses", nib);
-      const bool wire_mode = (nib <= 3) || nib == 4 || nib == 5 || nib == 6;  // 4 is the AUTO enum value itself
+      // The mode is the 3-bit field in bits 4-6 (stock t_work_mode record, RE docs/10 7.4a).
+      // Bit 7 is not part of it: with it set, the mode must decode as it does without it.
+      const int field = nib & 0x7;
+      const bool wire_mode = field != 7;  // 0..3, 4 (the AUTO enum value itself), 5/6 (AUTO)
       CHECK(hisense_mode_is_known(st.mode) == wire_mode, "nibble %d known=%d", nib, (int) wire_mode);
+      if (nib >= 8) {
+        uint8_t lo[160];
+        HisenseState st_lo;
+        status_with_mode_nibble(lo, (uint8_t) field);
+        CHECK(hisense_parse_status(lo, sizeof(lo), &st_lo) && st_lo.mode == st.mode,
+              "nibble %d: bit 7 does not change the decoded mode", nib);
+      }
 
       HisenseCommand sh = base;  // shadow holds COOL
       sh.mode = matter_shadow_mode_from_status(sh.mode, st.mode);
@@ -521,14 +531,27 @@ int main() {
       }
     }
 
-    // What the unguarded copy put on the wire for the next single-field write.
+    // Auto with bit 7 set: a 4-bit read made this 13 or 14, published as Cool.
+    {
+      uint8_t sf[160];
+      HisenseState st;
+      status_with_mode_nibble(sf, 0x8 | 5);
+      CHECK(hisense_parse_status(sf, sizeof(sf), &st) && st.mode == HISENSE_MODE_AUTO &&
+                hisense_mode_to_matter(st.mode) == 1,
+            "Auto (5) with bit 7 set still reads as Auto");
+      status_with_mode_nibble(sf, 0x8 | 6);
+      CHECK(hisense_parse_status(sf, sizeof(sf), &st) && st.mode == HISENSE_MODE_AUTO, "Auto (6) with bit 7 set too");
+    }
+
+    // What an out-of-enum shadow mode puts on the wire for the next single-field write. The
+    // parser can now only produce 7; the guard stays for it and for any other source.
     HisenseCommand raw = base;
     raw.mode = (HisenseMode) 8;
-    CHECK(cmd_byte(raw, 18) == 0x10, "unguarded: status nibble 8 was re-sent as Fan (0x10)");
+    CHECK(cmd_byte(raw, 18) == 0x10, "unguarded: a shadow mode of 8 goes out as Fan (0x10)");
     raw.mode = (HisenseMode) 9;
-    CHECK(cmd_byte(raw, 18) == 0x30, "unguarded: status nibble 9 was re-sent as Heat (0x30)");
+    CHECK(cmd_byte(raw, 18) == 0x30, "unguarded: a shadow mode of 9 goes out as Heat (0x30)");
     raw.mode = (HisenseMode) 12;
-    CHECK(cmd_byte(raw, 18) == 0x90, "unguarded: status nibble 12 was re-sent as Auto (0x90)");
+    CHECK(cmd_byte(raw, 18) == 0x90, "unguarded: a shadow mode of 12 goes out as Auto (0x90)");
   }
 
   // ---- writes judged against the pending command, not a status that has not caught up -----------

@@ -54,8 +54,8 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   every status frame.
 
 ### Fixed
-- AmebaZ2 1.3.48, and the ESP32 build from its next release: three faults found by an audit of the
-  Matter write and readback paths after #168. All three decisions are pure functions in
+- AmebaZ2 1.3.48, and the ESP32 build from its next release: four faults found by an audit of the
+  Matter write and readback paths after #168. The decisions are pure functions in
   `matter_aircon_map.h` with host tests. None has been on hardware yet.
   - Choosing the fan's Auto preset, or the A/C reporting fan Auto, made the AmebaZ2 node command
     the fan to High and then back to Auto. The FanControl server nulls PercentSetting and
@@ -71,6 +71,9 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   - A status frame with a mode nibble outside the known ones (0 to 3, 5 and 6) was copied into the
     command shadow, where it encodes as a different mode: the next setpoint or fan change could
     have switched the unit to Fan or Heat. The shadow now keeps its last good mode.
+  - The status mode was read as four bits. The stock capability table defines it as three (byte
+    18, bits 4 to 6), so a frame with bit 7 set decoded to an unknown mode and was reported as
+    Cool. The driver and the ESPHome codec port now both mask three bits.
 - AmebaZ2 1.3.47: the node no longer commands its own stale SystemMode readback. A status frame
   parsed before the A/C applied a mode change is published over the client's value, and if the
   status had moved on by the time that readback was handled it was sent to the A/C as a new

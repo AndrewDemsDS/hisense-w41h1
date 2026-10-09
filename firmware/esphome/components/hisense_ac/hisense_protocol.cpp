@@ -345,9 +345,11 @@ bool parse_status(const uint8_t *buf, size_t len, AcState *out) {
     return false;
 
   *out = AcState{};
-  uint8_t packed = buf[18];  // direction:2, run:2, mode:4
+  uint8_t packed = buf[18];  // direction:2, run:2, mode:3, bit 7 not part of the mode
   uint8_t run_status = (packed >> 2) & 0x3;
-  uint8_t mode_status = (packed >> 4) & 0xF;
+  // 3-bit field, bits 4-6 (stock t_work_mode record, RE docs/10 7.4a). Kept identical to
+  // hisense_rs485.cpp: the codec parity test compares the two parsers.
+  uint8_t mode_status = (packed >> 4) & 0x7;
   // AUTO is status nibble 5 or 6 (the vendor module's AUTO command lands on 6).
   if (mode_status == 5 || mode_status == 6)
     mode_status = MODE_AUTO;
