@@ -204,37 +204,6 @@ static void test_build_command() {
   printf("  build_command: %ld commands compared\n", built);
 }
 
-static void test_overrides() {
-  H::AcCommand n;
-  n.mode = H::MODE_HEAT;
-  n.setpoint = 23;
-  n.fan = H::FAN_SPEED_MID;
-  HisenseCommand o;
-  to_old(n, &o);
-  static const uint8_t vals[] = {0x00, 0x01, 0x30, 0x7F, 0xF4, 0xFF};
-  for (int off = -2; off < 60; off++) {
-    for (uint8_t v : vals) {
-      uint8_t a[64], b[64];
-      size_t na = hisense_build_command_override(&o, a, sizeof(a), off, v);
-      size_t nb = H::build_command_override(n, b, sizeof(b), off, v);
-      CHECK(same_bytes(a, na, b, nb), "override off=%d v=0x%02X", off, v);
-    }
-  }
-  for (int o1 = 10; o1 < 52; o1 += 3) {
-    for (int o2 = 10; o2 < 52; o2++) {
-      uint8_t a[64], b[64];
-      size_t na = hisense_build_command_override2(&o, a, sizeof(a), o1, 0x5A, o2, 0xF4);
-      size_t nb = H::build_command_override(n, b, sizeof(b), o1, 0x5A, o2, 0xF4);
-      CHECK(same_bytes(a, na, b, nb), "override2 %d %d", o1, o2);
-    }
-  }
-  // The two-byte override must not leak into a later plain command (the original uses a global).
-  uint8_t a[64], b[64];
-  size_t na = hisense_build_command(&o, a, sizeof(a));
-  size_t nb = H::build_command(n, b, sizeof(b));
-  CHECK(same_bytes(a, na, b, nb), "plain command after override2");
-}
-
 static void test_fixed_builders() {
   uint8_t a[64], b[64];
   for (int on = 0; on < 2; on++) {
@@ -638,7 +607,6 @@ int main() {
   printf("== ESPHome codec parity (port vs original driver) ==\n");
   test_constants();
   test_build_command();
-  test_overrides();
   test_fixed_builders();
   test_link_heartbeat();
   test_stamp_link_token();

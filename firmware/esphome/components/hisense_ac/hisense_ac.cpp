@@ -202,46 +202,6 @@ void HisenseAC::send_command() {
   }
 }
 
-void HisenseAC::tx_override(int offset, int value) {
-  uint8_t frame[CMD_FRAME_MAX];
-  this->cmd_.display = this->display_pref_;
-  size_t len = build_command_override(this->cmd_, frame, sizeof(frame), offset, (uint8_t) value);
-  if (len == 0) {
-    ESP_LOGW(TAG, "tx_override rejected: offset %d out of the payload range", offset);
-    return;
-  }
-  ESP_LOGI(TAG, "tx_override: byte %d = 0x%02X", offset, (unsigned) value);
-  if (!this->send_frame_(frame, len)) {
-    ESP_LOGW(TAG, "tx_override frame dropped: TX queue full");
-  }
-}
-
-void HisenseAC::tx_override2(int off1, int val1, int off2, int val2) {
-  uint8_t frame[CMD_FRAME_MAX];
-  this->cmd_.display = this->display_pref_;
-  size_t len = build_command_override(this->cmd_, frame, sizeof(frame), off1, (uint8_t) val1, off2, (uint8_t) val2);
-  if (len == 0 || off2 < 0) {
-    ESP_LOGW(TAG, "tx_override2 rejected: offsets %d/%d out of range", off1, off2);
-    return;
-  }
-  ESP_LOGI(TAG, "tx_override2: byte %d = 0x%02X, byte %d = 0x%02X", off1, (unsigned) val1, off2, (unsigned) val2);
-  if (!this->send_frame_(frame, len)) {
-    ESP_LOGW(TAG, "tx_override2 frame dropped: TX queue full");
-  }
-}
-
-void HisenseAC::tx_single(int offset, int value) {
-  // Deliberately NOT the combined frame: this is the shape a generic attribute setter would
-  // send, one field set and every other byte left at 0x00 ("leave alone").
-  uint8_t frame[CMD_FRAME_MAX];
-  size_t len = (offset == 17) ? build_sleep_frame((uint8_t) ((value - 1) / 2), frame, sizeof(frame))
-                              : build_mute_frame(value == 0x30, frame, sizeof(frame));
-  ESP_LOGI(TAG, "tx_single: byte %d = 0x%02X (len %u)", offset, (unsigned) value, (unsigned) len);
-  if (len == 0 || !this->send_frame_(frame, len)) {
-    ESP_LOGW(TAG, "tx_single frame not sent");
-  }
-}
-
 void HisenseAC::send_power(bool on) {
   uint8_t frame[CMD_FRAME_MAX];
   size_t len = build_power_frame(on, frame, sizeof(frame));
