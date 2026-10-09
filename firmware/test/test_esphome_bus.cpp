@@ -88,6 +88,12 @@ class SimAC : public H::BusIO {
   bool responsive = true;
   bool corrupt_status = false;
   bool stale_1e_before_status = false;
+  bool deaf_to_commands = false;     // hears everything except 0x65
+  bool stale_1e_before_ack = false;  // a late 0x1E lands in the command's window, ahead of its ack
+  uint32_t ack_starts = 0, ack_ends = 0;
+  bool truncate_next_status = false;  // one status reply cut off after 60 bytes
+  // Time of the last byte of the newest reply queued, to tell whether a write overlaps a reply.
+  uint32_t reply_ends = 0;
   uint32_t reply_delay = 40;
   uint8_t devtype_hi = 0x01, devtype_lo = 0x02;
   uint8_t setpoint = 22;
@@ -124,6 +130,7 @@ class SimAC : public H::BusIO {
       rx_.push_back({t, f[i]});
       if ((i == f.size() - 4 || i == f.size() - 3) && f[i] == 0xF4)
         rx_.push_back({t, 0xF4});
+      reply_ends = t;
       t++;
     }
   }
@@ -154,9 +161,22 @@ class SimAC : public H::BusIO {
         queue_(ac_frame(28, 0x1E, 0x00), at);
         at += 40;
       }
-      queue_(status_frame(setpoint, corrupt_status), at);
+      auto f = status_frame(setpoint, corrupt_status);
+      if (truncate_next_status) {
+        truncate_next_status = false;
+        f.resize(60);
+      }
+      queue_(f, at);
     } else if (cls == 0x65) {
-      queue_(ac_frame(20, 0x65, 0x00), at);
+      if (stale_1e_before_ack) {
+        queue_(ac_frame(28, 0x1E, 0x00), at);
+        at += 40;
+      }
+      if (!deaf_to_commands) {
+        ack_starts = at;
+        queue_(ac_frame(20, 0x65, 0x00), at);
+        ack_ends = reply_ends;
+      }
     }
   }
   std::deque<std::pair<uint32_t, uint8_t>> rx_;
@@ -181,6 +201,8 @@ class Recorder : public H::BusListener {
   }
   void on_bus_checksum_error(const uint8_t *, size_t) override { checksum_errors++; }
   void on_bus_timeout(uint8_t) override { timeouts++; }
+  std::vector<std::pair<bool, uint8_t>> commands;
+  void on_bus_command(bool answered, uint8_t reply_class) override { commands.push_back({answered, reply_class}); }
 };
 
 static void run(H::BusScheduler &bus, uint32_t ms) {
@@ -334,6 +356,9 @@ static void test_link_loss_and_recovery() {
   ac.responsive = true;
   run(bus, 4000);
   CHECK(rec.links.size() == 2 && rec.links[1].second, "exactly one link-restored edge");
+  CHECK(bus.link_losses() == 1, "one link loss counted (%u)", (unsigned) bus.link_losses());
+  CHECK((int) bus.reply_timeouts() == rec.timeouts && bus.unanswered_commands() == 0,
+        "every timeout counted (%u), none of them a command", (unsigned) bus.reply_timeouts());
 }
 
 static void test_correlation_and_checksum() {
@@ -403,6 +428,232 @@ static void test_peripheral_de() {
   CHECK(!bus.wants_fast_loop(), "no DE timing, no fast loop needed");
 }
 
+static size_t count_cls(const SimAC &ac, size_t from, uint8_t want) {
+  size_t n = 0;
+  for (size_t i = from; i < ac.writes.size(); i++)
+    if (cls(ac.writes[i]) == want)
+      n++;
+  return n;
+}
+
+// What happens to a command frame, which is what a user write turns into.
+static void test_command_fate() {
+  printf("-- command fate: answered, unanswered, queued behind a poll, queued during boot\n");
+  uint8_t cmd[64];
+  size_t n = H::build_command(H::AcCommand{}, cmd, sizeof(cmd));
+  uint8_t pwr[64];
+  size_t pn = H::build_power_frame(true, pwr, sizeof(pwr));
+
+  {  // Answered: the listener hears it, with the class of the reply.
+    SimAC ac;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 2500);
+    CHECK(bus.enqueue(cmd, n), "enqueue");
+    run(bus, 2000);
+    CHECK(rec.commands.size() == 1 && rec.commands[0].first && rec.commands[0].second == 0x65,
+          "answered command reported once with class 0x65 (%zu)", rec.commands.size());
+  }
+  {  // Unanswered: reported as such, sent exactly once, and the link is not blamed for it.
+    SimAC ac;
+    ac.deaf_to_commands = true;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 2500);
+    size_t before = ac.writes.size();
+    CHECK(bus.enqueue(cmd, n), "enqueue");
+    run(bus, 4000);
+    CHECK(rec.commands.size() == 1 && !rec.commands[0].first && rec.commands[0].second == 0,
+          "unanswered command reported (%zu)", rec.commands.size());
+    CHECK(count_cls(ac, before, 0x65) == 1, "and not sent again (%zu)", count_cls(ac, before, 0x65));
+    CHECK(bus.unanswered_commands() == 1 && bus.reply_timeouts() == 1 && bus.link_losses() == 0,
+          "counted: %u unanswered, %u timeouts, %u link losses", (unsigned) bus.unanswered_commands(),
+          (unsigned) bus.reply_timeouts(), (unsigned) bus.link_losses());
+    CHECK(rec.links.empty(), "a lost command is not a lost link");
+  }
+  {
+    // Enqueued while the status poll is on the wire: it waits for the next cycle's command slot,
+    // goes out once, and the status delivered in between is the one from before the command.
+    SimAC ac;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 2500);
+    size_t at = ac.writes.size();
+    while (ac.writes.size() == at || cls(ac.writes.back()) != 0x66 || ac.writes.back().bytes[14] != 0x00)
+      run(bus, 1);
+    size_t poll = ac.writes.size() - 1;
+    int statuses = rec.statuses;
+    CHECK(bus.enqueue(cmd, n), "enqueue during the status poll");
+    run(bus, 2500);
+    size_t sent = 0;
+    for (size_t i = poll + 1; i < ac.writes.size() && sent == 0; i++)
+      if (cls(ac.writes[i]) == 0x65)
+        sent = i;
+    CHECK(sent > poll + 1 && cls(ac.writes[sent - 1]) == 0x1E, "command follows the next heartbeat");
+    CHECK(count_cls(ac, poll, 0x65) == 1, "sent once");
+    CHECK(rec.statuses > statuses, "the poll in flight still delivered its (pre-command) status");
+    uint32_t wait = ac.writes[sent].t - ac.writes[poll].t;
+    CHECK(wait <= 1200, "worst-case wait for the command slot is about one cycle (%u ms)", (unsigned) wait);
+  }
+  {
+    // Power-on then the combined frame, as a mode change on a powered-down unit sends them: same
+    // cycle, in order, and the second never starts while the reply to the first is still arriving.
+    // It does start the moment that reply ends: there is no guard time, which is the assumption a
+    // capture has to back (does the unit take a command 5 ms after it acknowledged power-on).
+    SimAC ac;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 2500);
+    size_t before = ac.writes.size();
+    CHECK(bus.enqueue(pwr, pn) && bus.enqueue(cmd, n), "enqueue power-on, then the combined frame");
+    uint32_t first_reply_end = 0, second_de = 0;
+    for (int i = 0; i < 2500; i++) {
+      size_t writes = ac.writes.size(), edges = ac.de.size();
+      bus.poll(g_now);
+      if (ac.writes.size() > writes && cls(ac.writes.back()) == 0x65 && first_reply_end == 0) {
+        first_reply_end = ac.reply_ends;
+      } else if (ac.de.size() > edges && ac.de.back().high && first_reply_end != 0 && second_de == 0) {
+        second_de = g_now;
+      }
+      g_now++;
+    }
+    size_t a = 0, b = 0;
+    for (size_t i = before; i < ac.writes.size(); i++) {
+      if (cls(ac.writes[i]) != 0x65)
+        continue;
+      if (a == 0) {
+        a = i;
+      } else if (b == 0) {
+        b = i;
+      }
+    }
+    CHECK(a != 0 && b == a + 1, "the two frames are consecutive on the wire");
+    CHECK(a != 0 && ac.writes[a].bytes[18] == 0x0C, "power-on first");
+    CHECK(second_de >= first_reply_end, "second frame waits for the first reply to finish");
+    CHECK(second_de - first_reply_end <= 1, "and starts DE %u ms after it (no guard time)",
+          (unsigned) (second_de - first_reply_end));
+    CHECK(rec.commands.size() == 2 && rec.commands[0].first && rec.commands[1].first, "both answered");
+  }
+  {
+    // Enqueued while the boot handshake is still knocking on a silent A/C: the frames survive
+    // the ten tries, go out in the first cycle, and are reported lost.
+    SimAC ac;
+    ac.responsive = false;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 1000);
+    CHECK(bus.enqueue(pwr, pn) && bus.enqueue(cmd, n), "enqueue during boot");
+    CHECK(count_cls(ac, 0, 0x65) == 0, "nothing sent before the handshake is over");
+    run(bus, 14000);
+    CHECK(count_cls(ac, 0, 0x65) == 2, "both sent once the handshake gives up (%zu)", count_cls(ac, 0, 0x65));
+    CHECK(rec.commands.size() == 2 && !rec.commands[0].first && !rec.commands[1].first, "both reported unanswered");
+  }
+}
+
+// KNOWN AND NOT FIXED. A command's reply window accepts a frame of any class, as the shared driver's
+// does. If a late frame of another class lands in it (the sim's stale 0x1E, which the status poll
+// is already hardened against), the window closes on that frame and the next frame is transmitted
+// at once, on top of the acknowledgement the A/C is about to send. On a half-duplex bus that
+// garbles the next frame. When that frame is the combined command behind a power-on, the unit
+// comes up in its last mode. Whether the real A/C ever sends such a frame needs a capture. The
+// tell on hardware is the hub's log line "Command answered (class 0x1E)".
+// This test pins what the scheduler does today, so that correlating the command reply (accept
+// 0x65 and 0x66 only, keep listening otherwise) shows up as a deliberate change here.
+static void test_stale_frame_in_command_window() {
+  printf("-- KNOWN: a stale frame in a command's reply window\n");
+  SimAC ac;
+  Recorder rec;
+  H::BusScheduler bus;
+  bus.setup(&ac, &rec, true);
+  run(bus, 2500);
+  ac.stale_1e_before_ack = true;
+  uint8_t cmd[64];
+  size_t n = H::build_command(H::AcCommand{}, cmd, sizeof(cmd));
+  uint8_t pwr[64];
+  size_t pn = H::build_power_frame(true, pwr, sizeof(pwr));
+  size_t before = ac.writes.size();
+  CHECK(bus.enqueue(pwr, pn) && bus.enqueue(cmd, n), "enqueue power-on, then the combined frame");
+  uint32_t first_ack_start = 0, first_ack_end = 0;
+  for (int i = 0; i < 2500; i++) {
+    size_t writes = ac.writes.size();
+    bus.poll(g_now);
+    if (ac.writes.size() > writes && cls(ac.writes.back()) == 0x65 && first_ack_start == 0) {
+      first_ack_start = ac.ack_starts;
+      first_ack_end = ac.ack_ends;
+    }
+    g_now++;
+  }
+  size_t second = 0;
+  for (size_t i = before, seen = 0; i < ac.writes.size(); i++) {
+    if (cls(ac.writes[i]) == 0x65 && ++seen == 2)
+      second = i;
+  }
+  CHECK(second != 0, "both frames went out");
+  CHECK(rec.commands.size() == 2 && rec.commands[0].first && rec.commands[0].second == 0x1E,
+        "the power-on window closed on the stale 0x1E, not on its own ack");
+  if (second != 0) {
+    uint32_t tx_start = ac.writes[second].t;
+    uint32_t tx_end = tx_start + H::bus_tx_time_ms(ac.writes[second].bytes.size());
+    bool overlap = tx_start <= first_ack_end && tx_end >= first_ack_start;
+    CHECK(overlap, "the combined frame (%u..%u ms) is sent over the power-on ack (%u..%u ms)", (unsigned) tx_start,
+          (unsigned) tx_end, (unsigned) first_ack_start, (unsigned) first_ack_end);
+  }
+}
+
+// One reply cut short on the wire costs that one poll and nothing else.
+static void test_truncated_reply() {
+  printf("-- truncated status reply\n");
+  SimAC ac;
+  Recorder rec;
+  H::BusScheduler bus;
+  bus.setup(&ac, &rec, true);
+  run(bus, 2500);
+  int before = rec.statuses;
+  ac.truncate_next_status = true;
+  run(bus, 1000);
+  int during = rec.statuses;
+  run(bus, 3000);
+  CHECK(during - before <= 1, "the cut frame is not delivered");
+  CHECK(rec.statuses - during >= 2, "the polls after it are (%d)", rec.statuses - during);
+  CHECK(rec.links.empty(), "one bad poll is not a link loss");
+}
+
+// millis() wraps after 49.7 days. Every deadline here is a signed difference, so the cycle has to
+// run straight through the wrap: same cadence, no link edge, a queued command still sent.
+static void test_millis_rollover() {
+  printf("-- millis() rollover\n");
+  uint32_t saved = g_now;
+  g_now = 0xFFFFFFFFu - 3500;
+  SimAC ac;
+  Recorder rec;
+  H::BusScheduler bus;
+  bus.setup(&ac, &rec, true);
+  run(bus, 3000);
+  uint8_t cmd[64];
+  size_t n = H::build_command(H::AcCommand{}, cmd, sizeof(cmd));
+  CHECK(bus.enqueue(cmd, n), "enqueue just before the wrap");
+  int statuses = rec.statuses;
+  run(bus, 5000);
+  CHECK(g_now < 0x10000u, "the clock wrapped (now %u)", (unsigned) g_now);
+  std::vector<uint32_t> hb;
+  for (auto &w : ac.writes)
+    if (cls(w) == 0x1E)
+      hb.push_back(w.t);
+  CHECK(hb.size() >= 7, "heartbeats kept coming (%zu)", hb.size());
+  for (size_t i = 2; i < hb.size(); i++)
+    CHECK(hb[i] - hb[i - 1] >= 1000 && hb[i] - hb[i - 1] <= 1200, "cycle %zu period %u ms across the wrap", i,
+          (unsigned) (hb[i] - hb[i - 1]));
+  CHECK(rec.statuses - statuses >= 4, "status kept arriving (%d)", rec.statuses - statuses);
+  CHECK(rec.links.empty(), "no link edge at the wrap");
+  CHECK(rec.commands.size() == 1 && rec.commands[0].first, "the queued command went out and was answered");
+  g_now = saved;
+}
+
 int main() {
   printf("== ESPHome bus scheduler vs the original bus task's contract ==\n");
   test_boot_and_cycle();
@@ -411,6 +662,10 @@ int main() {
   test_correlation_and_checksum();
   test_boot_retries();
   test_peripheral_de();
+  test_command_fate();
+  test_stale_frame_in_command_window();
+  test_truncated_reply();
+  test_millis_rollover();
   printf("  %d checks, %d failed\n", g_checks, g_fail);
   printf(g_fail ? "== BUS SCHEDULER FAILED ==\n" : "== BUS SCHEDULER OK ==\n");
   return g_fail ? 1 : 0;

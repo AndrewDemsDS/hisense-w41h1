@@ -92,6 +92,10 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
     return this->holdoff_armed_;
   }
 
+  /// The unit's power once every power frame already sent has landed. Status alone lags a power
+  /// frame by a poll or two.
+  bool power_expected() const { return hisense_ac::power_expected(this->power_intent_, this->last_.power_on); }
+
   bool link_up() const { return this->link_up_; }
   bool has_state() const { return this->last_.valid; }
   const AcState &last_state() const { return this->last_; }
@@ -103,6 +107,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   void on_bus_frame(const uint8_t *frame, size_t len) override;
   void on_bus_checksum_error(const uint8_t *frame, size_t len) override;
   void on_bus_timeout(uint8_t expect_class) override;
+  void on_bus_command(bool answered, uint8_t reply_class) override;
 
   // BusIO, over uart::UARTDevice and the DE pin.
   void bus_set_de(bool high) override;
@@ -119,6 +124,9 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   SUB_SENSOR(voltage)
   SUB_SENSOR(current)
   SUB_SENSOR(checksum_errors)
+  SUB_SENSOR(reply_timeouts)
+  SUB_SENSOR(unanswered_commands)
+  SUB_SENSOR(link_losses)
 #endif
 #ifdef USE_BINARY_SENSOR
   SUB_BINARY_SENSOR(aux_heat)
@@ -141,6 +149,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
 
   void process_status_(const AcState &state);
   void publish_telemetry_(const AcState &state);
+  void publish_bus_counters_(bool refresh_due);
 #ifdef USE_SENSOR
   void publish_sensor_(sensor::Sensor *sensor, float value, bool refresh_due);
 #endif
@@ -160,6 +169,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
 
   AcState last_{};
   AcCommand cmd_{};
+  PowerIntent power_intent_{};
   HisenseClimate *climate_{nullptr};
   std::vector<StatusListener *> listeners_;
   uint32_t holdoff_start_{0};

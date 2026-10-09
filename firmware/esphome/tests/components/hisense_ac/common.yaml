@@ -55,6 +55,12 @@ sensor:
       name: Current
     checksum_errors:
       name: Bus checksum errors
+    reply_timeouts:
+      name: Bus reply timeouts
+    unanswered_commands:
+      name: Unanswered commands
+    link_losses:
+      name: Bus link losses
 
 binary_sensor:
   - platform: hisense_ac

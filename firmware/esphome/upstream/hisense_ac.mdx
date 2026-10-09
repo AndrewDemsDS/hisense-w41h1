@@ -157,6 +157,10 @@ sensor:
 - **voltage** (*Optional*): Mains voltage, in V.
 - **current** (*Optional*): Estimated current, in A.
 - **checksum_errors** (*Optional*): Number of frames received with a bad checksum since boot.
+- **reply_timeouts** (*Optional*): Number of frames the unit did not answer within 500 ms since boot.
+- **unanswered_commands** (*Optional*): Number of those that were commands. A command the unit does
+  not answer is not sent again, so the control goes back to its old value a few seconds later.
+- **link_losses** (*Optional*): Number of times the bus link was declared lost since boot.
 
 Each takes all options from [Sensor](/components/sensor#config-sensor). Values are published when
 they change and at least once a minute.

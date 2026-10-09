@@ -131,6 +131,12 @@ sensor:
       name: Current
     checksum_errors:
       name: Bus checksum errors
+    reply_timeouts:
+      name: Bus reply timeouts
+    unanswered_commands:
+      name: Unanswered commands
+    link_losses:
+      name: Bus link losses
 
   # Energy for the HA Energy dashboard, integrated from the power estimate. The Matter path
   # had no equivalent: this is one of the things ESPHome gives away for free.

@@ -118,6 +118,13 @@ climate::ClimateTraits HisenseClimate::traits() {
 void HisenseClimate::control(const climate::ClimateCall &call) {
   if (this->parent_ == nullptr)
     return;
+  // Everything except off rides the combined frame, which is built from the shadow. Before the
+  // first status the shadow is all defaults (see combined_frame_allowed in hisense_map.h).
+  const bool off_only = call.get_mode().has_value() && *call.get_mode() == climate::CLIMATE_MODE_OFF;
+  if (!off_only && !combined_frame_allowed(this->parent_->has_state())) {
+    ESP_LOGW(TAG, "Command refused: no status from the unit yet");
+    return;
+  }
   AcCommand &cmd = this->parent_->cmd();
   bool send_combined = false;
   bool powering_on = false;
@@ -138,7 +145,8 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
       send_combined = true;
       // The A/C ignores a mode change while powered down, so power on first and let the
       // combined frame carry the mode.
-      if (!this->parent_->last_state().power_on)
+      // power_expected(), not the last status: that still reads on for a poll or two after an off.
+      if (!this->parent_->power_expected())
         powering_on = true;
     } else {
       ESP_LOGW(TAG, "Unsupported climate mode %d", (int) mode);
@@ -146,11 +154,16 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   }
 
   if (call.get_target_temperature().has_value()) {
-    // The A/C reads byte 19 in its panel's unit, so an F panel needs the value in F.
     const AcState &st = this->parent_->last_state();
-    int wanted = setpoint_to_cmd((int) lroundf(*call.get_target_temperature()), st.valid && st.temp_unit_f, &cmd);
-    this->target_temperature = (float) wanted;
-    send_combined = true;
+    // cmd.mode is the mode the combined frame will carry: the one just requested, else the shadow.
+    if (!setpoint_request_allowed(this->parent_->power_expected() || powering_on, cmd.mode)) {
+      ESP_LOGW(TAG, "Target temperature refused: the unit only takes one in cool and heat");
+    } else {
+      // The A/C reads byte 19 in its panel's unit, so an F panel needs the value in F.
+      int wanted = setpoint_to_cmd((int) lroundf(*call.get_target_temperature()), st.valid && st.temp_unit_f, &cmd);
+      this->target_temperature = (float) wanted;
+      send_combined = true;
+    }
   }
 
   // A fan request can arrive by EITHER route, and the trap is that it is not our choice which.
@@ -227,12 +240,19 @@ void HisenseClimate::update_from_bus(const AcState &state, bool holdoff) {
   const uint8_t prev_preset = this->preset_index_;
 
   this->current_temperature = state.indoor_temp_c;
-  this->action = (climate::ClimateAction) climate_action(state.power_on, state.mode, state.compressor_freq);
+  Mode action_mode = state.mode;
+  mode_from_status(state.mode, &action_mode);
+  this->action = (climate::ClimateAction) climate_action(state.power_on, action_mode, state.compressor_freq);
   // During the hold-off the frame may predate the user's command, so only telemetry is taken
   // from it. Everything the user can move is left showing what they asked for.
   if (!holdoff) {
-    this->mode =
-        state.power_on ? (climate::ClimateMode) hisense_mode_to_climate(state.mode) : climate::CLIMATE_MODE_OFF;
+    // A mode value with no meaning keeps the mode shown, where it used to read as cool.
+    Mode mode;
+    if (!state.power_on) {
+      this->mode = climate::CLIMATE_MODE_OFF;
+    } else if (mode_from_status(state.mode, &mode)) {
+      this->mode = (climate::ClimateMode) hisense_mode_to_climate(mode);
+    }
     this->target_temperature = state.setpoint_c;
     this->swing_mode = (climate::ClimateSwingMode) climate_swing(state.vswing_on, state.hswing_on);
     uint8_t idx = fan_raw_to_index(state.fan_raw);

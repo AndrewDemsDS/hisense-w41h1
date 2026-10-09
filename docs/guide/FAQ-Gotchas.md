@@ -108,6 +108,10 @@ and raw special-mode switches. ([Everyday Control](Everyday-Control))
 Temperature is only honored in **cool/heat**. A temp change in dry / fan-only / auto / off is a no-op
 and shows no target (the unified integration gates this explicitly). ([Everyday Control](Everyday-Control))
 
+The ESPHome build refuses the write while the unit runs in dry, fan-only or auto and logs a warning,
+so the entity keeps the setpoint the unit reports. In auto the unit holds its own value: a write
+used to show for about four seconds and then revert.
+
 ## Eco/Turbo/Mute/Sleep don't respond on the raw device.
 
 The manufacturer cluster (`0xFFF1FC00`) is **read-only** to python-matter-server. A direct write

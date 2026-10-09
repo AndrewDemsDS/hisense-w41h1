@@ -150,6 +150,7 @@ void BusScheduler::poll(uint32_t now) {
           continue;
         if (!reached(now, this->phase_until_))
           return;
+        this->reply_timeouts_++;
         if (this->listener_ != nullptr)
           this->listener_->on_bus_timeout(this->expect_class_);
         this->finish_transaction_(0, now);  // timeout, no reply
@@ -264,6 +265,10 @@ void BusScheduler::on_step_done_(size_t reply_len, uint32_t now) {
       this->step_ = Step::DRAIN;
       return;
     case Step::DRAIN:
+      if (reply_len == 0)
+        this->unanswered_commands_++;
+      if (this->listener_ != nullptr)
+        this->listener_->on_bus_command(reply_len > 0, reply_len > 0 ? this->rx_.data()[FRAME_CLASS_OFFSET] : 0);
       if (reply_len > 0)
         this->consume_(reply_len);
       return;  // stay in DRAIN until the queue is empty
@@ -277,6 +282,8 @@ void BusScheduler::on_step_done_(size_t reply_len, uint32_t now) {
       bool silent = this->link_miss_ >= BUS_LINK_LOST_POLLS;
       if (silent != this->link_down_) {
         this->link_down_ = silent;
+        if (silent)
+          this->link_losses_++;
         if (this->listener_ != nullptr)
           this->listener_->on_bus_link(!silent);
       }

@@ -51,6 +51,17 @@ void HisenseAC::on_bus_timeout(uint8_t expect_class) {
   ESP_LOGV(TAG, "No reply within the window (expected class 0x%02X)", expect_class);
 }
 
+void HisenseAC::on_bus_command(bool answered, uint8_t reply_class) {
+  // The unit answers every command it hears. Silence means the frame was lost on the way or
+  // arrived damaged: nothing resends it, and the entity goes back to the old value after the
+  // hold-off.
+  if (!answered) {
+    ESP_LOGW(TAG, "Command frame got no reply from the unit");
+  } else {
+    ESP_LOGD(TAG, "Command answered (class 0x%02X)", reply_class);
+  }
+}
+
 void HisenseAC::on_bus_link(bool up) {
   if (!up) {
     // Drop any undrained pre-loss frame, or loop() would publish those stale values (and flip
@@ -102,6 +113,9 @@ void HisenseAC::loop() {
     if (this->bus_link_binary_sensor_ != nullptr)
       this->bus_link_binary_sensor_->publish_state(this->link_up_);
 #endif
+    // No status frame arrives while the link is down, so the edge is the one moment the counters
+    // can still go out.
+    this->publish_bus_counters_(false);
   }
 
   if (have_state)
@@ -131,14 +145,18 @@ void HisenseAC::process_status_(const AcState &state) {
   }
   this->last_ = state;
 
+  power_intent_status(&this->power_intent_, this->in_command_holdoff());
+
   // Keep the command shadow tracking reality, so a later single-field write rebuilds the
   // combined frame from what the A/C is actually doing instead of a stale shadow. Skipped
   // during the hold-off, when `state` may predate the user's own command.
   if (!this->in_command_holdoff()) {
-    FanSpeed fan = fan_raw_to_cmd(state.fan_raw);
+    FanSpeed fan = shadow_fan_from_status(state.fan_raw);
     if (fan != FAN_SPEED_NOCHANGE)
       this->cmd_.fan = fan;
-    this->cmd_.mode = state.mode;
+    if (!mode_from_status(state.mode, &this->cmd_.mode)) {
+      ESP_LOGV(TAG, "Status mode %d is not a mode, shadow kept", (int) state.mode);
+    }
     // Validated in the wire unit: a raw copy would drop the F flag and let an out-of-range report
     // poison the shadow, which silently kills every later Cool/Heat/Auto frame.
     if (!sync_shadow_setpoint(state.setpoint_c, state.temp_unit_f, &this->cmd_)) {
@@ -193,13 +211,22 @@ void HisenseAC::publish_telemetry_(const AcState &state) {
   this->publish_sensor_(this->voltage_sensor_, voltage_mv(state.voltage_raw) / 1000.0f, refresh);
   this->publish_sensor_(this->current_sensor_, active_current_ma(state.current_raw, state.voltage_raw) / 1000.0f,
                         refresh);
-  this->publish_sensor_(this->checksum_errors_sensor_, this->bus_.checksum_mismatches(), refresh);
+  this->publish_bus_counters_(refresh);
 #endif
 #ifdef USE_BINARY_SENSOR
   if (this->aux_heat_binary_sensor_ != nullptr)
     this->aux_heat_binary_sensor_->publish_state(state.heat_relay_on);
   if (this->bus_link_binary_sensor_ != nullptr)
     this->bus_link_binary_sensor_->publish_state(this->link_up_);
+#endif
+}
+
+void HisenseAC::publish_bus_counters_(bool refresh_due) {
+#ifdef USE_SENSOR
+  this->publish_sensor_(this->checksum_errors_sensor_, this->bus_.checksum_mismatches(), refresh_due);
+  this->publish_sensor_(this->reply_timeouts_sensor_, this->bus_.reply_timeouts(), refresh_due);
+  this->publish_sensor_(this->unanswered_commands_sensor_, this->bus_.unanswered_commands(), refresh_due);
+  this->publish_sensor_(this->link_losses_sensor_, this->bus_.link_losses(), refresh_due);
 #endif
 }
 
@@ -248,6 +275,10 @@ void HisenseAC::publish_diagnostics_() {
 
 // ---- Commands ---------------------------------------------------------------------------------
 void HisenseAC::send_command() {
+  if (!combined_frame_allowed(this->last_.valid)) {
+    ESP_LOGW(TAG, "Command not sent: no status from the unit yet, so the frame would carry defaults");
+    return;
+  }
   uint8_t frame[CMD_FRAME_MAX];
   ESP_LOGD(TAG, "TX combined: mode=%d setpoint=%d fan=0x%02X vswing=%d hswing=%d feature=%d", (int) this->cmd_.mode,
            (int) this->cmd_.setpoint, (unsigned) this->cmd_.fan, (int) this->cmd_.vswing, (int) this->cmd_.hswing,
@@ -270,7 +301,9 @@ void HisenseAC::send_power(bool on) {
   size_t len = build_power_frame(on, frame, sizeof(frame));
   if (len == 0 || !this->send_frame_(frame, len)) {
     ESP_LOGW(TAG, "Power %s frame not sent", on ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
+    return;
   }
+  power_intent_sent(&this->power_intent_, on);
 }
 
 /* Mute and sleep use the MINIMAL single-field frame, which is what the vendor module's generic

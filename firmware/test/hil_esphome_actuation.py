@@ -56,6 +56,7 @@ class Node:
         self.climate = None
         self.switches: dict[str, object] = {}
         self.selects: dict[str, object] = {}
+        self.binary_sensors: dict[str, object] = {}
 
     async def connect(self) -> None:
         entities, _ = await self.client.list_entities_services()
@@ -69,6 +70,8 @@ class Node:
                 self.switches[name] = e
             elif kind.startswith("Select"):
                 self.selects[name] = e
+            elif kind.startswith("BinarySensor"):
+                self.binary_sensors[name] = e
         self.client.subscribe_states(lambda s: self.states.__setitem__(s.key, s))
         await asyncio.sleep(3)
 
@@ -81,6 +84,29 @@ class Node:
             v = getattr(s, f, None)
             snap[f] = str(v) if v is not None else None
         return snap
+
+    def bus_link(self) -> bool | None:
+        """The bus-link binary sensor, or None when the node does not declare one."""
+        for name, e in self.binary_sensors.items():
+            if "bus link" in name.lower():
+                s = self.states.get(e.key)
+                return None if s is None else bool(getattr(s, "state", False))
+        return None
+
+    def mode(self) -> int | None:
+        """The climate mode as ESPHome's ClimateMode int (0 off, 2 cool, 3 heat, ...)."""
+        s = self.states.get(self.climate.key)
+        try:
+            return int(getattr(s, "mode", None))
+        except (TypeError, ValueError):
+            return None
+
+    def fan_is(self, name: str) -> bool:
+        """True when the entity shows exactly the ladder step `name`."""
+        snap = self.climate_snapshot()
+        if name in FAN_ENUM:
+            return snap.get("fan_mode") == str(FAN_ENUM[name]) and not snap.get("custom_fan_mode")
+        return snap.get("custom_fan_mode") == name
 
     def switch_state(self, name: str) -> bool | None:
         e = self.switches.get(name)
@@ -154,7 +180,22 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     else:
         print()
 
-    settle = 6
+    # Every readback below is the entity, and the entity shows the REQUEST for the firmware's 4 s
+    # hold-off. Only a status frame after that replaces it with what the unit does. With the bus
+    # link down no such frame arrives, so every step would pass on the echo of its own command.
+    link = node.bus_link()
+    if link is None:
+        print("  NOTE: no bus-link binary sensor declared; a dead bus cannot be told from a pass.")
+    else:
+        record("bus link is up before the run", link, f"bus link reads {link}")
+        if not link:
+            print("\n0 steps run: the unit is not answering, so no readback would mean anything.")
+            await client.disconnect()
+            return 1
+
+    # 4 s hold-off, plus up to ~1.7 s for the command to reach its slot in the 1 s bus cycle and
+    # for the poll after it. 6 s left almost nothing over; 7 s leaves a full cycle.
+    settle = 7
     # Eco / turbo / quiet / sleep go through the firmware's paced special-mode queue: each write
     # waits 10 s after the previous one (the A/C swallows faster ones), then ~3 s to read back.
     special_settle = 14
@@ -187,13 +228,17 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # --- 1. setpoint ------------------------------------------------------------------
     phase("setpoint")
     before = node.climate_snapshot()
-    target = 25.0 if float(before.get("target_temperature") or 24) != 25.0 else 23.0
-    client.climate_command(key=node.climate.key, target_temperature=target)
-    await asyncio.sleep(settle)
-    after = node.climate_snapshot()
-    record("setpoint actuates", float(after.get("target_temperature") or -1) == target,
-           f"wanted {target}, got {after.get('target_temperature')}")
-    node.no_collateral("setpoint", before, {"target_temperature"})
+    if not powered_off and node.mode() not in (2, 3):
+        # The unit takes a setpoint in cool and heat only, and the firmware refuses it elsewhere.
+        print(f"  SKIP setpoint: mode {node.mode()} takes none (cool and heat only)")
+    else:
+        target = 25.0 if float(before.get("target_temperature") or 24) != 25.0 else 23.0
+        client.climate_command(key=node.climate.key, target_temperature=target)
+        await asyncio.sleep(settle)
+        after = node.climate_snapshot()
+        record("setpoint actuates", float(after.get("target_temperature") or -1) == target,
+               f"wanted {target}, got {after.get('target_temperature')}")
+        node.no_collateral("setpoint", before, {"target_temperature"})
 
     # --- 2. fan, BUILT-IN enum path (the 2026-08-18 bug) ------------------------------
     phase("fan: built-in enum")
@@ -203,9 +248,8 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     client.climate_command(key=node.climate.key, custom_fan_mode=enum_step)
     await asyncio.sleep(settle)
     after = node.climate_snapshot()
-    moved = before.get("fan_mode") != after.get("fan_mode") or \
-        before.get("custom_fan_mode") != after.get("custom_fan_mode")
-    record(f"fan {enum_step} actuates", moved,
+    # "It moved" is not enough: a unit that went to some other speed did not obey.
+    record(f"fan {enum_step} actuates", node.fan_is(enum_step.lower()),
            f"fan_mode {before.get('fan_mode')} -> {after.get('fan_mode')}, "
            f"custom {before.get('custom_fan_mode')} -> {after.get('custom_fan_mode')}")
     node.no_collateral("fan", before, {"fan_mode", "custom_fan_mode"})
@@ -241,11 +285,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         client.climate_command(key=node.climate.key, custom_fan_mode=name)
         await asyncio.sleep(settle)
         after = node.climate_snapshot()
-        moved = (before.get("fan_mode") != after.get("fan_mode")
-                 or before.get("custom_fan_mode") != after.get("custom_fan_mode"))
-        already = before.get("custom_fan_mode") == name or \
-            before.get("fan_mode") == str(FAN_ENUM.get(name))
-        record(f"fan {name}", moved or already or name == "auto",
+        record(f"fan {name}", node.fan_is(name),
                f"fan_mode={after.get('fan_mode')} custom={after.get('custom_fan_mode')}")
         node.no_collateral(f"fan {name}", before, {"fan_mode", "custom_fan_mode"})
 
@@ -253,7 +293,13 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # HEAT is deliberately skipped: it would heat the room to prove a mapping the host tests
     # already cover. Cool / dry / fan-only / auto exercise the same code path.
     phase("mode sweep")
-    for label, mode_val in (("cool", 2), ("dry", 5), ("fan_only", 4), ("auto", 6)):
+    # A mode write powers the unit on. Without --power-on that must not happen, and the sweep
+    # used to start the compressor on a unit found off and leave it running in auto.
+    base_mode = node.mode()
+    sweep = () if powered_off else (("cool", 2), ("dry", 5), ("fan_only", 4), ("auto", 6))
+    if powered_off:
+        print("  SKIP mode sweep: unit is off (use --power-on to run it)")
+    for label, mode_val in sweep:
         before = node.climate_snapshot()
         client.climate_command(key=node.climate.key, mode=mode_val)
         await asyncio.sleep(settle)
@@ -263,6 +309,15 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         # A mode change legitimately moves the action, and dry/turbo may move the fan.
         node.no_collateral(f"mode {label}", before,
                            {"mode", "fan_mode", "custom_fan_mode", "target_temperature"})
+    # Put the mode back now: the sweep ends in auto, and the steps below (and the unit's owner)
+    # expect the mode the run started in. Heat is not re-entered by the test.
+    if sweep and base_mode not in (None, 0, 3, 6):
+        client.climate_command(key=node.climate.key, mode=base_mode)
+        await asyncio.sleep(settle)
+        record("mode restored after the sweep", node.mode() == base_mode,
+               f"wanted {base_mode}, got {node.mode()}")
+    elif sweep and base_mode == 3:
+        print("  NOTE: the run started in heat, which the test does not re-enter. Unit left in auto.")
 
     # --- 5. THE DISPLAY REGRESSION ----------------------------------------------------
     # Turn the panel off, then drive eco, turbo and quiet in turn. Each of those sends a
@@ -371,10 +426,18 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         if e is not None and was is not None:
             client.switch_command(key=e.key, state=was)
             await asyncio.sleep(2)
-    if baseline.get("target_temperature"):
+    # Turbo forces cool at 16 C and the unit stays in cool once turbo is off, so the mode can
+    # have moved again since the sweep put it back.
+    if not powered_off and base_mode not in (None, 0, 3) and node.mode() != base_mode:
+        client.climate_command(key=node.climate.key, mode=base_mode)
+        await asyncio.sleep(settle)
+    if baseline.get("target_temperature") and (powered_off or node.mode() in (2, 3)):
         client.climate_command(key=node.climate.key,
                                target_temperature=float(baseline["target_temperature"]))
         await asyncio.sleep(3)
+    link = node.bus_link()
+    if link is not None:
+        record("bus link still up after the run", link, f"bus link reads {link}")
     print("  restored to baseline (verify on the unit)")
 
     await client.disconnect()
