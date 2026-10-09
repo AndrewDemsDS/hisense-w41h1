@@ -616,6 +616,33 @@ static void test_telemetry_pacing() {
   CHECK(H::TELEMETRY_REFRESH_MS == 60000, "refresh period is one minute");
 }
 
+// Port-only rule: which setpoint writes the climate entity accepts. The unit takes a setpoint in
+// cool and heat only (auto measured on hardware 2026-10-09; dry and fan-only are stripped by
+// build_command), so a write in any other running mode would be shown and then revert.
+static void test_setpoint_gate() {
+  CHECK(H::setpoint_request_allowed(true, H::MODE_COOL), "running cool takes a setpoint");
+  CHECK(H::setpoint_request_allowed(true, H::MODE_HEAT), "running heat takes a setpoint");
+  CHECK(!H::setpoint_request_allowed(true, H::MODE_AUTO), "running auto refuses a setpoint");
+  CHECK(!H::setpoint_request_allowed(true, H::MODE_DRY), "running dry refuses a setpoint");
+  CHECK(!H::setpoint_request_allowed(true, H::MODE_FAN), "running fan-only refuses a setpoint");
+  // A status nibble the parser does not know lands outside the enum. It is not cool or heat.
+  CHECK(!H::setpoint_request_allowed(true, (H::Mode) 7), "unknown mode refuses a setpoint");
+  // Powered down and not being switched on: the value is kept for the mode change that follows.
+  for (int m = H::MODE_FAN; m <= H::MODE_AUTO; m++)
+    CHECK(H::setpoint_request_allowed(false, (H::Mode) m), "powered down, mode %d: setpoint kept", m);
+  // The refusal agrees with the wire: every mode whose frame strips byte 19 is refused while running.
+  for (int m = H::MODE_FAN; m <= H::MODE_AUTO; m++) {
+    H::AcCommand c;
+    c.mode = (H::Mode) m;
+    c.setpoint = 24;
+    uint8_t f[H::CMD_FRAME_MAX];
+    size_t n = H::build_command(c, f, sizeof(f));
+    CHECK(n > 0, "mode %d builds", m);
+    if (n > 0 && f[19] == 0x00)
+      CHECK(!H::setpoint_request_allowed(true, (H::Mode) m), "mode %d strips byte 19 but is accepted", m);
+  }
+}
+
 int main() {
   printf("== ESPHome codec parity (port vs original driver) ==\n");
   test_constants();
@@ -631,6 +658,7 @@ int main() {
   test_power();
   test_frame_assembler();
   test_telemetry_pacing();
+  test_setpoint_gate();
   printf("  %ld checks, %d failed\n", g_checks, g_fail);
   printf(g_fail ? "== CODEC PARITY FAILED ==\n" : "== CODEC PARITY OK ==\n");
   return g_fail ? 1 : 0;

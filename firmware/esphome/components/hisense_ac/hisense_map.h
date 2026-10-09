@@ -239,6 +239,18 @@ inline int setpoint_to_cmd(int wanted_c, bool panel_f, AcCommand *cmd) {
   return c;
 }
 
+// The A/C takes a setpoint only in cool and heat. In dry and fan-only the command builder strips it
+// from the wire. In auto the frame carries it and the unit keeps its own: measured 2026-10-09, writes
+// of 19 C and 25 C in auto both read back as the previous 22 C once the hold-off expired. A write
+// the unit drops would show a target that reverts about four seconds later, so the climate entity
+// refuses it. `running` is false for a powered-down unit that the same call does not switch on:
+// there the value still goes into the shadow, for the mode change that may follow.
+inline bool setpoint_request_allowed(bool running, Mode frame_mode) {
+  if (!running)
+    return true;
+  return frame_mode == MODE_COOL || frame_mode == MODE_HEAT;
+}
+
 // Status -> command shadow, validated in the wire unit. False leaves the shadow alone.
 inline bool sync_shadow_setpoint(int8_t setpoint_c, bool temp_unit_f, AcCommand *cmd) {
   int8_t wire;
