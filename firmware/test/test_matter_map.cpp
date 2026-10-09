@@ -430,6 +430,54 @@ int main() {
     CHECK(matter_sysmode_should_command(&e, 4, false, false, HISENSE_MODE_FAN), "no status yet: command the write");
   }
 
+  // ---- PercentSetting / SpeedSetting: null is not a fan request ---------------------------------
+  printf("[fan settings: null and out-of-range]\n");
+  {
+    HisenseFanSpeed f = HISENSE_FAN_LOW;
+    // What the glue did before: the raw byte went straight into the percentage ladder.
+    CHECK(percent_to_hisense_fan(0xFF) == HISENSE_FAN_HIGH, "unguarded: a null PercentSetting reads as HIGH");
+    CHECK(speed_to_hisense_fan(0xFF) == HISENSE_FAN_AUTO, "unguarded: a null SpeedSetting reads as AUTO");
+
+    CHECK(!matter_percent_setting_to_fan(0xFF, &f) && f == HISENSE_FAN_LOW, "null PercentSetting: no request");
+    CHECK(!matter_percent_setting_to_fan(101, &f) && f == HISENSE_FAN_LOW, "PercentSetting 101: no request");
+    CHECK(!matter_speed_setting_to_fan(0xFF, &f) && f == HISENSE_FAN_LOW, "null SpeedSetting: no request");
+    CHECK(!matter_speed_setting_to_fan(7, &f) && f == HISENSE_FAN_LOW, "SpeedSetting above SpeedMax: no request");
+
+    // In-range values keep the existing ladders, ends included.
+    for (int p = 0; p <= 100; p++) {
+      HisenseFanSpeed g = HISENSE_FAN_NOCHANGE;
+      CHECK(matter_percent_setting_to_fan((uint8_t) p, &g) && g == percent_to_hisense_fan((uint8_t) p),
+            "PercentSetting %d keeps its ladder step", p);
+    }
+    for (int s = 0; s <= 6; s++) {
+      HisenseFanSpeed g = HISENSE_FAN_NOCHANGE;
+      CHECK(matter_speed_setting_to_fan((uint8_t) s, &g) && g == speed_to_hisense_fan((uint8_t) s),
+            "SpeedSetting %d keeps its speed", s);
+    }
+
+    // The sequence on AmebaZ2 when the A/C reports fan Auto and the node publishes FanMode=Auto:
+    // the server nulls PercentSetting then SpeedSetting, and both reach the handler.
+    HisenseFanSpeed shadow = HISENSE_FAN_AUTO;
+    int frames = 0;
+    HisenseFanSpeed nf = percent_to_hisense_fan(0xFF);
+    if (nf != shadow) {
+      shadow = nf;
+      frames++;
+    }
+    CHECK(frames == 1 && shadow == HISENSE_FAN_HIGH, "unguarded: publishing Auto commanded the fan to HIGH");
+    shadow = HISENSE_FAN_AUTO;
+    frames = 0;
+    if (matter_percent_setting_to_fan(0xFF, &nf) && nf != shadow) {
+      shadow = nf;
+      frames++;
+    }
+    if (matter_speed_setting_to_fan(0xFF, &nf) && nf != shadow) {
+      shadow = nf;
+      frames++;
+    }
+    CHECK(frames == 0 && shadow == HISENSE_FAN_AUTO, "guarded: publishing Auto sends no frame");
+  }
+
   printf("== %d passed, %d failed ==\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

@@ -456,7 +456,11 @@ static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t e
         flush_cmd();
       }
     } else if (attribute_id == FanControl::Attributes::PercentSetting::Id) {
-      HisenseFanSpeed nf = percent_to_hisense_fan(val->val.u8);
+      // PercentSetting is nullable (null = 0xFF, valid only while FanMode is Auto). Null is
+      // not a request; read as a percentage it would command HIGH.
+      HisenseFanSpeed nf;
+      if (!matter_percent_setting_to_fan(val->val.u8, &nf))
+        return ESP_OK;
       if (nf != s_cmd.fan) {
         s_cmd.fan = nf;
         flush_cmd();

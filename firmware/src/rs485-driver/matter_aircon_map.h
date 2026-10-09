@@ -126,6 +126,35 @@ static inline HisenseFanSpeed speed_to_hisense_fan(uint8_t speed) {
   return r ? r->cmd : HISENSE_FAN_AUTO;
 }
 
+/* PercentSetting / SpeedSetting as they reach the glue: a raw byte that may be NULL.
+ *
+ * Both attributes are nullable and the null value of a nullable uint8 is 0xFF. The FanControl
+ * server nulls both whenever FanMode becomes Auto, whether a client picked the Auto preset or the
+ * node published Auto from the A/C's status. On AmebaZ2 that server write is queued to the glue
+ * like any other attribute change, and read as a number 0xFF is "above 83 %": the fan was
+ * commanded to HIGH, then put back by the SpeedSetting null that follows (0xFF is no table row,
+ * so AUTO). Two frames the user never asked for on every change to Auto, and a fan left on HIGH
+ * if the A/C drops the second one.
+ *
+ * Null carries no request: FanMode=Auto has its own event and commands AUTO there. So null, and
+ * any other value outside the attribute's range, returns false and the caller sends nothing. */
+#define MATTER_FAN_PERCENT_MAX 100
+#define MATTER_FAN_SPEED_MAX 6 /* SpeedMax in the data model: the six W41H1 speeds */
+
+static inline bool matter_percent_setting_to_fan(uint8_t raw, HisenseFanSpeed *out) {
+  if (raw > MATTER_FAN_PERCENT_MAX)
+    return false;  // 0xFF null, or out of range
+  *out = percent_to_hisense_fan(raw);
+  return true;
+}
+
+static inline bool matter_speed_setting_to_fan(uint8_t raw, HisenseFanSpeed *out) {
+  if (raw > MATTER_FAN_SPEED_MAX)
+    return false;  // 0xFF null, or out of range
+  *out = speed_to_hisense_fan(raw);
+  return true;
+}
+
 /* FanControl FanMode preset (Matter FanModeEnum: Off=0 Low=1 Medium=2 High=3 On=4
  * Auto=5 Smart=6) -> a representative W41H1 speed. HA writes THIS attribute when the
  * user picks a preset from the fan card; without a handler for it the preset was

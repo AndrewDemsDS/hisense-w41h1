@@ -1437,14 +1437,18 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
             // The SDK FanControl server mirrors PercentSetting<->SpeedSetting, so
             // one user fan change re-enters here twice. Skip if the resolved speed
             // already matches the shadow -> one frame per change, not two. (docs/08)
-            HisenseFanSpeed nf = percent_to_hisense_fan(aEvent->value._u8);
+            // The server nulls PercentSetting (0xFF) whenever FanMode becomes Auto; that is not
+            // a request, and read as a percentage it commanded HIGH (matter_percent_setting_to_fan).
+            HisenseFanSpeed nf;
+            if (!matter_percent_setting_to_fan(aEvent->value._u8, &nf)) break;
             if (nf == s_cmd.fan) break;
             s_cmd.fan = nf;
             hisense_flush_command();
         }
         else if (path.mAttributeId == FanAttr::SpeedSetting::Id)
         {
-            HisenseFanSpeed nf = speed_to_hisense_fan(aEvent->value._u8); // 1..6 discrete
+            HisenseFanSpeed nf;   // 1..6 discrete; null (0xFF) is nulled with PercentSetting, same rule
+            if (!matter_speed_setting_to_fan(aEvent->value._u8, &nf)) break;
             if (nf == s_cmd.fan) break;
             s_cmd.fan = nf;
             hisense_flush_command();
