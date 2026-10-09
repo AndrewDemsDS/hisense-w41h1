@@ -6,7 +6,7 @@ title: "Hisense A/C"
 import APIRef from '@components/APIRef.astro';
 
 The `hisense_ac` component controls Hisense split air conditioners over the RS-485 port that the
-stock **AEH-W41H1** Wi-Fi module plugs into. An ESP board with an RS-485 transceiver replaces the
+stock AEH-W41H1 Wi-Fi module plugs into. An ESP board with an RS-485 transceiver replaces the
 module and talks to the indoor unit directly, so the unit works without the vendor cloud.
 
 It has been tested on ESP32 and ESP32-C3 against units that ship with the AEH-W41H1. Other Hisense
@@ -17,8 +17,8 @@ modules use different protocols and are not supported.
 The indoor unit's module connector carries a half-duplex RS-485 bus at 9600 baud, 8N1. You need:
 
 - An ESP board.
-- A **3.3 V** RS-485 transceiver (MAX3485, SP3485 or SN65HVD75). A 5 V MAX485 module drives its
-  receiver output at 5 V and can damage the ESP's RX pin.
+- A 3.3 V RS-485 transceiver (MAX3485, SP3485 or SN65HVD75). Do not use a 5 V MAX485 module: it
+  drives its receiver output at 5 V and can damage the ESP's RX pin.
 - A ~10 kΩ pull-down on the transceiver's DE line. The pin floats until the firmware starts, and a
   floating DE can enable the driver and hold the bus against the A/C.
 
@@ -152,8 +152,8 @@ sensor:
   while the unit is running.
 - **coil_temperature** (*Optional*): Indoor coil temperature, in °C.
 - **compressor_frequency** (*Optional*): Compressor frequency, in Hz.
-- **power** (*Optional*): Active power, in W. This is an estimate derived from the current value
-  the unit reports, not a metered reading.
+- **power** (*Optional*): Active power, in W. It is estimated from the current value the unit
+  reports and is not metered.
 - **voltage** (*Optional*): Mains voltage, in V.
 - **current** (*Optional*): Estimated current, in A.
 - **checksum_errors** (*Optional*): Number of frames received with a bad checksum since boot.
