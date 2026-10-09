@@ -146,11 +146,16 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   }
 
   if (call.get_target_temperature().has_value()) {
-    // The A/C reads byte 19 in its panel's unit, so an F panel needs the value in F.
     const AcState &st = this->parent_->last_state();
-    int wanted = setpoint_to_cmd((int) lroundf(*call.get_target_temperature()), st.valid && st.temp_unit_f, &cmd);
-    this->target_temperature = (float) wanted;
-    send_combined = true;
+    // cmd.mode is the mode the combined frame will carry: the one just requested, else the shadow.
+    if (!setpoint_request_allowed(st.power_on || powering_on, cmd.mode)) {
+      ESP_LOGW(TAG, "Target temperature refused: the unit only takes one in cool and heat");
+    } else {
+      // The A/C reads byte 19 in its panel's unit, so an F panel needs the value in F.
+      int wanted = setpoint_to_cmd((int) lroundf(*call.get_target_temperature()), st.valid && st.temp_unit_f, &cmd);
+      this->target_temperature = (float) wanted;
+      send_combined = true;
+    }
   }
 
   // A fan request can arrive by EITHER route, and the trap is that it is not our choice which.
