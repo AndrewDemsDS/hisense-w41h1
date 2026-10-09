@@ -54,8 +54,8 @@ The component logs under the tag `hisense_ac`. Set the level with ESPHome's `log
 | `VERBOSE` | every decoded status frame, every poll that got no reply |
 | `VERY_VERBOSE` | the raw bytes of every frame sent and received |
 
-`VERY_VERBOSE` is the one to reach for when the link is down: it shows whether the A/C sends
-anything at all, without adding a `debug:` block to the UART.
+Use `VERY_VERBOSE` when the link is down. It shows whether the A/C sends anything at all, and you
+do not need to add a `debug:` block to the UART.
 
 ### The codec port (`hisense_protocol.*`, `hisense_map.h`)
 
