@@ -47,12 +47,13 @@ extern "C" {
 #define ESPHOME_CLIMATE_SWING_VERTICAL 2
 #define ESPHOME_CLIMATE_SWING_HORIZONTAL 3
 
-/* Hisense AUTO is the A/C's own auto mode, so it maps to HEAT_COOL. ESPHome's
- * CLIMATE_MODE_AUTO means "a schedule decides", which this A/C has no concept of.
- * OFF is not a HisenseMode (it rides the separate power frame), so it returns false. */
+/* Hisense AUTO maps to ESPHome's CLIMATE_MODE_AUTO: the unit picks heating or cooling itself.
+ * HEAT_COOL means "heat or cool to the target", which is not what this mode does, and Home
+ * Assistant labels it "Heat/Cool" rather than "Auto". It is rejected, as is OFF, which is not a
+ * HisenseMode (it rides the separate power frame). */
 static inline bool esphome_mode_to_hisense(uint8_t climate_mode, HisenseMode *out) {
   switch (climate_mode) {
-    case ESPHOME_CLIMATE_MODE_HEAT_COOL:
+    case ESPHOME_CLIMATE_MODE_AUTO:
       *out = HISENSE_MODE_AUTO;
       return true;
     case ESPHOME_CLIMATE_MODE_COOL:
@@ -68,7 +69,7 @@ static inline bool esphome_mode_to_hisense(uint8_t climate_mode, HisenseMode *ou
       *out = HISENSE_MODE_DRY;
       return true;
     default:
-      return false; /* OFF / AUTO */
+      return false; /* OFF / HEAT_COOL */
   }
 }
 
@@ -83,7 +84,7 @@ static inline uint8_t hisense_mode_to_esphome(HisenseMode m) {
     case HISENSE_MODE_DRY:
       return ESPHOME_CLIMATE_MODE_DRY;
     case HISENSE_MODE_AUTO:
-      return ESPHOME_CLIMATE_MODE_HEAT_COOL;
+      return ESPHOME_CLIMATE_MODE_AUTO;
     default:
       return ESPHOME_CLIMATE_MODE_COOL;
   }

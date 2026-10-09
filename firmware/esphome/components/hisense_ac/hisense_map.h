@@ -49,11 +49,12 @@ static constexpr uint8_t CLIMATE_FAN_DIFFUSE_VALUE = 8;
 static constexpr uint8_t CLIMATE_FAN_QUIET_VALUE = 9;
 
 // ---- Mode --------------------------------------------------------------------------------------
-// Hisense AUTO is the A/C's own auto mode, so it is HEAT_COOL; ESPHome's AUTO means "a schedule
-// decides", which this unit has no notion of. OFF is not a Mode (power has its own frame).
+// Hisense AUTO is CLIMATE_MODE_AUTO: the unit picks heating or cooling itself. HEAT_COOL means
+// "heat or cool to the target", which is not what this mode does. OFF is not a Mode (power has
+// its own frame).
 inline bool climate_mode_to_hisense(uint8_t climate_mode, Mode *out) {
   switch (climate_mode) {
-    case CLIMATE_MODE_HEAT_COOL_VALUE:
+    case CLIMATE_MODE_AUTO_VALUE:
       *out = MODE_AUTO;
       return true;
     case CLIMATE_MODE_COOL_VALUE:
@@ -82,7 +83,7 @@ inline uint8_t hisense_mode_to_climate(Mode m) {
     case MODE_DRY:
       return CLIMATE_MODE_DRY_VALUE;
     case MODE_AUTO:
-      return CLIMATE_MODE_HEAT_COOL_VALUE;
+      return CLIMATE_MODE_AUTO_VALUE;
     case MODE_COOL:
     default:
       return CLIMATE_MODE_COOL_VALUE;

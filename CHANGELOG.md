@@ -44,6 +44,14 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   `high`, matching `hisense-unified-ac`. `Medium-low` / `Medium-high` are renamed, and `quiet` is
   no longer a fan mode (use the `quiet` preset; the quiet step reads back as `low`). Update
   automations that set the old names.
+- ESPHome, **breaking**: the unit's own auto mode is now the climate mode `auto` instead of
+  `heat_cool`, so Home Assistant labels it "Auto". Update automations and climate groups that set
+  `heat_cool`. The mapping lives in `esphome_aircon_map.h`, which is under `firmware/src/`, so the
+  AmebaZ2 version moves to 1.3.46 with no change to any Matter image.
+- ESPHome: the component is self-contained and builds on ESP8266 as well as ESP32. The fallback
+  transport that ran the shared driver's bus task is removed, along with the `tx_override` bench
+  services. State is published on change, with sensors refreshed once a minute, instead of on
+  every status frame.
 
 ### Fixed
 - AmebaZ2 1.3.44: General Diagnostics NetworkInterfaces now lists every valid IPv6 address, not only

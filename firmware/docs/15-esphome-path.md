@@ -14,8 +14,9 @@ feature set is a hard constraint, not a goal to trade away.
 > The component now carries its own port of the codec (held equal to the shared driver by
 > `firmware/test/test_esphome_codec_parity.cpp`) and talks through ESPHome's `uart:` component.
 > The route described under Phase 0, registering the shared driver and its HAL as local ESP-IDF
-> components, has been removed. [`firmware/esphome/README.md`](../esphome/README.md) describes the
-> component as it is today.
+> components, has been removed. The unit's auto mode is also now `CLIMATE_MODE_AUTO`, not the
+> `CLIMATE_MODE_HEAT_COOL` this plan chose. [`firmware/esphome/README.md`](../esphome/README.md)
+> describes the component as it is today.
 
 ## Scope
 

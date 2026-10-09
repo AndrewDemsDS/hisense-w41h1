@@ -27,7 +27,7 @@ agree on, so matching names is what makes the whole set available.
 
 | Attribute | Values |
 |---|---|
-| HVAC modes | `off`, `cool`, `heat` (heat-pump units), `heat_cool`, `dry`, `fan_only` |
+| HVAC modes | `off`, `cool`, `heat` (heat-pump units), `auto`, `dry`, `fan_only` |
 | Fan modes | `auto`, `low`, `medium_low`, `medium`, `medium_high`, `high` |
 | Presets | `none`, `eco`, `quiet`, `turbo`, `eco_quiet`, `sleep_general`, `sleep_old`, `sleep_young`, `sleep_kids`, `eco_sleep_general`, `eco_sleep_old`, `eco_sleep_young`, `eco_sleep_kids` |
 | Swing | `off`, `vertical` |
