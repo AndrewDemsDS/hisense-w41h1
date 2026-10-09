@@ -140,6 +140,9 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
 
   void process_status_(const AcState &state);
   void publish_telemetry_(const AcState &state);
+#ifdef USE_SENSOR
+  void publish_sensor_(sensor::Sensor *sensor, float value, bool refresh_due);
+#endif
   void drain_special_queue_();
   void execute_special_(const SpecialOp &op);
   void publish_diagnostics_();
@@ -169,6 +172,10 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   bool special_sent_{false};
   SpecialState projected_{};
   bool features_published_{false};
+  // Status frames arrive about once a second and almost never differ, so telemetry goes out on
+  // change plus one refresh per TELEMETRY_REFRESH_MS.
+  uint32_t last_refresh_ms_{0};
+  bool telemetry_refreshed_{false};
   // Defaults to ON to match the switch's boot state; the A/C ships with the panel lit.
   Display display_pref_{DISPLAY_ON};
 #ifdef USE_BINARY_SENSOR

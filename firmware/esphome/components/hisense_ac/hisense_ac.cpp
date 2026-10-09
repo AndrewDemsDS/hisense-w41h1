@@ -120,26 +120,36 @@ void HisenseAC::process_status_(const AcState &state) {
   this->publish_diagnostics_();
 }
 
+#ifdef USE_SENSOR
+void HisenseAC::publish_sensor_(sensor::Sensor *sensor, float value, bool refresh_due) {
+  if (sensor == nullptr)
+    return;
+  if (telemetry_publish_due(sensor->has_state(), sensor->get_raw_state(), value, refresh_due))
+    sensor->publish_state(value);
+}
+#endif
+
 void HisenseAC::publish_telemetry_(const AcState &state) {
 #ifdef USE_SENSOR
-  if (this->indoor_temperature_sensor_ != nullptr)
-    this->indoor_temperature_sensor_->publish_state(state.indoor_temp_c);
-  if (this->outdoor_temperature_sensor_ != nullptr)
-    this->outdoor_temperature_sensor_->publish_state(state.outdoor_temp_c);
-  if (this->coil_temperature_sensor_ != nullptr)
-    this->coil_temperature_sensor_->publish_state(state.coil_temp_c);
-  if (this->compressor_frequency_sensor_ != nullptr)
-    this->compressor_frequency_sensor_->publish_state(state.compressor_freq);
+  // An unchanged value is still republished once per refresh period: integrating sensors such as
+  // total_daily_energy only advance when their source publishes.
+  const uint32_t now = millis();
+  const bool refresh = !this->telemetry_refreshed_ || now - this->last_refresh_ms_ >= TELEMETRY_REFRESH_MS;
+  if (refresh) {
+    this->last_refresh_ms_ = now;
+    this->telemetry_refreshed_ = true;
+  }
+  this->publish_sensor_(this->indoor_temperature_sensor_, state.indoor_temp_c, refresh);
+  this->publish_sensor_(this->outdoor_temperature_sensor_, state.outdoor_temp_c, refresh);
+  this->publish_sensor_(this->coil_temperature_sensor_, state.coil_temp_c, refresh);
+  this->publish_sensor_(this->compressor_frequency_sensor_, state.compressor_freq, refresh);
   // The bus carries a current PROXY, not amps: active power is 4.15 * raw^2, calibrated against
   // a panel meter. hisense_map.h owns that maths and works in milli-units, so scale back here.
-  if (this->power_sensor_ != nullptr)
-    this->power_sensor_->publish_state(active_power_mw(state.current_raw) / 1000.0f);
-  if (this->voltage_sensor_ != nullptr)
-    this->voltage_sensor_->publish_state(voltage_mv(state.voltage_raw) / 1000.0f);
-  if (this->current_sensor_ != nullptr)
-    this->current_sensor_->publish_state(active_current_ma(state.current_raw, state.voltage_raw) / 1000.0f);
-  if (this->checksum_errors_sensor_ != nullptr)
-    this->checksum_errors_sensor_->publish_state(this->bus_.checksum_mismatches());
+  this->publish_sensor_(this->power_sensor_, active_power_mw(state.current_raw) / 1000.0f, refresh);
+  this->publish_sensor_(this->voltage_sensor_, voltage_mv(state.voltage_raw) / 1000.0f, refresh);
+  this->publish_sensor_(this->current_sensor_, active_current_ma(state.current_raw, state.voltage_raw) / 1000.0f,
+                        refresh);
+  this->publish_sensor_(this->checksum_errors_sensor_, this->bus_.checksum_mismatches(), refresh);
 #endif
 #ifdef USE_BINARY_SENSOR
   if (this->aux_heat_binary_sensor_ != nullptr)

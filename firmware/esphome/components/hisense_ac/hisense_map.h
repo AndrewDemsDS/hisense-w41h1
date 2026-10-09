@@ -492,4 +492,15 @@ inline void energy_add(uint64_t *acc_mw_ms, int64_t power_mw, uint32_t dt_ms) {
 
 inline uint64_t energy_mwh(uint64_t acc_mw_ms) { return acc_mw_ms / 3600000ULL; }
 
+// ---- Telemetry pacing ---------------------------------------------------------------------------
+// A status frame arrives about once a second and rarely differs from the previous one. A sensor
+// value goes out when it is the first, when it changed, or when the periodic refresh is due. The
+// refresh keeps integrating sensors (total_daily_energy) advancing through a steady load.
+static constexpr uint32_t TELEMETRY_REFRESH_MS = 60000;
+
+inline bool telemetry_publish_due(bool has_state, float last, float value, bool refresh_due) {
+  // Negated equality, not !=, so a NaN on either side counts as a change.
+  return !has_state || refresh_due || !(last == value);
+}
+
 }  // namespace esphome::hisense_ac

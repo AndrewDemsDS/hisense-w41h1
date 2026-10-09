@@ -9,6 +9,7 @@
 // (link heartbeat, frame reassembler) cannot be called from outside, so those two are checked
 // against the captured templates and hand-built streams instead.
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -603,6 +604,18 @@ static void test_frame_assembler() {
   CHECK(got == 0, "assembler: oversize LEN dropped");
 }
 
+// Port-only rule, no counterpart in the shared driver: when a sensor value is worth publishing.
+static void test_telemetry_pacing() {
+  const float nan = std::nanf("");
+  CHECK(H::telemetry_publish_due(false, 0.0f, 0.0f, false), "first value always publishes");
+  CHECK(!H::telemetry_publish_due(true, 24.0f, 24.0f, false), "unchanged value is held back");
+  CHECK(H::telemetry_publish_due(true, 24.0f, 25.0f, false), "changed value publishes");
+  CHECK(H::telemetry_publish_due(true, 24.0f, 24.0f, true), "unchanged value publishes on refresh");
+  CHECK(H::telemetry_publish_due(true, nan, 24.0f, false), "NaN -> value publishes");
+  CHECK(H::telemetry_publish_due(true, 24.0f, nan, false), "value -> NaN publishes");
+  CHECK(H::TELEMETRY_REFRESH_MS == 60000, "refresh period is one minute");
+}
+
 int main() {
   printf("== ESPHome codec parity (port vs original driver) ==\n");
   test_constants();
@@ -617,6 +630,7 @@ int main() {
   test_presets();
   test_power();
   test_frame_assembler();
+  test_telemetry_pacing();
   printf("  %ld checks, %d failed\n", g_checks, g_fail);
   printf(g_fail ? "== CODEC PARITY FAILED ==\n" : "== CODEC PARITY OK ==\n");
   return g_fail ? 1 : 0;
