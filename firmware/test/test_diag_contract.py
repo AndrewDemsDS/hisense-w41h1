@@ -91,6 +91,13 @@ def check_esphome_bits(fw: dict[str, int]) -> list[str]:
             continue
         entries = re.findall(r'"(\w+)":\s*\((\d+),', body.group(1))
         ns[dict_name] = entries
+        if dict_name == "CAPABILITY_BITS":
+            # A capability has no device class, so its icon is the only thing keeping every
+            # node from showing the generic binary-sensor icon in Home Assistant.
+            with_icon = set(re.findall(r'"(\w+)":\s*\(\d+,\s*"[^"]+",\s*"mdi:[\w-]+"\)', body.group(1)))
+            for key, _ in entries:
+                if key not in with_icon:
+                    errors.append(f"{dict_name}: {key} has no mdi: icon")
         for key, bit in entries:
             # "fault_indoor_temp" -> HISENSE_FAULT1_IN_TEMP is not mechanical, so the component
             # key carries the macro suffix after its prefix only when they agree; compare on the

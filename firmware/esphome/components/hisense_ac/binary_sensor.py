@@ -50,27 +50,31 @@ FAULT_BITS = {
 }
 
 # The two-bit fields (power_display, demand_resp) are not booleans and are left out.
+# Each carries its own icon: a capability has no device class, so without one every node shows
+# the generic binary-sensor icon. Eco, quiet and display reuse the icon of the switch they gate.
 CAPABILITY_BITS = {
-    "capability_cool_heat": (0, "Capability heat pump"),
-    "capability_ai": (1, "Capability AI mode"),
-    "capability_infinite_fan": (2, "Capability infinite fan"),
-    "capability_power_save": (3, "Capability eco"),
-    "capability_fan_mute": (4, "Capability quiet"),
-    "capability_swing_dir_8": (5, "Capability 8-position louvre"),
-    "capability_swing_follow": (6, "Capability swing follow"),
-    "capability_humidity": (7, "Capability humidity"),
-    "capability_heat_8c": (8, "Capability 8C frost guard"),
-    "capability_purify": (9, "Capability purify"),
-    "capability_q_display": (10, "Capability display control"),
-    "capability_enable_8heat": (11, "Capability enable 8C heat"),
-    "capability_trans_102_64": (12, "Capability trans 102/64"),
+    "capability_cool_heat": (0, "Capability heat pump", "mdi:heat-pump"),
+    "capability_ai": (1, "Capability AI mode", "mdi:brain"),
+    "capability_infinite_fan": (2, "Capability infinite fan", "mdi:fan"),
+    "capability_power_save": (3, "Capability eco", "mdi:leaf"),
+    "capability_fan_mute": (4, "Capability quiet", "mdi:volume-off"),
+    "capability_swing_dir_8": (5, "Capability 8-position louvre", "mdi:arrow-up-down"),
+    "capability_swing_follow": (6, "Capability swing follow", "mdi:arrow-oscillating"),
+    "capability_humidity": (7, "Capability humidity", "mdi:water-percent"),
+    "capability_heat_8c": (8, "Capability 8C frost guard", "mdi:snowflake-thermometer"),
+    "capability_purify": (9, "Capability purify", "mdi:air-purifier"),
+    "capability_q_display": (10, "Capability display control", "mdi:television-ambient-light"),
+    "capability_enable_8heat": (11, "Capability enable 8C heat", "mdi:snowflake-thermometer"),
+    "capability_trans_102_64": (12, "Capability trans 102/64", "mdi:swap-horizontal"),
 }
 
 
-def _diagnostic(device_class: str | None = None):
+def _diagnostic(device_class: str | None = None, icon: str | None = None):
     kwargs = {"entity_category": ENTITY_CATEGORY_DIAGNOSTIC}
     if device_class is not None:
         kwargs["device_class"] = device_class
+    if icon is not None:
+        kwargs["icon"] = icon
     return binary_sensor.binary_sensor_schema(**kwargs)
 
 
@@ -89,7 +93,7 @@ CONFIG_SCHEMA = (
         }
     )
     .extend({cv.Optional(key): _diagnostic(DEVICE_CLASS_PROBLEM) for key in FAULT_BITS})
-    .extend({cv.Optional(key): _diagnostic() for key in CAPABILITY_BITS})
+    .extend({cv.Optional(key): _diagnostic(icon=icon) for key, (_, _, icon) in CAPABILITY_BITS.items()})
     .extend(HISENSE_AC_CLIENT_SCHEMA)
 )
 
@@ -107,7 +111,7 @@ async def to_code(config):
             var = await binary_sensor.new_binary_sensor(config[key])
             cg.add(parent.add_fault_binary_sensor(bit, var))
 
-    for key, (bit, _) in CAPABILITY_BITS.items():
+    for key, (bit, _, _) in CAPABILITY_BITS.items():
         if key in config:
             var = await binary_sensor.new_binary_sensor(config[key])
             cg.add(parent.add_capability_binary_sensor(bit, var))
