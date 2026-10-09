@@ -111,7 +111,7 @@ void HisenseAC::loop() {
 void HisenseAC::process_status_(const AcState &state) {
   // A decoded frame IS the link being up. The link callback only fires on EDGES, so a link that
   // is healthy from boot never produces a "restored" edge and link_up_ would sit at its initial
-  // false forever, reporting a working bus as down. Seen on a real A/C 2026-08-19.
+  // false forever, reporting a working bus as down.
   this->link_up_ = true;
   ESP_LOGV(TAG, "Status: power=%d mode=%d setpoint=%d indoor=%d fan_raw=0x%02X holdoff=%d", state.power_on,
            (int) state.mode, state.setpoint_c, state.indoor_temp_c, state.fan_raw, this->in_command_holdoff());
@@ -139,15 +139,15 @@ void HisenseAC::process_status_(const AcState &state) {
     if (fan != FAN_SPEED_NOCHANGE)
       this->cmd_.fan = fan;
     this->cmd_.mode = state.mode;
-    // Validated in the wire unit: a raw copy dropped the F flag and let an out-of-range report
-    // poison the shadow, which silently killed every later Cool/Heat/Auto frame (#117).
+    // Validated in the wire unit: a raw copy would drop the F flag and let an out-of-range report
+    // poison the shadow, which silently kills every later Cool/Heat/Auto frame.
     if (!sync_shadow_setpoint(state.setpoint_c, state.temp_unit_f, &this->cmd_)) {
       ESP_LOGV(TAG, "Status setpoint %d C is outside the command range, shadow kept", state.setpoint_c);
     }
     this->cmd_.vswing = state.vswing_on ? SWING_MODE_SWING : SWING_MODE_OFF;
     this->cmd_.hswing = state.hswing_on ? SWING_MODE_SWING : SWING_MODE_OFF;
-    // Without this a Turbo/Eco set from HA re-asserted on every later combined frame, even
-    // after the remote cleared it. Ported from the esp32 Matter sync.
+    // Without this a Turbo/Eco set from HA is re-asserted on every later combined frame, even
+    // after the remote cleared it.
     this->cmd_.feature = feature_from_status(state.eco_on, state.turbo_on);
   }
   // The projection only follows the A/C while nothing of ours is queued or settling; otherwise
@@ -273,13 +273,13 @@ void HisenseAC::send_power(bool on) {
   }
 }
 
-/* Mute and sleep use the MINIMAL single-field frame, which is what the stock module's generic
+/* Mute and sleep use the MINIMAL single-field frame, which is what the vendor module's generic
  * attribute setter sends: one field set, every other byte left at 0x00, "leave alone".
  *
- * That frame was ignored by the A/C until 2026-08-19, when the cause turned out to be a single
- * missing byte: frame[31] = 0x01, which every combined command writes and the zeroed buffer
- * omitted. With the marker added in build_single_field(), both attributes work: all four sleep
- * profiles select (sleep_raw 2/4/6/8) and mute engages with fan_raw 0x02.
+ * The A/C ignores that frame unless it also carries frame[31] = 0x01, the marker every combined
+ * command writes and a zeroed buffer omits. With the marker added in build_single_field(), both
+ * attributes work: all four sleep profiles select (sleep_raw 2/4/6/8) and mute engages with
+ * fan_raw 0x02.
  *
  * The minimal frame is preferable to patching the combined one, because it leaves mode,
  * setpoint, fan and swing alone instead of re-asserting the shadow on every mute or sleep. */

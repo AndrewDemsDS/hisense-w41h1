@@ -11,9 +11,9 @@ CONF_LINK_TOKEN = "link_token"
 
 CONFIG_SCHEMA = cv.Schema(
     {
-        # The device-type / sub-type pair the A/C reports in its DevType reply, which the driver
+        # The device-type / sub-type pair the A/C reports in its DevType reply, which the hub
         # then stamps on outbound frames. It is a static per-model identifier, NOT a session
-        # token, and stamping the wrong bytes once killed the link entirely, so it is worth
+        # token, and stamping the wrong bytes kills the link entirely, so it is worth
         # being able to read it back from a deployed unit.
         cv.Optional(CONF_LINK_TOKEN): text_sensor.text_sensor_schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,

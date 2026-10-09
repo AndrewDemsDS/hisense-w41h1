@@ -1,21 +1,19 @@
 #pragma once
 // Non-blocking RS-485 bus master for the Hisense A/C, driven from ESPHome's loop().
 //
-// Port of the bus task in firmware/src/rs485-driver/hisense_rs485.cpp (hisense_bus_task and
-// hisense_transact) as a state machine: the same frames, in the same order, with the same timing,
-// but no task, no queue object and no module state. Every exchange is a transaction, as on the
-// stock module (RE docs/09, docs/10): flush RX, stamp the frame, raise DE, settle 5 ms, send, hold
-// DE 25 ms past the last byte, drop DE, then listen up to 500 ms for a reply of the expected
-// class. The A/C only ever answers, never initiates; two frames without a reply window collide on
-// the half-duplex bus, which is why a free-running replay once got silence.
+// A state machine with no task and no blocking waits. Every exchange is a transaction, as on the
+// vendor module: flush RX, stamp the frame, raise DE, settle 5 ms, send, hold DE 25 ms past the
+// last byte, drop DE, then listen up to 500 ms for a reply of the expected class. The A/C only
+// ever answers, never initiates, and two frames without a reply window collide on the half-duplex
+// bus.
 //
 // Boot: DevType (0x0A) handshake, up to 10 tries 500 ms apart, then 0x07.
 // Each ~1 s cycle: a DevType re-handshake if 5 status polls in a row went unanswered, the 0x1E
 // heartbeat, every queued command, the 0x66 status poll (the link-liveness signal), and the
 // 0x66/40 ProductType poll on the first heard cycle and every 60th after.
 //
-// I/O goes through BusIO so the host tests can drive this against a simulated A/C
-// (firmware/test/test_esphome_bus.cpp). No ESPHome includes.
+// I/O goes through BusIO, so the scheduler can be driven against a simulated A/C in a host test.
+// No ESPHome includes.
 
 #include <cstddef>
 #include <cstdint>
@@ -45,7 +43,7 @@ class BusListener {
   virtual void on_bus_features(const AcFeatures &features) = 0;
   virtual void on_bus_link(bool up) = 0;
   // Diagnostics, all optional. They exist so the owner of the bus can log at the level it likes;
-  // the scheduler itself has no logger, which keeps it buildable in the host tests.
+  // the scheduler itself has no logger, which keeps it buildable without ESPHome.
   // Every complete frame received, of any class, before its checksum is judged.
   virtual void on_bus_frame(const uint8_t *frame, size_t len) {}
   // A status-class frame whose checksum did not match. It is counted and not parsed.
@@ -54,11 +52,11 @@ class BusListener {
   virtual void on_bus_timeout(uint8_t expect_class) {}
 };
 
-// Timing, from the stock byte-writer and transaction primitive (RE docs/09).
+// Timing, from the vendor module's byte-writer and transaction primitive.
 static constexpr uint32_t BUS_DE_SETTLE_MS = 5;  // DE high before the first byte
 static constexpr uint32_t BUS_DE_DRAIN_MS = 25;  // DE held after the last byte left
 static constexpr uint32_t BUS_REPLY_TIMEOUT_MS = 500;
-static constexpr uint32_t BUS_CYCLE_MS = 1000;  // stock master paces at 0x3e8 ms
+static constexpr uint32_t BUS_CYCLE_MS = 1000;  // the vendor module paces at 0x3e8 ms
 static constexpr uint32_t BUS_BOOT_RETRY_MS = 500;
 static constexpr uint8_t BUS_BOOT_TRIES = 10;
 static constexpr uint8_t BUS_LINK_LOST_POLLS = 5;
@@ -73,13 +71,12 @@ inline uint32_t bus_tx_time_ms(size_t len) {
 class BusScheduler {
  public:
   // `has_de`: true when this component drives DE itself (the hardware-validated path). False when
-  // the UART peripheral owns it (flow_control_pin): then there is no settle or drain, as in the
-  // original's CONFIG_HISENSE_RS485_HW_MODE.
+  // the UART peripheral owns it (flow_control_pin): then there is no settle or drain.
   void setup(BusIO *io, BusListener *listener, bool has_de);
   // Advance as far as `now_ms` allows. Call every loop.
   void poll(uint32_t now_ms);
   // Queue a finished frame (from the builders) for the next cycle's command slot. False when the
-  // queue is full or the frame is empty or too long, matching hisense_send_frame().
+  // queue is full or the frame is empty or too long.
   bool enqueue(const uint8_t *frame, size_t len);
   // True while DE timing is running, so the hub can ask ESPHome for a tight loop.
   bool wants_fast_loop() const { return this->phase_ == Phase::TX_SETTLE || this->phase_ == Phase::TX_DRAIN; }
@@ -130,8 +127,8 @@ class BusScheduler {
   size_t queue_head_{0};
   size_t queue_len_{0};
 
-  // #49: outbound envelope bytes 7/8 = the A/C's device type from its DevType reply. Seeded to
-  // the known-good 01 01, so a unit whose probe never answers behaves as before #49.
+  // Outbound envelope bytes 7/8 = the A/C's device type from its DevType reply. Seeded to the
+  // known-good 01 01, which stays in use for a unit whose probe never answers.
   uint8_t token_[2]{0x01, 0x01};
   bool token_seen_{false};
 

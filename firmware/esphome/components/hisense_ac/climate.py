@@ -15,7 +15,7 @@ CONF_SUPPORTS_QUIET = "supports_quiet"
 CONF_SUPPORTS_TURBO = "supports_turbo"
 CONF_SUPPORTS_SLEEP = "supports_sleep"
 
-# Bits of ESPHOME_SUPPORT_* in esphome_aircon_map.h.
+# The SUPPORT_* bits in hisense_map.h.
 PRESET_SUPPORT_BITS = {
     CONF_SUPPORTS_ECO: 0x01,
     CONF_SUPPORTS_QUIET: 0x02,
@@ -28,14 +28,11 @@ CONFIG_SCHEMA = (
     .extend(
         {
             # Capability gating is a YAML decision here rather than runtime firmware logic:
-            # a Matter node's endpoint list is fixed once commissioned, so that firmware has
-            # to hide unsupported controls itself. In ESPHome you just do not declare them.
-            # `capabilities` on the text_sensor platform reports what your unit answers.
+            # you just do not declare what your unit lacks.
             cv.Optional(CONF_SUPPORTS_HEAT, default=True): cv.boolean,
             cv.Optional(CONF_SUPPORTS_HORIZONTAL_SWING, default=False): cv.boolean,
             # Special modes offered as climate presets (eco, quiet, turbo, eco_quiet, sleep_*,
-            # eco_sleep_*), named exactly as the hisense-unified-ac wrapper names them for the
-            # Matter builds. Set false for a mode your unit lacks and every preset needing it
+            # eco_sleep_*). Set false for a mode your unit lacks and every preset needing it
             # disappears; the capability_* binary sensors report what the A/C answers.
             **{
                 cv.Optional(key, default=True): cv.boolean

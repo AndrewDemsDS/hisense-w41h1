@@ -1,6 +1,5 @@
 #pragma once
-// Eco / Turbo / Quiet / panel-display switches: the ep3/ep4/ep5/ep9 OnOff endpoints of the
-// Matter builds, as ordinary ESPHome switches.
+// Eco / Turbo / Quiet / panel-display switches.
 #include "esphome/core/defines.h"
 #ifdef USE_SWITCH
 #include "esphome/components/switch/switch.h"

@@ -76,7 +76,7 @@ CONFIG_SCHEMA = cv.Schema(
             device_class=DEVICE_CLASS_CURRENT,
             state_class=STATE_CLASS_MEASUREMENT,
         ),
-        # Bench instrument: a climbing count means framing trouble on the bus.
+        # Diagnostic: a climbing count means framing trouble on the bus.
         cv.Optional(CONF_CHECKSUM_ERRORS): sensor.sensor_schema(
             accuracy_decimals=0,
             state_class=STATE_CLASS_TOTAL_INCREASING,

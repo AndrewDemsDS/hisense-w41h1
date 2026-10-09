@@ -2,8 +2,7 @@
 
 #include <cstring>
 
-// See hisense_bus.h. Each transaction and cycle step below cites the line of the original bus
-// task it reproduces; behaviour is held to it by firmware/test/test_esphome_bus.cpp.
+// See hisense_bus.h for the transaction sequence and the polling cycle implemented here.
 
 namespace esphome::hisense_ac {
 
@@ -14,7 +13,7 @@ void BusScheduler::setup(BusIO *io, BusListener *listener, bool has_de) {
   this->listener_ = listener;
   this->has_de_ = has_de;
   if (this->has_de_)
-    this->io_->bus_set_de(false);  // idle low = receive, before the UART speaks (stock hs_driver_init)
+    this->io_->bus_set_de(false);  // idle low = receive, before the UART speaks
   this->step_ = Step::BOOT_DEVTYPE;
   this->phase_ = Phase::IDLE;
 }
@@ -57,13 +56,13 @@ void BusScheduler::discard_rx_() {
   this->rx_.reset();
 }
 
-// hisense_transact(): flush stale RX, stamp the A/C's device type into envelope bytes 7/8 (except
-// on the DevType probe, which bootstraps the link with the stock's pre-link 00 00), then send.
+// Flush stale RX, stamp the A/C's device type into envelope bytes 7/8 (except on the DevType
+// probe, which bootstraps the link with the vendor module's pre-link 00 00), then send.
 void BusScheduler::begin_transaction_(const uint8_t *frame, size_t len, uint8_t expect_class, uint32_t now) {
   this->discard_rx_();
   this->expect_class_ = expect_class;
   size_t stamped = 0;
-  // NOLINTNEXTLINE(readability-simplify-boolean-expr): same predicate, same shape as the driver's
+  // NOLINTNEXTLINE(readability-simplify-boolean-expr): reads as "not the DevType probe"
   if (!(len > FRAME_CLASS_OFFSET && frame[FRAME_CLASS_OFFSET] == CLASS_DEVTYPE))
     stamped = stamp_link_token(frame, len, this->token_[0], this->token_[1], this->tx_, sizeof(this->tx_));
   if (stamped > 0) {
@@ -74,7 +73,7 @@ void BusScheduler::begin_transaction_(const uint8_t *frame, size_t len, uint8_t 
   }
 
   if (this->has_de_) {
-    // hisense_tx_raw(): assert DE, then let the transceiver settle before the first byte.
+    // Assert DE, then let the transceiver settle before the first byte.
     this->io_->bus_set_de(true);
     this->phase_ = Phase::TX_SETTLE;
     this->phase_until_ = now + BUS_DE_SETTLE_MS;
@@ -108,7 +107,7 @@ void BusScheduler::poll(uint32_t now) {
         if (!reached(now, this->phase_until_))
           return;
         this->io_->bus_write(this->tx_, this->tx_len_);
-        // The original waited for every byte to shift out, then held DE a further 25 ms.
+        // Wait for every byte to shift out, then hold DE a further 25 ms.
         this->phase_ = Phase::TX_DRAIN;
         this->phase_until_ = now + bus_tx_time_ms(this->tx_len_) + BUS_DE_DRAIN_MS;
         continue;
@@ -131,11 +130,11 @@ void BusScheduler::poll(uint32_t now) {
           const uint8_t *f = this->rx_.data();
           if (this->listener_ != nullptr)
             this->listener_->on_bus_frame(f, n);
-          // A completed frame of the wrong class is a late reply to something else (#60): drop
-          // it and keep listening within this window.
+          // A completed frame of the wrong class is a late reply to something else: drop it and
+          // keep listening within this window.
           if (n > FRAME_CLASS_OFFSET && reply_class_ok(f[FRAME_CLASS_OFFSET], this->expect_class_)) {
-            // #49: latch the device type from a DevType reply. A 00 00 pair means "not linked
-            // yet" to stock, so it is never adopted.
+            // Latch the device type from a DevType reply. A 00 00 pair means "not linked yet"
+            // to the vendor module, so it is never adopted.
             uint8_t hi;
             uint8_t lo;
             if (devtype_from_reply(f, n, &hi, &lo) && (hi != 0 || lo != 0)) {
@@ -269,7 +268,7 @@ void BusScheduler::on_step_done_(size_t reply_len, uint32_t now) {
         this->consume_(reply_len);
       return;  // stay in DRAIN until the queue is empty
     case Step::STATUS: {
-      // Only a checksum-valid 0x66 counts as the link being alive (#12).
+      // Only a checksum-valid 0x66 counts as the link being alive.
       if (reply_len > 0 && this->consume_(reply_len)) {
         this->link_miss_ = 0;
       } else if (this->link_miss_ < 0xFF) {
@@ -296,8 +295,8 @@ void BusScheduler::on_step_done_(size_t reply_len, uint32_t now) {
   }
 }
 
-// hisense_consume_status(): a 0x66 reply is either the ProductType answer (subtype 0x40) or the
-// status frame. A well-framed frame with a bad checksum is counted and not parsed (#12).
+// A 0x66 reply is either the ProductType answer (subtype 0x40) or the status frame. A well-framed
+// frame with a bad checksum is counted and not parsed.
 bool BusScheduler::consume_(size_t n) {
   const uint8_t *f = this->rx_.data();
   if (n < CMD_HEADER_LEN || f[FRAME_CLASS_OFFSET] != CLASS_STATUS)

@@ -1,12 +1,8 @@
 """Per-bit fault and capability entities.
 
-The Matter builds pack these into the `Faults1` / `Features1` bitmaps and hand the decoding
-to a companion HACS integration, because Home Assistant cannot render a manufacturer cluster
-without changes to two upstream projects. Here each bit is simply its own binary sensor.
+Each fault bit and each capability bit the A/C reports is its own binary sensor.
 
-The bit indices below mirror the HISENSE_FAULT1_* / HISENSE_FEAT1_* macros in hisense_rs485.h.
-firmware/test/test_diag_contract.py asserts that agreement, so a renumbered bit fails the host
-QA gate instead of silently mislabelling a fault.
+The bit indices below mirror the FAULT1_* / FEAT1_* constants in hisense_protocol.h.
 """
 
 import esphome.codegen as cg
@@ -92,8 +88,7 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_AUX_HEAT): binary_sensor.binary_sensor_schema(
                 device_class=DEVICE_CLASS_HEAT,
             ),
-            # The #56 link-health signal, which the Matter builds could only express by nulling
-            # liveness attributes and letting entities go unavailable.
+            # Link health: off while the A/C is not answering status polls.
             cv.Optional(CONF_BUS_LINK): _diagnostic(DEVICE_CLASS_CONNECTIVITY),
             cv.Optional(CONF_PROBLEM): binary_sensor.binary_sensor_schema(
                 device_class=DEVICE_CLASS_PROBLEM,

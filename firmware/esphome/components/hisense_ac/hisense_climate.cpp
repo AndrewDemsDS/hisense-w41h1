@@ -8,11 +8,9 @@ static const char *const TAG = "hisense_ac.climate";
 // Five of the seven steps are advertised as ESPHome's BUILT-IN fan enum, and only the two it
 // has no name for stay custom. Mixing is not cosmetic: ClimateCall converts a name matching a
 // built-in into the enum, and validate_() then DISCARDS that enum unless traits advertise it.
-// Publishing everything as custom therefore made "High" unsettable, which is what shipped.
+// Publishing everything as custom would therefore make "High" unsettable.
 // Ladder index -> representation: 0 auto, 2 low, 3 "medium_low", 4 medium, 5 "medium_high",
-// 6 high. Index 1 (quiet) is the `quiet` preset, not a fan mode, and publishes as low. The names
-// match the hisense-unified-ac wrapper's fan_modes so a climate group syncs fan speed across
-// firmwares.
+// 6 high. Index 1 (quiet) is the `quiet` preset, not a fan mode, and publishes as low.
 const char *const FAN_CUSTOM_MEDIUM_LOW = "medium_low";
 const char *const FAN_CUSTOM_MEDIUM_HIGH = "medium_high";
 const char *const FAN_CUSTOM_NAMES[2] = {FAN_CUSTOM_MEDIUM_LOW, FAN_CUSTOM_MEDIUM_HIGH};
@@ -33,7 +31,7 @@ static climate::ClimateFanMode fan_index_to_enum(uint8_t idx) {
   }
 }
 
-// esphome_aircon_map.h mirrors these enums as plain ints so it stays host-testable. If upstream
+// hisense_map.h mirrors these enums as plain ints so it stays free of ESPHome types. If ESPHome
 // ever renumbers ClimateMode, this is where the build breaks, instead of the A/C silently
 // switching to the wrong mode on the wire.
 static_assert((int) climate::CLIMATE_MODE_OFF == CLIMATE_MODE_OFF_VALUE, "ClimateMode drift");
@@ -100,7 +98,7 @@ climate::ClimateTraits HisenseClimate::traits() {
   traits.set_supported_fan_modes(
       {climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_HIGH});
 
-  // none + eco ride the built-in enum (see esphome_aircon_map.h); the rest are the custom
+  // none + eco ride the built-in enum (see hisense_map.h); the rest are the custom
   // presets registered in setup(). No special modes at all means no preset control.
   if (this->preset_support_ != 0) {
     traits.add_supported_preset(climate::CLIMATE_PRESET_NONE);
@@ -147,7 +145,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   }
 
   if (call.get_target_temperature().has_value()) {
-    // The A/C reads byte 19 in its panel's unit, so an F panel needs the value in F (#117).
+    // The A/C reads byte 19 in its panel's unit, so an F panel needs the value in F.
     const AcState &st = this->parent_->last_state();
     int wanted = setpoint_to_cmd((int) lroundf(*call.get_target_temperature()), st.valid && st.temp_unit_f, &cmd);
     this->target_temperature = (float) wanted;
@@ -158,7 +156,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   // ClimateCall::set_fan_mode(const char *) case-insensitively matches the built-in enum names
   // FIRST, so "auto", "low", "medium" and "high" are converted to ClimateFanMode and never reach
   // has_custom_fan_mode(); only "medium_low" and "medium_high" stay custom. Handling just the
-  // custom path silently dropped most of the speeds.
+  // custom path would silently drop most of the speeds.
   int8_t wanted_index = -1;
   if (call.has_custom_fan_mode()) {
     StringRef wanted = call.get_custom_fan_mode();
@@ -172,7 +170,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   }
   // A mode that owns the fan (turbo, quiet, sleep) overwrites any other speed about a second
   // later. Refuse instead of acknowledging a change that undoes itself, and keep showing the
-  // pinned speed. Same rule as the wrapper's fan_mode_forced_by_preset.
+  // pinned speed.
   if (wanted_index >= 0 && !fan_request_allowed(this->parent_->projected_special(), (uint8_t) wanted_index)) {
     ESP_LOGW(TAG, "Fan change refused: turbo, quiet or sleep is holding the fan speed");
     wanted_index = -1;
@@ -182,10 +180,8 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
       // Unreachable from Home Assistant now that quiet is not an advertised fan mode (validate_()
       // drops it), kept so a direct API client asking for QUIET still gets the mute path.
       // "Quiet" is not reachable through the fan byte on this unit. Commanding fan 0x03 (the
-      // 3-speed reference's "mute" value, flagged // VERIFY in the driver and never confirmed
-      // on a W41H1) put the A/C on HIGH. The A/C reaches quiet via the MUTE flag instead:
-      // toggling mute drove fan_raw to 0x02 on hardware 2026-08-19, which is what the driver
-      // documents ("also sets fan_raw=0x02 quiet").
+      // FAN_SPEED_QUIET command value, still marked VERIFY) puts the A/C on HIGH. The A/C
+      // reaches quiet via the MUTE flag instead: setting mute drives fan_raw to 0x02.
       this->parent_->enqueue_special({SPECIAL_OP_MUTE, 1});
     } else {
       cmd.fan = fan_index_to_hisense((uint8_t) wanted_index);

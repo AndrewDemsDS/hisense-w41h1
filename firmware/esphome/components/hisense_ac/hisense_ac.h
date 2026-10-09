@@ -1,7 +1,7 @@
 #pragma once
 // Hub component: owns the A/C bus and moves decoded values into entities and user intent back
-// onto the bus. The protocol lives in hisense_protocol.* and hisense_map.h (the codec, held equal
-// to the shared driver by a parity test) and hisense_bus.* (the transaction scheduler).
+// onto the bus. The protocol lives in hisense_protocol.* and hisense_map.h (the codec) and
+// hisense_bus.* (the transaction scheduler).
 //
 // ESPHome's uart component carries the bytes and the scheduler runs in loop(). No task, no
 // global state.
@@ -49,7 +49,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
 
   /// Build and send the combined command frame from the current shadow.
   void send_command();
-  /// Power is a separate, byte-for-byte ported frame, never part of the combined command.
+  /// Power is a separate literal frame, never part of the combined command.
   void send_power(bool on);
   void send_mute(bool on);
   void send_sleep(uint8_t profile);
@@ -69,8 +69,8 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
 
   /// Panel display is STICKY, not one-shot. Byte 36 rides every frame, and 0x00 ("no change")
   /// turns the panel ON on real hardware, so a command that does not state a preference
-  /// re-lights a display the user switched off. Confirmed on an A/C 2026-08-19; only 0x40
-  /// (off) and 0xC0 (on) were ever bench-confirmed, 0x00 was an assumption.
+  /// re-lights a display the user switched off. Only 0x40 (off) and 0xC0 (on) are confirmed on
+  /// hardware to do what they are named for.
   void set_display_pref(bool on) { this->display_pref_ = on ? DISPLAY_ON : DISPLAY_OFF; }
   bool display_pref_on() const { return this->display_pref_ != DISPLAY_OFF; }
 
@@ -124,9 +124,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   SUB_BINARY_SENSOR(aux_heat)
   SUB_BINARY_SENSOR(bus_link)
   SUB_BINARY_SENSOR(problem)
-  /// One entry per named f_e_* fault bit, keyed by its FAULT1_* index. The Matter builds pack
-  /// these into a bitmap because a manufacturer cluster cannot be rendered in Home Assistant
-  /// without upstream changes; here each bit is its own entity.
+  /// One entry per named f_e_* fault bit, keyed by its FAULT1_* index. Each bit is its own entity.
   void add_fault_binary_sensor(uint8_t bit, binary_sensor::BinarySensor *sensor) {
     this->fault_sensors_.emplace_back(bit, sensor);
   }
