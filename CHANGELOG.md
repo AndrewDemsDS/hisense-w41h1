@@ -54,6 +54,9 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   every status frame.
 
 ### Fixed
+- ESPHome: `w41h1.yaml` now integrates energy with `method: left`. Since power is published on
+  change, the default `right` method misplaced up to a minute of energy at each compressor start
+  and stop. Nodes built from an older copy of the YAML need the same line.
 - AmebaZ2 1.3.44: General Diagnostics NetworkInterfaces now lists every valid IPv6 address, not only
   the link-local one. The Ameba port copied address slot 0 and hard-coded the count to 1, so the
   SLAAC and DHCPv6 addresses in slots 1 and up were never reported. Tentative and duplicated slots

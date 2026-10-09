@@ -137,6 +137,11 @@ sensor:
   - platform: total_daily_energy
     name: Energy today
     power_id: ac_power
+    # The power sensor publishes when its value changes (and once a minute), so between two
+    # updates the load was at the OLDER value. `left` integrates exactly that. The default,
+    # `right`, would apply each new value to the interval before it and misplace up to a minute
+    # of energy at every compressor start and stop.
+    method: left
     unit_of_measurement: kWh
     accuracy_decimals: 3
     filters:
