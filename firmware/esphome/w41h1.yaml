@@ -103,11 +103,6 @@ hisense_ac:
   id: ac_bus
   uart_id: uart_bus
   de_pin: ${de_pin}
-  # LEGACY fallback (the shared driver's own bus task, as before the uart transport): delete the
-  # uart: block above and replace uart_id + de_pin here with
-  #   tx_pin: ${tx_pin}
-  #   rx_pin: ${rx_pin}
-  #   de_pin: ${de_pin}
 
 climate:
   - platform: hisense_ac

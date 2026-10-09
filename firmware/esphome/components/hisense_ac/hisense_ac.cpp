@@ -7,11 +7,9 @@ namespace esphome::hisense_ac {
 static const char *const TAG = "hisense_ac";
 
 // ---- Bus results ------------------------------------------------------------------------------
-// With the uart transport these run inside bus_.poll() on the main loop. The legacy transport
-// calls them from its own FreeRTOS task, so entities are never touched here: the frame is parked
-// under the lock and loop() publishes it.
+// These run inside bus_.poll(). Entities are not touched here: the frame is parked and loop()
+// publishes it after the special-mode queue has had its turn.
 void HisenseAC::on_bus_status(const AcState &state) {
-  LockGuard guard(this->lock_);
   this->pending_ = state;
   this->pending_valid_ = true;
 }
@@ -21,8 +19,7 @@ void HisenseAC::on_bus_features(const AcFeatures &features) {}  // polled in pub
 void HisenseAC::on_bus_link(bool up) {
   if (!up) {
     // Drop any undrained pre-loss frame, or loop() would publish those stale values (and flip
-    // link_up_ back to true) until real data returns. Port of the Matter fix 0d3b9ff.
-    LockGuard guard(this->lock_);
+    // link_up_ back to true) until real data returns.
     this->pending_valid_ = false;
   }
   this->link_up_ = up;
@@ -30,14 +27,14 @@ void HisenseAC::on_bus_link(bool up) {
 }
 
 void HisenseAC::setup() {
-  if (!this->transport_start_()) {
-    ESP_LOGE(TAG, "bus transport failed to start: no A/C control");
-    this->mark_failed();
+  if (this->de_pin_ != nullptr) {
+    this->de_pin_->setup();
+    this->de_pin_->digital_write(false);  // idle low = receive, before the UART speaks
   }
+  this->bus_.setup(this, this, this->de_pin_ != nullptr);
 }
 
 void HisenseAC::loop() {
-#ifndef USE_HISENSE_AC_LEGACY_DRIVER
   this->bus_.poll(millis());
   // DE settle and drain are a few ms each; the default ~16 ms loop would stretch them, so ask for
   // a tight loop only while they run.
@@ -46,17 +43,13 @@ void HisenseAC::loop() {
   } else {
     this->fast_loop_.stop();
   }
-#endif
 
   AcState state;
   bool have_state = false;
-  {
-    LockGuard guard(this->lock_);
-    if (this->pending_valid_) {
-      state = this->pending_;
-      this->pending_valid_ = false;
-      have_state = true;
-    }
+  if (this->pending_valid_) {
+    state = this->pending_;
+    this->pending_valid_ = false;
+    have_state = true;
   }
 
   this->drain_special_queue_();
@@ -146,7 +139,7 @@ void HisenseAC::publish_telemetry_(const AcState &state) {
   if (this->current_sensor_ != nullptr)
     this->current_sensor_->publish_state(active_current_ma(state.current_raw, state.voltage_raw) / 1000.0f);
   if (this->checksum_errors_sensor_ != nullptr)
-    this->checksum_errors_sensor_->publish_state(this->transport_checksum_mismatches_());
+    this->checksum_errors_sensor_->publish_state(this->bus_.checksum_mismatches());
 #endif
 #ifdef USE_BINARY_SENSOR
   if (this->aux_heat_binary_sensor_ != nullptr)
@@ -159,7 +152,7 @@ void HisenseAC::publish_telemetry_(const AcState &state) {
 void HisenseAC::publish_diagnostics_() {
 #ifdef USE_BINARY_SENSOR
   AcFaults faults;
-  if (this->transport_faults_(&faults)) {
+  if (this->bus_.faults(&faults)) {
     uint32_t bitmap = faults_to_bitmap32(faults);
     if (this->problem_binary_sensor_ != nullptr)
       this->problem_binary_sensor_->publish_state(faults.any);
@@ -170,7 +163,7 @@ void HisenseAC::publish_diagnostics_() {
 
   // Capabilities answer once, after the 0x66/40 ProductType exchange, and never change.
   AcFeatures features;
-  if (this->features_published_ || !this->transport_features_(&features) || !features.valid)
+  if (this->features_published_ || !this->bus_.features(&features) || !features.valid)
     return;
   this->features_published_ = true;
 #ifdef USE_BINARY_SENSOR
@@ -182,7 +175,7 @@ void HisenseAC::publish_diagnostics_() {
   if (this->link_token_text_sensor_ != nullptr) {
     uint8_t hi = 0;
     uint8_t lo = 0;
-    this->transport_link_token_(&hi, &lo);
+    this->bus_.link_token(&hi, &lo);
     char buf[16];
     snprintf(buf, sizeof(buf), "%02X %02X", hi, lo);
     this->link_token_text_sensor_->publish_state(buf);
@@ -347,16 +340,11 @@ void HisenseAC::execute_special_(const SpecialOp &op) {
 
 void HisenseAC::dump_config() {
   ESP_LOGCONFIG(TAG, "Hisense A/C (RS-485 9600 8N1)");
-#ifdef USE_HISENSE_AC_LEGACY_DRIVER
-  ESP_LOGCONFIG(TAG, "  transport: legacy driver task (pins in the boot log)");
-#else
-  ESP_LOGCONFIG(TAG, "  transport: uart, scheduler in loop()");
   LOG_PIN("  DE pin: ", this->de_pin_);
   if (this->de_pin_ == nullptr) {
     ESP_LOGCONFIG(TAG, "  DE: owned by the UART (flow_control_pin) or the transceiver");
   }
   this->check_uart_settings(BUS_BAUD_RATE, 1, uart::UART_CONFIG_PARITY_NONE, 8);
-#endif
   ESP_LOGCONFIG(TAG, "  link: %s", this->link_up_ ? LOG_STR_LITERAL("up") : LOG_STR_LITERAL("down"));
   if (this->last_.valid) {
     ESP_LOGCONFIG(TAG, "  last status: power=%d mode=%d setpoint=%dC indoor=%dC", this->last_.power_on,
@@ -366,23 +354,7 @@ void HisenseAC::dump_config() {
   }
 }
 
-// ---- uart transport ---------------------------------------------------------------------------
-#ifndef USE_HISENSE_AC_LEGACY_DRIVER
-bool HisenseAC::transport_start_() {
-  if (this->de_pin_ != nullptr) {
-    this->de_pin_->setup();
-    this->de_pin_->digital_write(false);  // idle low = receive, before the UART speaks
-  }
-  this->bus_.setup(this, this, this->de_pin_ != nullptr);
-  return true;
-}
-
-bool HisenseAC::send_frame_(const uint8_t *frame, size_t len) { return this->bus_.enqueue(frame, len); }
-bool HisenseAC::transport_faults_(AcFaults *out) { return this->bus_.faults(out); }
-bool HisenseAC::transport_features_(AcFeatures *out) { return this->bus_.features(out); }
-void HisenseAC::transport_link_token_(uint8_t *hi, uint8_t *lo) { this->bus_.link_token(hi, lo); }
-uint32_t HisenseAC::transport_checksum_mismatches_() { return this->bus_.checksum_mismatches(); }
-
+// ---- BusIO ------------------------------------------------------------------------------------
 void HisenseAC::bus_set_de(bool high) {
   if (this->de_pin_ != nullptr)
     this->de_pin_->digital_write(high);
@@ -395,6 +367,5 @@ int HisenseAC::bus_read() {
     return b;
   return -1;
 }
-#endif
 
 }  // namespace esphome::hisense_ac

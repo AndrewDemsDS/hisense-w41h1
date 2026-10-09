@@ -1,0 +1,12 @@
+substitutions:
+  tx_pin: "4"
+  rx_pin: "5"
+  de_pin: "12"
+
+uart:
+  id: uart_bus
+  tx_pin: ${tx_pin}
+  rx_pin: ${rx_pin}
+  baud_rate: 9600
+
+<<: !include common.yaml

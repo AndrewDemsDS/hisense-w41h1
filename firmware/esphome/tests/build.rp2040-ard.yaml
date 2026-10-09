@@ -1,0 +1,18 @@
+# Repo-only harness: supplies what ESPHome's own tests/test_build_components base config would,
+# so `esphome config` (CI) and `esphome compile` can run the upstream-shaped test for rp2040-ard.
+esphome:
+  name: hisense-ac-test
+
+rp2040:
+  board: rpipicow
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [hisense_ac]
+
+packages:
+  hisense_ac: !include hisense_ac/test.rp2040-ard.yaml
