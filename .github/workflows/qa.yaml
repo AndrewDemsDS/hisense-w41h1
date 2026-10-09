@@ -102,8 +102,9 @@ jobs:
   # ESPHome's own CI gates, run against the hisense_ac component placed in a checkout of
   # esphome/esphome (see firmware/scripts/esphome-upstream-check.sh). The pinned-release run is
   # required. The dev run is informational: their rules move ahead of the release this repo builds
-  # with (dev wants ESPHOME_LOG_TAG, which the pinned release does not define), so it shows what
-  # an upstream pull request would still have to change without blocking work here.
+  # with (dev wants ESPHOME_LOG_TAG, which the pinned release does not define). A dev failure is
+  # reported as a warning annotation and the job still passes, so it shows what an upstream pull
+  # request would have to change without marking every commit as failed.
   esphome-upstream:
     if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
@@ -111,12 +112,16 @@ jobs:
       fail-fast: false
       matrix:
         ref: [pinned, dev]
-    continue-on-error: ${{ matrix.ref == 'dev' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: ESPHome upstream gates (${{ matrix.ref }})
         env:
           REF: ${{ matrix.ref }}
         run: |
-          if [ "$REF" = dev ]; then export ESPHOME_UPSTREAM_REF=dev; fi
-          bash firmware/scripts/esphome-upstream-check.sh
+          if [ "$REF" = dev ]; then
+            if ! ESPHOME_UPSTREAM_REF=dev bash firmware/scripts/esphome-upstream-check.sh; then
+              echo "::warning title=ESPHome dev gates::The component does not pass ESPHome's dev-branch gates. See this job's log. Informational, not blocking."
+            fi
+          else
+            bash firmware/scripts/esphome-upstream-check.sh
+          fi

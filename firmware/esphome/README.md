@@ -76,3 +76,29 @@ The port is the only transport: `w41h1.yaml` has a `uart:` block and the bus is 
 2026-09-25; the one miss, heat_cool readback, is an intermittent A/C-side flake). The earlier
 fallback that ran the shared driver's own FreeRTOS bus task was removed: it pulled in files from
 outside the component, which upstream ESPHome cannot accept.
+
+## Troubleshooting
+
+### An update uploads, then the node is back on the old firmware
+
+The log of the old firmware shows `OTA rollback detected` and `Last reset was due to brownout`.
+The board's 3.3 V supply dips when Wi-Fi starts at full power, so the new image resets on its
+first boot and the bootloader rolls back. The node can look healthy all the same: ESP-IDF lowers
+the transmit power on the boot that follows a brownout, so the old image comes up fine.
+
+Check the supply and its wiring first. If the board has to run as it is, cap the transmit power
+from boot in that node's YAML:
+
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_PHY_MAX_WIFI_TX_POWER: "10"
+
+wifi:
+  output_power: 8.5dB
+```
+
+After any update, confirm that the `compiled on` line in the log shows the new build time.
+
