@@ -36,6 +36,11 @@ g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_bus.cpp \
     ../esphome/components/hisense_ac/hisense_bus.cpp ../esphome/components/hisense_ac/hisense_protocol.cpp \
     -o test_esphome_bus
 ./test_esphome_bus
+echo
+echo "== Layer 1f: ESPHome component edge cases (shadow sync rules, boundaries, damaged byte streams) =="
+g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_edge_cases.cpp \
+    ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_edge_cases
+./test_esphome_edge_cases
 
 echo
 echo "== Layer 2: virtual A/C <-> decoder round-trip =="

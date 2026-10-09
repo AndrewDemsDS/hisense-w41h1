@@ -90,6 +90,25 @@ inline uint8_t hisense_mode_to_climate(Mode m) {
   }
 }
 
+// The mode a status frame reports, checked before it reaches the command shadow or the entity.
+// parse_status() hands over the whole upper nibble of byte 18 with 5 and 6 folded into AUTO. The
+// vendor module's descriptor for the field (t_work_mode, 1c030503) is three bits wide, bits 4 to 6,
+// so bit 7 is not part of the mode and is dropped here. That leaves 7 as the one value with no
+// meaning: false, and the caller keeps the mode it had. Copied raw, a value above AUTO would be
+// shown as cool and re-sent by the next combined frame as whatever (mode * 2 + 1) << 4 wraps to.
+inline bool mode_from_status(Mode reported, Mode *out) {
+  auto v = static_cast<uint8_t>(reported);
+  if (v > MODE_AUTO) {
+    v &= 0x07;
+    if (v == 5 || v == 6)
+      v = MODE_AUTO;
+  }
+  if (v > MODE_AUTO)
+    return false;
+  *out = static_cast<Mode>(v);
+  return true;
+}
+
 // Bitmap of what is running (Heat = 1, Cool = 2, Fan = 4). Compressor Hz decides whether a heat/cool
 // mode is working or idle.
 inline uint16_t running_state(bool power_on, Mode mode, uint8_t comp_freq) {
@@ -188,6 +207,15 @@ inline FanSpeed fan_raw_to_cmd(uint8_t raw) {
   return r != nullptr ? r->cmd : FAN_SPEED_NOCHANGE;
 }
 
+// The fan the command shadow takes from a status frame, or NOCHANGE to keep what it holds. The quiet
+// step (raw 0x02) is the mute flag showing through, not a speed that can be commanded: its command
+// value 0x03 puts the unit on high (see the quiet note in hisense_climate.cpp). Left in the shadow,
+// the next combined frame, for example a setpoint change while quiet is on, would send it.
+inline FanSpeed shadow_fan_from_status(uint8_t raw) {
+  FanSpeed fan = fan_raw_to_cmd(raw);
+  return fan == FAN_SPEED_QUIET ? FAN_SPEED_NOCHANGE : fan;
+}
+
 inline FanSpeed fan_index_to_hisense(uint8_t idx) {
   if (idx == FAN_INDEX_AUTO)
     return FAN_SPEED_AUTO;
@@ -260,6 +288,37 @@ inline bool sync_shadow_setpoint(int8_t setpoint_c, bool temp_unit_f, AcCommand 
   cmd->fahrenheit = temp_unit_f;
   return true;
 }
+
+// ---- Power intent -------------------------------------------------------------------------------
+// The status frame lags a power frame by a poll or two, and the hold-off keeps the entity showing the
+// request meanwhile. A decision that needs the unit's power state in that window (does this mode
+// change need the power-on frame first) has to use what was last commanded, not the lagging status:
+// off followed by a mode within the window otherwise skips the power-on frame, and the unit, which
+// ignores a mode change while powered down, stays off.
+struct PowerIntent {
+  bool pending{false};
+  bool on{false};
+};
+
+inline void power_intent_sent(PowerIntent *p, bool on) {
+  p->pending = true;
+  p->on = on;
+}
+
+// A status frame from outside the hold-off is newer than every command sent: it is the truth again.
+inline void power_intent_status(PowerIntent *p, bool holdoff) {
+  if (!holdoff)
+    p->pending = false;
+}
+
+inline bool power_expected(const PowerIntent &p, bool status_on) { return p.pending ? p.on : status_on; }
+
+// ---- Shadow readiness ---------------------------------------------------------------------------
+// A combined frame states mode, setpoint, fan and swing together and has no "leave alone" value for
+// the mode or the swing. Until one status frame has filled the shadow those fields are the struct's
+// defaults (cool, 24, auto fan, no swing), so a single write, say swing, would also switch a heating
+// unit to cool. No combined frame goes out before the first status.
+inline bool combined_frame_allowed(bool have_status) { return have_status; }
 
 // ---- Eco / turbo -------------------------------------------------------------------------------
 // The shadow's byte 33 rides every combined frame, so it tracks what the A/C reports. Eco wins.
