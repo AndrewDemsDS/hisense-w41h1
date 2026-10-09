@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 from esphome.components import switch
 import esphome.config_validation as cv
-from esphome.const import CONF_DISPLAY, ENTITY_CATEGORY_CONFIG
+from esphome.const import CONF_BEEPER, CONF_DISPLAY, ENTITY_CATEGORY_CONFIG
 
 from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA, hisense_ac_ns
 
@@ -13,7 +13,6 @@ SwitchKind = hisense_ac_ns.enum("SwitchKind")
 CONF_ECO = "eco"
 CONF_TURBO = "turbo"
 CONF_QUIET = "quiet"
-CONF_BEEPER = "beeper"
 
 # Declare only the ones your unit has: the capability_* binary sensors report what the A/C
 # answers to the ProductType poll, and an absent capability means the switch does nothing.
@@ -32,7 +31,9 @@ CONFIG_SCHEMA = cv.Schema(
             HisenseSwitch,
             icon=icon,
             entity_category=ENTITY_CATEGORY_CONFIG,
-            default_restore_mode="RESTORE_DEFAULT_ON" if key == CONF_BEEPER else cv.UNDEFINED,
+            default_restore_mode=(
+                "RESTORE_DEFAULT_ON" if key == CONF_BEEPER else cv.UNDEFINED
+            ),
         ).extend(cv.COMPONENT_SCHEMA)
         for key, (_, icon) in SWITCHES.items()
     }
