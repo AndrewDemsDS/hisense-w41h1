@@ -531,6 +531,112 @@ int main() {
     CHECK(cmd_byte(raw, 18) == 0x90, "unguarded: status nibble 12 was re-sent as Auto (0x90)");
   }
 
+  // ---- writes judged against the pending command, not a status that has not caught up -----------
+  printf("[pending command: power, mode, setpoint]\n");
+  {
+    // The guards as they were: every one compared with the status at handling time.
+    auto old_power_redundant = [](bool valid, bool status_on, bool want) { return valid && want == status_on; };
+    auto old_setpoint_applies = [](bool valid, bool status_on, HisenseMode status_mode, bool attr_heat) {
+      if (valid && !status_on)
+        return false;
+      return !(valid && attr_heat != (status_mode == HISENSE_MODE_HEAT));
+    };
+
+    // -- On, then Off before the status shows the unit running --
+    MatterPowerIntent pi = {false, false};
+    bool hold = false;
+    bool st_on = false;  // unit powered down
+    CHECK(!matter_power_write_is_redundant(true, matter_expected_power(&pi, hold, st_on), true), "On is commanded");
+    matter_power_intent_note(&pi, true);
+    hold = true;
+    CHECK(old_power_redundant(true, st_on, false), "status-only guard drops the Off that follows: unit stays on");
+    CHECK(!matter_power_write_is_redundant(true, matter_expected_power(&pi, hold, st_on), false),
+          "Off after a pending On is commanded");
+    CHECK(matter_power_write_is_redundant(true, matter_expected_power(&pi, hold, st_on), true),
+          "a repeated On while one is pending needs no second frame");
+    matter_power_intent_note(&pi, false);
+    CHECK(matter_expected_power(&pi, hold, true) == false, "pending Off wins over a status that still says on");
+
+    // -- Off, then On while the status still shows the unit running --
+    MatterPowerIntent po = {false, false};
+    matter_power_intent_note(&po, false);
+    CHECK(old_power_redundant(true, true, true), "status-only guard drops the On that follows: unit stays off");
+    CHECK(!matter_power_write_is_redundant(true, matter_expected_power(&po, true, true), true),
+          "On after a pending Off is commanded");
+
+    // -- The intent is spent with the hold-off: an ignored command must not be masked --
+    MatterPowerIntent ps = {false, false};
+    matter_power_intent_note(&ps, true);
+    matter_power_intent_tick(&ps, true);
+    CHECK(ps.pending, "intent survives while the hold-off runs");
+    CHECK(matter_expected_power(&ps, false, false) == false, "hold-off over: the status decides, even before the tick");
+    matter_power_intent_tick(&ps, false);
+    CHECK(!ps.pending, "intent cleared once the hold-off is over");
+    CHECK(matter_expected_power(&ps, true, false) == false, "a later hold-off does not revive a spent intent");
+    CHECK(!matter_power_write_is_redundant(false, true, true), "no status yet: every power write is commanded");
+
+    // -- Mode: Cool -> Auto -> Cool inside the lag. Shadow holds the commanded Auto. --
+    MatterEchoLedger none = {{0}, 0};
+    CHECK(!matter_sysmode_should_command(&none, 3, true, true, HISENSE_MODE_COOL),
+          "status-only view drops the return to Cool: unit goes to Auto");
+    CHECK(matter_sysmode_should_command(&none, 3, true, true,
+                                        matter_expected_mode(true, HISENSE_MODE_AUTO, HISENSE_MODE_COOL)),
+          "return to Cool after a pending Auto is commanded");
+    CHECK(!matter_sysmode_should_command(&none, 1, true, true,
+                                         matter_expected_mode(true, HISENSE_MODE_AUTO, HISENSE_MODE_COOL)),
+          "a repeated Auto while one is pending needs no frame");
+    CHECK(matter_expected_mode(false, HISENSE_MODE_AUTO, HISENSE_MODE_COOL) == HISENSE_MODE_COOL,
+          "hold-off over: the status mode decides (an ignored Auto reads back as Cool)");
+
+    // -- Mode then Off inside the lag, from a powered-down unit --
+    MatterPowerIntent pm = {false, false};
+    matter_power_intent_note(&pm, true);  // the mode write powers the unit on
+    CHECK(!matter_sysmode_should_command(&none, 0, true, false, HISENSE_MODE_COOL),
+          "status-only view drops the Off: unit comes on");
+    CHECK(matter_sysmode_should_command(&none, 0, true, matter_expected_power(&pm, true, false), HISENSE_MODE_COOL),
+          "Off after a pending power-on is commanded");
+
+    // -- Mode on a powered-down unit, then its setpoint (one climate call) --
+    CHECK(!old_setpoint_applies(true, false, HISENSE_MODE_COOL, false),
+          "status-only guard drops the setpoint that follows a power-on");
+    CHECK(matter_setpoint_write_applies(true, matter_expected_power(&pm, true, false), HISENSE_MODE_COOL, false),
+          "setpoint after a pending power-on applies");
+    CHECK(!matter_setpoint_write_applies(true, false, HISENSE_MODE_COOL, false), "setpoint on an off unit: no frame");
+
+    // -- Cool -> Heat, then the heating setpoint --
+    HisenseMode exp = matter_expected_mode(true, HISENSE_MODE_HEAT, HISENSE_MODE_COOL);
+    CHECK(!old_setpoint_applies(true, true, HISENSE_MODE_COOL, true),
+          "status-only guard drops the heating setpoint while the status still says Cool");
+    CHECK(matter_setpoint_write_applies(true, true, exp, true), "heating setpoint after a pending Heat applies");
+    CHECK(!matter_setpoint_write_applies(true, true, exp, false), "cooling setpoint is the inactive one in Heat");
+    for (HisenseMode m : {HISENSE_MODE_COOL, HISENSE_MODE_DRY, HISENSE_MODE_FAN, HISENSE_MODE_AUTO}) {
+      CHECK(matter_setpoint_write_applies(true, true, m, false) && !matter_setpoint_write_applies(true, true, m, true),
+            "mode %d reads the cooling setpoint only", (int) m);
+    }
+    CHECK(matter_setpoint_write_applies(false, false, HISENSE_MODE_FAN, true), "no status yet: setpoint is commanded");
+
+    // -- Readback while a power-on settles (AmebaZ2: that write is queued to the handler) --
+    // Client wrote OnOff=true on a powered-down unit; a frame parsed before the A/C applied it
+    // still says off.
+    MatterPowerIntent pr = {false, false};
+    matter_power_intent_note(&pr, true);
+    bool attr_onoff = true;
+    bool published_old = false;  // st.power_on, as published before
+    CHECK(published_old != attr_onoff, "status-only readback moves OnOff back to false: an event is queued");
+    // ...and once the status shows the unit running, that queued false is a power-off command.
+    CHECK(!old_power_redundant(true, true, published_old), "status-only guard commands the stale Off");
+    bool published_new = matter_expected_power(&pr, true, false);
+    CHECK(published_new == attr_onoff, "pending power is published: OnOff does not move, nothing is queued");
+    CHECK(hisense_status_to_system_mode(published_new,
+                                        matter_expected_mode(true, HISENSE_MODE_AUTO, HISENSE_MODE_COOL)) == 1,
+          "SystemMode keeps the commanded Auto over a stale powered-down Cool frame");
+    // After the hold-off, an A/C that never switched on is published as it is.
+    matter_power_intent_tick(&pr, false);
+    CHECK(matter_expected_power(&pr, false, false) == false, "hold-off over: OnOff follows the status again");
+    CHECK(old_power_redundant(true, false, false) && matter_power_write_is_redundant(true, false, false),
+          "that readback matches the status and is not commanded");
+  }
+
   printf("== %d passed, %d failed ==\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

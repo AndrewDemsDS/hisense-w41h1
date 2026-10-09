@@ -114,6 +114,13 @@ static uint8_t s_user_matter_mode = 0;
 static constexpr int HISENSE_SYNC_HOLD_MS = 3000;
 static chip::System::Clock::Timestamp s_sync_hold_until = chip::System::Clock::kZero;
 
+// The power state last commanded, while its hold-off runs. During that window the write guards
+// and the OnOff/SystemMode readback use it in place of a status frame that has not caught up
+// (see MatterPowerIntent in matter_aircon_map.h). Only touched under the CHIP stack lock.
+static MatterPowerIntent s_power_intent = {false, false};
+
+static bool sync_hold_active() { return chip::System::SystemClock().GetMonotonicTimestamp() < s_sync_hold_until; }
+
 // ---------------------------------------------------------------------------
 // Sleep-profile ModeSelect (ep6): 5 fixed modes. esp-matter installs this as the global
 // SupportedModesManager when passed as the mode_select config delegate.
@@ -212,6 +219,7 @@ static void send_power(bool on) {
     return;
   if (hisense_send_frame(f, n)) {
     arm_sync_hold();
+    matter_power_intent_note(&s_power_intent, on);  // only for a frame that was queued
   } else {
     ESP_LOGW(TAG, "power dropped (TX queue full)");
   }
@@ -308,6 +316,14 @@ static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t e
   // lock, which is held while a client-write callback is dispatched).
   const HisenseState st = s_status;
 
+  // While one of our own commands is settling, the status still describes the state the client
+  // asked to leave. Power and mode are judged against what was commanded instead, so a write
+  // that reverses or follows a pending command is not dropped (matter_aircon_map.h).
+  const bool hold_active = sync_hold_active();
+  matter_power_intent_tick(&s_power_intent, hold_active);
+  const bool exp_on = matter_expected_power(&s_power_intent, hold_active, st.power_on);
+  const HisenseMode exp_mode = matter_expected_mode(hold_active, s_cmd.mode, st.mode);
+
   // ---- Special-mode switch endpoints (ep3/4/5 OnOff, ep6 ModeSelect) ------------------
   if (endpoint_id == s_ep_eco && cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
     if (!(st.valid && val->val.b == st.eco_on))
@@ -341,8 +357,9 @@ static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t e
     return ESP_OK;
 
   if (cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
-    if (!(st.valid && val->val.b == st.power_on))
-      send_power(val->val.b);  // echo guard
+    // Against the pending power, so On then Off inside the status lag is not dropped.
+    if (!matter_power_write_is_redundant(st.valid, exp_on, val->val.b))
+      send_power(val->val.b);
 
   } else if (cluster_id == Thermostat::Id) {
     if (attribute_id == Thermostat::Attributes::SystemMode::Id) {
@@ -350,7 +367,7 @@ static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t e
       // ON (a mode frame alone won't wake an off unit). Mirrors matter_drivers.cpp:526-534.
       uint8_t matter_mode = val->val.u8;
       if (st.valid) {  // echo guard vs what we currently report (Auto preserved, see below)
-        uint8_t cur = st.power_on ? (s_user_matter_mode == 1 ? 1 : hisense_mode_to_matter(st.mode)) : 0;
+        uint8_t cur = exp_on ? (s_user_matter_mode == 1 ? 1 : hisense_mode_to_matter(exp_mode)) : 0;
         if (matter_mode == cur)
           return ESP_OK;
       }
@@ -370,15 +387,14 @@ static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t e
                attribute_id == Thermostat::Attributes::OccupiedHeatingSetpoint::Id) {
       // #4: no setpoint changes while the A/C is OFF (a temp write on an off unit is a
       // confusing no-op -- select a mode to turn it on first).
-      if (st.valid && !st.power_on)
-        return ESP_OK;
       // #3: the A/C has a SINGLE setpoint; which Matter attr is authoritative depends on
       // mode (HEAT -> heating, else cooling). Ignore the inactive one so HA's deadband
       // adjusting the *other* setpoint can't command a wrong temperature (the HIL-v6
-      // "18C over our 20C" bug). Mirrors matter_drivers.cpp:548-550.
+      // "18C over our 20C" bug).
+      // Both guards run against the PENDING power and mode: a setpoint written right after
+      // the mode that switches the unit on, or into Heat, belongs to that mode.
       bool attr_is_heat = (attribute_id == Thermostat::Attributes::OccupiedHeatingSetpoint::Id);
-      bool mode_is_heat = (st.valid && st.mode == HISENSE_MODE_HEAT);
-      if (st.valid && attr_is_heat != mode_is_heat)
+      if (!matter_setpoint_write_applies(st.valid, exp_on, exp_mode, attr_is_heat))
         return ESP_OK;
       // Round on the full int, clamp last (never narrow to int8 before the clamp).
       int whole_c = matter_round_setpoint_c(val->val.i16);
@@ -447,7 +463,7 @@ static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t e
 
   } else if (cluster_id == FanControl::Id) {
     // #4: no fan changes while the A/C is OFF (fan is meaningless with the unit off).
-    if (st.valid && !st.power_on)
+    if (st.valid && !exp_on)
       return ESP_OK;
     if (attribute_id == FanControl::Attributes::FanMode::Id) {
       HisenseFanSpeed nf = fanmode_to_hisense_fan(val->val.u8);
@@ -579,7 +595,9 @@ static void on_status(const HisenseState *st) {
   // (which would clobber an out-of-band IR-remote / turbo change, or force COOL/24 after a
   // reboot). Held off for a settle window after our own commands so an in-flight command
   // isn't reverted by a pre-command status frame (#61). Mirrors matter_drivers.cpp:732-749.
-  if (chip::System::SystemClock().GetMonotonicTimestamp() >= s_sync_hold_until) {
+  const bool hold_active = sync_hold_active();
+  matter_power_intent_tick(&s_power_intent, hold_active);  // spent once the hold-off is over
+  if (!hold_active) {
     // An unknown status mode nibble keeps the last good mode: copied into the shadow it wraps
     // onto a different mode on the wire (matter_shadow_mode_from_status).
     s_cmd.mode = matter_shadow_mode_from_status(s_cmd.mode, st->mode);
@@ -616,12 +634,17 @@ static void on_status(const HisenseState *st) {
   }
 
   // --- Room A/C ep1 ---------------------------------------------------------------------
+  // Power and mode come from the pending command while it settles, so a frame parsed before
+  // the A/C applied it does not put the old state back over the client's value. After the
+  // hold-off the status is published again, whatever was commanded.
+  const bool pub_on = matter_expected_power(&s_power_intent, hold_active, st->power_on);
+  const HisenseMode pub_mode = matter_expected_mode(hold_active, s_cmd.mode, st->mode);
   // OnOff power
-  set_attr(s_ep_id, OnOff::Id, OnOff::Attributes::OnOff::Id, esp_matter_bool(st->power_on));
+  set_attr(s_ep_id, OnOff::Id, OnOff::Attributes::OnOff::Id, esp_matter_bool(pub_on));
   // Thermostat: mode (Off when the unit reports powered down / #6), local temp (0.01C),
   // the mode-appropriate setpoint, running state
   set_attr(s_ep_id, Thermostat::Id, Thermostat::Attributes::SystemMode::Id,
-           esp_matter_enum8(st->power_on ? (s_user_matter_mode == 1 ? 1 : hisense_mode_to_matter(st->mode)) : 0));
+           esp_matter_enum8(pub_on ? (s_user_matter_mode == 1 ? 1 : hisense_mode_to_matter(pub_mode)) : 0));
   set_attr(s_ep_id, Thermostat::Id, Thermostat::Attributes::LocalTemperature::Id,
            esp_matter_nullable_int16(nullable<int16_t>((int16_t) (st->indoor_temp_c * 100))));
   int16_t sp = (int16_t) (st->setpoint_c * 100);

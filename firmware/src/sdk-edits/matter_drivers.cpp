@@ -154,6 +154,16 @@ static volatile bool  s_link_lost = false;
 #define HISENSE_SYNC_HOLD_MS 3000
 static chip::System::Clock::Timestamp s_sync_hold_until = chip::System::Clock::kZero;
 
+/* The power state last commanded, while its hold-off runs. During that window the write guards
+ * and the OnOff/SystemMode readback use it in place of a status frame that has not caught up
+ * (see MatterPowerIntent in matter_aircon_map.h). Only touched under the CHIP stack lock. */
+static MatterPowerIntent s_power_intent = { false, false };
+
+static bool hisense_sync_hold_active(void)
+{
+    return chip::System::SystemClock().GetMonotonicTimestamp() < s_sync_hold_until;
+}
+
 static void hisense_flush_command(void)
 {
     uint8_t frame[HISENSE_CMD_FRAME_LEN + 2];
@@ -187,6 +197,7 @@ static void hisense_send_power(bool on)
     if (len > 0 && hisense_send_frame(frame, len)) {
         s_sync_hold_until = chip::System::SystemClock().GetMonotonicTimestamp()
                           + chip::System::Clock::Milliseconds32(HISENSE_SYNC_HOLD_MS);
+        matter_power_intent_note(&s_power_intent, on);   // only for a frame that was queued
     } else if (len > 0) {
         ChipLogError(DeviceLayer, "hisense_send_power: TX enqueue dropped (queue full)");
     }
@@ -1363,6 +1374,14 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
     st = s_status;
     taskEXIT_CRITICAL();
 
+    // While one of our own commands is settling, the status still describes the state the
+    // client asked to leave. Power and mode are judged against what was commanded instead, so a
+    // write that reverses or follows a pending command is not dropped (matter_aircon_map.h).
+    const bool hold_active = hisense_sync_hold_active();
+    matter_power_intent_tick(&s_power_intent, hold_active);
+    const bool        exp_on   = matter_expected_power(&s_power_intent, hold_active, st.power_on);
+    const HisenseMode exp_mode = matter_expected_mode(hold_active, s_cmd.mode, st.mode);
+
     switch (path.mClusterId)
     {
     case Clusters::Thermostat::Id:
@@ -1380,7 +1399,7 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
             // writes; matter_sysmode_should_command skips a noted value first.
             bool act;
             taskENTER_CRITICAL();
-            act = matter_sysmode_should_command(&s_sysmode_echo, matter_mode, st.valid, st.power_on, st.mode);
+            act = matter_sysmode_should_command(&s_sysmode_echo, matter_mode, st.valid, exp_on, exp_mode);
             taskEXIT_CRITICAL();
             if (!act) break;
             if (matter_mode == 0) {           // Off
@@ -1399,15 +1418,15 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
         {
             // Guard: no setpoint changes while the A/C is OFF -- select a mode to turn
             // it on first (a temp write on an off unit is a confusing no-op). (user req)
-            if (st.valid && !st.power_on) break;
             // The A/C has a SINGLE setpoint; which Matter attribute is authoritative
             // depends on mode (HEAT -> heating, else cooling). Ignore the inactive
             // one, else Matter's deadband adjusting the *other* setpoint fires a
             // spurious command (HIL v6: a cool-mode heating-setpoint write commanded
             // 18C over our 20C). (docs/07 / docs/08)
+            // Both guards run against the PENDING power and mode: a setpoint written right
+            // after the mode that switches the unit on, or into Heat, belongs to that mode.
             bool attr_is_heat = (path.mAttributeId == ThermAttr::OccupiedHeatingSetpoint::Id);
-            bool mode_is_heat = (st.valid && st.mode == HISENSE_MODE_HEAT);
-            if (st.valid && attr_is_heat != mode_is_heat) break;
+            if (!matter_setpoint_write_applies(st.valid, exp_on, exp_mode, attr_is_heat)) break;
             int16_t hundredths = aEvent->value._i16;
             int whole_c = matter_round_setpoint_c(hundredths);   // rounded, UNCLAMPED int -- never narrow to int8 before clamp (would sign-wrap and invert direction)
             // Echo-suppression: compare the raw whole-degree value BEFORE clamping
@@ -1431,7 +1450,7 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
     case Clusters::FanControl::Id:
         // Guard: no fan/swing changes while the A/C is OFF (fan is meaningless with the
         // unit off; select a mode to turn it on first). (user request)
-        if (st.valid && !st.power_on) break;
+        if (st.valid && !exp_on) break;
         if (path.mAttributeId == FanAttr::PercentSetting::Id)
         {
             // The SDK FanControl server mirrors PercentSetting<->SpeedSetting, so
@@ -1489,8 +1508,8 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
             // here -- each case echo-guards so it never re-commands its own readback.
             switch (path.mEndpointId)
             {
-            case kAirconEp: // ep1: A/C power
-                if (st.valid && on == st.power_on) break;
+            case kAirconEp: // ep1: A/C power, against the pending power so On then Off is not dropped
+                if (matter_power_write_is_redundant(st.valid, exp_on, on)) break;
                 hisense_send_power(on);
                 break;
             case kEcoEp:    // ep3: Eco (byte33 0x30 on / explicit 0x10 off)
@@ -1691,7 +1710,9 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // after a reboot). Held off for a few polls after our own commands so an
         // in-flight command isn't reverted by a pre-command status frame.
         // (docs/07 Tier-1 #2)
-        if (chip::System::SystemClock().GetMonotonicTimestamp() < s_sync_hold_until) {
+        const bool hold_active = hisense_sync_hold_active();
+        matter_power_intent_tick(&s_power_intent, hold_active);   // spent once the hold-off is over
+        if (hold_active) {
             // still settling after our own command -- don't trust a (possibly
             // pre-command) status frame yet (#61)
         } else {
@@ -1740,7 +1761,12 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // This write is queued to our own SystemMode handler like a client's. Note it there
         // (#168), only when it changes the attribute: an unchanged write posts no event. The
         // handler takes the CHIP stack lock held here before it looks, so noting after Set is safe.
-        uint8_t mm = hisense_status_to_system_mode(st.power_on, st.mode);
+        // Power and mode come from the pending command while it settles. A frame parsed before
+        // the A/C applied it would otherwise put the old state back over the client's value, and
+        // that readback is a command once the status has moved on (OnOff has no ledger).
+        const bool        pub_on   = matter_expected_power(&s_power_intent, hold_active, st.power_on);
+        const HisenseMode pub_mode = matter_expected_mode(hold_active, s_cmd.mode, st.mode);
+        uint8_t mm = hisense_status_to_system_mode(pub_on, pub_mode);
         {
             SystemModeEnum cur;
             const bool known = ThermAttr::SystemMode::Get(kAirconEp, &cur) ==
@@ -1759,7 +1785,7 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // SystemMode (climate.py:417) -- so without this the entity always shows
         // "off" and the heating setpoint, even while the unit is cooling. The
         // uplink OnOff case echo-guards against this write re-commanding. (docs/08 #10)
-        Clusters::OnOff::Attributes::OnOff::Set(kAirconEp, st.power_on);
+        Clusters::OnOff::Attributes::OnOff::Set(kAirconEp, pub_on);
 
         // ThermostatRunningState -> HA hvac_action (cooling/heating/fan badge). Requires
         // the attribute enabled in the .zap (0x0029); harmless no-op if absent. (docs/08)
