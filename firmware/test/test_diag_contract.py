@@ -89,12 +89,14 @@ def check_esphome_bits(fw: dict[str, int]) -> list[str]:
         if body is None:
             errors.append(f"{ESPHOME_BS.name}: {dict_name} not found")
             continue
-        entries = re.findall(r'"(\w+)":\s*\((\d+),', body.group(1))
+        entries = re.findall(r'"(\w+)":\s*\(\s*(\d+),', body.group(1))
         ns[dict_name] = entries
         if dict_name == "CAPABILITY_BITS":
             # A capability has no device class, so its icon is the only thing keeping every
             # node from showing the generic binary-sensor icon in Home Assistant.
-            with_icon = set(re.findall(r'"(\w+)":\s*\(\d+,\s*"[^"]+",\s*"mdi:[\w-]+"\)', body.group(1)))
+            with_icon = set(
+                re.findall(r'"(\w+)":\s*\(\s*\d+,\s*"[^"]+",\s*"mdi:[\w-]+",?\s*\)', body.group(1))
+            )
             for key, _ in entries:
                 if key not in with_icon:
                     errors.append(f"{dict_name}: {key} has no mdi: icon")
@@ -113,6 +115,11 @@ def check_esphome_bits(fw: dict[str, int]) -> list[str]:
                 )
     if len(ns.get("FAULT_BITS", [])) != 18:
         errors.append(f"esphome FAULT_BITS has {len(ns.get('FAULT_BITS', []))} entries, want 18")
+    # Also guards the parsing above: an entry the regex fails to read would otherwise go unchecked.
+    if len(ns.get("CAPABILITY_BITS", [])) != 13:
+        errors.append(
+            f"esphome CAPABILITY_BITS has {len(ns.get('CAPABILITY_BITS', []))} entries, want 13"
+        )
     return errors
 
 

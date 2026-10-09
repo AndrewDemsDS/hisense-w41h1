@@ -1,5 +1,5 @@
-# Every option of every hisense_ac platform, shaped like ESPHome's tests/components/<name>/common.yaml
-# so it can move upstream unchanged. The uart bus and the pins come from the per-target test.*.yaml.
+# Every option of every hisense_ac platform. The uart bus comes from ESPHome's shared test
+# package and the DE pin from the per-target test.*.yaml.
 hisense_ac:
   id: ac_bus
   uart_id: uart_bus

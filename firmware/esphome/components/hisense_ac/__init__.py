@@ -16,6 +16,7 @@ from esphome.const import CONF_ID
 
 CODEOWNERS = ["@AndrewDemsDS"]
 DEPENDENCIES = ["uart"]
+DOMAIN = "hisense_ac"
 
 hisense_ac_ns = cg.esphome_ns.namespace("hisense_ac")
 HisenseAC = hisense_ac_ns.class_("HisenseAC", cg.Component)
