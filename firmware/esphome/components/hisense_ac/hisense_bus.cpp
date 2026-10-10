@@ -2,6 +2,8 @@
 
 #include <cstring>
 
+#include "hisense_map.h"
+
 // See hisense_bus.h for the transaction sequence and the polling cycle implemented here.
 
 namespace esphome::hisense_ac {
@@ -204,11 +206,12 @@ void BusScheduler::start_step_(uint32_t now) {
         this->start_step_(now);
         return;
       }
+      // The frame stays at the head of the queue until its transaction has been judged, so a
+      // re-send keeps its place in front of everything queued after it.
       size_t slot = this->queue_head_;
       size_t len = this->queue_lens_[slot];
       std::memcpy(f, this->queue_[slot], len);
-      this->queue_head_ = (this->queue_head_ + 1) % BUS_TX_QUEUE_LEN;
-      this->queue_len_--;
+      this->head_sends_++;
       this->begin_transaction_(f, len, 0x00, now);  // the A/C may echo a status frame
       return;
     }
@@ -264,18 +267,37 @@ void BusScheduler::on_step_done_(size_t reply_len, uint32_t now) {
       }
       this->step_ = Step::DRAIN;
       return;
-    case Step::DRAIN:
-      if (reply_len == 0)
+    case Step::DRAIN: {
+      const bool answered = reply_len > 0;
+      this->command_reply_ = command_reply_verdict(this->tx_, this->tx_len_, this->rx_.data(), reply_len);
+      if (!answered)
         this->unanswered_commands_++;
+      // A frame with no reply at all goes out again, while the unit shows it is there by answering
+      // its status poll (see command_resend_allowed in hisense_map.h).
+      this->head_resend_ =
+          !answered && command_resend_allowed(this->head_sends_, this->status_seen_ && this->link_miss_ == 0);
+      if (this->head_resend_) {
+        this->command_resends_++;
+      } else {
+        this->queue_head_ = (this->queue_head_ + 1) % BUS_TX_QUEUE_LEN;
+        this->queue_len_--;
+        this->head_sends_ = 0;
+      }
       if (this->listener_ != nullptr)
-        this->listener_->on_bus_command(reply_len > 0, reply_len > 0 ? this->rx_.data()[FRAME_CLASS_OFFSET] : 0);
-      if (reply_len > 0)
+        this->listener_->on_bus_command(answered, answered ? this->rx_.data()[FRAME_CLASS_OFFSET] : 0);
+      if (answered)
         this->consume_(reply_len);
-      return;  // stay in DRAIN until the queue is empty
+      // The re-send waits for the next cycle's command slot: a unit that missed a frame is not asked
+      // again within the same second. Otherwise stay in DRAIN until the queue is empty.
+      if (this->head_resend_)
+        this->step_ = Step::STATUS;
+      return;
+    }
     case Step::STATUS: {
       // Only a checksum-valid 0x66 counts as the link being alive.
       if (reply_len > 0 && this->consume_(reply_len)) {
         this->link_miss_ = 0;
+        this->status_seen_ = true;
       } else if (this->link_miss_ < 0xFF) {
         this->link_miss_++;
       }

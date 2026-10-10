@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "hisense_bus.h"
+#include "hisense_map.h"
 #include "hisense_protocol.h"
 
 namespace H = esphome::hisense_ac;
@@ -89,6 +90,7 @@ class SimAC : public H::BusIO {
   bool corrupt_status = false;
   bool stale_1e_before_status = false;
   bool deaf_to_commands = false;     // hears everything except 0x65
+  int deaf_commands_left = 0;        // misses this many 0x65 frames, then hears again
   bool stale_1e_before_ack = false;  // a late 0x1E lands in the command's window, ahead of its ack
   uint32_t ack_starts = 0, ack_ends = 0;
   bool truncate_next_status = false;  // one status reply cut off after 60 bytes
@@ -172,7 +174,9 @@ class SimAC : public H::BusIO {
         queue_(ac_frame(28, 0x1E, 0x00), at);
         at += 40;
       }
-      if (!deaf_to_commands) {
+      if (deaf_commands_left > 0) {
+        deaf_commands_left--;
+      } else if (!deaf_to_commands) {
         ack_starts = at;
         queue_(ac_frame(20, 0x65, 0x00), at);
         ack_ends = reply_ends;
@@ -202,7 +206,13 @@ class Recorder : public H::BusListener {
   void on_bus_checksum_error(const uint8_t *, size_t) override { checksum_errors++; }
   void on_bus_timeout(uint8_t) override { timeouts++; }
   std::vector<std::pair<bool, uint8_t>> commands;
-  void on_bus_command(bool answered, uint8_t reply_class) override { commands.push_back({answered, reply_class}); }
+  // Set to read, per report, whether the scheduler said it would send the frame again.
+  H::BusScheduler *bus = nullptr;
+  std::vector<bool> resends;
+  void on_bus_command(bool answered, uint8_t reply_class) override {
+    commands.push_back({answered, reply_class});
+    resends.push_back(bus != nullptr && bus->command_resend_pending());
+  }
 };
 
 static void run(H::BusScheduler &bus, uint32_t ms) {
@@ -455,23 +465,108 @@ static void test_command_fate() {
     CHECK(rec.commands.size() == 1 && rec.commands[0].first && rec.commands[0].second == 0x65,
           "answered command reported once with class 0x65 (%zu)", rec.commands.size());
   }
-  {  // Unanswered: reported as such, sent exactly once, and the link is not blamed for it.
+  {
+    // Unanswered by a unit that answers everything else: sent again, once per cycle, three sends
+    // in all, each reported, and the link is not blamed for it.
     SimAC ac;
     ac.deaf_to_commands = true;
     Recorder rec;
     H::BusScheduler bus;
+    rec.bus = &bus;
     bus.setup(&ac, &rec, true);
     run(bus, 2500);
     size_t before = ac.writes.size();
     CHECK(bus.enqueue(cmd, n), "enqueue");
-    run(bus, 4000);
-    CHECK(rec.commands.size() == 1 && !rec.commands[0].first && rec.commands[0].second == 0,
-          "unanswered command reported (%zu)", rec.commands.size());
-    CHECK(count_cls(ac, before, 0x65) == 1, "and not sent again (%zu)", count_cls(ac, before, 0x65));
-    CHECK(bus.unanswered_commands() == 1 && bus.reply_timeouts() == 1 && bus.link_losses() == 0,
-          "counted: %u unanswered, %u timeouts, %u link losses", (unsigned) bus.unanswered_commands(),
-          (unsigned) bus.reply_timeouts(), (unsigned) bus.link_losses());
+    run(bus, 8000);
+    CHECK(rec.commands.size() == 3 && !rec.commands[0].first && rec.commands[0].second == 0,
+          "each unanswered send reported (%zu)", rec.commands.size());
+    CHECK(rec.resends.size() == 3 && rec.resends[0] && rec.resends[1] && !rec.resends[2],
+          "the listener is told the first two go out again and the third does not");
+    CHECK(count_cls(ac, before, 0x65) == H::COMMAND_SENDS_MAX, "three sends, then the frame is dropped (%zu)",
+          count_cls(ac, before, 0x65));
+    std::vector<uint32_t> at;
+    std::vector<size_t> idx;
+    for (size_t i = before; i < ac.writes.size(); i++) {
+      if (cls(ac.writes[i]) == 0x65) {
+        at.push_back(ac.writes[i].t);
+        idx.push_back(i);
+      }
+    }
+    for (size_t i = 1; i < at.size(); i++) {
+      CHECK(at[i] - at[i - 1] >= 900 && at[i] - at[i - 1] <= 1200, "send %zu is one cycle after the last (%u ms)", i,
+            (unsigned) (at[i] - at[i - 1]));
+      CHECK(cls(ac.writes[idx[i] - 1]) == 0x1E, "and sits in the command slot, behind the heartbeat");
+    }
+    CHECK(bus.unanswered_commands() == 3 && bus.reply_timeouts() == 3 && bus.command_resends() == 2 &&
+              bus.link_losses() == 0,
+          "counted: %u unanswered, %u timeouts, %u re-sends, %u link losses", (unsigned) bus.unanswered_commands(),
+          (unsigned) bus.reply_timeouts(), (unsigned) bus.command_resends(), (unsigned) bus.link_losses());
     CHECK(rec.links.empty(), "a lost command is not a lost link");
+    CHECK(bus.queued() == 0, "queue empty afterwards");
+    CHECK(bus.command_reply() == H::COMMAND_REPLY_NONE, "verdict: no reply");
+  }
+  {  // The case from the hardware runs: one frame gets no reply. The second send is answered.
+    SimAC ac;
+    ac.deaf_commands_left = 1;
+    Recorder rec;
+    H::BusScheduler bus;
+    rec.bus = &bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 2500);
+    size_t before = ac.writes.size();
+    CHECK(bus.enqueue(cmd, n), "enqueue");
+    run(bus, 6000);
+    CHECK(count_cls(ac, before, 0x65) == 2, "sent twice (%zu)", count_cls(ac, before, 0x65));
+    CHECK(rec.commands.size() == 2 && !rec.commands[0].first && rec.commands[1].first && rec.resends[0] &&
+              !rec.resends[1],
+          "unanswered, then answered");
+    CHECK(bus.unanswered_commands() == 1 && bus.command_resends() == 1, "one unanswered, one re-send");
+  }
+  {
+    // A newer frame queued behind one that is being sent again never overtakes it: the order on
+    // the wire is old, old again, new. Sent the other way round, the old request would win.
+    SimAC ac;
+    ac.deaf_commands_left = 1;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 2500);
+    H::AcCommand heat;
+    heat.mode = H::MODE_HEAT;
+    uint8_t newer[64];
+    size_t nn = H::build_command(heat, newer, sizeof(newer));
+    size_t before = ac.writes.size();
+    CHECK(bus.enqueue(cmd, n) && bus.enqueue(newer, nn), "enqueue cool, then heat");
+    run(bus, 6000);
+    std::vector<uint8_t> modes;
+    for (size_t i = before; i < ac.writes.size(); i++)
+      if (cls(ac.writes[i]) == 0x65)
+        modes.push_back(ac.writes[i].bytes[18]);
+    CHECK(modes.size() == 3 && modes[0] == 0x50 && modes[1] == 0x50 && modes[2] == 0x30,
+          "wire order: cool, cool again, heat (%zu frames)", modes.size());
+    CHECK(rec.commands.size() == 3 && rec.commands[2].first, "and heat is answered last");
+  }
+  {
+    // A unit that answers nothing: no re-send. Five missed polls later the link is declared lost,
+    // and a frame queued then still goes out once and is dropped.
+    SimAC ac;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 2500);
+    ac.responsive = false;
+    run(bus, 1500);  // one status poll has gone unanswered
+    size_t before = ac.writes.size();
+    CHECK(bus.enqueue(cmd, n), "enqueue into a unit that stopped answering");
+    run(bus, 12000);
+    CHECK(count_cls(ac, before, 0x65) == 1, "sent once, not again (%zu)", count_cls(ac, before, 0x65));
+    CHECK(bus.command_resends() == 0, "no re-send counted");
+    CHECK(!rec.links.empty() && !rec.links.back().second, "the link is reported lost");
+    before = ac.writes.size();
+    CHECK(bus.enqueue(cmd, n), "enqueue with the link down");
+    run(bus, 6000);
+    CHECK(count_cls(ac, before, 0x65) == 1 && bus.command_resends() == 0 && bus.queued() == 0,
+          "one send into the dead bus, then gone (%zu)", count_cls(ac, before, 0x65));
   }
   {
     // Enqueued while the status poll is on the wire: it waits for the next cycle's command slot,

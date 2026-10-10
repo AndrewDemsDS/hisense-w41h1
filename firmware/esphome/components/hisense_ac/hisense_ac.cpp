@@ -9,8 +9,9 @@ namespace esphome::hisense_ac {
 static const char *const TAG = "hisense_ac";
 
 // What each log level shows:
-//   WARN          the bus link dropping, a frame that could not be sent, a bad checksum, a fault
-//   INFO          the bus link coming back, a fault clearing
+//   WARN          the bus link dropping, a frame that could not be sent, a bad checksum, a fault,
+//                 a command that got no reply, was sent again, or was given up on
+//   INFO          the bus link coming back, a fault clearing, a command taken on a re-send
 //   DEBUG         a status change, every command sent, the unit's capabilities
 //   VERBOSE       every decoded status frame, every poll that got no reply
 //   VERY_VERBOSE  the raw bytes of every frame sent and received
@@ -51,15 +52,39 @@ void HisenseAC::on_bus_timeout(uint8_t expect_class) {
   ESP_LOGV(TAG, "No reply within the window (expected class 0x%02X)", expect_class);
 }
 
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_DEBUG
+static const LogString *command_reply_to_string(uint8_t reply) {
+  switch (reply) {
+    case COMMAND_REPLY_ACK:
+      return LOG_STR("echo, ack");
+    case COMMAND_REPLY_NAK:
+      return LOG_STR("echo, no ack");
+    default:
+      return LOG_STR("not an echo");
+  }
+}
+#endif
+
 void HisenseAC::on_bus_command(bool answered, uint8_t reply_class) {
   // The unit answers every command it hears. Silence means the frame was lost on the way or
-  // arrived damaged: nothing resends it, and the entity goes back to the old value after the
-  // hold-off.
-  if (!answered) {
-    ESP_LOGW(TAG, "Command frame got no reply from the unit");
+  // arrived damaged.
+  if (answered) {
+    ESP_LOGD(TAG, "Command answered (class 0x%02X, %s)", reply_class,
+             LOG_STR_ARG(command_reply_to_string(this->bus_.command_reply())));
+  } else if (this->bus_.command_resend_pending()) {
+    ESP_LOGW(TAG, "Command frame got no reply from the unit, sending it again");
   } else {
-    ESP_LOGD(TAG, "Command answered (class 0x%02X)", reply_class);
+    ESP_LOGW(TAG, "Command frame got no reply from the unit, not sent again");
   }
+  // The frame left the wire now, whichever way it ended: the unit's settle time, the hold-off and
+  // the special-mode pacing all count from here and not from the moment it was queued.
+  const uint32_t now = millis();
+  if (this->main_pending_.active || this->special_pending_.active)
+    this->note_user_command();
+  pending_on_wire(&this->main_pending_, now);
+  pending_on_wire(&this->special_pending_, now);
+  if (!answered && this->special_pending_.active)
+    this->last_special_ms_ = now;
 }
 
 void HisenseAC::on_bus_link(bool up) {
@@ -113,6 +138,9 @@ void HisenseAC::loop() {
     if (this->bus_link_binary_sensor_ != nullptr)
       this->bus_link_binary_sensor_->publish_state(this->link_up_);
 #endif
+    // Nothing is re-sent into a dead bus, and nothing still waiting is sent when it comes back.
+    if (!this->link_up_)
+      this->drop_pending_commands_();
     // No status frame arrives while the link is down, so the edge is the one moment the counters
     // can still go out.
     this->publish_bus_counters_(false);
@@ -144,6 +172,9 @@ void HisenseAC::process_status_(const AcState &state) {
         state.turbo_on, state.mute_on, state.sleep_raw);
   }
   this->last_ = state;
+
+  // First, so that a command sent again re-arms the hold-off before anything below reads it.
+  this->confirm_commands_(state);
 
   power_intent_status(&this->power_intent_, this->in_command_holdoff());
 
@@ -226,6 +257,9 @@ void HisenseAC::publish_bus_counters_(bool refresh_due) {
   this->publish_sensor_(this->checksum_errors_sensor_, this->bus_.checksum_mismatches(), refresh_due);
   this->publish_sensor_(this->reply_timeouts_sensor_, this->bus_.reply_timeouts(), refresh_due);
   this->publish_sensor_(this->unanswered_commands_sensor_, this->bus_.unanswered_commands(), refresh_due);
+  this->publish_sensor_(this->command_retries_sensor_, this->bus_.command_resends() + this->command_retries_,
+                        refresh_due);
+  this->publish_sensor_(this->failed_commands_sensor_, this->failed_commands_, refresh_due);
   this->publish_sensor_(this->link_losses_sensor_, this->bus_.link_losses(), refresh_due);
 #endif
 }
@@ -283,36 +317,64 @@ bool HisenseAC::send_frame_(const uint8_t *frame, size_t len) {
   return n != 0 && this->bus_.enqueue(quiet, n);
 }
 
-void HisenseAC::send_command() {
+bool HisenseAC::send_command() {
   if (!combined_frame_allowed(this->last_.valid)) {
     ESP_LOGW(TAG, "Command not sent: no status from the unit yet, so the frame would carry defaults");
-    return;
+    return false;
   }
   uint8_t frame[CMD_FRAME_MAX];
-  ESP_LOGD(TAG, "TX combined: mode=%d setpoint=%d fan=0x%02X vswing=%d hswing=%d feature=%d", (int) this->cmd_.mode,
-           (int) this->cmd_.setpoint, (unsigned) this->cmd_.fan, (int) this->cmd_.vswing, (int) this->cmd_.hswing,
-           (int) this->cmd_.feature);
+  ESP_LOGD(TAG, "TX combined: power_on=%d mode=%d setpoint=%d fan=0x%02X vswing=%d hswing=%d feature=%d",
+           this->cmd_.power_on, (int) this->cmd_.mode, (int) this->cmd_.setpoint, (unsigned) this->cmd_.fan,
+           (int) this->cmd_.vswing, (int) this->cmd_.hswing, (int) this->cmd_.feature);
   // Stamp the user's standing display preference on every combined frame. Leaving it at
   // NOCHANGE writes 0x00, which real hardware treats as "on".
   this->cmd_.display = this->display_pref_;
   size_t len = build_command(this->cmd_, frame, sizeof(frame));
   if (len == 0) {
     ESP_LOGW(TAG, "Command frame could not be built");
-    return;
+    return false;
   }
   if (!this->send_frame_(frame, len)) {
     ESP_LOGW(TAG, "Command frame dropped: TX queue full");
+    return false;
   }
+  return true;
 }
 
-void HisenseAC::send_power(bool on) {
+bool HisenseAC::send_power(bool on) {
   uint8_t frame[CMD_FRAME_MAX];
   size_t len = build_power_frame(on, frame, sizeof(frame));
   if (len == 0 || !this->send_frame_(frame, len)) {
     ESP_LOGW(TAG, "Power %s frame not sent", on ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
-    return;
+    return false;
   }
+  ESP_LOGD(TAG, "TX power %s", on ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
   power_intent_sent(&this->power_intent_, on);
+  return true;
+}
+
+void HisenseAC::send_user_command(uint16_t fields, bool power_on) {
+  // Power and mode in one frame, as the stock module sends them: the unit takes both or neither.
+  this->cmd_.power_on = power_on;
+  const bool sent = this->send_command();
+  this->cmd_.power_on = false;  // one frame only, never part of the shadow
+  if (!sent)
+    return;
+  if (power_on) {
+    power_intent_sent(&this->power_intent_, true);
+    fields |= CONFIRM_POWER;
+  }
+  this->track_command_(intent_from_command(this->cmd_, fields));
+}
+
+void HisenseAC::send_user_power_off() {
+  if (this->send_power(false))
+    this->track_command_(intent_power_off());
+}
+
+void HisenseAC::track_command_(const CommandIntent &intent) {
+  pending_begin(&this->main_pending_, intent, unit_view_from_status(this->last_), millis());
+  this->note_user_command();
 }
 
 /* Mute and sleep use the MINIMAL single-field frame, which is what the vendor module's generic
@@ -325,24 +387,147 @@ void HisenseAC::send_power(bool on) {
  *
  * The minimal frame is preferable to patching the combined one, because it leaves mode,
  * setpoint, fan and swing alone instead of re-asserting the shadow on every mute or sleep. */
-void HisenseAC::send_mute(bool on) {
+bool HisenseAC::send_mute(bool on) {
   uint8_t frame[CMD_FRAME_MAX];
   size_t len = build_mute_frame(on, frame, sizeof(frame));
   if (len == 0 || !this->send_frame_(frame, len)) {
     ESP_LOGW(TAG, "Mute frame not sent");
+    return false;
   }
+  return true;
 }
 
-void HisenseAC::send_sleep(uint8_t profile) {
+bool HisenseAC::send_sleep(uint8_t profile) {
   uint8_t frame[CMD_FRAME_MAX];
   size_t len = build_sleep_frame(profile, frame, sizeof(frame));
   if (len == 0 || !this->send_frame_(frame, len)) {
     ESP_LOGW(TAG, "Sleep frame not sent");
+    return false;
   }
+  return true;
+}
+
+// ---- Confirm and retry ------------------------------------------------------------------------
+// Every decision here is a function in hisense_map.h with a host test (test_esphome_confirm.cpp).
+// This code only carries the decisions out.
+void HisenseAC::confirm_commands_(const AcState &state) {
+  const uint32_t now = millis();
+  const UnitView view = unit_view_from_status(state);
+  const SpecialState wanted = special_wanted(this->projected_, this->special_queue_, this->special_len_);
+  this->confirm_main_(view, wanted, now, state.temp_unit_f);
+  this->confirm_special_(view, wanted, now);
+}
+
+void HisenseAC::confirm_main_(const UnitView &view, const SpecialState &wanted, uint32_t now, bool panel_f) {
+  PendingCommand &p = this->main_pending_;
+  if (!p.active)
+    return;
+  uint16_t unmet = 0;
+  switch (confirm_decision(p, view, wanted, now, COMMAND_RESEND_MAX, &unmet)) {
+    case CONFIRM_WAIT:
+      return;
+    case CONFIRM_DONE:
+      if (p.resends > 0) {
+        ESP_LOGI(TAG, "Command taken by the unit after %u re-send(s)", p.resends);
+      } else {
+        ESP_LOGD(TAG, "Command confirmed by the unit's status");
+      }
+      p.active = false;
+      return;
+    case CONFIRM_YIELD:
+      ESP_LOGD(TAG, "Unit was changed from elsewhere (fields 0x%03X), command not sent again", unmet);
+      p.active = false;
+      return;
+    case CONFIRM_GIVE_UP:
+      ESP_LOGW(TAG, "Command not taken by the unit after %u re-send(s) (fields 0x%03X), showing what it reports",
+               p.resends, unmet);
+      this->failed_commands_++;
+      p.active = false;
+      return;
+    case CONFIRM_RESEND:
+      break;
+  }
+  p.resends++;
+  this->command_retries_++;
+  ESP_LOGW(TAG, "Command not taken by the unit (fields 0x%03X), sending it again (%u of %u)", unmet, p.resends,
+           COMMAND_RESEND_MAX);
+  intent_to_command(p.intent, panel_f, &this->cmd_);
+  switch (resend_frames(p.intent, unmet)) {
+    case RESEND_POWER_OFF:
+      this->send_power(false);
+      break;
+    case RESEND_POWER_ON_ALONE:
+      this->send_power(true);
+      break;
+    case RESEND_POWER_ON_PAIR:
+      this->send_power(true);
+      this->send_command();
+      break;
+    case RESEND_COMBINED:
+      this->send_command();
+      break;
+  }
+  p.sent_ms = now;
+  this->note_user_command();
+}
+
+void HisenseAC::confirm_special_(const UnitView &view, const SpecialState &wanted, uint32_t now) {
+  PendingCommand &p = this->special_pending_;
+  if (!p.active)
+    return;
+  uint16_t unmet = 0;
+  switch (confirm_decision(p, view, wanted, now, SPECIAL_RESEND_MAX, &unmet)) {
+    case CONFIRM_WAIT:
+      return;
+    case CONFIRM_DONE:
+      if (p.resends > 0) {
+        ESP_LOGI(TAG, "Special-mode command taken by the unit after %u re-send(s)", p.resends);
+      }
+      p.active = false;
+      return;
+    case CONFIRM_YIELD:
+      ESP_LOGD(TAG, "Special mode was changed from elsewhere (fields 0x%03X), command not sent again", unmet);
+      p.active = false;
+      return;
+    case CONFIRM_GIVE_UP:
+      ESP_LOGW(TAG, "Special-mode command not taken by the unit after %u re-send(s) (fields 0x%03X)", p.resends, unmet);
+      this->failed_commands_++;
+      p.active = false;
+      return;
+    case CONFIRM_RESEND:
+      break;
+  }
+  // Nothing else is in flight (the queue waits for this verdict), so the status is the truth. Plan
+  // again from it to where the user wants the unit: the lost write, plus whatever was still queued.
+  p.active = false;
+  this->special_resends_++;
+  this->command_retries_++;
+  SpecialOp ops[PRESET_PLAN_MAX];
+  size_t n = special_plan(view.special, wanted, ops);
+  ESP_LOGW(TAG, "Special-mode command not taken by the unit (fields 0x%03X), %u command(s) queued again", unmet,
+           (unsigned) n);
+  this->projected_ = view.special;
+  this->special_len_ = 0;
+  for (size_t i = 0; i < n; i++)
+    this->push_special_(ops[i]);
+  this->note_user_command();
+}
+
+void HisenseAC::drop_pending_commands_() {
+  unsigned dropped = (this->main_pending_.active ? 1 : 0) + (this->special_pending_.active ? 1 : 0);
+  if (this->special_len_ > 0)
+    dropped++;
+  this->main_pending_.active = false;
+  this->special_pending_.active = false;
+  this->special_len_ = 0;
+  if (dropped == 0)
+    return;
+  this->failed_commands_ += dropped;
+  ESP_LOGW(TAG, "%u command(s) unconfirmed or unsent when the link dropped, not sent again", dropped);
 }
 
 // ---- Special-mode queue -----------------------------------------------------------------------
-void HisenseAC::enqueue_special(const SpecialOp &op) {
+void HisenseAC::push_special_(const SpecialOp &op) {
   if (this->special_len_ >= SPECIAL_QUEUE_CAP) {
     ESP_LOGW(TAG, "Special-mode queue full, op %u dropped", op.kind);
     return;
@@ -353,21 +538,31 @@ void HisenseAC::enqueue_special(const SpecialOp &op) {
   this->note_user_command();
 }
 
+void HisenseAC::enqueue_special(const SpecialOp &op) {
+  this->special_resends_ = 0;  // a new request from the user: a fresh allowance of re-sends
+  this->push_special_(op);
+}
+
 void HisenseAC::request_preset(uint8_t target) {
   // Plan from where the unit will be once everything already SENT lands. Queued-but-unsent ops
   // are discarded: the new preset fully determines all four modes, so they would only add
-  // settle waits (or undo each other).
+  // settle waits (or undo each other). A write already sent and not yet confirmed stays under
+  // watch: if the unit did not take it, the plan is made again from what it reports.
   SpecialOp ops[PRESET_PLAN_MAX];
   size_t n = preset_plan(this->projected_, target, ops);
   this->special_len_ = 0;
+  this->special_resends_ = 0;
   ESP_LOGD(TAG, "Preset %s: %u command(s) queued", PRESETS[target].name, (unsigned) n);
   for (size_t i = 0; i < n; i++)
-    this->enqueue_special(ops[i]);
+    this->push_special_(ops[i]);
   this->note_user_command();
 }
 
 void HisenseAC::drain_special_queue_() {
   if (this->special_len_ == 0)
+    return;
+  // One write at a time: the next waits until the unit's status has answered for the last.
+  if (this->special_pending_.active)
     return;
   if (this->special_sent_ && millis() - this->last_special_ms_ < SPECIAL_SETTLE_MS)
     return;
@@ -375,31 +570,35 @@ void HisenseAC::drain_special_queue_() {
   for (uint8_t i = 1; i < this->special_len_; i++)
     this->special_queue_[i - 1] = this->special_queue_[i];
   this->special_len_--;
-  this->execute_special_(op);
+  const bool sent = this->execute_special_(op);
   special_apply(&this->projected_, op);
   this->last_special_ms_ = millis();
   this->special_sent_ = true;
   this->note_user_command();
+  if (sent) {
+    pending_begin(&this->special_pending_, intent_from_special(op), unit_view_from_status(this->last_),
+                  this->last_special_ms_);
+    this->special_pending_.resends = this->special_resends_;
+  }
 }
 
-void HisenseAC::execute_special_(const SpecialOp &op) {
+bool HisenseAC::execute_special_(const SpecialOp &op) {
   switch (op.kind) {
-    case SPECIAL_OP_FEATURE:
+    case SPECIAL_OP_FEATURE: {
       ESP_LOGD(TAG, "TX special: byte33 feature %u", op.value);
       this->cmd_.feature = (Feature) op.value;
-      this->send_command();
+      const bool sent = this->send_command();
       this->cmd_.feature = feature_after_send(this->cmd_.feature);  // ECO_OFF is one-shot
-      break;
+      return sent;
+    }
     case SPECIAL_OP_MUTE:
       ESP_LOGD(TAG, "TX special: mute %u", op.value);
-      this->send_mute(op.value != 0);
-      break;
+      return this->send_mute(op.value != 0);
     case SPECIAL_OP_SLEEP:
       ESP_LOGD(TAG, "TX special: sleep profile %u", op.value);
-      this->send_sleep(op.value);
-      break;
+      return this->send_sleep(op.value);
     default:
-      break;
+      return false;
   }
 }
 

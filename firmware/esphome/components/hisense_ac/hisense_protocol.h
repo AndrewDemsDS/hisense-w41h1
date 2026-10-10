@@ -124,7 +124,15 @@ enum Display : uint8_t {
 };
 
 // ---- Structs -----------------------------------------------------------------------------------
-// Everything one combined 0x65 frame carries. Power is deliberately absent: it has its own frame.
+// Command byte 18 bits 2-3, the run field. 0b11 is "switch on", 0b01 "switch off", 0b00 "leave
+// alone". The literal power frames carry 0x0C and 0x04 there (hardware-proven), and the stock module
+// ORs the same 0x0C into the mode byte so that power and mode travel in one frame: 0x5C for cool and
+// 0x3C for heat (stock image file 0x25bf2 and 0x25bdc, RE docs/10 section 5b-2).
+static constexpr uint8_t CMD_MODE_BYTE = 18;
+static constexpr uint8_t CMD_POWER_ON_BITS = 0x0C;
+
+// Everything one combined 0x65 frame carries. Switching off is deliberately absent: it has its own
+// literal frame.
 struct AcCommand {
   Mode mode{MODE_COOL};
   int8_t setpoint{24};  // whole degrees in the unit named by `fahrenheit`
@@ -134,6 +142,11 @@ struct AcCommand {
   SwingMode hswing{SWING_MODE_OFF};
   Feature feature{FEATURE_NONE};
   Display display{DISPLAY_NOCHANGE};
+  // Also switch the unit on, in this frame (byte 18 |= CMD_POWER_ON_BITS). Set for the one frame
+  // that powers the unit on, never kept in the shadow. Cool 0x5C and heat 0x3C are the stock
+  // module's own bytes. VERIFY on hardware: auto 0x9C, dry 0x7C and fan 0x1C, which follow from the
+  // same field rule and which the stock Matter path never sends.
+  bool power_on{false};
 };
 
 // Decoded 0x66/00 status frame (160 bytes on the W41H1). Offsets are absolute frame offsets.

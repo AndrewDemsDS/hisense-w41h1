@@ -47,12 +47,20 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   void set_climate(HisenseClimate *climate) { this->climate_ = climate; }
   void add_status_listener(StatusListener *listener) { this->listeners_.push_back(listener); }
 
-  /// Build and send the combined command frame from the current shadow.
-  void send_command();
-  /// Power is a separate literal frame, never part of the combined command.
-  void send_power(bool on);
-  void send_mute(bool on);
-  void send_sleep(uint8_t profile);
+  /// A user write of `fields` (CONFIRM_* bits in hisense_map.h), already placed in the shadow.
+  /// Sends the combined frame, with the power-on bits in it when `power_on`, and keeps the request
+  /// until the unit's status agrees with it: a frame the unit did not take is sent again.
+  void send_user_command(uint16_t fields, bool power_on);
+  /// Switch the unit off, checked and re-sent the same way.
+  void send_user_power_off();
+  /// Build and send the combined command frame from the current shadow, unchecked. For frames
+  /// that only carry something the status does not report (the display preference).
+  bool send_command();
+  /// The literal power frames. Off is always this frame; on is the fallback for a unit that did
+  /// not take power and mode in one frame.
+  bool send_power(bool on);
+  bool send_mute(bool on);
+  bool send_sleep(uint8_t profile);
 
   /// Special modes (eco/turbo byte33, mute, sleep) go through a paced queue, never straight to
   /// the bus: the A/C swallows a special-mode command that lands within ~8 s of the previous
@@ -62,8 +70,9 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   /// Replace whatever is still queued with the plan for preset `target` (a row index), computed
   /// against what the unit is expected to be once already-sent ops land.
   void request_preset(uint8_t target);
-  /// Queue not yet drained: preset/switch readbacks would show intermediate states.
-  bool special_busy() const { return this->special_len_ > 0; }
+  /// Queue not yet drained, or the last write not yet confirmed: preset/switch readbacks would
+  /// show intermediate states.
+  bool special_busy() const { return this->special_len_ > 0 || this->special_pending_.active; }
   /// The special-mode state the unit should report once everything sent so far lands.
   const SpecialState &projected_special() const { return this->projected_; }
 
@@ -130,6 +139,8 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   SUB_SENSOR(checksum_errors)
   SUB_SENSOR(reply_timeouts)
   SUB_SENSOR(unanswered_commands)
+  SUB_SENSOR(command_retries)
+  SUB_SENSOR(failed_commands)
   SUB_SENSOR(link_losses)
 #endif
 #ifdef USE_BINARY_SENSOR
@@ -158,7 +169,13 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   void publish_sensor_(sensor::Sensor *sensor, float value, bool refresh_due);
 #endif
   void drain_special_queue_();
-  void execute_special_(const SpecialOp &op);
+  bool execute_special_(const SpecialOp &op);
+  void push_special_(const SpecialOp &op);
+  void track_command_(const CommandIntent &intent);
+  void confirm_commands_(const AcState &state);
+  void confirm_main_(const UnitView &view, const SpecialState &wanted, uint32_t now, bool panel_f);
+  void confirm_special_(const UnitView &view, const SpecialState &wanted, uint32_t now);
+  void drop_pending_commands_();
   void publish_diagnostics_();
 
   // A decoded frame is parked here by poll() and published by loop() once the queue has drained.
@@ -174,6 +191,15 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   AcState last_{};
   AcCommand cmd_{};
   PowerIntent power_intent_{};
+  // The last user write to power, mode, setpoint, fan or swing, until the unit's status confirms
+  // it, and the same for the last special-mode write sent.
+  PendingCommand main_pending_{};
+  PendingCommand special_pending_{};
+  uint8_t special_resends_{0};
+  // Counters since boot: commands sent again after a status that did not match, and commands the
+  // unit never took.
+  uint32_t command_retries_{0};
+  uint32_t failed_commands_{0};
   HisenseClimate *climate_{nullptr};
   std::vector<StatusListener *> listeners_;
   uint32_t holdoff_start_{0};
@@ -204,5 +230,8 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
 
   static constexpr uint32_t COMMAND_HOLDOFF_MS = 4000;
 };
+
+// The verdict on a command has to be in before the hold-off lets a status frame reach the entities.
+static_assert(CONFIRM_SETTLE_MS < 4000, "confirm settle must end inside the command hold-off");
 
 }  // namespace esphome::hisense_ac
