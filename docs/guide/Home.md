@@ -31,6 +31,21 @@ Three firmwares share one driver. In order of preference:
 One script, `firmware/scripts/dev.py`, builds, flashes, tests and updates all three: see the
 **[User Guide](User-Guide)**.
 
+## State of the project
+
+As of 2026-10-10 the three firmwares expose the same controls and diagnostics
+([Entities, Endpoints and Diagnostics](Entities-and-Diagnostics)), and all three run on real units.
+One difference remains: only the ESPHome build confirms a command and sends it again when the unit
+missed it.
+
+Issue #182 proposes dropping the two Matter builds and keeping ESPHome as the only firmware. It is
+open and undecided, and its preconditions are not met: ESPHome on the stock module's own MCU
+(a LibreTiny build compiles and has not run on hardware), a tested way to move a commissioned
+Matter node to ESPHome and back, and a soak on each migrated unit. One ESP32 node has been moved
+over the air already ([Migrating an ESP32 Node from Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome)).
+Until that issue is settled, the Matter builds stay supported and documented here. If you are
+starting fresh and Home Assistant is your only controller, pick ESPHome.
+
 ## How it works
 
 ```mermaid
@@ -52,8 +67,10 @@ flowchart LR
 | [Installing the Custom Firmware](Installing-Custom-Firmware) | the stock AmebaZ2 module, flashed with a CH341A clip |
 | [Commissioning & HA Setup](Commissioning-and-HA-Setup) | commission into HA via matter-server, the cross-VLAN mDNS fix, re-interview after an OTA |
 | [Everyday Control](Everyday-Control) | what entities appear, the unified climate integration, special modes, the dashboard card |
+| [Entities, Endpoints and Diagnostics](Entities-and-Diagnostics) | the three firmwares side by side, the beeper, the bus counters, confirm and retry |
 | [Climate Groups](Climate-Groups) | several A/Cs as one thermostat with Climate Group Helper, across ESPHome and Matter |
 | [OTA Updates](OTA-Updates) | ship a new firmware, retry reality, version rules |
+| [Migrating an ESP32 Node from Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome) | move an esp-matter board to ESPHome over the air, and what can go wrong |
 | [Recovery & Reflash](Recovery-and-Reflash) | CH341A SPI-clip recovery, the stock image, preserving commissioning |
 | [FAQ & Gotchas](FAQ-Gotchas) | the load-bearing traps, in Q&A form |
 

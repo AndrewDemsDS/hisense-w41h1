@@ -90,6 +90,7 @@ A `0x66` **status** reply *does* carry `01 01` at `[9]/[10]`, which is what make
 | `0x66` sub `40` | ProductType | Model code + decoded feature bit-flags |
 | `0x65` | Control / set | The command write (fan/mode/temp/…) |
 | `0x1D` (num29) | Reconfig / OTA | A/C demands re-provisioning / OTA reboot |
+| `0x67` | not decoded | The stock module sends it after each ProductType exchange, about once a minute. Seen only on a bench against a synthetic A/C (issue #110). Our driver never sends it and ignores it |
 
 > Provenance: only the **envelope** is firmware-confirmed from the stock binary. The
 > stock module treats temps/fan/compressor as a bit-packed + transparent block it forwards to
@@ -105,7 +106,7 @@ Two directions, two different frames. Full tables (with the confirmed hex per fi
 | Byte | Field |
 |---|---|
 | 16 | fan speed (six speeds, more than the reference's three) |
-| 18 | mode nibble (AUTO = 5 in *status*) |
+| 18 | mode: three bits, 4 to 6 (AUTO = 5 in *status*). Bit 7 is not part of the mode; the parsers mask it off |
 | 19 | setpoint °C (direct integer) |
 | 20 | room temp °C (direct integer, **not** the W4A1 `(raw-32)*0.5556`) |
 | 35 | flags1: vswing / hswing / aux-heat / eco / turbo |
@@ -117,10 +118,17 @@ Two directions, two different frames. Full tables (with the confirmed hex per fi
 | Byte | Field | Note |
 |---|---|---|
 | 16 | fan | ref's `0x05/07/09` were WRONG; `fan*2+1` |
-| 18 | mode | AUTO = `0x90` in *command*, which differs from status nibble 5 |
+| 18 | mode, and power in the low nibble | AUTO = `0x90` in *command*, which differs from status value 5. The stock module ORs power-on `0x0C` into the same byte (`0x5C` cool, `0x3C` heat), so power and mode travel in one frame |
 | 19 | temp | `2n+1`, whole °C |
+| 23 | beeper | bit 2 (`0x04`), the stock `t_beep`. Set: the unit beeps when it takes this frame. Every builder sets it; the Beeper switch clears it |
 | 32 | vertical swing | `0xC0` swing / `0x40` fixed |
 | 33 | eco (`0x30`/`0x10`) / turbo (`0x0C`/`0x04`) | ref values were wrong |
+
+**Power and mode in one frame.** The ESPHome build sends a mode request to a unit that is off as
+one frame with `0x0C` in byte 18, as the stock module does. `0x5C` and `0x3C` are in the stock
+image. The values for auto, dry and fan-only (`0x9C`, `0x7C`, `0x1C`) follow from the same field
+rule and are marked `VERIFY` in the source. The two Matter builds still send a power-on frame
+followed by a mode frame. Evidence and file offsets: doc 10 section 5b-2.
 
 **Horizontal swing is N/A**: no motor on this unit; the bit toggles but nothing moves. Only
 vertical swing is advertised over Matter. Left in the builder as dead code for a hypothetical

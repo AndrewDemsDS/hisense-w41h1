@@ -161,6 +161,16 @@ somebody else's server address.
 Verified end to end on an AmebaZ2 unit: the device fetched over TCP, wrote the idle A/B slot and
 rebooted into the new version, confirmed across three fresh attribute reads.
 
+On the ESP32 build the same trigger fetches one full application image from `HISENSE_OTA_URL`
+(set in `ota-release.env`, compiled in by `dev.py ota esp32 build`), writes it to the idle OTA
+slot and reboots. Serve the full `.bin`, not a delta patch. Both builds also open a token-protected
+TCP listener (port 2324 by default) that starts the same fetch when Matter itself is unreachable:
+`firmware/docs/10-firmware-ota-procedure.md` section 13.
+
+The ESP32 path checks no version and the bootloader does not roll back, so it flashes whatever
+valid image sits at that URL. That is also how an ESP32 node can be moved to the ESPHome firmware
+without a cable: [Migrating an ESP32 Node from Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome).
+
 ## No infra? Use the clip
 
 The CH341A clip path is the recovery route if OTA is unavailable. `package` also produces the 4 MB

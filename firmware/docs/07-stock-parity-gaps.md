@@ -15,18 +15,18 @@ to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` fl
 |---|:--:|:--:|:--:|---|
 | Power on/off | ✅ | ✅ | ✅ | OnOff ep1 |
 | Mode (cool/heat/dry/fan/auto) | ✅ | ✅ | ✅ | Thermostat FeatureMap 35 (Heat+Cool+Auto); dry/fan via HA unlock |
-| Setpoint | ✅ | ✅ | ✅ | Occupied Cooling/Heating Setpoint |
+| Setpoint | ✅ | ✅ | ✅ | Occupied Cooling/Heating Setpoint. Full 16 to 32 °C from AmebaZ2 1.3.49 / ESP32 1.1.19 (`MinSetpointDeadBand` = 0) |
 | Fan (6 discrete speeds) | ✅ | ✅ | ✅ | FanControl mode + percent |
 | Eco / power-save | ✅ | ✅ | ✅ | ep3 OnOff "Eco" + mfg `0xFFF1FC00/0x0000` |
-| Turbo / boost | ✅ | ✅ | ✅ | ep5 OnOff "Turbo" + mfg `/0x0002` |
+| Turbo / boost | ✅ | ✅ | ✅ | ep5 OnOff "Turbo" + mfg `/0x0001` |
 | Mute / quiet | ✅ | ✅ | ✅ | ep4 OnOff "Quiet" + mfg `/0x0002`; `hisense_build_mute_frame`, fixed 2026-08-19 (see the note below). |
-| Sleep profile (4) | ✅ | ✅ | ✅ | ep6 ModeSelect; `hisense_build_sleep_frame`, fixed 2026-08-19. All four profiles verified. |
+| Sleep profile (4) | ✅ | ✅ | ✅ | ep6 ModeSelect; `hisense_build_sleep_frame`, fixed 2026-08-19. All four profiles verified. On AmebaZ2 the option list comes from an SDK edit that `build` applies from 1.3.50; some earlier builds shipped it empty (`sdk-edits/README.md`). |
 | Aux/PTC heat relay | ✅ | – | ✅ | ep7 BooleanState (read-only status) |
 | Outdoor + coil temp | ✅ | – | ✅ | ep2 / ep8 TemperatureMeasurement |
 | Power (V/I/W) | ✅ | – | ✅ | ElectricalPowerMeasurement (see #16, `power_estimate.h`) |
 | Vertical swing on/off | ✅ | ✅ | ✅ | FanControl **RockSetting** on ep1, both builds. Shipped under #19. |
 | Display / panel on/off | cap only | ✅ | ✅ | OnOff switch on ep9 (write-only, the A/C reports no display state back). Shipped under #19/#33. (Dimmer *level* = `ac_power_display`, still needs new RE.) |
-| Beeper (buzzer on a command) | – | ✅ | ✅ | OnOff switch on ep11, default on, persisted on the node. Off clears `t_beep` (command frame byte 23 bit 2) on every frame the node sends; the A/C reports no beeper state. Built in AmebaZ2 1.3.49 / ESP32 1.1.19, same bit the ESPHome `beeper` switch clears. |
+| Beeper (buzzer on a command) | – | ✅ | ✅ | OnOff switch on ep11, default on, persisted on the node. Off clears `t_beep` (command frame byte 23 bit 2) on every frame the node sends; the A/C reports no beeper state. Built in AmebaZ2 1.3.49 / ESP32 1.1.19, same bit the ESPHome `beeper` switch clears. Heard to silence a unit on an ESPHome node (maintainer's check, 2026-10-10); not listened to on a Matter node. |
 | 8 °C frost-guard heat | ✅ cap | ❌ | ✅ ro | Capability bit `ac_8heat` (byte26 0x80) read as `heat_8c`; `ac_enable_8heat` (byte39 0x04) read as `enable_8heat` when `ext_valid`. No control frame RE'd. `docs/05:79` marks it likely absent on this unit. |
 | Purify / ionizer | ✅ cap | ❌ | ✅ ro | `ac_purify` (byte23 0x08) read as `purify`; live `purify_on` (b36 0x20) "bit always 0, feature absent on this unit". No builder. |
 | AI / smart | ✅ cap | ❌ | ✅ ro | `ai` (byte28 0x40). Capability only, no control frame. |
@@ -37,6 +37,19 @@ to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` fl
 
 > `✅ ro` in EXP = the capability flag reads read-only in HA through the Capabilities sensor
 > (`Features1`, #82/#39). No control frame is RE'd for any of these, so none is drivable yet.
+
+## Behaviour gaps against the stock module
+
+Differences in how the node talks to the unit, found in the 2026-10 re-read of the stock image
+(`reverse-engineering/docs/10` sections 4.6 and 5b-2):
+
+| Stock behaviour | ESPHome | Matter builds |
+|---|---|---|
+| Power and mode in one `0x65` frame (byte 18 = mode bits with `0x0C`) | yes, from 2026-10-10 (#179), with a fallback to two frames | no: a power-on frame, then a mode frame |
+| A command is checked against the reply | not acted on: the reply layout is not captured on this bus, so the verdict is only logged | no |
+| A command is checked against the next status and sent again | yes (#179) | no: sent once, the miss is counted in `UnansweredCommands` |
+
+The Matter rows are the open part of issue #168. Whether they get closed depends on issue #182.
 
 ## Cheap wins: shipped
 
@@ -53,8 +66,9 @@ physically-absent on this unit (`docs/05:79-80`). Not cheap; defer / track under
 The `HisenseFeatures` set (`hisense_get_features`) is written to the ep1 mfg cluster `0xFFF1FC00` as
 attribute `0x0012` (`Features1`, packed bitmap), alongside `CompressorHz` (`0x0010`) and `Faults1`
 (`0x0013`). matter-server reads all three live, and the `hisense-unified-ac` HACS integration decodes
-them into the Compressor frequency, Capabilities, and Faults entities on nodes 14/35/62 (#82, #39,
-closed). The telnet `:2323` `decode` path still works as a secondary read.
+them into the Compressor frequency, Capabilities, and Faults entities (#82, #39, closed). The bus
+counters, `LinkToken` and `BusLink` (`0x0014` to `0x0019`) sit beside them from AmebaZ2 1.3.49 /
+ESP32 1.1.19, read by the integration from 1.6.0 (`docs/14`). The telnet `:2323` `decode` path still works as a secondary read.
 
 ## Data-quality bugs found during this review (→ issue #83): RESOLVED
 

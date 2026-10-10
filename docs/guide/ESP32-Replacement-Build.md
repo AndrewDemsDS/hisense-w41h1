@@ -158,8 +158,14 @@ which archives the delta base first ([OTA Updates](OTA-Updates#esp32-delta-ota))
 
 The ESP32 esp-matter node has **functional and structural parity with the AmebaZ2 build**: the
 same endpoints (Room A/C with OnOff, Thermostat, FanControl and power measurement; outdoor and coil
-temperature; Eco / Quiet / Turbo switches; Sleep mode select; aux-heat contact sensor), commissioned
-into Home Assistant on a live unit and updated over Matter delta OTA.
+temperature; Eco / Quiet / Turbo switches; Sleep mode select; aux-heat contact sensor; panel display
+switch; aggregate fault contact sensor; and from 1.1.19 the beeper switch on endpoint 11),
+commissioned into Home Assistant on a live unit and updated over Matter delta OTA. The table of
+endpoints and manufacturer-cluster attributes is in
+[Entities, Endpoints and Diagnostics](Entities-and-Diagnostics).
+
+This board can also be moved to the ESPHome firmware without a cable:
+[Migrating an ESP32 Node from Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome).
 
 Known issue: the outdoor and coil temperature endpoints read null in matter-server even though the
 device writes correct values every poll, a suspected esp-matter dynamic-endpoint reporting quirk

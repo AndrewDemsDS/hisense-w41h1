@@ -110,7 +110,15 @@ Two traps this encodes, both of which produced false results by hand:
    update callback, no frame on the wire. The script seeds a known state first so both
    legs are genuine transitions and it cannot pass on a no-op.
 
-It is deliberately **not** wired into `run_tests.sh`, which stays no-hardware. The panel
+`firmware/test/hil_esphome_actuation.py` is the ESPHome counterpart. It drives the node over the
+native API and checks the same two properties for every control. Since 2026-10 it also reads the
+bus counters: a readback that would pass on a dead bus is rejected, every wait watches
+`Command retries` and waits longer when it moved, and the run ends with the counter deltas. Retries
+are listed and are fine. A rise in `Failed commands` is a failed check. The restore step leaves the
+unit off when the run itself switched it on (an earlier version put the mode back after the
+power-off and left two units running, #175).
+
+Both scripts are deliberately **not** wired into `run_tests.sh`, which stays no-hardware. The panel
 itself is not asserted: the A/C reports no display state, so whether it physically lit
 remains a human observation.
 
