@@ -7,7 +7,8 @@
 # first update bricks the unit. How to tell which one a unit has:
 # firmware/docs/15-esphome-path.md, "Which flash layout a unit has".
 #
-# STATUS: compiles, hardware test pending.
+# STATUS: runs on one module in an A/C since 2026-10-10 (boot, Wi-Fi, the bus, two updates over
+# the air). No long run yet. firmware/docs/15-esphome-path.md has what was measured.
 #
 #   build:   esphome compile firmware/esphome/w41h1-amebaz2-factory.yaml
 

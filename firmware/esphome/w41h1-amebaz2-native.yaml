@@ -10,7 +10,7 @@
 # How to tell which layout a unit has: firmware/docs/15-esphome-path.md, "Which flash layout a
 # unit has".
 #
-# STATUS: compiles, hardware test pending.
+# STATUS: compiles, never run on hardware. Only the factory layout has run on a module.
 #
 #   build:   esphome compile firmware/esphome/w41h1-amebaz2-native.yaml
 

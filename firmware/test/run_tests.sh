@@ -46,6 +46,10 @@ echo "== Layer 1g: ESPHome confirm and retry, power and mode in one frame (decis
 g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_confirm.cpp \
     ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_confirm
 ./test_esphome_confirm
+echo
+echo "== Layer 1h: stock module under ESPHome, when the A/C bus serial port is restarted =="
+g++ -std=c++17 -Wall -I../esphome/amebaz2 test_esphome_uart_policy.cpp -o test_esphome_uart_policy
+./test_esphome_uart_policy
 
 echo
 echo "== Layer 2: virtual A/C <-> decoder round-trip =="

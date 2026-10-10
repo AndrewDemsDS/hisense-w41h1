@@ -2,14 +2,17 @@
 # LibreTiny platform. Included by the three w41h1-amebaz2-*.yaml board files, which differ only in
 # the flash layout they name.
 #
-# STATUS: compiles, hardware test pending. Read firmware/docs/15-esphome-path.md ("The stock
-# module through LibreTiny") before flashing a module.
+# STATUS: the factory layout has run on a module in an A/C (2026-10-10): boot, Wi-Fi, the bus,
+# and updates in both directions between the slots. The sdk and native layouts compile and have
+# not run on hardware. Read firmware/docs/15-esphome-path.md ("The stock module through
+# LibreTiny") before flashing a module.
 #
 # Substitutions the including file must define: layout (factory, sdk or native), plus the pins.
 # There is no default layout on purpose: the wrong one bricks the unit at its first update.
 
 esphome:
-  # Copies amebaz2/ into the build: the layout files and w41h1_slots.h, which is also included.
+  # Copies amebaz2/ into the build: the layout files, and the headers (w41h1_slots.h,
+  # w41h1_uart.h), which are also included.
   includes:
     - amebaz2
   platformio_options:
@@ -23,7 +26,8 @@ esphome:
     # until power has been off for half a minute: after a restart, and after every OTA
     # (libretiny-eu/libretiny issue 396, fix proposed in pull request 397, not released). These
     # two flags point lt_reboot() at the SDK's watchdog system reset instead, the workaround
-    # confirmed in that issue. They stay harmless once the fix ships.
+    # confirmed in that issue. They stay harmless once the fix ships. With them in the image, two
+    # updates and one mains power cycle came back without a hang (one module, 2026-10-10).
     - -Wl,--wrap=lt_reboot
     - -Wl,--defsym=__wrap_lt_reboot=sys_reset
   on_boot:
@@ -55,6 +59,34 @@ rtl87xx:
 
 # The logger keeps LibreTiny's default port, UART2: TX on PA16, the module's own log console pad,
 # at 115200 baud. It must never be moved to UART0, which is the A/C bus.
+
+# Serial port recovery. On this module the receive side of the A/C bus port has stopped twice and
+# stayed stopped until a power cycle, with transmit still working. The cause is not known;
+# reopening the port restores it (amebaz2/w41h1_uart.h has what was measured). So the port is
+# restarted the moment the hub reports the link lost, and every 15 s for as long as it stays
+# down. This lives here and not in the component because Serial0 is LibreTiny's: ESPHome's uart
+# component can only reload a port's settings on ESP32 and ESP8266.
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (!w41h1_uart_restart_due(&w41h1_uart_watch, id(ac_bus).link_up(), millis()))
+            return;
+          w41h1_uart_restart(id(uart_bus).get_baud_rate());
+          ESP_LOGW("w41h1", "A/C bus silent: serial port restarted (%u so far)",
+                   (unsigned) w41h1_uart_watch.restarts);
+
+sensor:
+  # How often the recovery above has fired since boot. On a healthy bus it stays at 0. It also
+  # counts while the unit is off at the mains with the node powered some other way.
+  - platform: template
+    name: Serial port restarts
+    icon: mdi:restart-alert
+    entity_category: diagnostic
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return (float) w41h1_uart_watch.restarts;
 
 text_sensor:
   # The running slot, the address the bootloader gives for the next update, and whether that
