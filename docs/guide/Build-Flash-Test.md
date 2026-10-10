@@ -33,7 +33,7 @@ What each step has been run against. "Simulator" means `virtual_ac.py`, not an A
 | `busmon` against the real bus | n/a | untested | hardware (2026-07-12) | n/a |
 | Matter app against `virtual_ac.py` | n/a | simulator (2026-08-07) | untested | n/a |
 | Node on a live A/C, USB-powered (stage 2) | hardware | untested on these pins | hardware | hardware |
-| Powered from the connector (stage 3) | outstanding | untested | see [ESP32 Replacement Build](ESP32-Replacement-Build) | hardware |
+| Powered from the connector (stage 3) | hardware (units run this way) | untested | see [ESP32 Replacement Build](ESP32-Replacement-Build) | hardware |
 | `dev.py` flash / bench on hardware | untested | untested | untested | n/a (clip) |
 
 Builds have been run through the wrapper; nothing has yet been flashed or benched through it on a
@@ -60,13 +60,20 @@ standalone command:
 | `monitor <target> --port P` | serial console only |
 | `bench <target> --port P --sim-port S` | firmware against `virtual_ac.py`, no A/C |
 | `next <target>` | the staged bring-up and its warnings |
+| `convert esphome --board amebaz2-factory [--stage]` | wrap the built ESPHome image as a Matter `.ota` the stock module's Matter firmware installs, see [Converting a Stock Module](Converting-a-Stock-Module-to-ESPHome) |
 | `ota <amebaz2\|esp32> <step> [args]` | Matter OTA through the release scripts, see [OTA Updates](OTA-Updates) |
 
 `--board` defaults to `c3`. It picks the IDF target (`esp32c3` or `esp32`) and, for ESPHome, the
 board and pin substitutions passed to `esphome -s`. For ESPHome there are also `--board amebaz2-factory`,
 `amebaz2-sdk` and `amebaz2-native`, the stock module through LibreTiny by the flash layout the
-unit has: `test` and `build` only, because that image has not run on
-hardware yet ([ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board-hardware-test-pending)).
+unit has: `test`, `build` and `convert`. There is no serial flash for the module through `dev.py`
+([ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board)).
+
+ESPHome builds go through a PlatformIO build cache (`PLATFORMIO_BUILD_CACHE_DIR`, default
+`~/.cache/w41h1-dev/pio-build-cache`). It speeds up the boards PlatformIO compiles (the stock
+module, ESP8266, RP2040) and does nothing for the ESP32 boards, which ESPHome builds with ESP-IDF's
+tools and ccache. Set the variable to an empty string to switch it off. The numbers and the two
+caveats are in `firmware/esphome/README.md`, "Build cache".
 
 ## ESPHome
 

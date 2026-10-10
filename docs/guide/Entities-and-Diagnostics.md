@@ -48,6 +48,13 @@ which reads them from matter-server by raw attribute path. The mfg attributes `0
 
 ### Where the firmwares differ
 
+- **Outdoor and coil temperature after a power cut.** For a while after mains power returns the
+  unit reports both as exactly -20 C, a placeholder. The ESPHome build shows them as unknown until
+  real readings arrive. The two Matter builds publish the placeholder, so they show -20 C in that
+  window. (One observation, one unit, 2026-10-10.)
+- **Serial port restarts** exists only on the stock module under ESPHome. It counts how often the
+  firmware had to reopen the bus port after the link dropped, and should stay at 0.
+
 | | ESPHome | Matter (AmebaZ2 and ESP32) |
 |---|---|---|
 | A command the unit does not take | sent again, see [below](#confirm-and-retry-esphome-only) | sent once; the miss is counted in `UnansweredCommands` |

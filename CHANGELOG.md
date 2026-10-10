@@ -7,6 +7,41 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 
 ## Unreleased
 
+### ESPHome on the stock module: first run on hardware, and what it found (2026-10-10)
+- **The factory-layout build runs on a module in an A/C.** It boots under the factory bootloader,
+  joins Wi-Fi, reports its flash layout as matching, drives the bus, and has taken two ESPHome
+  updates over the air (running slot 2, 1, 2, back within about 10 s each time). The module was
+  converted over the air: the Matter firmware installed the LibreTiny image, re-signed with the
+  next FWHS serial and wrapped as a Matter `.ota`. The sdk and native layouts still compile only.
+  There is no long run yet, and the return to the Matter firmware has not been tried.
+- **Fault found: the bus receiver stops.** Twice the receive side of the serial port stopped and
+  stayed stopped until a power cycle, while commands still reached the unit. The cause is not
+  known. Reopening the port restores it, so the AmebaZ2 board package now restarts the port when
+  the hub reports the link lost and every 15 s while it stays down, logs a warning each time, and
+  counts the restarts in a new `Serial port restarts` diagnostic sensor. The timing rule has a
+  host test. The component itself is unchanged by this and builds as before on every board.
+- **Outdoor and coil temperature read "unknown" instead of -20 C after a power cut.** For a while
+  after mains power returns the unit reports both as `0xEC` (-20 C), a placeholder. The component
+  publishes that pair as unknown until a real pair has arrived since the bus link came up. A lone
+  -20, or -20 after real readings, is still published. One observation on one unit, marked
+  VERIFY. The Matter builds are unchanged and show -20 C in that window.
+- **Changes existing ESPHome nodes: Wi-Fi power saving is off.** `packages/node.yaml` now sets
+  `power_save_mode: none`. The validated configuration of the ESP32, ESP32-C3 and RP2040 board
+  files changes from `LIGHT` to `NONE` at their next build. ESP8266 and the stock module already
+  defaulted to `NONE`. With `light`, an ESP32-C3 node on a weak signal (about -77 dBm) lost 65 %
+  of pings and commands did not reach the unit. With `none`: 100 of 100, a command taken in
+  0.5 s. The radio no longer sleeps between beacons, so the board draws more on average. A board
+  on a weak supply can go back with `-s wifi_power_save light`.
+- `dev.py convert esphome --board amebaz2-factory [--stage]` makes the conversion image: it
+  re-signs the built ESPHome image, verifies it the way the bootloader will, refuses one that
+  does not fit the slot, and writes the `.ota` and its manifest. Host-tested, and checked byte for
+  byte against the image that was installed on the unit. New guide page:
+  `docs/guide/Converting-a-Stock-Module-to-ESPHome.md`.
+- Builds: `dev.py` sets `PLATFORMIO_BUILD_CACHE_DIR` for ESPHome builds, and the
+  `esphome-amebaz2` CI job keeps the same cache next to the PlatformIO tree. A stock-module image
+  builds in 18 s into a new directory, against 29 s cold. The ESP32 boards gain nothing from it
+  (ESPHome builds those with ESP-IDF's tools and ccache).
+
 ### ESPHome: one entity definition for every board, and a build for the stock module
 - The node config is split. `firmware/esphome/packages/hisense-ac.yaml` holds the bus, the hub and
   every entity, `packages/node.yaml` holds logger, API and Wi-Fi, `packages/ota.yaml` the update
@@ -15,7 +50,8 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 - New board files: `w41h1-esp32c3.yaml` (the C3 SuperMini, same node the `-s` overrides build),
   and two compile-only examples, `w41h1-esp8266.yaml` and `w41h1-rp2040.yaml`.
 - **`w41h1-amebaz2-factory.yaml`, `-sdk.yaml`, `-native.yaml`: ESPHome for the stock module's own
-  RTL8710C through LibreTiny. They compile (601 KB) and have not run on hardware.** There is one
+  RTL8710C through LibreTiny. They compile (601 KB). At the time of this entry they had not run on
+  hardware; the section above has the first run.** There is one
   file per flash layout a module can have and no default, because an image built for the wrong
   layout bricks the unit at its first update. The layouts are tracked in
   `firmware/esphome/amebaz2/`. The build fails if the image's addresses are not those of the
@@ -31,14 +67,14 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   warns.
 
 ### Fixed (AmebaZ2 1.3.50)
-- The Kitchen-style AmebaZ2 node published an empty sleep profile list (ep6 ModeSelect
+- An AmebaZ2 node published an empty sleep profile list (ep6 ModeSelect
   `SupportedModes`), so Home Assistant showed the sleep select as unavailable. The list lives in a
   Realtek SDK file that was edited by hand, and a restored SDK brought back the stock table.
   `dev.py ota amebaz2 build` now writes the five profiles (Off, General, Old, Young, Kids) on
   endpoint 6 on every build, with a host test.
 
 ### Matter (AmebaZ2 1.3.49, ESP32 1.1.19): the controls and diagnostics the ESPHome build has
-Built and host-tested. Not on hardware yet.
+Built and host-tested. Both targets have since run it on a unit.
 - **Beeper switch**, endpoint 11 on both targets: an On/Off plug-in unit labelled "Beeper", on by
   default. Off clears the buzzer bit (frame byte 23 bit 2, the stock `t_beep`) on every command
   frame the node sends, through the same stamp the ESPHome path uses (`hisense_stamp_beep()`,

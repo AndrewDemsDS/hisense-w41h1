@@ -52,6 +52,7 @@ The rest of what it runs:
 | Layer 1e | `test_esphome_bus.cpp` | the ESPHome bus scheduler against a simulated A/C: timing, re-send of an unanswered frame, wire order |
 | Layer 1f | `test_esphome_edge_cases.cpp` | shadow and power rules, boundaries, damaged byte streams |
 | Layer 1g | `test_esphome_confirm.cpp` | confirm and retry, and power plus mode in one frame: each decision, and scenarios against a unit model that loses frames |
+| Layer 1h | `test_esphome_uart_policy.cpp` | the stock module under ESPHome: when the bus serial port is restarted after the link drops |
 | Layer 3 | `test_diag_contract.py` | the fault and capability bit maps match the `hisense-unified-ac` integration (skipped without the submodule) |
 | Layer 4 | `test_image_chain.py` | the AmebaZ2 image signing chain |
 | Layer 5 | `test_ota_guards.py` | the OTA pre-flight and staging guards refuse a bad release |

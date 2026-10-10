@@ -13,6 +13,7 @@
 - [Climate Groups](Climate-Groups)
 - [OTA Updates](OTA-Updates)
 - [Migrating ESP32 Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome)
+- [Converting a Stock Module to ESPHome](Converting-a-Stock-Module-to-ESPHome)
 - [Recovery & Reflash](Recovery-and-Reflash)
 - [FAQ & Gotchas](FAQ-Gotchas)
 

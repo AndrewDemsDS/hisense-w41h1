@@ -46,6 +46,7 @@ GUIDE_ORDER = [
     "Climate-Groups",
     "OTA-Updates",
     "Migrating-ESP32-Matter-to-ESPHome",
+    "Converting-a-Stock-Module-to-ESPHome",
     "Recovery-and-Reflash",
     "Build-Flash-Test",
     "FAQ-Gotchas",

@@ -30,7 +30,7 @@ As of 2026-10-10 the three firmwares expose the same controls and diagnostics
 and sends it again when the unit missed it.
 [Issue #182](https://github.com/AndrewDemsDS/hisense-w41h1/issues/182) proposes retiring the two
 Matter builds in favour of ESPHome. It is open and undecided: ESPHome on the stock module's own MCU
-compiles through LibreTiny and has not run on hardware. Both Matter builds remain supported until
+has run on one unit through LibreTiny since 2026-10-10, with no long run behind it yet. Both Matter builds remain supported until
 the issue is settled.
 
 Everything below is written from a working system, not a plan. The RS-485 protocol was

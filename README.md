@@ -50,7 +50,8 @@ As of 2026-10-10 the three firmwares expose the same controls and diagnostics. O
 build confirms a command and sends it again when the unit missed it.
 [Issue #182](https://github.com/AndrewDemsDS/hisense-w41h1/issues/182) proposes retiring the two
 Matter builds and keeping ESPHome as the only firmware. It is open and undecided: ESPHome on the
-stock module's own MCU compiles through LibreTiny and has not run on hardware. Both Matter builds
+stock module's own MCU has run on one unit through LibreTiny since 2026-10-10, with no long run
+behind it yet. Both Matter builds
 stay supported until that issue is settled.
 
 ## Get started
