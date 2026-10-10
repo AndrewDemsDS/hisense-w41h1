@@ -12,6 +12,10 @@
 // heartbeat, every queued command, the 0x66 status poll (the link-liveness signal), and the
 // 0x66/40 ProductType poll on the first heard cycle and every 60th after.
 //
+// A command frame that gets no reply is sent again in the next cycle's command slot, ahead of
+// everything queued behind it, up to COMMAND_SENDS_MAX sends and only while the unit answers its
+// status poll (hisense_map.h holds the rule).
+//
 // I/O goes through BusIO, so the scheduler can be driven against a simulated A/C in a host test.
 // No ESPHome includes.
 
@@ -50,9 +54,10 @@ class BusListener {
   virtual void on_bus_checksum_error(const uint8_t *frame, size_t len) {}
   // The reply window closed with no frame of the expected class (0 = any class was acceptable).
   virtual void on_bus_timeout(uint8_t expect_class) {}
-  // A queued command frame finished its transaction. `answered` is false when the reply window
-  // closed with nothing from the A/C; the frame is not sent again. `reply_class` is the class of
-  // the frame that ended the window, 0 when there was none.
+  // A queued command frame finished one transaction. `answered` is false when the reply window
+  // closed with nothing from the A/C; command_resend_pending() then says whether the scheduler
+  // sends the frame again. `reply_class` is the class of the frame that ended the window, 0 when
+  // there was none, and command_reply() is what that frame says.
   virtual void on_bus_command(bool answered, uint8_t reply_class) {}
 };
 
@@ -88,9 +93,15 @@ class BusScheduler {
   bool link_token(uint8_t *hi, uint8_t *lo) const;  // false until a DevType reply supplied it
   uint32_t checksum_mismatches() const { return this->chk_mismatch_; }
   // Counters since boot, for diagnostics. A reply window that closed empty, of any kind; a queued
-  // command among those (the frame is gone, nothing resends it); a link-lost edge.
+  // command among those (each send counts); a command frame sent again for that reason; a
+  // link-lost edge.
   uint32_t reply_timeouts() const { return this->reply_timeouts_; }
   uint32_t unanswered_commands() const { return this->unanswered_commands_; }
+  uint32_t command_resends() const { return this->command_resends_; }
+  // Valid inside on_bus_command(): the frame just reported is going out again.
+  bool command_resend_pending() const { return this->head_resend_; }
+  // What the reply to the last command frame says (CommandReply in hisense_map.h).
+  uint8_t command_reply() const { return this->command_reply_; }
   uint32_t link_losses() const { return this->link_losses_; }
   bool faults(AcFaults *out) const;
   bool features(AcFeatures *out) const;
@@ -135,6 +146,10 @@ class BusScheduler {
   uint8_t queue_lens_[BUS_TX_QUEUE_LEN]{};
   size_t queue_head_{0};
   size_t queue_len_{0};
+  // Sends of the frame at the head of the queue so far, and whether it is waiting for another.
+  uint8_t head_sends_{0};
+  bool head_resend_{false};
+  uint8_t command_reply_{0};
 
   // Outbound envelope bytes 7/8 = the A/C's device type from its DevType reply. Seeded to the
   // known-good 01 01, which stays in use for a unit whose probe never answers.
@@ -149,6 +164,8 @@ class BusScheduler {
   uint32_t chk_mismatch_{0};
   uint32_t reply_timeouts_{0};
   uint32_t unanswered_commands_{0};
+  uint32_t command_resends_{0};
+  bool status_seen_{false};
   uint32_t link_losses_{0};
   AcFeatures features_{};
   AcFaults faults_{};

@@ -279,7 +279,10 @@ size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap) {
   // 17: sleep, 0x00 = leave alone (sleep has its own frame).
   frame[17] = 0x00;
   // 18: mode in bits 4-7, (mode * 2 + 1) << 4.
-  frame[18] = static_cast<uint8_t>((cmd.mode * 2 + 1) << 4);
+  frame[CMD_MODE_BYTE] = static_cast<uint8_t>((cmd.mode * 2 + 1) << 4);
+  // 18 bits 2-3: power-on in the same frame, as the stock module packs it (0x5C cool, 0x3C heat).
+  if (cmd.power_on)
+    frame[CMD_MODE_BYTE] |= CMD_POWER_ON_BITS;
   // 19: setpoint, value * 2 + 1 in whichever unit the panel uses.
   frame[19] = static_cast<uint8_t>(cmd.setpoint * 2 + 1);
   // Lockouts, matching the vendor app: Dry and Fan-only carry no setpoint, Dry no fan change.

@@ -128,11 +128,12 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   AcCommand &cmd = this->parent_->cmd();
   bool send_combined = false;
   bool powering_on = false;
+  uint16_t fields = 0;  // what this call asks of the unit, for the confirm and retry check
 
   if (call.get_mode().has_value()) {
     climate::ClimateMode mode = *call.get_mode();
     if (mode == climate::CLIMATE_MODE_OFF) {
-      this->parent_->send_power(false);
+      this->parent_->send_user_power_off();
       this->mode = mode;
       this->parent_->note_user_command();
       this->publish_state();
@@ -143,8 +144,9 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
       cmd.mode = hmode;
       this->mode = mode;
       send_combined = true;
-      // The A/C ignores a mode change while powered down, so power on first and let the
-      // combined frame carry the mode.
+      fields |= CONFIRM_MODE;
+      // The A/C ignores a mode change while powered down, so the combined frame that carries the
+      // mode also switches the unit on.
       // power_expected(), not the last status: that still reads on for a poll or two after an off.
       if (!this->parent_->power_expected())
         powering_on = true;
@@ -163,6 +165,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
       int wanted = setpoint_to_cmd((int) lroundf(*call.get_target_temperature()), st.valid && st.temp_unit_f, &cmd);
       this->target_temperature = (float) wanted;
       send_combined = true;
+      fields |= CONFIRM_SETPOINT;
     }
   }
 
@@ -200,6 +203,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
     } else {
       cmd.fan = fan_index_to_hisense((uint8_t) wanted_index);
       send_combined = true;
+      fields |= CONFIRM_FAN;
     }
     this->publish_fan_index((uint8_t) wanted_index);
   }
@@ -209,6 +213,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
     climate_swing_to_hisense((uint8_t) swing, &cmd.vswing, &cmd.hswing);
     this->swing_mode = swing;
     send_combined = true;
+    fields |= CONFIRM_SWING;
   }
 
   int preset = this->preset_request_index_(call);
@@ -218,11 +223,9 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
     this->publish_state();
   }
 
-  if (powering_on)
-    this->parent_->send_power(true);
   if (send_combined)
-    this->parent_->send_command();
-  if (powering_on || send_combined) {
+    this->parent_->send_user_command(fields, powering_on);
+  if (send_combined) {
     this->parent_->note_user_command();
     this->publish_state();
   }
