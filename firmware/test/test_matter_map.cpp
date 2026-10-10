@@ -660,6 +660,31 @@ int main() {
           "that readback matches the status and is not commanded");
   }
 
+  // ---- beeper setting + bus diagnostics (ESPHome parity) ----
+  printf("[beeper / bus diagnostics]\n");
+  CHECK(matter_beeper_setting(true, true), "stored ON -> beep");
+  CHECK(!matter_beeper_setting(true, false), "stored OFF -> silent");
+  CHECK(matter_beeper_setting(false, false) && matter_beeper_setting(false, true),
+        "attribute unreadable -> beep (the stock default), whatever the buffer held");
+  CHECK(matter_link_token_attr(false, 0x01, 0x01) == 0, "token not learned -> 0, not the 01 01 default");
+  CHECK(matter_link_token_attr(true, 0x01, 0x01) == 0x0101, "token 01 01 -> 0x0101");
+  CHECK(matter_link_token_attr(true, 0xAB, 0x02) == 0xAB02, "device type is the high byte");
+  {
+    MatterBusDiag d;
+    memset(&d, 0xFF, sizeof(d));
+    matter_bus_diag_read(&d);
+    CHECK(d.checksum_errors == hisense_checksum_mismatch_count() && d.reply_timeouts == 0 &&
+              d.unanswered_commands == 0 && d.link_losses == 0,
+          "diag snapshot: counters from the driver, 0 with no bus task");
+    CHECK(d.link_token == 0 && d.bus_link, "diag snapshot: no token yet, link up until a loss");
+  }
+  CHECK(MATTER_HISENSE_ATTR_REPLY_TIMEOUTS == MATTER_HISENSE_ATTR_CHECKSUM_ERRORS + 1 &&
+            MATTER_HISENSE_ATTR_UNANSWERED_COMMANDS == MATTER_HISENSE_ATTR_CHECKSUM_ERRORS + 2 &&
+            MATTER_HISENSE_ATTR_LINK_LOSSES == MATTER_HISENSE_ATTR_CHECKSUM_ERRORS + 3,
+        "the four counters are consecutive, in the order the ESP32 glue loops over");
+  CHECK(MATTER_HISENSE_ATTR_CHECKSUM_ERRORS == 0x0014 && MATTER_HISENSE_ATTR_BUS_LINK == 0x0019,
+        "diagnostic attribute ids follow Faults1 (0x0013) without a gap");
+
   printf("== %d passed, %d failed ==\n", g_pass, g_fail);
   return g_fail ? 1 : 0;
 }

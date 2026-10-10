@@ -97,6 +97,17 @@ static constexpr EmberAfAttributeType kHisenseTypeBool   = (EmberAfAttributeType
 static constexpr EmberAfAttributeType kHisenseTypeInt8u  = (EmberAfAttributeType)0x20;
 static constexpr EmberAfAttributeType kHisenseTypeInt8s  = (EmberAfAttributeType)0x28;
 static constexpr EmberAfAttributeType kHisenseTypeInt32u = (EmberAfAttributeType)0x23;
+static constexpr EmberAfAttributeType kHisenseTypeInt16u = (EmberAfAttributeType)0x21;
+
+// The ESP32 glue addresses the bus-diagnostic attributes by the ids in matter_aircon_map.h; this
+// file uses the cluster header. One node type must not disagree with the other.
+static_assert(HisenseAttr::ChecksumErrors::Id == MATTER_HISENSE_ATTR_CHECKSUM_ERRORS &&
+              HisenseAttr::ReplyTimeouts::Id == MATTER_HISENSE_ATTR_REPLY_TIMEOUTS &&
+              HisenseAttr::UnansweredCommands::Id == MATTER_HISENSE_ATTR_UNANSWERED_COMMANDS &&
+              HisenseAttr::LinkLosses::Id == MATTER_HISENSE_ATTR_LINK_LOSSES &&
+              HisenseAttr::LinkToken::Id == MATTER_HISENSE_ATTR_LINK_TOKEN &&
+              HisenseAttr::BusLink::Id == MATTER_HISENSE_ATTR_BUS_LINK,
+              "manufacturer-cluster ids differ between HisenseAircon-ClusterId.h and matter_aircon_map.h");
 
 MatterRoomAirCon aircon;
 
@@ -116,6 +127,11 @@ static const chip::EndpointId kHeatRelayEp = 7;  // BooleanState (Contact Sensor
 static const chip::EndpointId kCoilTempEp  = 8;  // TemperatureMeasurement -> outdoor/condenser coil temp (#51)
 static const chip::EndpointId kDisplayEp   = 9;  // OnOff -> panel display (#19 parity; on=0xC0/off=0x40 @20)
 static const chip::EndpointId kFaultEp     = 10; // BooleanState (Contact Sensor) -> aggregate A/C fault (#38)
+/* OnOff -> whether the unit beeps for a command from this node (ESPHome's `beeper` switch).
+ * A setting of the node, not of the A/C: nothing on the bus reports it. The attribute is NVM
+ * storage with default ON in the .zap, so the data model keeps it across a reboot and no init
+ * code seeds it. The uplink handler reads it before any frame is built. */
+static const chip::EndpointId kBeeperEp    = MATTER_EP_BEEPER;
 
 /* --------------------------------------------------------------------------
  * Command shadow: incrementally updated by each Matter write, flushed as one
@@ -803,6 +819,7 @@ CHIP_ERROR matter_driver_room_aircon_init(void)
     set_ha_entity_label(kCoilTempEp,    "Coil");
     set_ha_entity_label(kDisplayEp,     "Display");
     set_ha_entity_label(kFaultEp,       "Fault");
+    set_ha_entity_label(kBeeperEp,      MATTER_LABEL_BEEPER);
     HISENSE_INIT_STAGE(4);
 
     /* ep9 Display boots ON (#33) via the .zap OnOff defaultValue -- deliberately NOT an ember
@@ -1374,6 +1391,17 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
     st = s_status;
     taskEXIT_CRITICAL();
 
+    // Beeper (ep11). Read here, on every pass, instead of acting on the write: the stored value
+    // comes back from NVM at boot without any attribute-change callback, and every command frame
+    // is built further down this function, so this is the one place that is always ahead of a
+    // frame. The driver clears the buzzer bit of each 0x65 frame while this is off.
+    {
+        bool beep = true;
+        const bool ok = Clusters::OnOff::Attributes::OnOff::Get(kBeeperEp, &beep) ==
+                        chip::Protocols::InteractionModel::Status::Success;
+        hisense_set_beeper(matter_beeper_setting(ok, beep));
+    }
+
     // While one of our own commands is settling, the status still describes the state the
     // client asked to leave. Power and mode are judged against what was commanded instead, so a
     // write that reverses or follows a pending command is not dropped (matter_aircon_map.h).
@@ -1528,6 +1556,9 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
             case kDisplayEp: // ep9: panel display (write-only; A/C reports no display state -> no echo guard)
                 hisense_apply_display(on);
                 break;
+            case kBeeperEp:  // ep11: already applied at the top of this handler; no frame of its own
+                ChipLogProgress(DeviceLayer, "beeper %s", on ? "on" : "off");
+                break;
             // (v20) kSleepEp OnOff removed -- Sleep is now the ModeSelect "Sleep Profile"
             // on ep6 (Off/General/Old/Young/Kids), handled in the ModeSelect case below.
             default:
@@ -1651,6 +1682,23 @@ void matter_driver_uplink_update_handler(AppEvent *aEvent)
     chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 }
 
+/* Bus diagnostics -> manufacturer cluster (read-only, docs/14). The Matter side of the ESPHome
+ * build's diagnostic sensors: three bus counters, checksum errors, the A/C's device type and the
+ * link state. Ember only reports a write that changes the value, so calling this on every
+ * downlink pass costs nothing on a quiet bus. Call with the CHIP stack locked. */
+static void hisense_publish_bus_diag(void)
+{
+    MatterBusDiag d;
+    matter_bus_diag_read(&d);
+    uint8_t up = d.bus_link ? 1 : 0;
+    emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::ChecksumErrors::Id,     (uint8_t *)&d.checksum_errors,     kHisenseTypeInt32u);
+    emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::ReplyTimeouts::Id,      (uint8_t *)&d.reply_timeouts,      kHisenseTypeInt32u);
+    emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::UnansweredCommands::Id, (uint8_t *)&d.unanswered_commands, kHisenseTypeInt32u);
+    emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::LinkLosses::Id,         (uint8_t *)&d.link_losses,         kHisenseTypeInt32u);
+    emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::LinkToken::Id,          (uint8_t *)&d.link_token,          kHisenseTypeInt16u);
+    emberAfWriteAttribute(kAirconEp, HisenseCl::Id, HisenseAttr::BusLink::Id,            &up,                               kHisenseTypeBool);
+}
+
 /* --------------------------------------------------------------------------
  * Downlink: apply a snapshotted A/C status to the Matter attribute store.
  * ------------------------------------------------------------------------ */
@@ -1674,6 +1722,10 @@ void matter_driver_downlink_update_handler(AppEvent *aEvent)
         // fresh-status gate (the link-lost event carries no new status); the next good
         // poll repopulates everything below. LocalTemperature is HA's documented link-
         // health signal; MeasuredValue + EPM extend it to the outdoor-temp/power sensors.
+        //
+        // The bus diagnostics go out first, on both paths: the link-lost event is the one pass
+        // that carries no status, and it is exactly when the counters and BusLink have moved.
+        hisense_publish_bus_diag();
         if (s_link_lost) {
             // Drop any still-unconsumed pre-loss frame: the link-restored event takes the
             // normal path below, and a lingering fresh flag would apply the STALE pre-loss

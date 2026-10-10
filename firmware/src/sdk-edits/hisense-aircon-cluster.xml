@@ -29,6 +29,20 @@
          hisense_rs485.h, mirrored by the integration's const.py + a host test. -->
     <attribute side="server" code="0x0012" define="FEATURES1"     type="int32u"  writable="false" default="0"     optional="true">Features1</attribute>
     <attribute side="server" code="0x0013" define="FAULTS1"       type="int32u"  writable="false" default="0"     optional="true">Faults1</attribute>
+    <!-- RS-485 bus diagnostics, the Matter side of the ESPHome build's diagnostic sensors
+         (firmware/docs/14). The four counters run from boot and reset to 0 on a reboot.
+         ChecksumErrors: 0x66 frames that passed framing but failed the checksum.
+         ReplyTimeouts: reply windows that closed empty, any frame class.
+         UnansweredCommands: queued command frames among those (the write is lost, nothing resends it).
+         LinkLosses: link-lost edges (five silent status polls in a row).
+         LinkToken: the A/C's (device type, sub type) pair, high byte first; 0 until its DevType reply.
+         BusLink: true while status polls are answered. -->
+    <attribute side="server" code="0x0014" define="CHECKSUM_ERRORS"     type="int32u"  writable="false" default="0" optional="true">ChecksumErrors</attribute>
+    <attribute side="server" code="0x0015" define="REPLY_TIMEOUTS"      type="int32u"  writable="false" default="0" optional="true">ReplyTimeouts</attribute>
+    <attribute side="server" code="0x0016" define="UNANSWERED_COMMANDS" type="int32u"  writable="false" default="0" optional="true">UnansweredCommands</attribute>
+    <attribute side="server" code="0x0017" define="LINK_LOSSES"         type="int32u"  writable="false" default="0" optional="true">LinkLosses</attribute>
+    <attribute side="server" code="0x0018" define="LINK_TOKEN"          type="int16u"  writable="false" default="0" optional="true">LinkToken</attribute>
+    <attribute side="server" code="0x0019" define="BUS_LINK"            type="boolean" writable="false" default="false" optional="true">BusLink</attribute>
 
     <command source="client" code="0x00" name="Refresh" optional="true">
       <description>No-op; present so the cluster attaches to an endpoint.</description>

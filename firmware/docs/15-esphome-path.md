@@ -105,6 +105,10 @@ refer to `firmware/esp32-matter/main/app_main.cpp`.
 | ep7 ContactSensor aux heat | `binary_sensor` | `state.heat_relay_on` |
 | ep9 OnOff panel display | `switch` | `HisenseDisplay` tri-state |
 | ep10 BooleanState aggregate fault | `binary_sensor`, `device_class: problem` | `HisenseFaults.any` |
+| ep11 OnOff beeper (label "Beeper", default on, persisted) | `switch` beeper | `hisense_set_beeper()`, `hisense_stamp_beep()` |
+| ep1 mfg `0x0014` to `0x0017` bus counters | 4 diagnostic `sensor` (checksum errors, reply timeouts, unanswered commands, link losses) | `hisense_*_count()` |
+| ep1 mfg `0x0018` LinkToken | diagnostic `text_sensor` | `hisense_get_link_token()` |
+| ep1 mfg `0x0019` BusLink | `binary_sensor`, `device_class: connectivity` | `hisense_link_is_up()` |
 | Thermostat C/F unit (#5) | diagnostic `switch` or `select` | `state.temp_unit_f` |
 | link health nulling (#56) | `binary_sensor`, `device_class: connectivity`, plus NaN on stale sensors | `hisense_set_link_cb()` |
 | `:2323` `token` | diagnostic `text_sensor` | `hisense_get_link_token()` |

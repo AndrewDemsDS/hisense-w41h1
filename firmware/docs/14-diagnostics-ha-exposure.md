@@ -92,6 +92,25 @@ already ship via standard clusters. Keep as-is.
   client-side. The bit map in `const.py` stays in lockstep with `hisense_rs485.h`, and a host-side
   test asserts agreement (`firmware/test/test_diag_contract.py`, wired into `run_tests.sh`).
 
+**Phase 2b (firmware done in AmebaZ2 1.3.49 / ESP32 1.1.19, not yet on hardware):** the bus
+diagnostics the ESPHome build shows as sensors, on the same ep1 cluster, read-only:
+
+| id | name | type | ESPHome entity | source |
+|---|---|---|---|---|
+| `0x0014` | `ChecksumErrors` | int32u | `checksum_errors` | `hisense_checksum_mismatch_count()` |
+| `0x0015` | `ReplyTimeouts` | int32u | `reply_timeouts` | `hisense_reply_timeout_count()` |
+| `0x0016` | `UnansweredCommands` | int32u | `unanswered_commands` | `hisense_unanswered_command_count()` |
+| `0x0017` | `LinkLosses` | int32u | `link_losses` | `hisense_link_loss_count()` |
+| `0x0018` | `LinkToken` | int16u | `link_token` (text, "HH LL") | `hisense_get_link_token()`: device type in the high byte, sub type in the low byte, 0 until the A/C's DevType reply |
+| `0x0019` | `BusLink` | boolean | `bus_link` | `hisense_link_is_up()` |
+
+The four counters run from boot and return to 0 on a reboot, as on ESPHome. They are written on
+every status frame and on both link edges, and reported only when a value changes. `BusLink` is
+the explicit form of the Phase 1 availability heuristic: it goes false on the link-lost edge,
+which is also when the liveness attributes go null. Both targets create the attributes with the
+same ids and types (`MATTER_HISENSE_ATTR_*` in `matter_aircon_map.h`). The integration side reads
+them like `Features1`: raw paths `1/4294048768/20` to `1/4294048768/25`.
+
 **Phase 4 (optional, only if native `matter`-integration entities are specifically wanted):** file
 a `matter-python-client` cluster-class PR + a matching `home-assistant/core` `MatterDiscoverySchema`
 PR. Not required; Phases 1-3 already cover all four diagnostics end to end with full fidelity.

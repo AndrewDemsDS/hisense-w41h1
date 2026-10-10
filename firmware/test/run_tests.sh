@@ -96,4 +96,8 @@ echo "== Layer 7: dev.py release engine (version, endpoint and tag rules, #143) 
 python3 ./test_dev_release.py
 
 echo
+echo "== Layer 8: headless .zap editor + data-model contract (beeper endpoint, mfg-cluster ids) =="
+python3 ./test_zap_edit.py
+
+echo
 echo "ALL QA LAYERS PASSED"

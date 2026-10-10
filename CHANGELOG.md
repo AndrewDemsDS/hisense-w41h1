@@ -7,6 +7,30 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 
 ## Unreleased
 
+### Matter (AmebaZ2 1.3.49, ESP32 1.1.19): the controls and diagnostics the ESPHome build has
+Built and host-tested. Not on hardware yet.
+- **Beeper switch**, endpoint 11 on both targets: an On/Off plug-in unit labelled "Beeper", on by
+  default. Off clears the buzzer bit (frame byte 23 bit 2, the stock `t_beep`) on every command
+  frame the node sends, through the same stamp the ESPHome path uses (`hisense_stamp_beep()`,
+  checked byte for byte against it). The setting survives a reboot: NVM attribute storage on
+  AmebaZ2, a non-volatile attribute on ESP32. Endpoints 0 to 10 are unchanged. Home Assistant
+  needs a re-interview of the node to see the new endpoint.
+- **Bus diagnostics** on the manufacturer cluster `0xFFF1FC00` (ep1), read-only: `ChecksumErrors`
+  `0x0014`, `ReplyTimeouts` `0x0015`, `UnansweredCommands` `0x0016`, `LinkLosses` `0x0017` (all
+  int32u, since boot), `LinkToken` `0x0018` (int16u) and `BusLink` `0x0019` (boolean). The shared
+  driver gained the three counters the ESPHome bus already kept. See `firmware/docs/14`.
+- **Thermostat `MinSetpointDeadBand` is 0.** AmebaZ2 did not have the attribute, so the server
+  used its 2.5 C default and refused cooling setpoints below 18.5 C and heating setpoints above
+  29.5 C. ESP32 carried the esp-matter default of 2.0 C (18 C and 30 C). The unit takes 16 to 32.
+- With the beeper on, every frame is byte for byte what the previous version sent.
+
+### Tooling
+- `firmware/scripts/zap_edit.py` edits the AmebaZ2 `.zap` without the ZAP GUI (add an attribute,
+  set a default or storage option, append an endpoint) and `zap_edit.py check` runs the build's
+  generation steps on a scratch copy, failing on a dropped attribute or a new kind of ZAP warning.
+  The three data-model changes above were made with it. Recipe in
+  `firmware/src/sdk-edits/README.md`.
+
 ### ESPHome
 - `beeper` switch: clears the buzzer bit (frame byte 23 bit 2) on every command frame the node
   sends. The bit comes from the stock module's `t_beep` handling, found by static analysis of the
