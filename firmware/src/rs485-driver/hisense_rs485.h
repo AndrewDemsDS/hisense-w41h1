@@ -568,6 +568,41 @@ bool hisense_status_checksum_ok(const uint8_t *frame, size_t len);
 // verify is allowed to gate parsing / the link-miss counter.
 uint32_t hisense_checksum_mismatch_count(void);
 
+// Bus counters since boot, the same three the ESPHome bus keeps (hisense_bus.h), so both builds
+// report one set of diagnostics. Written by the bus task only; a reader on another task may see a
+// value one increment old, never a torn one (single aligned 32-bit word).
+//   reply timeouts      -- reply windows that closed empty, any frame class
+//   unanswered commands -- queued command frames among those: a user write the unit never
+//                          acknowledged, and nothing resends it
+//   link losses         -- link-lost edges (HISENSE_LINK_LOST_POLLS silent status polls in a row)
+uint32_t hisense_reply_timeout_count(void);
+uint32_t hisense_unanswered_command_count(void);
+uint32_t hisense_link_loss_count(void);
+// The live link state the edge callback above reports: false while the status poll is silent.
+// True from boot until the first loss, like the callback (which only fires on an edge).
+bool hisense_link_is_up(void);
+
+/* ---------------------------------------------------------------------------
+ * Buzzer ("beeper"). Frame byte 23 bit 2 of a class 0x65 command is the stock module's
+ * `t_beep`: get_dev_control_cmd ORs `t_beep << 2` into payload byte 10 (= frame byte 23), and
+ * the stock default is 1 (static analysis of the stock image, file offset 0x1f96e; the same
+ * finding the ESPHome path's stamp_beep() is built on). It is a flag on the one frame, not a
+ * stored setting: the unit beeps for a command that carries it and stays silent for one that
+ * does not. Every builder in this file writes the bit set (the 0x04 baseline at [23]).
+ *
+ * hisense_stamp_beep(): PURE. Sets or clears that bit on a finished, F4-stuffed frame and
+ * fixes the checksum. Any other frame class is copied through unchanged. Returns the new
+ * length, 0 on a malformed frame. `out` may be the same buffer as `in`.
+ * hisense_set_beeper(): the node-wide choice, applied to every command frame the bus task
+ * sends from then on (combined, power and single-field frames alike). Default true, the
+ * stock behaviour. Not persisted here: the glue owns the stored value.
+ * -------------------------------------------------------------------------*/
+#define HISENSE_CMD_BEEP_BYTE 23
+#define HISENSE_CMD_BEEP_BIT 0x04
+size_t hisense_stamp_beep(const uint8_t *in, size_t len, bool beep, uint8_t *out, size_t out_cap);
+void hisense_set_beeper(bool on);
+bool hisense_get_beeper(void);
+
 /* ---------------------------------------------------------------------------
  * Public API
  *

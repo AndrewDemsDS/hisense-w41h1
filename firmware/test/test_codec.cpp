@@ -589,6 +589,72 @@ int main() {
       CHECK(out[19] == 0xF4 && out[20] == 0xFB, "end tag preserved");
     }
 
+    // ---- Buzzer bit (frame byte 23 bit 2 of a 0x65 command, the stock t_beep) ----------
+    {
+      HisenseCommand bc = {HISENSE_MODE_COOL,
+                           22,
+                           false,
+                           HISENSE_FAN_AUTO,
+                           HISENSE_SWING_OFF,
+                           HISENSE_SWING_OFF,
+                           HISENSE_FEATURE_NONE,
+                           HISENSE_DISPLAY_NOCHANGE};
+      uint8_t in[HISENSE_CMD_FRAME_LEN + 2], q[HISENSE_CMD_FRAME_LEN + 2], back[HISENSE_CMD_FRAME_LEN + 2];
+      size_t l = hisense_build_command(&bc, in, sizeof(in));
+      CHECK(l != 0 && (in[HISENSE_CMD_BEEP_BYTE] & HISENSE_CMD_BEEP_BIT) != 0, "builders write the buzzer bit set");
+      size_t n = hisense_stamp_beep(in, l, false, q, sizeof(q));
+      CHECK(n != 0 && (q[HISENSE_CMD_BEEP_BYTE] & HISENSE_CMD_BEEP_BIT) == 0, "stamp_beep(false) clears the bit");
+      bool same = true;
+      for (size_t i = 0; i < HISENSE_CMD_CHK_OFFSET; i++) {
+        if (i != HISENSE_CMD_BEEP_BYTE && in[i] != q[i])
+          same = false;
+      }
+      CHECK(same, "stamp_beep moves nothing but byte 23");
+      // Every setpoint and mode, so a checksum low byte of 0xF4 (stuffed, frame one byte
+      // longer) is covered in both directions: off then on gives the builder's frame back.
+      for (int mode = 0; mode <= 4; mode++) {
+        for (int sp = 16; sp <= 32; sp++) {
+          bc.mode = (HisenseMode) mode;
+          bc.setpoint = (uint8_t) sp;
+          l = hisense_build_command(&bc, in, sizeof(in));
+          n = hisense_stamp_beep(in, l, false, q, sizeof(q));
+          size_t m = hisense_stamp_beep(q, n, true, back, sizeof(back));
+          CHECK(l != 0 && n != 0 && m == l && memcmp(back, in, l) == 0, "beep off/on round trip mode=%d sp=%d", mode,
+                sp);
+        }
+      }
+      // In place (the bus task re-stamps the buffer the link token was stamped into).
+      bc.mode = HISENSE_MODE_COOL;
+      bc.setpoint = 22;
+      l = hisense_build_command(&bc, in, sizeof(in));
+      n = hisense_stamp_beep(in, l, false, q, sizeof(q));
+      memcpy(back, in, l);
+      size_t ip = hisense_stamp_beep(back, l, false, back, sizeof(back));
+      CHECK(ip == n && memcmp(back, q, n) == 0, "stamp_beep works in place");
+      // Power frames carry the bit too; the power byte must survive.
+      for (int on = 0; on < 2; on++) {
+        l = hisense_build_power_frame(on != 0, in, sizeof(in));
+        n = hisense_stamp_beep(in, l, false, q, sizeof(q));
+        CHECK(n != 0 && (q[HISENSE_CMD_BEEP_BYTE] & HISENSE_CMD_BEEP_BIT) == 0 && q[18] == in[18],
+              "power frame %d: bit clear, power byte kept", on);
+      }
+      // Not a command: copied through. Truncated or headless: refused.
+      n = hisense_stamp_beep(HISENSE_STATUS_REQUEST, HISENSE_STATUS_REQUEST_LEN, false, q, sizeof(q));
+      CHECK(n == HISENSE_STATUS_REQUEST_LEN && memcmp(q, HISENSE_STATUS_REQUEST, n) == 0,
+            "stamp_beep leaves other frame classes alone");
+      CHECK(hisense_stamp_beep(in, 5, false, q, sizeof(q)) == 0, "stamp_beep refuses a truncated frame");
+      CHECK(hisense_stamp_beep(NULL, 50, false, q, sizeof(q)) == 0, "stamp_beep refuses NULL");
+      // The node-wide choice defaults to the stock behaviour and reads back.
+      CHECK(hisense_get_beeper(), "beeper defaults on");
+      hisense_set_beeper(false);
+      CHECK(!hisense_get_beeper(), "beeper off reads back");
+      hisense_set_beeper(true);
+      // Counters start at zero and the link reads up before any poll.
+      CHECK(hisense_reply_timeout_count() == 0 && hisense_unanswered_command_count() == 0 &&
+                hisense_link_loss_count() == 0 && hisense_link_is_up(),
+            "bus counters start at 0, link up");
+    }
+
     // A token whose checksum byte hits the 0xF4 marker must still be stuffed.
     // status: chk 0x01B3 with 01 01 -> low byte 0xF4 needs hi+lo delta 0x41.
     {

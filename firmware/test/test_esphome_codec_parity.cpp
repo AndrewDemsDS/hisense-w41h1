@@ -318,6 +318,39 @@ static void test_stamp_beep() {
   CHECK(n == H::STATUS_REQUEST_LEN && std::memcmp(out, H::STATUS_REQUEST, n) == 0,
         "other frame classes are copied through");
   CHECK(H::stamp_beep(in, 5, false, out, sizeof(out)) == 0, "a truncated frame is refused");
+
+  // The shared Matter driver's hisense_stamp_beep() is the same function: byte for byte on real
+  // command frames, on every length around one, and on garbage.
+  for (int sp = 16; sp <= 32; sp++) {
+    for (int beep = 0; beep < 2; beep++) {
+      c.setpoint = (uint8_t) sp;
+      l = H::build_command(c, in, sizeof(in));
+      uint8_t a[80], b[80];
+      size_t na = hisense_stamp_beep(in, l, beep != 0, a, sizeof(a));
+      size_t nb = H::stamp_beep(in, l, beep != 0, b, sizeof(b));
+      CHECK(same_bytes(a, na, b, nb), "beep parity sp=%d beep=%d", sp, beep);
+      for (size_t k = 0; k <= l + 2; k++) {
+        CHECK(hisense_stamp_beep(in, k, beep != 0, a, sizeof(a)) == H::stamp_beep(in, k, beep != 0, b, sizeof(b)),
+              "beep parity len %zu", k);
+      }
+    }
+  }
+  for (int i = 0; i < 20000; i++) {
+    uint8_t g[80], a[80], b[80];
+    for (auto &x : g)
+      x = (uint8_t) rnd();
+    if (i & 1) {
+      g[0] = 0xF4;
+      g[1] = 0xF5;
+    }
+    if (i & 2)
+      g[13] = 0x65;
+    size_t len = rnd() % 80;
+    size_t cap = rnd() % 80;
+    size_t na = hisense_stamp_beep(g, len, (i & 4) != 0, a, cap);
+    size_t nb = H::stamp_beep(g, len, (i & 4) != 0, b, cap);
+    CHECK(same_bytes(a, na, b, nb), "beep parity random %d", i);
+  }
 }
 
 static void test_parsers() {
