@@ -60,17 +60,20 @@ rtl87xx:
 # The logger keeps LibreTiny's default port, UART2: TX on PA16, the module's own log console pad,
 # at 115200 baud. It must never be moved to UART0, which is the A/C bus.
 
-# Serial port recovery. On this module the receive side of the A/C bus port has stopped twice and
-# stayed stopped until a power cycle, with transmit still working. The cause is not known;
-# reopening the port restores it (amebaz2/w41h1_uart.h has what was measured). So the port is
-# restarted the moment the hub reports the link lost, and every 15 s for as long as it stays
-# down. This lives here and not in the component because Serial0 is LibreTiny's: ESPHome's uart
-# component can only reload a port's settings on ESP32 and ESP8266.
+# Serial port recovery, a fallback. On this module the receive side of the A/C bus port stopped
+# twice and stayed stopped until a power cycle, with transmit still working. The cause found for
+# that is in LibreTiny's receive buffer and the component now prevents it (amebaz2/w41h1_uart.h
+# has the measurements). Reopening the port also clears it, so the restart stays as a net for a
+# stall with some other cause: when the hub reports the link lost, and every 15 s for as long as
+# it stays down, never while the hub is transmitting. This lives here and not in the component
+# because Serial0 is LibreTiny's: ESPHome's uart component can only reload a port's settings on
+# ESP32 and ESP8266.
 interval:
   - interval: 1s
     then:
       - lambda: |-
-          if (!w41h1_uart_restart_due(&w41h1_uart_watch, id(ac_bus).link_up(), millis()))
+          if (!w41h1_uart_restart_due(&w41h1_uart_watch, id(ac_bus).link_up(), id(ac_bus).bus_transmitting(),
+                                      millis()))
             return;
           w41h1_uart_restart(id(uart_bus).get_baud_rate());
           ESP_LOGW("w41h1", "A/C bus silent: serial port restarted (%u so far)",
@@ -78,7 +81,8 @@ interval:
 
 sensor:
   # How often the recovery above has fired since boot. On a healthy bus it stays at 0. It also
-  # counts while the unit is off at the mains with the node powered some other way.
+  # counts while the unit does not answer at all: off at the mains with the node powered some
+  # other way, or a wiring or transceiver fault, which no restart cures.
   - platform: template
     name: Serial port restarts
     icon: mdi:restart-alert
