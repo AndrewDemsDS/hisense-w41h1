@@ -41,6 +41,11 @@ echo "== Layer 1f: ESPHome component edge cases (shadow sync rules, boundaries, 
 g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_edge_cases.cpp \
     ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_edge_cases
 ./test_esphome_edge_cases
+echo
+echo "== Layer 1g: ESPHome confirm and retry, power and mode in one frame (decisions and scenarios) =="
+g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_confirm.cpp \
+    ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_confirm
+./test_esphome_confirm
 
 echo
 echo "== Layer 2: virtual A/C <-> decoder round-trip =="

@@ -32,9 +32,27 @@ Built and host-tested. Not on hardware yet.
   `firmware/src/sdk-edits/README.md`.
 
 ### ESPHome
+- Confirm and retry. A command frame the unit does not answer is sent again in the next bus cycle
+  (three sends at most). A command the unit answers and does not apply is sent again once its
+  status shows that, four seconds later (twice at most, once for eco, turbo, quiet and sleep).
+  After that the node logs a warning and shows what the unit reports. A newer command replaces
+  the one being checked, and a lost link drops it. The unit's own overrides (its setpoint outside
+  cool and heat, turbo, the fan under quiet and sleep) are not treated as lost commands. New
+  optional sensors `command_retries` and `failed_commands`; `unanswered_commands` now counts every
+  unanswered send.
+- A mode request to a unit that is off is one frame carrying mode and power-on (byte 18 = mode
+  bits with `0x0C`), as the stock module sends it. It was a power frame followed by a mode frame,
+  and losing the second left the unit running in its last mode (#168). The re-send falls back to
+  the two frames if the unit is still off.
 - `beeper` switch: clears the buzzer bit (frame byte 23 bit 2) on every command frame the node
   sends. The bit comes from the stock module's `t_beep` handling, found by static analysis of the
   stock image. Stored on the node, on by default.
+
+### Docs
+- New guide page, `docs/guide/ESP32-Build-Environment.md`: from a clean Linux machine to a flashed
+  ESP32 for both the ESPHome and the esp-matter build, with the steps through `dev.py` and by hand
+  (#117). The ESP-IDF version in the guide now points at `versions.env`, and the ESPHome page
+  describes the `uart:` block the YAML has.
 
 ### Tooling
 - `firmware/scripts/esphome-upstream-check.sh` runs ESPHome's own CI scripts against the

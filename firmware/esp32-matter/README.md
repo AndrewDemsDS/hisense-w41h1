@@ -9,6 +9,8 @@ is not repeated here:
 - why this track exists, the reused files, the HAL-shim model, BOM, **wiring for both boards, the
   GPIO and ground-loop warnings**, staged bring-up and status:
   [`docs/guide/ESP32-Replacement-Build.md`](../../docs/guide/ESP32-Replacement-Build.md)
+- installing ESP-IDF and esp-matter on a clean machine, and where `idf.py` comes from:
+  [`docs/guide/ESP32-Build-Environment.md`](../../docs/guide/ESP32-Build-Environment.md)
 - fetch, build, erase, flash and the `virtual_ac.py` bench, with what is hardware-verified:
   [`docs/guide/Build-Flash-Test.md`](../../docs/guide/Build-Flash-Test.md)
 - delta OTA and release: [`docs/guide/OTA-Updates.md`](../../docs/guide/OTA-Updates.md)

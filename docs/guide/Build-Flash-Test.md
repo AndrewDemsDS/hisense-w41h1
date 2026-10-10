@@ -84,11 +84,14 @@ defaults receives an image for the wrong chip. Both command lines are in
 ## ESP32 (esp-matter)
 
 ```
-python3 firmware/scripts/dev.py fetch esp32        # ESP-IDF v5.5.4 + esp-matter at the pinned SHA
+python3 firmware/scripts/dev.py fetch esp32        # ESP-IDF + esp-matter at the versions.env pins
 python3 firmware/scripts/dev.py test esp32
 python3 firmware/scripts/dev.py build esp32 --board c3
 python3 firmware/scripts/dev.py flash esp32 --board c3 --port /dev/ttyACM0
 ```
+
+New to ESP-IDF, or want the same steps without the wrapper?
+[ESP32 Build Environment](ESP32-Build-Environment) starts from a clean machine.
 
 - **Host packages first.** `fetch` checks the host prerequisites before cloning anything, and
   `doctor esp32` reports them: without `libusb-1.0` ESP-IDF's `install.sh` fails only after

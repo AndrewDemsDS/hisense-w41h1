@@ -61,6 +61,10 @@ sensor:
       name: Bus reply timeouts
     unanswered_commands:
       name: Unanswered commands
+    command_retries:
+      name: Command retries
+    failed_commands:
+      name: Failed commands
     link_losses:
       name: Bus link losses
 

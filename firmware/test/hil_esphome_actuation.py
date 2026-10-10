@@ -26,6 +26,12 @@ photons changed is a human observation. This proves the command path and the abs
 effects; a person at the unit proves the panel.
 
 State is snapshotted at the start and restored at the end, so a real unit is left as found.
+
+CONFIRM AND RETRY. The firmware re-sends a command the unit did not answer or did not apply, and
+holds the entity on the request while it does. A step that reads back during a re-send would pass
+on the echo of its own command, so every wait watches the node's `Command retries` counter and
+waits longer when it moved. At the end the run reports the three counters: retries are the firmware
+doing its job and are listed, a rise of `Failed commands` is a failed check.
 """
 
 import argparse
@@ -39,6 +45,11 @@ from aioesphomeapi import APIClient
 # esphome ClimateFanMode values for the built-in names the ladder uses
 FAN_ENUM = {"auto": 2, "low": 3, "medium": 4, "high": 5}
 CLIMATE_FIELDS = ("mode", "target_temperature", "custom_fan_mode", "fan_mode", "swing_mode")
+
+# Names of the diagnostic counters in w41h1.yaml.
+RETRIES = "Command retries"
+FAILED = "Failed commands"
+UNANSWERED = "Unanswered commands"
 
 results: list[tuple[str, bool, str]] = []
 
@@ -57,6 +68,7 @@ class Node:
         self.switches: dict[str, object] = {}
         self.selects: dict[str, object] = {}
         self.binary_sensors: dict[str, object] = {}
+        self.sensors: dict[str, object] = {}
 
     async def connect(self) -> None:
         entities, _ = await self.client.list_entities_services()
@@ -72,6 +84,8 @@ class Node:
                 self.selects[name] = e
             elif kind.startswith("BinarySensor"):
                 self.binary_sensors[name] = e
+            elif kind.startswith("Sensor"):
+                self.sensors[name] = e
         self.client.subscribe_states(lambda s: self.states.__setitem__(s.key, s))
         await asyncio.sleep(3)
 
@@ -92,6 +106,34 @@ class Node:
                 s = self.states.get(e.key)
                 return None if s is None else bool(getattr(s, "state", False))
         return None
+
+    def counter(self, name: str) -> int | None:
+        """A diagnostic counter sensor by name, or None when the node does not declare it."""
+        e = self.sensors.get(name)
+        if e is None:
+            return None
+        s = self.states.get(e.key)
+        try:
+            return int(getattr(s, "state", None))
+        except (TypeError, ValueError):
+            return None
+
+    async def settle(self, seconds: float, extra: float) -> None:
+        """Wait `seconds`, then `extra` more for each re-send the firmware made meanwhile.
+
+        During a re-send the entity still shows the request, so a readback proves nothing until the
+        firmware has either confirmed the command or given up on it. Up to three extra waits: the
+        firmware makes at most two re-sends of one command.
+        """
+        seen = self.counter(RETRIES)
+        await asyncio.sleep(seconds)
+        for _ in range(3):
+            now = self.counter(RETRIES)
+            if seen is None or now is None or now == seen:
+                return
+            print(f"    (firmware sent a command again: retries {seen} -> {now}, waiting {extra:.0f} s more)")
+            seen = now
+            await asyncio.sleep(extra)
 
     def mode(self) -> int | None:
         """The climate mode as ESPHome's ClimateMode int (0 off, 2 cool, 3 heat, ...)."""
@@ -135,9 +177,9 @@ class Node:
 # Phases in run order with rough durations (s), for the progress bar. The run takes ~12 minutes,
 # mostly waiting out the firmware's 10 s special-mode pacing, and is silent while it waits.
 PHASES = [
-    ("prepare", 35), ("setpoint", 6), ("fan: built-in enum", 6), ("fan: custom name", 6), ("swing", 6),
-    ("fan ladder", 36), ("mode sweep", 24), ("display + special modes", 90),
-    ("sleep profile", 14), ("presets", 245), ("restore", 15),
+    ("prepare", 35), ("setpoint", 7), ("fan: built-in enum", 7), ("fan: custom name", 7), ("swing", 7),
+    ("fan ladder", 42), ("mode sweep", 35), ("display + special modes", 103),
+    ("sleep profile", 16), ("presets", 245), ("restore", 31),
 ]
 _T0 = time.monotonic()
 
@@ -196,9 +238,19 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # 4 s hold-off, plus up to ~1.7 s for the command to reach its slot in the 1 s bus cycle and
     # for the poll after it. 6 s left almost nothing over; 7 s leaves a full cycle.
     settle = 7
+    # A re-send restarts the 4 s check, a cycle after the verdict.
+    retry_extra = 6
     # Eco / turbo / quiet / sleep go through the firmware's paced special-mode queue: each write
-    # waits 10 s after the previous one (the A/C swallows faster ones), then ~3 s to read back.
-    special_settle = 14
+    # waits 10 s after the previous one (the A/C swallows faster ones), then ~4 s until its status
+    # check, plus a cycle.
+    special_settle = 16
+    # A special-mode re-send waits out the 10 s pacing again, then its own 4 s check.
+    special_retry_extra = 16
+
+    counters_start = {n: node.counter(n) for n in (UNANSWERED, RETRIES, FAILED)}
+    if counters_start[RETRIES] is None or counters_start[FAILED] is None:
+        print("  NOTE: no 'Command retries' / 'Failed commands' sensors declared; a step read during a\n"
+              "        re-send cannot be told from a pass. Add them from w41h1.yaml.")
 
     # --- 0. power on (opt-in) -----------------------------------------------------------
     # Off by default: this starts a real compressor. Also the only test of the power path,
@@ -208,7 +260,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     if power_on and powered_off:
         print("[power on]")
         client.climate_command(key=node.climate.key, mode=2)  # COOL
-        await asyncio.sleep(12)
+        await node.settle(12, retry_extra)
         after = node.climate_snapshot()
         got_on = str(after.get("mode")) not in ("0", "ClimateMode.OFF")
         record("power on takes (issue #7)", got_on, f"mode now {after.get('mode')}")
@@ -234,7 +286,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     else:
         target = 25.0 if float(before.get("target_temperature") or 24) != 25.0 else 23.0
         client.climate_command(key=node.climate.key, target_temperature=target)
-        await asyncio.sleep(settle)
+        await node.settle(settle, retry_extra)
         after = node.climate_snapshot()
         record("setpoint actuates", float(after.get("target_temperature") or -1) == target,
                f"wanted {target}, got {after.get('target_temperature')}")
@@ -246,7 +298,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # A command matching the current value proves nothing, so pick a step that is not active.
     enum_step = "Medium" if before.get("fan_mode") == str(FAN_ENUM["high"]) else "High"
     client.climate_command(key=node.climate.key, custom_fan_mode=enum_step)
-    await asyncio.sleep(settle)
+    await node.settle(settle, retry_extra)
     after = node.climate_snapshot()
     # "It moved" is not enough: a unit that went to some other speed did not obey.
     record(f"fan {enum_step} actuates", node.fan_is(enum_step.lower()),
@@ -258,7 +310,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     phase("fan: custom name")
     before = node.climate_snapshot()
     client.climate_command(key=node.climate.key, custom_fan_mode="medium_low")
-    await asyncio.sleep(settle)
+    await node.settle(settle, retry_extra)
     after = node.climate_snapshot()
     record("fan medium_low actuates", after.get("custom_fan_mode") == "medium_low",
            f"got {after.get('custom_fan_mode')}")
@@ -269,7 +321,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     before = node.climate_snapshot()
     want = 0 if str(before.get("swing_mode")) not in ("0", "ClimateSwingMode.SWING_MODE_OFF") else 2
     client.climate_command(key=node.climate.key, swing_mode=want)
-    await asyncio.sleep(settle)
+    await node.settle(settle, retry_extra)
     after = node.climate_snapshot()
     record("swing actuates", before.get("swing_mode") != after.get("swing_mode"),
            f"{before.get('swing_mode')} -> {after.get('swing_mode')}")
@@ -283,7 +335,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     for name in ("auto", "low", "medium_low", "medium", "medium_high", "high"):
         before = node.climate_snapshot()
         client.climate_command(key=node.climate.key, custom_fan_mode=name)
-        await asyncio.sleep(settle)
+        await node.settle(settle, retry_extra)
         after = node.climate_snapshot()
         record(f"fan {name}", node.fan_is(name),
                f"fan_mode={after.get('fan_mode')} custom={after.get('custom_fan_mode')}")
@@ -302,7 +354,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     for label, mode_val in sweep:
         before = node.climate_snapshot()
         client.climate_command(key=node.climate.key, mode=mode_val)
-        await asyncio.sleep(settle)
+        await node.settle(settle, retry_extra)
         after = node.climate_snapshot()
         record(f"mode {label}", str(after.get("mode")) == str(mode_val),
                f"wanted {mode_val}, got {after.get('mode')}")
@@ -313,7 +365,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # expect the mode the run started in. Heat is not re-entered by the test.
     if sweep and base_mode not in (None, 0, 3, 6):
         client.climate_command(key=node.climate.key, mode=base_mode)
-        await asyncio.sleep(settle)
+        await node.settle(settle, retry_extra)
         record("mode restored after the sweep", node.mode() == base_mode,
                f"wanted {base_mode}, got {node.mode()}")
     elif sweep and base_mode == 3:
@@ -329,7 +381,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         record("display switch present", False, "no 'Panel display' switch declared")
     else:
         client.switch_command(key=disp.key, state=False)
-        await asyncio.sleep(settle)
+        await node.settle(settle, retry_extra)
         record("display switches off", node.switch_state("Panel display") is False,
                f"switch reads {node.switch_state('Panel display')}")
 
@@ -341,7 +393,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
             before = node.climate_snapshot()
             was = node.switch_state(mode_name)
             client.switch_command(key=e.key, state=not was)
-            await asyncio.sleep(special_settle)
+            await node.settle(special_settle, special_retry_extra)
             record(f"{mode_name} actuates", node.switch_state(mode_name) == (not was),
                    f"{was} -> {node.switch_state(mode_name)}")
             record(f"{mode_name} leaves display off",
@@ -362,7 +414,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
             node.no_collateral(f"{mode_name}", before, allowed)
             # put it back, and let turbo's forced cool / 16 C land before the next mode's snapshot
             client.switch_command(key=e.key, state=bool(was))
-            await asyncio.sleep(special_settle)
+            await node.settle(special_settle, special_retry_extra)
 
     # --- 6. sleep profile --------------------------------------------------------------
     phase("sleep profile")
@@ -371,7 +423,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         before = node.climate_snapshot()
         want = "General" if node.select_state("Sleep profile") != "General" else "Off"
         client.select_command(key=sleep_sel.key, state=want)
-        await asyncio.sleep(special_settle)
+        await node.settle(special_settle, special_retry_extra)
         record("sleep profile actuates", node.select_state("Sleep profile") == want,
                f"got {node.select_state('Sleep profile')}")
         record("sleep leaves display off",
@@ -387,13 +439,14 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # waits out the longest plan. The order walks through every kind of transition: set, combine,
     # replace eco with turbo, turbo to sleep, add eco under a running profile, sleep to quiet.
     phase("presets")
+    # The longest plan here is three writes: 10 s pacing between them, 4 s check after the last.
     preset_wait = 35.0
     for name in ("eco", "eco_quiet", "turbo", "sleep_general", "eco_sleep_general", "quiet", "none"):
         if name in ("none", "eco"):
             client.climate_command(key=node.climate.key, preset=0 if name == "none" else 5)
         else:
             client.climate_command(key=node.climate.key, custom_preset=name)
-        await asyncio.sleep(preset_wait)
+        await node.settle(preset_wait, special_retry_extra)
         got = _preset_name(node.states.get(node.climate.key))
         record(f"preset {name}", got == name, f"got {got}")
 
@@ -440,6 +493,18 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     link = node.bus_link()
     if link is not None:
         record("bus link still up after the run", link, f"bus link reads {link}")
+    # What the firmware had to do to get there. Retries are listed, not failed: a re-send that
+    # lands is the fix working. A command the unit never took is a failure even if every readback
+    # above happened to pass.
+    await asyncio.sleep(special_retry_extra)  # let the restore finish its own checks
+    counters_end = {n: node.counter(n) for n in counters_start}
+    delta = {n: (None if counters_start[n] is None or counters_end[n] is None
+                 else counters_end[n] - counters_start[n]) for n in counters_start}
+    print(f"  counters over the run: unanswered +{delta[UNANSWERED]}, retries +{delta[RETRIES]}, "
+          f"failed +{delta[FAILED]}")
+    if delta[FAILED] is not None:
+        record("no command was given up on", delta[FAILED] == 0,
+               f"'Failed commands' rose by {delta[FAILED]} (see the node's WARN log for which)")
     print("  restored to baseline (verify on the unit)")
 
     await client.disconnect()

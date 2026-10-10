@@ -51,7 +51,8 @@ ESP32 env switches: ESP32_FLAVOUR=release|debug (default debug), ESP32_TARGET, E
 ESP32_ALLOW_IDF_MISMATCH=1, ESP32_ALLOW_NO_RECOVERY=1.
 
 Targets: amebaz2 | esp32 | esphome. Board (esp32/esphome): --board c3 (ESP32-C3 SuperMini, default)
-or --board classic (ESP32-D0WDQ6). Env: IDF_PATH / ESP_MATTER_PATH (esp32; default ~/esp/esp-idf and
+or --board classic (ESP32-D0WDQ6). ESPHome node identity: --name <hostname> and --friendly-name <text>
+(default hisense-ac / "Air Conditioner"; give every node after the first its own). Env: IDF_PATH / ESP_MATTER_PATH (esp32; default ~/esp/esp-idf and
 ~/esp/esp-matter), ESPHOME (esphome command, default `esphome`), ENVF (the release env file, default
 firmware/scripts/ota-release.env; the self-hosted runner copies its secrets file to that exact path).
 """
@@ -204,11 +205,13 @@ def ensure_target(project, idf_tgt, env):
 
 class Ctx:
     """Parsed invocation: target, board-derived pins, and options."""
-    def __init__(self, target, board, port, sim_port):
+    def __init__(self, target, board, port, sim_port, name=None, friendly_name=None):
         self.target = target
         self.board = board
         self.port = port
         self.sim_port = sim_port
+        self.name = name
+        self.friendly_name = friendly_name
         self._versions = None
         if board == "c3":
             self.idf_tgt, self.pins, self.esphome_board = "esp32c3", (5, 6, 10), "esp32-c3-devkitm-1"
@@ -246,6 +249,12 @@ class Ctx:
             die(f"no {ESPHOME_DIR}/secrets.yaml -- cp secrets.yaml.example secrets.yaml and fill it in")
         subs = ["-s", "board", self.esphome_board, "-s", "tx_pin", str(self.pins[0]),
                 "-s", "rx_pin", str(self.pins[1]), "-s", "de_pin", str(self.pins[2])]
+        # A second node needs its own hostname: two boards both called hisense-ac fight over the
+        # same mDNS name and Home Assistant device.
+        if self.name:
+            subs += ["-s", "name", self.name]
+        if self.friendly_name:
+            subs += ["-s", "friendly_name", self.friendly_name]
         run([cmd, *subs, sub, "w41h1.yaml", *args], cwd=ESPHOME_DIR)
 
 
@@ -3033,7 +3042,7 @@ def main(argv):
         ota(Ctx(target, "c3", None, None), step, rest[1:])
         return
 
-    board, port, sim_port, i = "c3", None, None, 0
+    board, port, sim_port, name, friendly_name, i = "c3", None, None, None, None, 0
     while i < len(rest):
         a = rest[i]
         if a == "--board" and i + 1 < len(rest):
@@ -3042,9 +3051,17 @@ def main(argv):
             port = rest[i + 1]; i += 2
         elif a == "--sim-port" and i + 1 < len(rest):
             sim_port = rest[i + 1]; i += 2
+        elif a == "--name" and i + 1 < len(rest):
+            name = rest[i + 1]; i += 2
+        elif a == "--friendly-name" and i + 1 < len(rest):
+            friendly_name = rest[i + 1]; i += 2
         else:
             die(f"unknown option: {a}")
-    ctx = Ctx(target, board, port, sim_port)
+    if (name or friendly_name) and target != "esphome":
+        die("--name / --friendly-name are esphome-only (they set the node's hostname and HA name)")
+    if name and not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?", name):
+        die(f"--name '{name}' is not a valid hostname (lowercase letters, digits, hyphens; max 31)")
+    ctx = Ctx(target, board, port, sim_port, name, friendly_name)
 
     dispatch = {"walk": walk, "doctor": doctor, "fetch": fetch, "test": test_target,
                 "build": build, "erase": erase, "flash": flash, "monitor": monitor,

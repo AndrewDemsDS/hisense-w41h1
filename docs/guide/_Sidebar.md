@@ -3,6 +3,7 @@
 **Operator**
 - [User Guide](User-Guide)
 - [Hardware & Wiring](Hardware-and-Wiring)
+- [ESP32 Build Environment](ESP32-Build-Environment)
 - [ESPHome Build](ESPHome-Build)
 - [ESP32 Matter Build](ESP32-Replacement-Build)
 - [Installing on the AmebaZ2 Module](Installing-Custom-Firmware)

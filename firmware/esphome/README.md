@@ -6,6 +6,8 @@ esp-matter build, none of the Matter stack. **Home Assistant only.**
 
 The user guide covers everything a builder needs, so it is not repeated here:
 
+- installing ESPHome on a clean machine and the first flash, step by step:
+  [`docs/guide/ESP32-Build-Environment.md`](../../docs/guide/ESP32-Build-Environment.md)
 - entities, hardware, flashing (both boards), staged bring-up, capability gating and status:
   [`docs/guide/ESPHome-Build.md`](../../docs/guide/ESPHome-Build.md)
 - wiring and the GPIO / ground-loop warnings:
@@ -48,14 +50,42 @@ The component logs under the tag `hisense_ac`. Set the level with ESPHome's `log
 
 | Level | What it shows |
 |---|---|
-| `WARN` | the bus link dropping, a command that could not be sent, a status frame with a bad checksum, a fault reported by the unit |
-| `INFO` | the bus link coming back, a fault clearing |
+| `WARN` | the bus link dropping, a command that could not be sent, got no reply, was sent again or was given up on, a status frame with a bad checksum, a fault reported by the unit |
+| `INFO` | the bus link coming back, a fault clearing, a command the unit took on a re-send |
 | `DEBUG` | each status change, every command sent, the unit's capability bitmap |
 | `VERBOSE` | every decoded status frame, every poll that got no reply |
 | `VERY_VERBOSE` | the raw bytes of every frame sent and received |
 
 Use `VERY_VERBOSE` when the link is down. It shows whether the A/C sends anything at all, and you
 do not need to add a `debug:` block to the UART.
+
+### Confirm and retry
+
+A command used to be one frame, sent once. The component now checks each one twice and sends it
+again when the unit did not take it.
+
+| Check | When | On failure |
+|---|---|---|
+| The unit replied to the frame | within the 500 ms reply window | the frame goes out again in the next bus cycle, ahead of anything queued after it, three sends at most, and only while the unit answers its status poll |
+| The unit's status shows what was asked | first status frame 4 s after the frame left the wire | power, mode, setpoint, fan and swing: the frame is sent again, twice at most. Eco, turbo, quiet and sleep: the plan to the wanted state is made again from what the unit reports, once, and waits out the 10 s special-mode pacing |
+
+After the last re-send the component logs a warning, counts the command in `failed_commands` and
+lets the entities show what the unit reports. A newer command replaces the one still being checked,
+so an older request is never sent again over it. A lost bus link drops every open command.
+
+Some differences are the unit's own behaviour and are not treated as a lost command: it keeps its
+own setpoint in auto, dry and fan-only, turbo forces cool at 16 C on high fan, quiet and the sleep
+profiles hold the fan, and a unit that is off ignores everything except power. A value that is
+neither the old one nor the requested one means someone used the remote, and the command is
+dropped. The rules are `intent_expected_fields()` and `confirm_decision()` in `hisense_map.h`,
+tested in `firmware/test/test_esphome_confirm.cpp`.
+
+A mode request to a unit that is off is one frame that carries both the mode and power-on, as the
+stock module sends it (frame byte 18: `0x5C` cool, `0x3C` heat). If the unit is still off four
+seconds later, the re-send is the older pair of frames, power-on and then the mode.
+
+The `unanswered_commands`, `command_retries` and `failed_commands` sensors count all of this since
+boot.
 
 ### The codec port (`hisense_protocol.*`, `hisense_map.h`)
 

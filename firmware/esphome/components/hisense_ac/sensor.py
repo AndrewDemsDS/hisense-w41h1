@@ -30,6 +30,8 @@ CONF_COMPRESSOR_FREQUENCY = "compressor_frequency"
 CONF_CHECKSUM_ERRORS = "checksum_errors"
 CONF_REPLY_TIMEOUTS = "reply_timeouts"
 CONF_UNANSWERED_COMMANDS = "unanswered_commands"
+CONF_COMMAND_RETRIES = "command_retries"
+CONF_FAILED_COMMANDS = "failed_commands"
 CONF_LINK_LOSSES = "link_losses"
 
 
@@ -91,10 +93,13 @@ CONFIG_SCHEMA = cv.Schema(
         # Diagnostic: a climbing count means framing trouble on the bus.
         cv.Optional(CONF_CHECKSUM_ERRORS): _counter("mdi:alert-circle-outline"),
         # Diagnostic counters since boot. A reply window that closed with nothing from the A/C
-        # (any frame); a command among those, which is a user write the unit never acknowledged
-        # and that is not sent again; and the number of times the link was declared lost.
+        # (any frame); a command frame among those; a command sent again, because it got no
+        # reply or because the unit's status did not show it; a command the unit never took, after
+        # the re-sends; and the number of times the link was declared lost.
         cv.Optional(CONF_REPLY_TIMEOUTS): _counter("mdi:timer-alert-outline"),
         cv.Optional(CONF_UNANSWERED_COMMANDS): _counter("mdi:message-alert-outline"),
+        cv.Optional(CONF_COMMAND_RETRIES): _counter("mdi:repeat"),
+        cv.Optional(CONF_FAILED_COMMANDS): _counter("mdi:message-off-outline"),
         cv.Optional(CONF_LINK_LOSSES): _counter("mdi:lan-disconnect"),
     }
 ).extend(HISENSE_AC_CLIENT_SCHEMA)
@@ -110,6 +115,8 @@ SENSORS = [
     CONF_CHECKSUM_ERRORS,
     CONF_REPLY_TIMEOUTS,
     CONF_UNANSWERED_COMMANDS,
+    CONF_COMMAND_RETRIES,
+    CONF_FAILED_COMMANDS,
     CONF_LINK_LOSSES,
 ]
 

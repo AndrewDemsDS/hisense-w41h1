@@ -264,6 +264,29 @@ until the queue drains and the command hold-off expires, so a group mirroring it
 intermediate state. Exit criterion: every preset set from Home Assistant reads back as itself on a
 live A/C, from each starting preset.
 
+**Phase 7, confirm and retry. IMPLEMENTED, awaiting hardware validation.** Hardware runs on two
+units failed about one check in 52, each time with `unanswered_commands` at exactly 1: the unit
+missed one frame and nothing sent it again. The stock module verifies the reply to every command
+(`reverse-engineering/docs/10-stock-fw-init-and-comms.md`, section 4.6) and packs power and mode
+into one frame (section 5b-2). The component now does both:
+
+- the scheduler sends a command frame that got no reply again in the next cycle, in front of the
+  rest of the queue, three sends at most and only while the unit answers its status poll;
+- the hub keeps the last request until a status frame four seconds later agrees with it, sends it
+  again when it does not (twice at most, once for special modes, which also wait out the 10 s
+  pacing), then gives up with a warning and a `failed_commands` count;
+- a newer command replaces the one being checked, and a link loss drops it;
+- a mode request to a powered-down unit is one frame with the power-on bits in byte 18. A unit that
+  is still off at the check gets the previous pair of frames on the re-send.
+
+Every decision is a pure function in `hisense_map.h` (`command_resend_allowed`,
+`intent_expected_fields`, `confirm_decision`, `pending_begin`, `resend_frames`, `special_plan`),
+tested in `test_esphome_confirm.cpp` together with scenarios that run them against a model of a
+unit that loses frames and overrides values. The stock reply layout (echo of the first two payload
+bytes, then 1) has not been captured on this bus, so the reply verdict is logged at DEBUG and not
+acted on. Exit criterion: the hardware test passes on both units with `failed_commands` at 0, and
+one captured reply to a command settles the acknowledgement layout.
+
 **Phase 5, docs and CI. MOSTLY DONE.** Landed: [`firmware/esphome/README.md`](../esphome/README.md),
 the ESPHome column in [`13-path-comparison.md`](13-path-comparison.md), the `ESPHome-Build` guide
 page for the docs site, and `esphome config` as a hardware-free CI step in `.github/workflows/qa.yaml`
