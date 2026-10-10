@@ -1,0 +1,36 @@
+# Hisense A/C over RS-485, ESPHome variant: ESP32-C3 SuperMini.
+#
+# The same node as w41h1.yaml built with `-s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6
+# -s de_pin 10` (what `dev.py --board c3` passes), written down as a file. Hardware-validated.
+# Wiring and the C3 GPIO warnings: firmware/esp32-matter/README.md.
+#
+#   flash:   esphome run firmware/esphome/w41h1-esp32c3.yaml
+#   logs:    esphome logs firmware/esphome/w41h1-esp32c3.yaml
+
+substitutions:
+  name: hisense-ac
+  friendly_name: Air Conditioner
+  board: esp32-c3-devkitm-1
+  tx_pin: "5"
+  rx_pin: "6"
+  de_pin: "10"
+
+packages:
+  node: !include packages/node.yaml
+  hisense_ac: !include packages/hisense-ac.yaml
+
+esp32:
+  board: ${board}
+  framework:
+    type: esp-idf
+
+# A SuperMini whose 3.3 V rail dips when Wi-Fi starts at full power resets on the first boot of
+# a new image, and the bootloader rolls the update back. If that is your board and the supply
+# cannot be fixed, cap the transmit power here (README, Troubleshooting):
+#
+# esp32:
+#   framework:
+#     sdkconfig_options:
+#       CONFIG_ESP_PHY_MAX_WIFI_TX_POWER: "10"
+# wifi:
+#   output_power: 8.5dB

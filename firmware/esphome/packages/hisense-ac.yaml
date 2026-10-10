@@ -1,0 +1,145 @@
+# The A/C: the RS-485 bus, the hisense_ac hub and every entity. This is the one definition of what
+# a node exposes to Home Assistant. Every board file includes it, so the entity names and object
+# ids are the same on every chip and a unit can move between boards without Home Assistant
+# noticing.
+#
+# Nothing here names a chip. The bytes ride ESPHome's `uart:`; the component drives DE itself
+# with the hardware-validated timing (5 ms settle, 25 ms drain).
+#
+# Substitutions the including file must define: tx_pin, rx_pin, de_pin.
+
+external_components:
+  - source:
+      type: local
+      # Relative to the directory of the file given to `esphome`, which is why the board files sit
+      # next to components/ and not in a directory of their own.
+      path: components
+    components: [hisense_ac]
+
+# Only needed by total_daily_energy below, to know when the day rolls over.
+time:
+  - platform: homeassistant
+    id: ha_time
+
+uart:
+  id: uart_bus
+  tx_pin: ${tx_pin}
+  rx_pin: ${rx_pin}
+  baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: ${de_pin}
+
+climate:
+  - platform: hisense_ac
+    name: None
+    hisense_ac_id: ac_bus
+    # Set to false on a cooling-only unit. The capability_* binary sensors below report what
+    # your A/C actually answers to the 0x66/40 ProductType poll.
+    supports_heat: true
+    # Most W41H1 units have no left/right louvre motor; turn on only if yours does.
+    supports_horizontal_swing: false
+
+# Special modes. Eco and turbo are mutually exclusive on this bus (they share a command byte);
+# quiet and the sleep profile are independent. Delete any your unit does not support.
+switch:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    eco:
+      name: Eco
+    turbo:
+      name: Turbo
+    quiet:
+      name: Quiet
+    display:
+      name: Panel display
+    beeper:
+      name: Beeper
+
+# Sleep works as of 2026-08-19. All four profiles verified on a live A/C (sleep_raw 2/4/6/8),
+# once the minimal command frame gained frame[31] = 0x01, the marker it had been missing.
+select:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    sleep_profile:
+      name: Sleep profile
+
+sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    outdoor_temperature:
+      name: Outdoor temperature
+    coil_temperature:
+      name: Coil temperature
+    compressor_frequency:
+      name: Compressor frequency
+    power:
+      name: Power
+      id: ac_power
+    voltage:
+      name: Voltage
+    current:
+      name: Current
+    checksum_errors:
+      name: Bus checksum errors
+    reply_timeouts:
+      name: Bus reply timeouts
+    unanswered_commands:
+      name: Unanswered commands
+    command_retries:
+      name: Command retries
+    failed_commands:
+      name: Failed commands
+    link_losses:
+      name: Bus link losses
+
+  # Energy for the HA Energy dashboard, integrated from the power estimate. The Matter path
+  # had no equivalent: this is one of the things ESPHome gives away for free.
+  - platform: total_daily_energy
+    name: Energy today
+    power_id: ac_power
+    # The power sensor publishes when its value changes (and once a minute), so between two
+    # updates the load was at the OLDER value. `left` integrates exactly that. The default,
+    # `right`, would apply each new value to the interval before it and misplace up to a minute
+    # of energy at every compressor start and stop.
+    method: left
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+binary_sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    aux_heat:
+      name: Aux heat relay
+    bus_link:
+      name: AC bus link
+    problem:
+      name: Fault
+    # Per-bit fault detail. Add any of the other 15 bits from binary_sensor.py the same way;
+    # these four are the ones that have actually fired on a bench unit.
+    fault_indoor_temp:
+      name: Fault indoor temp sensor
+    fault_indoor_comms:
+      name: Fault indoor to outdoor comms
+    fault_water_full:
+      name: Fault condensate tray full
+    fault_outdoor_temp:
+      name: Fault outdoor temp sensor
+    # What the A/C says it supports, from the ProductType poll. Use these to decide which
+    # controls to declare above.
+    capability_cool_heat:
+      name: Capability heat pump
+    capability_power_save:
+      name: Capability eco
+    capability_fan_mute:
+      name: Capability quiet
+
+text_sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    link_token:
+      name: AC device type
