@@ -3,6 +3,7 @@
 #include "esphome/core/log.h"
 
 #include <cinttypes>
+#include <cmath>
 
 namespace esphome::hisense_ac {
 
@@ -92,6 +93,8 @@ void HisenseAC::on_bus_link(bool up) {
     // Drop any undrained pre-loss frame, or loop() would publish those stale values (and flip
     // link_up_ back to true) until real data returns.
     this->pending_valid_ = false;
+    // A silent unit may be one that lost power, and it comes back with the placeholder.
+    outdoor_temp_gate_reset(&this->outdoor_gate_);
   }
   this->link_up_ = up;
   this->link_dirty_ = true;
@@ -233,8 +236,11 @@ void HisenseAC::publish_telemetry_(const AcState &state) {
     this->telemetry_refreshed_ = true;
   }
   this->publish_sensor_(this->indoor_temperature_sensor_, state.indoor_temp_c, refresh);
-  this->publish_sensor_(this->outdoor_temperature_sensor_, state.outdoor_temp_c, refresh);
-  this->publish_sensor_(this->coil_temperature_sensor_, state.coil_temp_c, refresh);
+  // Both read -20 C for a while after mains power returns: the unit's "not measured yet" value.
+  // Those frames go out as unknown (see outdoor_temps_measured in hisense_map.h).
+  const bool outdoor_measured = outdoor_temps_measured(&this->outdoor_gate_, state.outdoor_temp_c, state.coil_temp_c);
+  this->publish_sensor_(this->outdoor_temperature_sensor_, outdoor_measured ? state.outdoor_temp_c : NAN, refresh);
+  this->publish_sensor_(this->coil_temperature_sensor_, outdoor_measured ? state.coil_temp_c : NAN, refresh);
   this->publish_sensor_(this->compressor_frequency_sensor_, state.compressor_freq, refresh);
   // The bus carries a current PROXY, not amps: active power is 4.15 * raw^2, calibrated against
   // a panel meter. hisense_map.h owns that maths and works in milli-units, so scale back here.

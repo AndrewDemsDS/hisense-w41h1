@@ -236,6 +236,61 @@ static void test_boundaries() {
   CHECK(H::telemetry_publish_due(true, 1.0f, NAN, false), "value -> NaN publishes");
   CHECK(!H::telemetry_publish_due(true, 1.0f, 1.0f, false), "unchanged does not");
   CHECK(!H::telemetry_publish_due(true, 0.0f, -0.0f, false), "0 and -0 are the same reading");
+  CHECK(!H::telemetry_publish_due(true, NAN, NAN, false), "unknown staying unknown does not");
+  CHECK(H::telemetry_publish_due(true, NAN, NAN, true), "unknown still goes out on the refresh");
+  CHECK(H::telemetry_publish_due(false, NAN, NAN, false), "a first unknown publishes");
+}
+
+// The outdoor and coil temperature bytes both read 0xEC (-20 C) for a while after mains power
+// returns (one unit, 2026-10-10, then 35 and 26 C the same afternoon). That pair is "unknown"
+// until a real pair has been seen. A real -20 C must not be hidden once readings are flowing.
+static void test_outdoor_placeholder() {
+  const int8_t ph = static_cast<int8_t>(0xEC);
+  CHECK(ph == -20, "0xEC is -20 as a signed byte");
+  CHECK(H::OUTDOOR_TEMP_PLACEHOLDER_RAW == 0xEC, "the placeholder byte is the observed one");
+
+  // The observed sequence: placeholder after power-up, then real readings.
+  H::OutdoorTempGate g;
+  for (int i = 0; i < 100; i++)
+    CHECK(!H::outdoor_temps_measured(&g, ph, ph), "placeholder pair after power-up is unknown (frame %d)", i);
+  CHECK(H::outdoor_temps_measured(&g, 35, 26), "the first real pair is published");
+  CHECK(H::outdoor_temps_measured(&g, 35, 26), "and stays published");
+
+  // Once real readings were seen, -20 / -20 is a reading: a cold site cooling down to it.
+  CHECK(H::outdoor_temps_measured(&g, -19, -19), "-19 / -19 is a reading");
+  CHECK(H::outdoor_temps_measured(&g, ph, ph), "-20 / -20 after real readings is a reading");
+
+  // Only the pair is the placeholder. One byte at -20 is a reading from the first frame.
+  H::OutdoorTempGate lone_outdoor;
+  CHECK(H::outdoor_temps_measured(&lone_outdoor, ph, -27), "outdoor -20 with coil -27 (heating) is a reading");
+  H::OutdoorTempGate lone_coil;
+  CHECK(H::outdoor_temps_measured(&lone_coil, -12, ph), "coil -20 with outdoor -12 (heating) is a reading");
+
+  // Neighbours of the placeholder and the ends of the byte are readings.
+  const int8_t near[] = {-128, -21, -19, 0, 26, 35, 127};
+  for (int8_t v : near) {
+    H::OutdoorTempGate n;
+    CHECK(H::outdoor_temps_measured(&n, v, v), "%d / %d is a reading", v, v);
+  }
+
+  // A lost link (the unit may have lost power) starts the judgement again.
+  H::outdoor_temp_gate_reset(&g);
+  CHECK(!H::outdoor_temps_measured(&g, ph, ph), "placeholder pair after a link loss is unknown again");
+  CHECK(H::outdoor_temps_measured(&g, 34, 25), "until real readings return");
+
+  // A status frame carrying the placeholder decodes to the pair the rule looks for.
+  std::vector<uint8_t> f = status_frame(0x20, 0x01, 24);
+  f[44] = 0xEC;
+  f[45] = 0xEC;
+  uint16_t sum = H::checksum_range(f.data(), 2, 156);
+  f[156] = static_cast<uint8_t>(sum >> 8);
+  f[157] = static_cast<uint8_t>(sum);
+  H::AcState st;
+  H::OutdoorTempGate from_frame;
+  CHECK(H::parse_status(f.data(), f.size(), &st), "a status frame with 0xEC in bytes 44 and 45 parses");
+  CHECK(st.outdoor_temp_c == -20 && st.coil_temp_c == -20, "and decodes to -20 / -20 (got %d / %d)", st.outdoor_temp_c,
+        st.coil_temp_c);
+  CHECK(!H::outdoor_temps_measured(&from_frame, st.outdoor_temp_c, st.coil_temp_c), "which is unknown");
 }
 
 static size_t feed_all(H::FrameAssembler &fa, const std::vector<uint8_t> &bytes, int *frames) {
@@ -335,6 +390,7 @@ int main() {
   test_power_intent();
   test_shadow_readiness();
   test_boundaries();
+  test_outdoor_placeholder();
   test_frame_stream();
   printf("  %d checks, %d failed\n", g_checks, g_fail);
   printf(g_fail ? "== EDGE CASES FAILED ==\n" : "== EDGE CASES OK ==\n");

@@ -220,6 +220,8 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   // change plus one refresh per TELEMETRY_REFRESH_MS.
   uint32_t last_refresh_ms_{0};
   bool telemetry_refreshed_{false};
+  // Whether the outdoor and coil bytes have held a real reading since the link came up.
+  OutdoorTempGate outdoor_gate_{};
   // Defaults to ON to match the switch's boot state; the A/C ships with the panel lit.
   Display display_pref_{DISPLAY_ON};
   bool beeper_{true};
