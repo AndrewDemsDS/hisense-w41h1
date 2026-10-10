@@ -9,8 +9,8 @@ updates over the air since (maintainer's report; not recorded in a pull request)
 tried on the classic ESP32 board, and the way back to Matter over the air has not been tried at
 all. Treat it as a procedure that has worked once. Issue #182 tracks turning it into a tested path.
 
-This page is for the ESP32 replacement board only. The stock AmebaZ2 module cannot run this
-ESPHome build today: a LibreTiny port is in progress and has not run on hardware.
+This page is for the ESP32 replacement board only. The stock AmebaZ2 module has its own page:
+[Converting a Stock Module from Matter to ESPHome](Converting-a-Stock-Module-to-ESPHome).
 
 ## Why it works
 
@@ -141,3 +141,11 @@ or `esphome run` with the board overrides shown in [OTA Updates](OTA-Updates#esp
   Matter data in NVS along with everything else.
 - Watch the bus counters for a few days
   ([Entities, Endpoints and Diagnostics](Entities-and-Diagnostics#bus-counters)).
+- **Check the radio is always on.** The esp-matter firmware never let the Wi-Fi radio sleep. An
+  ESPHome build does by default on an ESP32 (`power_save_mode: light`), and a board that was fine
+  on Matter can become unreachable on the same access point. Measured on a migrated ESP32-C3 node
+  with a weak signal (about -77 dBm) on 2026-10-10: 65 % ping loss, the API connection dropping
+  about once a minute, and commands that did not reach the unit. With `power_save_mode: none`:
+  100 of 100 pings and a command taken in 0.5 s. `packages/node.yaml` sets `none` since that day,
+  so an image built from this repo now has it. A node built before then, or from your own YAML,
+  needs `power_save_mode: none` under `wifi:` and one more update.

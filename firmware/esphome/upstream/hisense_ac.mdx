@@ -155,8 +155,10 @@ sensor:
 
 - **indoor_temperature** (*Optional*): Temperature at the indoor unit, in °C.
 - **outdoor_temperature** (*Optional*): Temperature at the outdoor unit, in °C. Only meaningful
-  while the unit is running.
-- **coil_temperature** (*Optional*): Indoor coil temperature, in °C.
+  while the unit is running. Unknown for a while after the unit gets mains power back, while it
+  reports a placeholder (-20 °C in this and the coil sensor at once).
+- **coil_temperature** (*Optional*): Indoor coil temperature, in °C. Unknown under the same
+  condition.
 - **compressor_frequency** (*Optional*): Compressor frequency, in Hz.
 - **power** (*Optional*): Active power, in W. It is estimated from the current value the unit
   reports and is not metered.

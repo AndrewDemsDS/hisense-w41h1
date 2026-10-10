@@ -40,9 +40,11 @@ missed it.
 
 Issue #182 proposes dropping the two Matter builds and keeping ESPHome as the only firmware. It is
 open and undecided, and its preconditions are not met: ESPHome on the stock module's own MCU
-(a LibreTiny build compiles and has not run on hardware), a tested way to move a commissioned
-Matter node to ESPHome and back, and a soak on each migrated unit. One ESP32 node has been moved
-over the air already ([Migrating an ESP32 Node from Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome)).
+(a LibreTiny build runs on one module since 2026-10-10, with an open receiver fault), a tested way
+to move a commissioned Matter node to ESPHome and back, and a soak on each migrated unit. One
+ESP32 node ([Migrating an ESP32 Node from Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome))
+and one stock module ([Converting a Stock Module from Matter to ESPHome](Converting-a-Stock-Module-to-ESPHome))
+have been moved over the air. Neither has been moved back.
 Until that issue is settled, the Matter builds stay supported and documented here. If you are
 starting fresh and Home Assistant is your only controller, pick ESPHome.
 

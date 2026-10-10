@@ -36,17 +36,21 @@ same node as `w41h1-esp32c3.yaml`.
 
 | File | Board | TX / RX / DE | Status | Image (ESPHome 2026.7.4) |
 |---|---|---|---|---|
-| `w41h1.yaml` | classic ESP32 (`esp32dev`), board and pins overridable with `-s` | 19 / 18 / 4 | runs on a live A/C | 919 KB, 50 % of the slot |
-| `w41h1-esp32c3.yaml` | ESP32-C3 SuperMini | 5 / 6 / 10 | runs on a live A/C | 973 KB, 53 % |
-| `w41h1-amebaz2-factory.yaml`, `-sdk.yaml`, `-native.yaml` | the stock W41H1 module itself (RTL8710C through LibreTiny), one file per flash layout | PA14 / PA13 / PA17 | **compiles, hardware test pending** | 601 KB, 40 % of the factory layout's slot, 34 % of the other two |
-| `w41h1-esp8266.yaml` | ESP8266 D1 mini | GPIO15 / GPIO13 / GPIO5 | example, compiles, never run | 500 KB, 48 % |
-| `w41h1-rp2040.yaml` | Raspberry Pi Pico W | GPIO4 / GPIO5 / GPIO6 | example, compiles, never run | 587 KB, 56 % |
+| `w41h1.yaml` | classic ESP32 (`esp32dev`), board and pins overridable with `-s` | 19 / 18 / 4 | runs on a live A/C | 923 KB, 50 % of the slot |
+| `w41h1-esp32c3.yaml` | ESP32-C3 SuperMini | 5 / 6 / 10 | runs on a live A/C | 978 KB, 53 % |
+| `w41h1-amebaz2-factory.yaml`, `-sdk.yaml`, `-native.yaml` | the stock W41H1 module itself (RTL8710C through LibreTiny), one file per flash layout | PA14 / PA13 / PA17 | **factory layout runs on one module in an A/C (2026-10-10)**; sdk and native compile, never run | 605 KB, 40 % of the factory layout's slot, 35 % of the other two |
+| `w41h1-esp8266.yaml` | ESP8266 D1 mini | GPIO15 / GPIO13 / GPIO5 | example, compiles, never run | 506 KB, 48 % |
+| `w41h1-rp2040.yaml` | Raspberry Pi Pico W | GPIO4 / GPIO5 / GPIO6 | example, compiles, never run | 590 KB, 56 % |
 
 Every board file is three things: the node's name, the pins, and the platform block. Everything
 else comes from two packages that all of them include, so the entity names and object ids are the
 same on every chip:
 
-- `packages/node.yaml`: logger, API, Wi-Fi and the fallback access point.
+- `packages/node.yaml`: logger, API, Wi-Fi, the fallback access point, and three diagnostics every
+  board has (`Uptime`, `WiFi signal`, `Reset reason`). Wi-Fi power saving is
+  off (`power_save_mode: none`): on an ESP32-C3 with a weak signal ESPHome's default, `light`,
+  lost 65 % of pings and commands did not arrive. A board on a weak supply can go back with the
+  `wifi_power_save` substitution (`-s wifi_power_save light`).
 - `packages/hisense-ac.yaml`: the UART, the `hisense_ac` hub and every entity.
 - `packages/ota.yaml`: ESPHome's update server. The AmebaZ2 files take theirs from
   `packages/amebaz2.yaml` instead, which can switch it off.
@@ -60,12 +64,16 @@ file it is given.
 Board files build into `.esphome/build/<name>/`. Two files with the same `name` share that
 directory, so give `-s name <something>` when switching between boards on one machine.
 
-### The stock module (AmebaZ2): compiles, hardware test pending
+### The stock module (AmebaZ2)
 
 The `w41h1-amebaz2-*.yaml` files build ESPHome for the Realtek RTL8710C inside the AEH-W41H1
-itself, through ESPHome's LibreTiny platform. It would mean no replacement board at all. **It has
-never run on a module.** What is known and what is open is in
-[`../docs/15-esphome-path.md`](../docs/15-esphome-path.md#the-stock-module-through-libretiny-compiles-hardware-test-pending).
+itself, through ESPHome's LibreTiny platform, so the unit needs no replacement board. **The
+factory layout has run on one module in an A/C since 2026-10-10:** boot, Wi-Fi, the bus, and two
+updates over the air. The sdk and native layouts compile and have not run on hardware. What was
+measured and what is open is in
+[`../docs/15-esphome-path.md`](../docs/15-esphome-path.md#the-stock-module-through-libretiny).
+A unit that runs this project's Matter firmware is converted over the air:
+[`docs/guide/Converting-a-Stock-Module-to-ESPHome.md`](../../docs/guide/Converting-a-Stock-Module-to-ESPHome.md).
 
 There are three files because a module can have one of three flash layouts, and the image has to
 be built for the one it has. An image built for another layout bricks the unit at its first
@@ -83,18 +91,45 @@ build if the image does not have the addresses of the layout it names, and at ru
 them with the bootloader's partition table: the result is the `Flash layout` diagnostic sensor,
 and on a mismatch the image switches its own update server off.
 
+One fault showed up on hardware. The receive side of the bus port stopped twice and stayed
+stopped until a power cycle, while commands still reached the unit. The cause is not known.
+Reopening the port restores it, so `packages/amebaz2.yaml` restarts the port when the hub reports
+the link lost and every 15 s while it stays down, logs a warning each time, and counts the
+restarts in a `Serial port restarts` diagnostic sensor. On a healthy bus that sensor stays at 0.
+
 The other open risks, in short:
 
 - LibreTiny rates this chip family 2 out of 5 for stability.
 - A restart or an OTA can leave the chip dark until a 30 second power cut (LibreTiny issue 396).
-  The board file carries the workaround from that issue. It is unproven on this module.
+  The board file carries the workaround from that issue. With it, two updates and a mains power
+  cycle came back clean on the tested module.
 - Nothing rolls a bad update back. An image that does not boot needs the clip.
-- The first flash needs the SOIC-8 clip or UART download mode, and must leave flash
-  `0x1000..0x3FFF` (the module's calibration data) as it was.
+- A first flash with the clip or UART download mode must leave flash `0x1000..0x3FFF` (the
+  module's calibration data) as it was. The over-the-air conversion does not touch it.
+- No long run yet, and the way back to the Matter firmware has not been tried.
 
 `dev.py test esphome --board amebaz2-factory` and `dev.py build esphome --board amebaz2-factory`
-(or `amebaz2-sdk`, `amebaz2-native`) validate and compile one. `dev.py` refuses a bare
-`--board amebaz2`, and refuses to flash any of them.
+(or `amebaz2-sdk`, `amebaz2-native`) validate and compile one. `dev.py convert esphome --board
+amebaz2-factory` re-signs the built image and wraps it as a Matter `.ota` for the conversion.
+`dev.py` refuses a bare `--board amebaz2`, and refuses to flash any of them over a serial port.
+
+### Build cache
+
+`dev.py` sets `PLATFORMIO_BUILD_CACHE_DIR` (default `~/.cache/w41h1-dev/pio-build-cache`) for
+every ESPHome build, and PlatformIO then keeps each compiled object by content. Export the same
+variable to get it when calling `esphome` directly. It pays off on the boards PlatformIO
+compiles, which here are the stock module, the ESP8266 and the RP2040. Measured on the stock
+module's image: 29 s cold, 18 s into a new build directory (a second node name, a new checkout),
+6 s after a clean with nothing changed, for 77 MB of cache per flash layout. The ESP32 boards gain
+nothing from it: ESPHome builds those with ESP-IDF's own tools, which already use ccache when it
+is installed.
+
+An object served from the cache prints no compiler warnings, so a warning shows once, on the
+build that compiled the file. When nothing at all changed, the cache hands back the linked
+firmware whole, and LibreTiny's slot images (`image_firmware_is.*.bin`), which it
+writes while linking, are not produced. `firmware.uf2`, the file an update uses, is. `dev.py build`
+notices and builds once more without the cache. PlatformIO never prunes the directory. Delete it
+when it has grown.
 
 ## Layout
 
@@ -103,7 +138,7 @@ The other open risks, in short:
 | `w41h1.yaml` | the classic ESP32 board file and the original entry point; board and pins are substitutions |
 | `w41h1-*.yaml` | one file per other board (see [Boards](#boards)) |
 | `packages/` | what the board files include: `node.yaml`, `hisense-ac.yaml`, `ota.yaml`, and `amebaz2.yaml` for the stock module |
-| `amebaz2/` | the stock module's flash layouts (`layout-*.json`) and the layout guard (`w41h1_slots.h`) |
+| `amebaz2/` | the stock module's flash layouts (`layout-*.json`), the layout guard (`w41h1_slots.h`) and the serial port recovery (`w41h1_uart.h`, with its timing rule in `w41h1_uart_policy.h`) |
 | `components/hisense_ac/` | the custom component: hub, climate, switches, select, sensors |
 | `tests/components/hisense_ac/` | every option of every platform, at the path and in the shape ESPHome's own `tests/components/<name>/` uses, so it moves upstream unchanged |
 | `tests/test_build_components/` | stand-ins for ESPHome's shared UART test packages, so the relative include in the test resolves here too |

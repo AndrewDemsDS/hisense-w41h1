@@ -17,15 +17,16 @@ feature set is a hard constraint, not a goal to trade away.
 > components, has been removed. The unit's auto mode is also now `CLIMATE_MODE_AUTO`, not the
 > `CLIMATE_MODE_HEAT_COOL` this plan chose. [`firmware/esphome/README.md`](../esphome/README.md)
 > describes the component as it is today. With no ESP-IDF dependency left, the same component now
-> also builds for the stock module's own MCU. That build has not run on hardware:
-> [The stock module through LibreTiny](#the-stock-module-through-libretiny-compiles-hardware-test-pending).
+> also builds for the stock module's own MCU. That build has run on one module, with the factory
+> flash layout, since 2026-10-10:
+> [The stock module through LibreTiny](#the-stock-module-through-libretiny).
 
 ## Scope
 
 - **Target:** ESP32 and ESP32-C3, the same boards and wiring as `firmware/esp32-matter/`
   (see that README for the pin tables and the C3 GPIO warnings, which apply unchanged).
 - **Not in scope (in this plan):** AmebaZ2. ESPHome has no RTL8710C target in this project's plan, so the stock
-  module keeps the Matter firmware. A LibreTiny build was added later and is untested on hardware
+  module keeps the Matter firmware. A LibreTiny build was added later and has run on one module
   (see the section near the end). This path is a third option beside the two in
   [`13-path-comparison.md`](13-path-comparison.md), not a replacement for either.
 - **Not in scope:** Matter. A user who needs Apple Home, Google Home, or Alexa should stay on the
@@ -98,8 +99,8 @@ refer to `firmware/esp32-matter/main/app_main.cpp`.
 | ep1 mfg `0x0010` CompressorHz | `sensor` compressor frequency | `state.compressor_freq` |
 | ep1 mfg `0x0012` Features1 (15 fields) | 15 diagnostic `binary_sensor` plus a `text_sensor` summary | `HisenseFeatures` |
 | ep1 mfg `0x0013` Faults1 (18 bits) | 18 diagnostic `binary_sensor` | `HisenseFaults` |
-| ep2 TemperatureMeasurement | `sensor` outdoor temperature | `state.outdoor_temp_c` |
-| ep8 TemperatureMeasurement | `sensor` coil temperature | `state.coil_temp_c` |
+| ep2 TemperatureMeasurement | `sensor` outdoor temperature | `state.outdoor_temp_c`, unknown while the unit sends its placeholder (below) |
+| ep8 TemperatureMeasurement | `sensor` coil temperature | `state.coil_temp_c`, same rule |
 | ep3 OnOff Eco | `switch`, and the `climate` presets | `HISENSE_FEATURE_ECO` / `ECO_OFF` |
 | ep4 OnOff Quiet | `switch`, and the `climate` presets | `hisense_build_mute_frame()` |
 | ep5 OnOff Turbo | `switch`, and the `climate` presets | `HISENSE_FEATURE_TURBO` |
@@ -239,9 +240,30 @@ bench, and both fixes landed in the shared driver, so all three firmwares carry 
 properties per control, actuation and no collateral change, snapshotting and restoring the unit's
 state around the run. It needs real hardware, so it stays outside `run_tests.sh`.
 
-Outstanding: stage 3 of the bring-up procedure (powered from the A/C connector's 5 V instead of
-USB, and closed up), plus a DI-tap sniffer pass confirming the frames on the wire, which is the
-same Layer 5 gate the other two paths pass. Do not skip the ground-loop warning.
+Stage 3 of the bring-up procedure (powered from the A/C connector's 5 V instead of USB, and closed
+up) is done: the ESPHome units run that way. Outstanding: a DI-tap sniffer pass confirming the
+frames on the wire, which is the same Layer 5 gate the other two paths pass. Do not skip the
+ground-loop warning.
+
+**Outdoor and coil temperature after a power cut.** Right after mains power returns, the unit
+fills both bytes (44 and 45) with `0xEC`, which decodes to -20 C, until it has real readings. Seen
+on one unit on 2026-10-10: both sensors at exactly -20, then 35 and 26 C the same afternoon. The
+component publishes that pair as unknown. The rule is in `hisense_map.h`
+(`outdoor_temps_measured`) and is marked VERIFY, since it rests on one observation. It is narrow
+on purpose, because -20 C is also a temperature: both bytes must be `0xEC` in the same frame, and
+only until a real pair has been seen since the bus link came up. After that, -20 is published as
+a reading. What it still hides is a unit at rest in exactly -20 C weather, from the moment the
+node starts until either reading moves. How long the placeholder lasts, and whether it can return
+while the unit stays powered, was not measured. The two Matter builds publish the bytes as they
+are, so they show -20 C in that window.
+
+**Wi-Fi power saving is off.** `packages/node.yaml` sets `power_save_mode: none`. ESPHome's
+default on ESP32 is `light`, where the radio sleeps between beacons. On an ESP32-C3 node with a
+weak signal (about -77 dBm) that default gave 65 % ping loss, an API connection that dropped about
+once a minute, and commands that did not reach the unit. With `none`: 100 of 100 pings and a
+command taken in 0.5 s (2026-10-10). The esp-matter build forces the radio on for the same reason
+(`firmware/esp32-matter/main/app_main.cpp`). The setting is a substitution, `wifi_power_save`, for
+a board whose supply cannot carry the extra current.
 
 **Phase 6, special modes as climate presets. IMPLEMENTED, awaiting hardware validation.** A
 climate group syncs only `climate` attributes, so eco, quiet, turbo and sleep were invisible to it
@@ -323,14 +345,53 @@ the paths that need them.
   recommended default, at least until it has run on a real A/C for a while.
 - **Runtime capability gating** becomes a YAML decision, as described above.
 
-## The stock module through LibreTiny (compiles, hardware test pending)
+## The stock module through LibreTiny
 
 Added October 2026. The component stopped depending on ESP-IDF when it gained its own codec and
 moved onto ESPHome's `uart:`, so the same YAML and the same C++ now build for the module's own
 MCU, the Realtek RTL8710C (AmebaZ2 family), through ESPHome's LibreTiny platform (`rtl87xx:`).
-If it works on hardware, the ESPHome path no longer needs a replacement board.
+With it, the ESPHome path needs no replacement board.
 
-**Nothing here has run on a module.**
+**Status: the factory layout runs on one module in an A/C, since 2026-10-10. The sdk and native
+layouts compile and have not run on hardware.**
+
+### Hardware results, 2026-10-10
+
+One module with the factory layout, in an A/C, converted over the air from the Matter firmware
+(the procedure is `docs/guide/Converting-a-Stock-Module-to-ESPHome.md`).
+Measured that day:
+
+| What | Result |
+|---|---|
+| Boot | the image boots under the factory bootloader and joins Wi-Fi |
+| Layout guard | `Flash layout` reported `ok`: running slot 2, next write address `0x010000`, the Matter image left intact in slot 1 |
+| Delivery | the LibreTiny application image, re-signed with the next FWHS serial and wrapped as a Matter `.ota`, was applied by the Matter firmware's normal OTA path |
+| ESPHome to ESPHome updates | two, with `esphome upload` (`firmware.uf2`). The running slot went 2, 1, 2 and the node was back within about 10 s each time |
+| Reboot | no hang, with the workaround flags in the image. One mains power cycle also came back clean |
+| Bus | status frames decode and commands are answered. The reply verdict logs `Command answered (class 0x65, echo, ack)`, so the echo-plus-ACK layout the component marks VERIFY is seen on this unit |
+| **Receiver** | **stopped twice** and stayed stopped until a power cycle (next paragraph) |
+| A second module, read with the clip | also the factory layout, with the vendor firmware (serial 100) in both slots and nothing in `0x3D0000..0x3D8000` |
+
+**The receiver stall.** Twice the bus link dropped and did not come back until the unit was power
+cycled: once within the first minute of the first boot after the conversion, and once right after
+the first command sent to a unit that had been idle for five minutes. The unit obeyed that command
+and later ones, so transmit kept working. Only receive was dead, and the node reported the link
+as lost while still controlling the unit. The cause is not established. 115 forced preference
+writes to flash did not reproduce it, and neither did repeated commands. LibreTiny's serial driver
+enables only the receive-data interrupt on this port.
+
+**The recovery.** Closing and reopening the port (`Serial0.end()`, `Serial0.begin()`) restores it.
+With the receive interrupt switched off on purpose, the link was reported lost after 5 silent
+polls and was back 0.6 s after the restart. `packages/amebaz2.yaml` therefore restarts the port
+the moment the hub reports the link lost and every 15 s while it stays down, logs a warning each
+time and counts the restarts in a `Serial port restarts` diagnostic sensor. The timing rule is a
+plain function with a host test (`amebaz2/w41h1_uart_policy.h`,
+`firmware/test/test_esphome_uart_policy.cpp`). It lives in the board package because `Serial0` is
+LibreTiny's: ESPHome's uart component can reload a port's settings only on ESP32 and ESP8266. This
+is a recovery, not a fix.
+
+Not measured: the sdk and native layouts, any run longer than an afternoon, an interrupted or
+failed update, the return to the Matter firmware, and the image without the reboot workaround.
 
 ### What exists
 
@@ -338,7 +399,8 @@ If it works on hardware, the ESPHome path no longer needs a replacement board.
   per flash layout a module can have (next section). All three use board `cr3l`, UART0 on PA14
   (TX) and PA13 (RX) and DE on PA17, the module's own wiring, and share
   `packages/amebaz2.yaml`. They include the same entity package as the ESP32 board files and add
-  one diagnostic text sensor, `Flash layout`.
+  one diagnostic text sensor, `Flash layout`, the serial port recovery described above and its
+  `Serial port restarts` sensor.
 - Board `cr3l` is a Tuya module with the same chip class. It is used because it is the LibreTiny
   board definition that names PA13 and PA14 as UART0. ESPHome's LibreTiny UART only accepts a
   port's fixed hardware pins, and `generic-rtl8720cm-4mb-1712k` does not define them. Its flash
@@ -397,15 +459,14 @@ Two guards keep a wrong choice from going unnoticed. Both are in
   its own update server off, so the bricking update cannot be started. ESPHome's safe mode does
   not run that check, so a unit in safe mode still accepts an update.
 
-The run-time check has not run on a module. If the SDK call answers differently under LibreTiny
-than under the Realtek SDK, it could report a mismatch on a correct unit, and that unit would
-refuse updates.
+The run-time check has run on one module, with the factory layout, and reported `ok` there. It
+has not run on the sdk or native layout, and a mismatch has not been provoked on hardware.
 
 ### What was checked without hardware
 
 | Check | Result |
 |---|---|
-| `esphome config` and `esphome compile`, ESPHome 2026.7.4, LibreTiny 1.13.0, all three layouts | pass. Flash 601,073 bytes: 39.9 % of the factory layout's 1,507,328 byte slot, 34.3 % of the 1,753,088 byte slot of the other two. Static RAM 13,337 of 262,144 bytes |
+| `esphome config` and `esphome compile`, ESPHome 2026.7.4, LibreTiny 1.13.0, all three layouts | pass. Flash 604,881 bytes: 40.1 % of the factory layout's 1,507,328 byte slot, 34.5 % of the 1,753,088 byte slot of the other two. Static RAM 13,369 of 262,144 bytes |
 | Layout applied | each build's slot and settings addresses are those of its layout (compile-time check), and the application image is built for the first slot's address (`0x010000`, `0x00C000`, `0x010000`) |
 | Warnings from `components/hisense_ac/` | none, also with every option of every platform declared (`tests/build.rtl87xx-ard.yaml`) |
 | UART write blocks (LibreTiny waits on the TX FIFO, about 1 ms per byte) | host test: DE still falls 25 ms after the last byte, the cycle stays at 1 s, no reply is missed |
@@ -417,14 +478,17 @@ refuse updates.
 
 1. **Platform stability.** LibreTiny rates RTL8720C 2 out of 5. Its feature table for 1.13.0 lists
    Wi-Fi, digital I/O, flash I/O and the watchdog as untested on this family and OTA as not
-   implemented, although the OTA code is there and users report it working.
+   implemented, although the OTA code is there and users report it working. On this module Wi-Fi,
+   the DE pin, flash writes and two updates worked on the day of the test. The serial
+   receiver did not stay up (risk 12).
 2. **Reboot hang.** LibreTiny 1.13.0 restarts the chip with a CPU-only reset. On other RTL8720C
    modules that leaves it dark after a restart or an OTA until power has been off for about
    30 seconds (libretiny-eu/libretiny issue 396). The fix, a watchdog system reset, is proposed in
    pull request 397 and is in no release. The board file applies the same change with two linker
    flags (`--wrap=lt_reboot`, `--defsym=__wrap_lt_reboot=sys_reset`), the workaround confirmed
-   in that issue on two other modules (a Tuya WBR3 and a Xiaomi one). On this module it is unproven. A module inside an A/C that needs a
-   30 second mains cut after every update is not usable, so this is the first thing to test.
+   in that issue on two other modules (a Tuya WBR3 and a Xiaomi one). On this module, with the flags
+   in the image, two updates and one mains power cycle came back without a hang. The image has not
+   run without them, so whether this module needs them is not known.
 3. **No automatic rollback.** The ESP32 bootloader goes back to the previous image when a new one
    fails to boot. Nothing does that here. ESPHome's safe mode covers an image that boots and then
    crash-loops. An image that does not get that far needs the clip.
@@ -433,7 +497,9 @@ refuse updates.
    native layout the partition table, the bootloader and the application are all LibreTiny's, by
    SOIC-8 clip on the GD25Q32 or by UART download mode: UART2 (PA15 RX, PA16 TX), with PA0 held at
    3.3 V through reset and PA13 not pulled low. Whether PA0 and PA15 can be reached on the W41H1
-   board is not known.
+   board is not known. A unit that runs this project's Matter firmware needs neither: the Matter
+   firmware installs the application image over the air (`dev.py convert`, the guide linked
+   above). That is how the one tested module got it.
 5. **Calibration data.** Flash `0x1000..0x3FFF` holds per-module data, including the flash
    controller's calibration table at `0x1040` that the boot code reads. The full-flash image
    LibreTiny builds is blank there apart from two bytes at `0x1028`. Written whole with a clip, it
@@ -452,26 +518,37 @@ refuse updates.
    sharing the loop is a scope measurement.
 9. **Settings storage.** ESPHome's preferences go to LibreTiny's key-value area, 32 KiB at the
    address the layout gives: `0x3D0000` for factory and sdk, `0x3F8000` for native. `0x3D0000` is
-   above the second slot in both layouts. What the vendor firmware or the Matter firmware may
-   have left there, and how FlashDB treats it on first boot, has not been seen. The native
+   above the second slot in both layouts. The converted unit booted and ran with the area as the
+   Matter firmware had left it, and a second module read with the clip had nothing there under
+   the vendor firmware. What the area held on the converted unit, and how FlashDB treated it on
+   first boot, was not looked at. The native
    address must not be used on a unit that may go back to the Matter firmware without a full
    clip restore: it overwrites data that firmware keeps at the top of flash.
 10. **Going back.** Returning to the stock or the Matter firmware is a full clip write of a dump
-    taken before the first flash. Take the dump and verify it first.
+    taken before the first flash. Take the dump and verify it first. A return over the air has
+    not been tried. After the first ESPHome update the Matter image is gone from the other slot.
 11. **The wrong layout.** Covered above. The build-time guard is tested (a wrong or missing
-    layout file fails the build). The run-time guard is untested on hardware.
+    layout file fails the build). The run-time guard has reported `ok` on one correct unit. It
+    has not been seen to report a mismatch on hardware.
+12. **The receiver stall.** Described under the hardware results. The cause is unknown, so the
+    restart is a recovery that may not cover every way the port can fail. A `Serial port restarts`
+    sensor that keeps climbing means the port is failing repeatedly on that unit.
 
-### A hardware test, in order
+### What is left to test
 
-Off the A/C, on the bench supply: flash, confirm it joins Wi-Fi and Home Assistant, press restart
-ten times, update over the air five times, cut power in the middle of one update. Then the bench
-against `virtual_ac.py` on the bus pads, watching DE on a scope for the settle and drain times and
-for its level during boot. Only then a live unit, with `hil_esphome_actuation.py`.
+The first module went straight into a live unit, so the bench steps were skipped and are still
+worth doing on a spare module: restart ten times, update five times, cut power in the middle of
+one update, and watch DE on a scope for the settle and drain times and for its level during boot,
+against `virtual_ac.py` on the bus pads.
+
+Beyond that: the sdk and native layouts, a soak of days on the converted unit with the restart
+counter watched, the cause of the receiver stall, `hil_esphome_actuation.py` against this build,
+and a return to the Matter firmware.
 
 ## Deliberately not attempted
 
 - LibreTiny as a route to ESPHome on the AmebaZ2 module was on this list in the original plan. It
-  has since been built and is waiting for a hardware test (the section above). The reasons it was
+  has since been built and has run on one module (the section above). The reasons it was
   left out still describe the risk: nothing in this project has run it, and a wrong guess leaves
   a unit that only a clip recovers.
 - Rewriting the HAL against ESPHome's `uart:` component, for the reasons in non-negotiable 3.

@@ -948,8 +948,53 @@ inline uint64_t energy_mwh(uint64_t acc_mw_ms) { return acc_mw_ms / 3600000ULL; 
 static constexpr uint32_t TELEMETRY_REFRESH_MS = 60000;
 
 inline bool telemetry_publish_due(bool has_state, float last, float value, bool refresh_due) {
-  // Negated equality, not !=, so a NaN on either side counts as a change.
-  return !has_state || refresh_due || !(last == value);
+  if (!has_state || refresh_due)
+    return true;
+  // "Unknown" (NaN) staying unknown is not a change. Without this a sensor held at NaN would go
+  // out with every status frame, about once a second, since NaN never compares equal to itself.
+  if (last != last && value != value)
+    return false;
+  // Negated equality, not !=, so a NaN on one side counts as a change.
+  return !(last == value);
+}
+
+// ---- Outdoor temperatures: the "not measured yet" placeholder -----------------------------------
+// Right after mains power comes back, the unit fills the outdoor temperature (byte 44) and the
+// coil temperature (byte 45) with 0xEC, which reads as -20 C, until it has real readings. Published
+// as they are, both sensors show a confident -20 C for a while after every power cut.
+//
+// VERIFY: one observation, on one unit, 2026-10-10. After a mains power cycle both bytes were
+// 0xEC, and later the same afternoon the same sensors read 35 and 26 C. How long the placeholder
+// lasts, whether both bytes leave it in the same frame, and whether it can come back while the
+// unit stays powered were not measured. The RE docs show no handling of this value in the stock
+// firmware (reverse-engineering/docs/03-rs485-ac-protocol.md lists both bytes as direct Celsius).
+//
+// The rule is as narrow as that observation allows, because -20 C is also a temperature:
+//   1. BOTH bytes are exactly 0xEC in the same frame. A lone -20 is published. With the
+//      compressor running the coil sits well away from the outdoor air (33 against 25 in docs/03),
+//      so the two only agree on a unit at rest.
+//   2. No real pair has been seen since the link came up. Once either byte has held anything
+//      else, the readings are trusted until the link drops, so a site that cools to -20 C is
+//      shown as -20 C.
+// What this still hides: a unit at rest in exactly -20 C weather, from the moment the node (or
+// the link) starts until either reading moves by one degree.
+static constexpr uint8_t OUTDOOR_TEMP_PLACEHOLDER_RAW = 0xEC;  // -20 as int8, see above
+
+struct OutdoorTempGate {
+  bool seen_real{false};
+};
+
+/// The bus link dropped: the unit may have lost power, so the next pair is judged afresh.
+inline void outdoor_temp_gate_reset(OutdoorTempGate *gate) { gate->seen_real = false; }
+
+/// True when this frame's outdoor and coil temperatures are readings, false when they are the
+/// placeholder and should be published as unknown. Call once per status frame.
+inline bool outdoor_temps_measured(OutdoorTempGate *gate, int8_t outdoor_c, int8_t coil_c) {
+  const bool placeholder_pair = static_cast<uint8_t>(outdoor_c) == OUTDOOR_TEMP_PLACEHOLDER_RAW &&
+                                static_cast<uint8_t>(coil_c) == OUTDOOR_TEMP_PLACEHOLDER_RAW;
+  if (!placeholder_pair)
+    gate->seen_real = true;
+  return gate->seen_real;
 }
 
 }  // namespace esphome::hisense_ac

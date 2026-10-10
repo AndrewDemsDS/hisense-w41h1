@@ -25,7 +25,7 @@ against ESPHome 2026.7.4.
 | **Sourcing** | Available everywhere | Available everywhere | W41H1 is fragile (ESD) and hard to source in the EU |
 | **First flash** | USB, no disassembly of anything | USB, `esphome run` | CH341A SPI clip on the GD25Q32 |
 | **Reproducibility** | Not byte-reproducible | Not byte-reproducible, and nothing depends on it (no delta base to archive) | Byte-reproducible since 1.3.5 |
-| **MCU / toolchain** | ESP-IDF 5.5.4, open source, version-pinned in `dependencies.lock`, ~8.3 GB | `pipx install esphome` (or `dev.py fetch esphome`); it fetches its own ESP-IDF, no esp-matter, no `sdk/` | Realtek AmebaZ2 SDK, proprietary, lives outside the repo, ~32 GB, not pinned |
+| **MCU / toolchain** | ESP-IDF 5.5.5, open source, version-pinned in `dependencies.lock`, ~8.3 GB | `pipx install esphome` (or `dev.py fetch esphome`); it fetches its own ESP-IDF, no esp-matter, no `sdk/` | Realtek AmebaZ2 SDK, proprietary, lives outside the repo, ~32 GB, not pinned |
 | **Transport** | Matter over Wi-Fi (2.4 GHz) | ESPHome native API, Home Assistant only | Matter over Wi-Fi (2.4 GHz) |
 | **OTA** | Delta, mandatory (a full image is rejected). 873 KB this release | Full image over ESPHome's own OTA, `esphome run` | Full image, 1.2 MB `.ota` |
 | **Flash budget** | 4 MB, app 1.66 MB in a 1.88 MB slot (~84 % used) | 4 MB, app 834 KB (45.5 % of the slot), 47.6 KB RAM | 4 MB, `firmware_is.bin` 1.23 MB |
@@ -142,7 +142,9 @@ software version, which is a trap that has cost this project a full session.
 **This is not a differentiator, and this project has not measured it.** Both boards are mains
 powered from the A/C's 5 V rail rather than from a battery, and neither firmware enables any power
 management: no light sleep, no deep sleep, no Wi-Fi power save. Both radios stay associated
-continuously because a Matter-over-Wi-Fi device has to remain reachable.
+continuously because a Matter-over-Wi-Fi device has to remain reachable. The ESPHome build does
+the same since 2026-10-10 (`power_save_mode: none`). With ESPHome's default, `light`, an ESP32-C3
+on a weak signal lost 65 % of pings and commands did not reach the unit.
 
 If you need this quantified, measure at the 5 V rail. Do not infer it from SoC datasheets: idle
 current on an always-associated Wi-Fi part is dominated by radio behaviour and AP beacon interval,
@@ -202,20 +204,24 @@ The AmebaZ2 path keeps its own strong justification: it is the only one that nee
 hardware at all**, and it proves the module can be fully de-clouded in place, which is the thing
 this project set out to demonstrate.
 
-## A fourth combination, not yet a path: ESPHome on the stock module
+## A fourth combination, new on hardware: ESPHome on the stock module
 
 The table above has ESPHome only on an ESP32. Since October 2026 the same ESPHome configuration
-also compiles for the stock module's RTL8710C through ESPHome's LibreTiny platform
+also builds for the stock module's RTL8710C through ESPHome's LibreTiny platform
 (`firmware/esphome/w41h1-amebaz2-*.yaml`, one per flash layout a module can have): no added
-hardware, no proprietary SDK to obtain (LibreTiny fetches what it needs, about 800 MB), a 601 KB
+hardware, no proprietary SDK to obtain (LibreTiny fetches what it needs, about 800 MB), a 605 KB
 image in a slot of 1472 or 1712 KiB.
 
-It is not in the table because it has not run on a module. The first flash still needs the clip
-or UART download mode, LibreTiny rates the chip family 2 out of 5 for stability, a known reboot
-hang is worked around but unproven here, nothing rolls a bad update back, and an image built for
-the wrong flash layout bricks the unit at its first update. The full list is in
-[`15-esphome-path.md`](15-esphome-path.md#the-stock-module-through-libretiny-compiles-hardware-test-pending).
-Until that test is done, the choice for a working module is still the AmebaZ2 Matter build.
+On 2026-10-10 it ran on a module for the first time: one unit with the factory layout, converted
+over the air from the Matter firmware, with two ESPHome updates after that. It is not in the
+table because one afternoon on one unit is not a comparison. The sdk and native layouts have not
+run. The bus receiver stopped twice for a reason nobody has found, and the build now restarts the
+serial port when that happens. LibreTiny rates the chip family 2 out of 5 for stability, nothing
+rolls a bad update back, the return to the Matter firmware has not been tried, and an image built
+for the wrong flash layout bricks the unit at its first update. The full list is in
+[`15-esphome-path.md`](15-esphome-path.md#the-stock-module-through-libretiny).
+Until it has run for a while, the proven choice for a working module is still the AmebaZ2 Matter
+build.
 
 ## What this comparison does not settle
 
@@ -223,7 +229,7 @@ Until that test is done, the choice for a working module is still the AmebaZ2 Ma
 - **Long-term reliability is not compared.** Both fleets are small and young. The known failure has
   been a dead W41H1 radio, which is a sample of one and not evidence of a rate.
 - **The ESPHome path has the least field time.** It has driven a live A/C since 2026-08 and found
-  two protocol bugs the bench had not, but stage 3 of the bring-up (powered from the A/C connector,
-  closed up) is still open, so it has not been left running unattended for as long as the other two.
+  two protocol bugs the bench had not. Units now run it powered from the A/C connector and closed
+  up, but it has not been left running unattended for as long as the other two.
 - **Numbers are from this project's units and builds.** Image sizes and build times will move with
   SDK versions and enabled features.

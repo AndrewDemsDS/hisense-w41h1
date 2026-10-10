@@ -29,6 +29,9 @@ Commands:
   monitor <target> --port P              serial monitor only
   bench   <target> --port P --sim-port S  busmon/app vs virtual_ac.py over a USB adapter
   next    <target>                       print the staged bring-up and its safety warnings
+  convert esphome --board amebaz2-factory [--name N] [--software-version V] [--serial S] [--stage]
+                                         wrap the built ESPHome image as a Matter .ota, so the
+                                         Matter firmware on a stock module installs it (below)
   ota     <target> <step> [args]         Matter OTA release steps (amebaz2 | esp32), below
 
 OTA steps, `dev.py ota amebaz2 <step>`:
@@ -52,11 +55,19 @@ ESP32_ALLOW_IDF_MISMATCH=1, ESP32_ALLOW_NO_RECOVERY=1.
 
 Targets: amebaz2 | esp32 | esphome. Board (esp32/esphome): --board c3 (ESP32-C3 SuperMini, default)
 or --board classic (ESP32-D0WDQ6). esphome also takes --board amebaz2-factory, amebaz2-sdk or
-amebaz2-native (the stock module through LibreTiny, by the flash layout the unit has: test and build
-only, hardware test pending). ESPHome node identity: --name <hostname> and --friendly-name <text>
+amebaz2-native (the stock module through LibreTiny, by the flash layout the unit has: test, build and
+convert; factory has run on a module, sdk and native have not). ESPHome node identity: --name <hostname> and --friendly-name <text>
 (default hisense-ac / "Air Conditioner"; give every node after the first its own). Env: IDF_PATH / ESP_MATTER_PATH (esp32; default ~/esp/esp-idf and
 ~/esp/esp-matter), ESPHOME (esphome command, default `esphome`), ENVF (the release env file, default
 firmware/scripts/ota-release.env; the self-hosted runner copies its secrets file to that exact path).
+ESPHome builds reuse compiled objects through PLATFORMIO_BUILD_CACHE_DIR (default
+~/.cache/w41h1-dev/pio-build-cache; set it yourself to move it, or to an empty string to switch it off).
+
+convert (docs/guide/Converting-a-Stock-Module-to-ESPHome.md): run `dev.py build esphome --board
+amebaz2-factory` first. It re-signs that image with an FWHS serial above the running Matter image
+(default SERIAL_BASE + version, the Matter build's own rule) and wraps it as a Matter .ota at a
+softwareVersion one above the newest Matter version (default), with its provider manifest, in
+firmware/built-images/. --stage also puts both on the OTA provider host and restarts matter-server.
 """
 
 import asyncio
@@ -89,8 +100,16 @@ ENVF = Path(os.environ.get("ENVF") or HERE / "ota-release.env")
 sys.path.insert(0, str(HERE))
 import ota_guards  # noqa: E402  (pure guard verdicts shared by both targets, host-tested)
 ESPHOME_AMEBAZ2_BOARDS = ("amebaz2-factory", "amebaz2-sdk", "amebaz2-native")
-ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2-* only has test and build: the image has not run on a module yet, and "
-                        "a first flash is a clip or UART download-mode job (firmware/docs/15-esphome-path.md)")
+ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2-* has test, build and convert. A first flash is `convert` (over the "
+                        "air from the Matter firmware), the clip or UART download mode, and later updates are "
+                        "`esphome upload` (firmware/docs/15-esphome-path.md)")
+# First slot address (LibreTiny names the app image after it) and slot length, per layout. The
+# host test holds this equal to firmware/esphome/amebaz2/layout-*.json.
+ESPHOME_AMEBAZ2_SLOTS = {"amebaz2-factory": (0x010000, 0x170000), "amebaz2-sdk": (0x00C000, 0x1AC000),
+                         "amebaz2-native": (0x010000, 0x1AC000)}
+# Layouts a unit running the Matter firmware can have. native is absent: it has LibreTiny's
+# bootloader and no Matter firmware to convert from.
+ESPHOME_CONVERT_BOARDS = ("amebaz2-factory", "amebaz2-sdk")
 ESPHOME_PIN = "2026.7.4"   # CI's `esphome config` pin (.github/workflows/qa.yaml); keep in step
 
 # Line-buffer stdout so our own lines stay in order with the stderr warnings and with the output
@@ -211,6 +230,7 @@ def ensure_target(project, idf_tgt, env):
 class Ctx:
     """Parsed invocation: target, board-derived pins, and options."""
     def __init__(self, target, board, port, sim_port, name=None, friendly_name=None):
+        self.convert_opts = {}
         self.target = target
         self.board = board
         self.port = port
@@ -256,7 +276,16 @@ class Ctx:
         pipx_bin = Path(os.environ.get("PIPX_BIN_DIR", str(Path.home() / ".local/bin"))) / "esphome"
         return str(pipx_bin) if pipx_bin.is_file() and os.access(pipx_bin, os.X_OK) else "esphome"
 
-    def esphome_run(self, sub, *args):
+    def esphome_build_dir(self):
+        name = self.name or "hisense-ac"
+        return ESPHOME_DIR / ".esphome/build" / name / ".pioenvs" / name
+
+    def esphome_slot_image(self):
+        """The application image LibreTiny builds for a firmware slot (stock module boards only).
+        `convert` re-signs it, and its name carries the first slot's address."""
+        return self.esphome_build_dir() / f"image_firmware_is.0x{ESPHOME_AMEBAZ2_SLOTS[self.board][0]:06X}.bin"
+
+    def esphome_run(self, sub, *args, cache=True):
         cmd = self.esphome_cmd()
         if not have(cmd):
             die(f"'{cmd}' not found (dev.py fetch esphome, or set ESPHOME=)")
@@ -275,7 +304,26 @@ class Ctx:
             subs += ["-s", "name", self.name]
         if self.friendly_name:
             subs += ["-s", "friendly_name", self.friendly_name]
-        run([cmd, *subs, sub, config, *args], cwd=ESPHOME_DIR)
+        env = esphome_env(os.environ) if cache else {k: v for k, v in os.environ.items()
+                                                      if k != "PLATFORMIO_BUILD_CACHE_DIR"}
+        run([cmd, *subs, sub, config, *args], cwd=ESPHOME_DIR, env=env)
+
+
+def esphome_env(base):
+    """The environment for an esphome call: the caller's, plus a PlatformIO build cache unless one
+    is already chosen. PlatformIO then keeps every compiled object by content, so a clean build, a
+    second node name (its own build directory) or a fresh worktree reuses them. Measured on an
+    AmebaZ2 image: 29 s cold, 18 s into a new build directory, 6 s after a clean with nothing
+    changed, 77 MB in the cache per layout. It does nothing for the ESP32 boards, which ESPHome
+    builds with ESP-IDF's own tools and ccache. An empty PLATFORMIO_BUILD_CACHE_DIR in the
+    caller's environment is respected and switches the cache off."""
+    env = dict(base)
+    if "PLATFORMIO_BUILD_CACHE_DIR" not in env:
+        cache = env.get("XDG_CACHE_HOME") or os.path.join(env.get("HOME") or os.path.expanduser("~"), ".cache")
+        env["PLATFORMIO_BUILD_CACHE_DIR"] = os.path.join(cache, "w41h1-dev", "pio-build-cache")
+    elif not env["PLATFORMIO_BUILD_CACHE_DIR"]:
+        del env["PLATFORMIO_BUILD_CACHE_DIR"]
+    return env
 
 
 # ---- doctor ----------------------------------------------------------------------------------
@@ -532,6 +580,17 @@ def build(ctx):
         say("dev build only. A shippable OTA goes through `dev.py ota esp32 build` (delta base archive, #82).")
     elif ctx.target == "esphome":
         ctx.esphome_run("compile")
+        if ctx.board in ESPHOME_AMEBAZ2_BOARDS and not ctx.esphome_slot_image().is_file():
+            # When nothing changed since a clean, the build cache hands back the linked firmware
+            # and the .uf2 whole. LibreTiny writes the slot images as a side effect of the link
+            # step, which then never runs, so they are missing. One build without the cache
+            # links again and writes them.
+            say("the build came whole from the build cache, without the slot images: building once without the cache")
+            for f in ("raw_firmware.elf", "firmware.uf2"):
+                (ctx.esphome_build_dir() / f).unlink(missing_ok=True)
+            ctx.esphome_run("compile", cache=False)
+            if not ctx.esphome_slot_image().is_file():
+                die(f"the build did not produce {ctx.esphome_slot_image().name}: was the layout file applied?")
 
 
 def erase(ctx):
@@ -1940,6 +1999,82 @@ def revert_version():
     return max(cur_version(), released_version()) + 1
 
 
+def esphome_matter_image(image, serial, slot_len):
+    """A LibreTiny AmebaZ2 app image (payload + 4-byte sum) re-signed with FWHS serial `serial`,
+    as the bytes the Matter firmware's OTA writes into the inactive slot. Dies instead of returning
+    anything the bootloader would refuse: it HANGS on a bad signature, with no fall-back (#75).
+
+    The bootloader boots the valid slot with the higher serial, so `serial` has to be above the
+    running Matter image's. LibreTiny builds with the same default key the Matter build signs with,
+    which is why re-signing is all it takes."""
+    import amebaz2_image
+    if len(image) < amebaz2_image.HDR0 + amebaz2_image.HDR_LEN + 4:
+        die(f"the ESPHome image is too short ({len(image)} bytes) to be an AmebaZ2 app image")
+    payload, trailer = image[:-4], image[-4:]
+    good, lines = amebaz2_image.verify(payload, trailer)
+    if not good:
+        die("the ESPHome image does not verify as built: " + "; ".join(amebaz2_image.failures(lines)))
+    if len(image) > slot_len:
+        die(f"the ESPHome image is {len(image):#x} bytes, the slot holds {slot_len:#x}")
+    if not 0 < serial < 0xFFFFFFFF:
+        die(f"serial {serial} is not a usable FWHS serial")
+    out = amebaz2_image.resign(payload, serial=serial)
+    out += amebaz2_image.bytesum(out)
+    good, lines = amebaz2_image.verify(out[:-4], out[-4:])
+    if not good or amebaz2_image.read_serial(out) != serial or len(out) != len(image):
+        die("the re-signed image does not verify: " + "; ".join(amebaz2_image.failures(lines)))
+    return out
+
+
+def convert(ctx):
+    """Wrap the built ESPHome image for a stock module as a Matter .ota (see the usage text)."""
+    if ctx.target != "esphome" or ctx.board not in ESPHOME_CONVERT_BOARDS:
+        die("convert is for esphome --board amebaz2-factory or amebaz2-sdk: it needs the Matter firmware "
+            "running on the stock module to install the image (amebaz2-native has none)")
+    opts = ctx.convert_opts
+    cfg = load_env(("OTA_TOOL", "VID", "PID"))
+    if opts.get("stage"):
+        need(cfg, "PI_HOST", "PI_OTA_DIR", "PI_SSH_KEY")
+    slot_len = ESPHOME_AMEBAZ2_SLOTS[ctx.board][1]
+    name = ctx.name or "hisense-ac"
+    src = ctx.esphome_slot_image()
+    if not src.is_file():
+        die(f"no {src} -- run: dev.py build esphome --board {ctx.board}" + (f" --name {name}" if ctx.name else ""))
+    v = opts.get("software_version") or revert_version()
+    serial = opts.get("serial") or serial_base(cfg) + v
+    semver = int_to_semver(v)
+    if ctx.board != "amebaz2-factory":
+        warn(f"{ctx.board}: only the factory layout has been converted on hardware (2026-10-10)")
+    say(f"convert {src.name} ({name}, {ctx.board[8:]} layout): FWHS serial {serial}, Matter softwareVersion {v}")
+    import amebaz2_image
+    image = src.read_bytes()
+    say(f"  built image: {len(image):#x} bytes, serial {amebaz2_image.read_serial(image)}, "
+        f"slot {slot_len:#x} ({100 * len(image) // slot_len} % used)")
+    signed = esphome_matter_image(image, serial, slot_len)
+    out = REPO / "firmware/built-images"
+    out.mkdir(parents=True, exist_ok=True)
+    raw, ota, manifest = (out / f"rac-v{v}-esphome.{ext}" for ext in ("bin", "ota", "json"))
+    for f in (raw, ota, manifest):
+        f.unlink(missing_ok=True)
+    raw.write_bytes(signed)
+    r = subprocess.run(["python3", cfg["OTA_TOOL"], "create", "-v", cfg["VID"], "-p", cfg["PID"],
+                        "-vn", str(v), "-vs", semver, "-da", "sha256", "-mi", "1", "-ma", str(v - 1),
+                        str(raw), str(ota)], stdout=subprocess.DEVNULL)
+    if r.returncode != 0:
+        die("ota_image_tool.py create failed")
+    manifest.write_text(json.dumps(ota_manifest(ota.read_bytes(), v, semver, f"file:///{ota.name}")) + "\n")
+    say(f"  image:    {raw}  (re-signed, every trailer and the byte-sum verified)")
+    say(f"  ota:      {ota}  (+ .json manifest)")
+    if opts.get("stage"):
+        say(f"stage on {cfg['PI_HOST']}:{cfg['PI_OTA_DIR']} + restart matter-server")
+        pi_stage(cfg, manifest, ota)
+    else:
+        say("  not staged: copy both to the OTA provider directory and restart matter-server, or re-run with --stage")
+    say(f"next: check the unit's running serial is below {serial} (dev.py ota amebaz2 revert --slots <ip>),")
+    say(f"  then install {semver} from the unit's update entity in Home Assistant. The unit reboots into ESPHome")
+    say("  and leaves the Matter fabric: docs/guide/Converting-a-Stock-Module-to-ESPHome.md")
+
+
 def breakglass_query(ip, port, message, timeout):
     """One short break-glass exchange: send, read up to a newline (or 512 bytes). Raises OSError
     when the unit cannot be reached. create_connection handles IPv6 link-local (fe80::..%if)."""
@@ -3094,9 +3229,16 @@ def main(argv):
         return
 
     board, port, sim_port, name, friendly_name, i = "c3", None, None, None, None, 0
+    convert_opts = {}
     while i < len(rest):
         a = rest[i]
-        if a == "--board" and i + 1 < len(rest):
+        if cmd == "convert" and a == "--stage":
+            convert_opts["stage"] = True; i += 1
+        elif cmd == "convert" and a in ("--serial", "--software-version") and i + 1 < len(rest):
+            if not rest[i + 1].isdigit() or int(rest[i + 1]) < 1:
+                die(f"{a} takes a positive integer (got '{rest[i + 1]}')")
+            convert_opts[a[2:].replace("-", "_")] = int(rest[i + 1]); i += 2
+        elif a == "--board" and i + 1 < len(rest):
             board = rest[i + 1]; i += 2
         elif a == "--port" and i + 1 < len(rest):
             port = rest[i + 1]; i += 2
@@ -3113,12 +3255,13 @@ def main(argv):
     if name and not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?", name):
         die(f"--name '{name}' is not a valid hostname (lowercase letters, digits, hyphens; max 31)")
     ctx = Ctx(target, board, port, sim_port, name, friendly_name)
-    if board in ESPHOME_AMEBAZ2_BOARDS and cmd not in ("doctor", "fetch", "test", "build"):
+    ctx.convert_opts = convert_opts
+    if board in ESPHOME_AMEBAZ2_BOARDS and cmd not in ("doctor", "fetch", "test", "build", "convert"):
         die(ESPHOME_AMEBAZ2_ONLY)
 
     dispatch = {"walk": walk, "doctor": doctor, "fetch": fetch, "test": test_target,
                 "build": build, "erase": erase, "flash": flash, "monitor": monitor,
-                "bench": bench, "next": next_steps}
+                "bench": bench, "next": next_steps, "convert": convert}
     fn = dispatch.get(cmd)
     if not fn:
         usage(1)
