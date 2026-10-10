@@ -12,6 +12,12 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   sends. The bit comes from the stock module's `t_beep` handling, found by static analysis of the
   stock image. Stored on the node, on by default.
 
+### Docs
+- New guide page, `docs/guide/ESP32-Build-Environment.md`: from a clean Linux machine to a flashed
+  ESP32 for both the ESPHome and the esp-matter build, with the steps through `dev.py` and by hand
+  (#117). The ESP-IDF version in the guide now points at `versions.env`, and the ESPHome page
+  describes the `uart:` block the YAML has.
+
 ### Tooling
 - `firmware/scripts/esphome-upstream-check.sh` runs ESPHome's own CI scripts against the
   `hisense_ac` component in a checkout of `esphome/esphome`. CI requires it to pass against the

@@ -135,8 +135,10 @@ ESP32 node drives real Matter commands to the A/C in production (write/control).
 
 ## Build
 
-The guided way, with ESP-IDF v5.5.4 and esp-matter fetched at the pinned versions if you don't have
-them ([Build, Flash & Test](Build-Flash-Test#esp32-esp-matter) has the detail):
+The guided way, with ESP-IDF and esp-matter fetched at the versions pinned in `versions.env` if you
+don't have them. [ESP32 Build Environment](ESP32-Build-Environment) starts from a clean machine and
+also gives every step by hand; [Build, Flash & Test](Build-Flash-Test#esp32-esp-matter) has the
+detail behind `dev.py`:
 
 ```
 python3 firmware/scripts/dev.py walk esp32 --board c3        # or --board classic

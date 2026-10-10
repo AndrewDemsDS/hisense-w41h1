@@ -67,9 +67,9 @@ without change, including the ground-loop rule for bench work and the warning ag
 module. The shipped defaults are the validated classic-ESP32 set (TX 19, RX 18, DE 4); an ESP32-C3
 SuperMini uses 5 / 6 / 10.
 
-There is deliberately **no `uart:` block** in the YAML. The driver's own HAL opens the port so the
-DE timing that took a multi-day debug to find stays exactly as validated. Pins are set on the
-`hisense_ac:` component instead.
+TX and RX are set on the YAML's `uart:` block and DE on the `hisense_ac:` component, all three
+through the `tx_pin`, `rx_pin` and `de_pin` substitutions. The component drives DE itself with the
+hardware-validated timing (5 ms settle, 25 ms drain).
 
 ## Flash it
 

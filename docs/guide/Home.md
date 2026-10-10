@@ -46,6 +46,7 @@ flowchart LR
 |---|---|
 | **[User Guide](User-Guide)** | **pick a firmware and take it from clone to running node with `dev.py`** |
 | [Hardware & Wiring](Hardware-and-Wiring) | the module, SoC/flash/transceiver, the A/C 4-pin port, the RS-485 bus |
+| [ESP32 Build Environment](ESP32-Build-Environment) | from a clean Linux machine to a flashed ESP32: the tools, where they come from, every step by hand |
 | [ESPHome Build](ESPHome-Build) | the recommended firmware: an ESP32 board, native to Home Assistant |
 | [ESP32 Replacement Build](ESP32-Replacement-Build) | the same ESP32 board running Matter |
 | [Installing the Custom Firmware](Installing-Custom-Firmware) | the stock AmebaZ2 module, flashed with a CH341A clip |

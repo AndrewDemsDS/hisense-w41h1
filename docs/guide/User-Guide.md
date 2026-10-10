@@ -30,7 +30,9 @@ warnings in [ESP32 Replacement Build](ESP32-Replacement-Build).
 ## What you need
 
 A Linux x86_64 machine. The package names below are for Debian and Ubuntu; `doctor` tells you what
-is still missing for your target.
+is still missing for your target. If ESP-IDF, `idf.py` or esp-matter are new to you, read
+[ESP32 Build Environment](ESP32-Build-Environment) first: it says where each tool comes from and
+gives the ESP32 steps by hand.
 
 | For | Install | Disk |
 |---|---|---|
