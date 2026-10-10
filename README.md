@@ -53,6 +53,7 @@ python3 firmware/scripts/dev.py walk esphome   # or esp32, or amebaz2; asks befo
 |---|---|
 | pick a firmware and go from clone to running node | [User Guide](docs/guide/User-Guide.md) |
 | know the hardware and the 4-pin port | [Hardware & Wiring](docs/guide/Hardware-and-Wiring.md) |
+| set up the ESP32 build tools on a clean machine (ESPHome or ESP-IDF + esp-matter) | [ESP32 Build Environment](docs/guide/ESP32-Build-Environment.md) |
 | 1. run ESPHome on an ESP32 (recommended, Home Assistant only) | [ESPHome Build](docs/guide/ESPHome-Build.md) |
 | 2. run Matter on an ESP32 | [ESP32 Replacement Build](docs/guide/ESP32-Replacement-Build.md) |
 | 3. flash a stock AmebaZ2 module (CH341A clip, once) | [Installing the Firmware](docs/guide/Installing-Custom-Firmware.md), prebuilt images on [Releases](https://github.com/AndrewDemsDS/hisense-w41h1/releases) |

@@ -6,6 +6,8 @@ esp-matter build, none of the Matter stack. **Home Assistant only.**
 
 The user guide covers everything a builder needs, so it is not repeated here:
 
+- installing ESPHome on a clean machine and the first flash, step by step:
+  [`docs/guide/ESP32-Build-Environment.md`](../../docs/guide/ESP32-Build-Environment.md)
 - entities, hardware, flashing (both boards), staged bring-up, capability gating and status:
   [`docs/guide/ESPHome-Build.md`](../../docs/guide/ESPHome-Build.md)
 - wiring and the GPIO / ground-loop warnings:
