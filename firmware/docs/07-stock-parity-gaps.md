@@ -26,6 +26,7 @@ to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` fl
 | Power (V/I/W) | ✅ | – | ✅ | ElectricalPowerMeasurement (see #16, `power_estimate.h`) |
 | Vertical swing on/off | ✅ | ✅ | ✅ | FanControl **RockSetting** on ep1, both builds. Shipped under #19. |
 | Display / panel on/off | cap only | ✅ | ✅ | OnOff switch on ep9 (write-only, the A/C reports no display state back). Shipped under #19/#33. (Dimmer *level* = `ac_power_display`, still needs new RE.) |
+| Beeper (buzzer on a command) | – | ✅ | ✅ | OnOff switch on ep11, default on, persisted on the node. Off clears `t_beep` (command frame byte 23 bit 2) on every frame the node sends; the A/C reports no beeper state. Built in AmebaZ2 1.3.49 / ESP32 1.1.19, same bit the ESPHome `beeper` switch clears. |
 | 8 °C frost-guard heat | ✅ cap | ❌ | ✅ ro | Capability bit `ac_8heat` (byte26 0x80) read as `heat_8c`; `ac_enable_8heat` (byte39 0x04) read as `enable_8heat` when `ext_valid`. No control frame RE'd. `docs/05:79` marks it likely absent on this unit. |
 | Purify / ionizer | ✅ cap | ❌ | ✅ ro | `ac_purify` (byte23 0x08) read as `purify`; live `purify_on` (b36 0x20) "bit always 0, feature absent on this unit". No builder. |
 | AI / smart | ✅ cap | ❌ | ✅ ro | `ai` (byte28 0x40). Capability only, no control frame. |

@@ -462,6 +462,63 @@ static inline uint32_t matter_thermostat_featuremap(const HisenseFeatures *f) {
   return f->cool_heat ? MATTER_THERMOSTAT_FEATUREMAP_FULL : MATTER_THERMOSTAT_FEATUREMAP_COOL;
 }
 
+/* ---- Beeper switch (ep11) ----------------------------------------------------
+ * One more On/Off plug-in unit, appended after the fault endpoint so nothing is renumbered.
+ * The number and the label are defined here because the two Matter targets must agree on
+ * both: AmebaZ2 takes the endpoint from the .zap, ESP32 creates it in code, and Home
+ * Assistant names the switch from the UserLabel. A host test checks the .zap against these. */
+#define MATTER_EP_BEEPER 11
+#define MATTER_LABEL_BEEPER "Beeper"
+
+/* What to hand hisense_set_beeper() given the stored OnOff attribute of that endpoint.
+ * The attribute is persisted by the data model (NVM storage on AmebaZ2, a non-volatile
+ * attribute on ESP32) and its default is ON, so a node that has never been told otherwise
+ * beeps like the stock module. A failed read also means ON: a unit that goes silent for no
+ * reason looks like one that stopped taking commands. */
+static inline bool matter_beeper_setting(bool read_ok, bool stored_on) { return !read_ok || stored_on; }
+
+/* ---- Bus diagnostics on the manufacturer cluster (0xFFF1FC00, ep1) -----------
+ * Read-only attributes next to CompressorHz/Features1/Faults1, the Matter side of the
+ * ESPHome build's diagnostic sensors (firmware/docs/14). The ids are also in
+ * sdk-edits/hisense-aircon-cluster.xml and HisenseAircon-ClusterId.h. */
+/* The four counters are consecutive and in this order: the ESP32 glue loops over them. */
+#define MATTER_HISENSE_ATTR_CHECKSUM_ERRORS 0x0014     /* int32u, since boot */
+#define MATTER_HISENSE_ATTR_REPLY_TIMEOUTS 0x0015      /* int32u, since boot */
+#define MATTER_HISENSE_ATTR_UNANSWERED_COMMANDS 0x0016 /* int32u, since boot */
+#define MATTER_HISENSE_ATTR_LINK_LOSSES 0x0017         /* int32u, since boot */
+#define MATTER_HISENSE_ATTR_LINK_TOKEN 0x0018          /* int16u, 0 = not learned yet */
+#define MATTER_HISENSE_ATTR_BUS_LINK 0x0019            /* boolean */
+
+/* LinkToken: the A/C's (device type, sub type) pair as one word, type in the high byte.
+ * 0 until the DevType reply supplied it. The driver never adopts a 00 00 pair, so 0 cannot
+ * be a learned value, and the 01 01 the driver stamps before that reply is a default, not
+ * something the unit said. The ESPHome text sensor shows the same pair as "HH LL". */
+static inline uint16_t matter_link_token_attr(bool seen, uint8_t hi, uint8_t lo) {
+  return seen ? (uint16_t) (((uint16_t) hi << 8) | lo) : 0;
+}
+
+typedef struct {
+  uint32_t checksum_errors;
+  uint32_t reply_timeouts;
+  uint32_t unanswered_commands;
+  uint32_t link_losses;
+  uint16_t link_token;
+  bool bus_link;
+} MatterBusDiag;
+
+/* One snapshot of everything above, so both glues publish the same set from the same calls.
+ * Counters are read without a lock (see the driver header): each is a single word. */
+static inline void matter_bus_diag_read(MatterBusDiag *d) {
+  uint8_t hi = 0, lo = 0;
+  bool seen = hisense_get_link_token(&hi, &lo);
+  d->checksum_errors = hisense_checksum_mismatch_count();
+  d->reply_timeouts = hisense_reply_timeout_count();
+  d->unanswered_commands = hisense_unanswered_command_count();
+  d->link_losses = hisense_link_loss_count();
+  d->link_token = matter_link_token_attr(seen, hi, lo);
+  d->bus_link = hisense_link_is_up();
+}
+
 #ifdef __cplusplus
 }
 #endif

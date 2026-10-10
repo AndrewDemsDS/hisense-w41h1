@@ -58,7 +58,8 @@ whole release, the OTA provider-discovery race, A/B rollback).
   whole-tree-regenerates and clobbers the hand-made `zzz_generated` HisenseAircon
   `ClusterId.h`/callback edits (see `sdk-edits/README.md`).
 - A **new manufacturer cluster** needs GUI-authored `.zap` + minimal `zzz_generated` edits
-  (ClusterId.h + callback decls). Standard clusters/attributes/endpoints: edit the `.zap`.
+  (ClusterId.h + callback decls). Attributes, defaults and appended endpoints: edit the `.zap`
+  with `firmware/scripts/zap_edit.py` and run its `check` (§16).
 
 ## 3. Endpoint rules (keep endpoints contiguous: precaution, not a proven crash cause)
 
@@ -509,13 +510,20 @@ and attribute.
 
 ### Editing the `.zap` without the GUI
 
-Scripted JSON edits do work for **standard** clusters (they resolve against stock ZCL metadata), and
-a full build confirmed correct codegen: `FIXED_ENDPOINT_COUNT`, both clusters present in the
-`.matter`, contiguity lint clean. But that build passed while shipping the model that broke
-subscriptions, so treat GUI-free editing as **build-verified, not runtime-verified**. Manufacturer
-clusters still require the GUI plus the `zzz_generated` edits. Cheap insurance either way: open the
-`.zap` in the GUI once and plain-Save before building, which forces ZAP to re-derive all metadata in
-one canonical pass.
+Use `firmware/scripts/zap_edit.py` (recipe in `firmware/src/sdk-edits/README.md`). It adds an
+attribute, changes a default or storage option, or appends an endpoint, taking names and types from
+the ZCL XML, and `zap_edit.py check` then runs the build's own generation steps on a scratch copy.
+The check fails on a generation error, on an enabled attribute that codegen dropped, on a
+non-contiguous endpoint array and on any ZAP warning of a kind the committed `.zap` does not
+already print.
+
+This covers the existing manufacturer cluster too: 1.3.49 added six attributes to it this way,
+after adding them to `hisense-aircon-cluster.xml` and `HisenseAircon-ClusterId.h`. A manufacturer
+cluster that is not on any endpoint yet still needs the GUI plus the `zzz_generated` edits.
+
+A passing check and a clean build are **build-verified, not runtime-verified**: the 2026-07-19
+model passed every build gate and broke subscriptions. The subscription gate in the flash path
+above is what covers that.
 
 ## 17. Reverting to stock without opening the case (issue #19)
 

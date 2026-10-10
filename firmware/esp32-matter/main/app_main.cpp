@@ -12,6 +12,7 @@
 //   ep4 On/Off plug-in unit   : Quiet/Mute          ep8 TemperatureMeasurement: coil temp
 //   ep5 On/Off plug-in unit   : Turbo               ep9 On/Off plug-in unit   : panel display
 //                            ep10 Contact Sensor    : aggregate fault flag (HisenseFaults.any)
+//                            ep11 On/Off plug-in unit: beeper (buzzer bit of command frames)
 // Every endpoint carries a UserLabel "ha_entitylabel" (via an in-RAM DeviceInfoProvider) so HA
 // names the entities. 0x66/40 feature flags + bus-link-health (#56) wire to the driver callbacks.
 //
@@ -79,6 +80,7 @@ static uint16_t s_ep_sleep = 0;    // ep6 ModeSelect Sleep profile
 static uint16_t s_ep_aux = 0;      // ep7 BooleanState aux/PTC heat relay
 static uint16_t s_ep_coil = 0;     // ep8 TemperatureMeasurement coil
 static uint16_t s_ep_display = 0;  // ep9 OnOff panel display (#19 cheap win)
+static uint16_t s_ep_beeper = 0;   // ep11 OnOff beeper: a node setting, default on, kept in NVS
 static uint16_t s_ep_fault = 0;    // ep10 BooleanState -> any A/C fault (#38)
 
 // Hisense manufacturer cluster (ember-only on Ameba; HA has no schema for it, but it exists
@@ -345,6 +347,12 @@ static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t e
     apply_display(val->val.b);
     return ESP_OK;
   }
+  // Beeper (ep11): no frame of its own. The driver clears the buzzer bit of every 0x65 command
+  // frame from here on (ESPHome's `beeper` switch, same bit).
+  if (endpoint_id == s_ep_beeper && cluster_id == OnOff::Id && attribute_id == OnOff::Attributes::OnOff::Id) {
+    hisense_set_beeper(val->val.b);
+    return ESP_OK;
+  }
   if (endpoint_id == s_ep_sleep && cluster_id == ModeSelect::Id &&
       attribute_id == ModeSelect::Attributes::CurrentMode::Id) {
     if (!(st.valid && val->val.u8 == (uint8_t) (st.sleep_raw / 2)))
@@ -499,6 +507,20 @@ static esp_err_t on_attribute_update(attribute::callback_type_t type, uint16_t e
 // ---------------------------------------------------------------------------
 static void set_attr(uint16_t ep, uint32_t cluster, uint32_t attr, esp_matter_attr_val_t val) {
   attribute::update(ep, cluster, attr, &val);
+}
+
+// Bus diagnostics -> manufacturer cluster (read-only, docs/14): the Matter side of the ESPHome
+// build's diagnostic sensors. attribute::update skips a value that has not changed, so this is
+// free on a quiet bus. Call with the CHIP stack locked and s_from_bus set.
+static void publish_bus_diag(void) {
+  MatterBusDiag d;
+  matter_bus_diag_read(&d);
+  // The four counters have consecutive ids (0x0014..0x0017), in this order.
+  const uint32_t counters[] = {d.checksum_errors, d.reply_timeouts, d.unanswered_commands, d.link_losses};
+  for (uint32_t i = 0; i < 4; i++)
+    set_attr(s_ep_id, kMfgClusterId, MATTER_HISENSE_ATTR_CHECKSUM_ERRORS + i, esp_matter_uint32(counters[i]));
+  set_attr(s_ep_id, kMfgClusterId, MATTER_HISENSE_ATTR_LINK_TOKEN, esp_matter_uint16(d.link_token));
+  set_attr(s_ep_id, kMfgClusterId, MATTER_HISENSE_ATTR_BUS_LINK, esp_matter_bool(d.bus_link));
 }
 
 // TemperatureMeasurement MeasuredValue must be set through the REGISTERED cluster object, not
@@ -732,6 +754,7 @@ static void on_status(const HisenseState *st) {
     set_attr(s_ep_id, kMfgClusterId, 0x0012, esp_matter_uint32(feats));
     set_attr(s_ep_id, kMfgClusterId, 0x0013, esp_matter_uint32(faults));
   }
+  publish_bus_diag();
 
   s_from_bus = false;
   // lk (ScopedChipStackLock) releases the CHIP stack lock here at scope exit.
@@ -856,8 +879,13 @@ static void on_features(const HisenseFeatures *f) {
 // -- HA reads ActivePower as steady 0 when off, not a liveness signal).
 static void on_link(bool up) {
   ESP_LOGW(TAG, "A/C RS-485 link %s", up ? "restored" : "lost (bus silent)");
+  // Both edges: no status frame arrives while the link is down, so this is the one moment
+  // the counters and BusLink can be published. s_from_bus keeps the uplink handler out.
+  lock::ScopedChipStackLock lk(portMAX_DELAY);
+  s_from_bus = true;
+  publish_bus_diag();
+  s_from_bus = false;
   if (!up) {
-    lock::ScopedChipStackLock lk(portMAX_DELAY);
     esp_matter_attr_val_t nullv = esp_matter_nullable_int16(nullable<int16_t>());
     attribute::update(s_ep_id, Thermostat::Id, Thermostat::Attributes::LocalTemperature::Id, &nullv);
     set_temp_measured(s_ep_outdoor, chip::app::DataModel::Nullable<int16_t>());  // null = unavailable
@@ -1471,7 +1499,7 @@ static void set_entity_label(chip::EndpointId ep, const char *name) {
 // esp-matter's endpoint::on_off_plug_in_unit::create() would ALSO add Groups (0x04),
 // ScenesManagement (0x62), and the OnOff Lighting feature (StartUpOnOff = HA's "power-on
 // behavior") -- none of which the kitchen unit has -- so build the endpoint by hand instead.
-static uint16_t make_onoff_switch(node_t *node) {
+static uint16_t make_onoff_switch(node_t *node, bool default_on = false) {
   endpoint_t *ep = endpoint::create(node, ENDPOINT_FLAG_NONE, NULL);
   endpoint::add_device_type(ep, endpoint::on_off_plug_in_unit::get_device_type_id(),
                             endpoint::on_off_plug_in_unit::get_device_type_version());
@@ -1486,6 +1514,10 @@ static uint16_t make_onoff_switch(node_t *node) {
   cluster::identify::command::create_trigger_effect(idc);
 
   cluster::on_off::config_t onoff_cfg;
+  // esp-matter creates OnOff non-volatile and reads NVS when the attribute is created, so
+  // `default_on` is only what a node with nothing stored starts with. The beeper relies on
+  // that: on until the user turns it off, then whatever was last written.
+  onoff_cfg.on_off = default_on;
   // `on_off` defaults false. Callers that model something the A/C reports back (eco,
   // turbo, mute) want that, because status resync corrects it within a second. The
   // Display switch does NOT: the A/C reports no display state, so nothing can ever
@@ -1786,6 +1818,11 @@ extern "C" void app_main() {
   cluster::thermostat::feature::heating::config_t heat_feat;
   cluster::thermostat::feature::heating::add(th, &heat_feat);
   cluster::thermostat::feature::auto_mode::config_t auto_feat;
+  // MinSetpointDeadBand 0, as in the AmebaZ2 .zap. The esp-matter default (2.0 C) is added to
+  // the heat limit and taken off the cool limit, so cool could not go below 18 C or heat above
+  // 30 C although the unit takes 16 to 32. The A/C runs one setpoint; a dead band between two
+  // that are never both active protects nothing.
+  auto_feat.min_setpoint_dead_band = 0;
   cluster::thermostat::feature::auto_mode::add(th, &auto_feat);
 
   cluster::fan_control::config_t fc_cfg;  // FanMode=0(Off), seq=2, PercentCurrent=0
@@ -1831,6 +1868,11 @@ extern "C" void app_main() {
   attribute::create(mfg, 0x0010, ATTRIBUTE_FLAG_NONE, esp_matter_uint8(0));   // CompressorHz
   attribute::create(mfg, 0x0012, ATTRIBUTE_FLAG_NONE, esp_matter_uint32(0));  // Features1 (packed)
   attribute::create(mfg, 0x0013, ATTRIBUTE_FLAG_NONE, esp_matter_uint32(0));  // Faults1 (packed)
+  // Bus diagnostics (docs/14), same ids and types as the AmebaZ2 cluster XML.
+  for (uint32_t id = MATTER_HISENSE_ATTR_CHECKSUM_ERRORS; id <= MATTER_HISENSE_ATTR_LINK_LOSSES; id++)
+    attribute::create(mfg, id, ATTRIBUTE_FLAG_NONE, esp_matter_uint32(0));  // the four bus counters
+  attribute::create(mfg, MATTER_HISENSE_ATTR_LINK_TOKEN, ATTRIBUTE_FLAG_NONE, esp_matter_uint16(0));
+  attribute::create(mfg, MATTER_HISENSE_ATTR_BUS_LINK, ATTRIBUTE_FLAG_NONE, esp_matter_bool(false));
 
   cluster::user_label::create(ep, NULL, CLUSTER_FLAG_SERVER);
 
@@ -1882,9 +1924,16 @@ extern "C" void app_main() {
   cluster::user_label::create(ep_fault, NULL, CLUSTER_FLAG_SERVER);
   s_ep_fault = endpoint::get_id(ep_fault);
 
-  ESP_LOGI(TAG, "endpoints: aircon=%u outdoor=%u eco=%u mute=%u turbo=%u sleep=%u aux=%u coil=%u display=%u fault=%u",
+  // ep11: beeper -> OnOff switch, default ON (the stock module beeps). Appended after the fault
+  // endpoint so ep1..10 keep their ids; the AmebaZ2 .zap numbers it 11 as well.
+  // (MATTER_EP_BEEPER; the log line below prints the id esp-matter assigned.)
+  s_ep_beeper = make_onoff_switch(node, true);
+
+  ESP_LOGI(TAG,
+           "endpoints: aircon=%u outdoor=%u eco=%u mute=%u turbo=%u sleep=%u aux=%u coil=%u display=%u fault=%u "
+           "beeper=%u",
            s_ep_id, s_ep_outdoor, s_ep_eco, s_ep_mute, s_ep_turbo, s_ep_sleep, s_ep_aux, s_ep_coil, s_ep_display,
-           s_ep_fault);
+           s_ep_fault, s_ep_beeper);
 
   // Install the in-RAM DeviceInfoProvider BEFORE start() so the UserLabel cluster init
   // (during Server::Init) sees a non-null provider (else it VerifyOrDie's).
@@ -1948,6 +1997,15 @@ extern "C" void app_main() {
   set_entity_label(s_ep_coil, "Coil");
   set_entity_label(s_ep_display, "Display");
   set_entity_label(s_ep_fault, "Fault");
+  set_entity_label(s_ep_beeper, MATTER_LABEL_BEEPER);
+  // The stored beeper choice comes back from NVS without an attribute callback, so hand it to
+  // the driver here, before hisense_init() below starts the bus task.
+  {
+    esp_matter_attr_val_t bv = esp_matter_invalid(NULL);
+    const bool ok = attribute::get_val(s_ep_beeper, OnOff::Id, OnOff::Attributes::OnOff::Id, &bv) == ESP_OK &&
+                    bv.type == ESP_MATTER_VAL_TYPE_BOOLEAN;
+    hisense_set_beeper(matter_beeper_setting(ok, ok && bv.val.b));
+  }
   chip::DeviceLayer::PlatformMgr().UnlockChipStack();
 
   // F1: swap the fabric when a new controller pairs during a "77" window.

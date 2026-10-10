@@ -164,6 +164,21 @@ bool hisense_status_checksum_ok(const uint8_t *f, size_t n) {
 static uint32_t s_chk_mismatch = 0;
 uint32_t hisense_checksum_mismatch_count(void) { return s_chk_mismatch; }
 
+/* Bus counters since boot (see the header). Bus-task writes only. */
+static uint32_t s_reply_timeouts = 0;
+static uint32_t s_unanswered_cmds = 0;
+static uint32_t s_link_losses = 0;
+uint32_t hisense_reply_timeout_count(void) { return s_reply_timeouts; }
+uint32_t hisense_unanswered_command_count(void) { return s_unanswered_cmds; }
+uint32_t hisense_link_loss_count(void) { return s_link_losses; }
+bool hisense_link_is_up(void) { return !s_link_down; }
+
+/* Buzzer choice for outgoing command frames (see the header). Written by the glue's task, read
+ * by the bus task once per frame; a single bool, so no lock. */
+static bool s_beeper = true;
+void hisense_set_beeper(bool on) { s_beeper = on; }
+bool hisense_get_beeper(void) { return s_beeper; }
+
 /* ---------------------------------------------------------------------------
  * Finalize a fully-populated frame in place: compute the 2-byte big-endian
  * checksum over [2, chk_offset), store it (hi,lo) at chk_offset, then write the
@@ -252,6 +267,34 @@ size_t hisense_stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8
   f[7] = hi;                 // bytes are rewritten by finalize
   f[8] = lo;
   finalize_frame(f, unstuffed - 4, unstuffed - 2);
+  return hisense_stuff_checksum(f, unstuffed, out, out_cap);
+}
+
+/* Set or clear the buzzer bit of a finished 0x65 command frame (see the header). Same shape
+ * as hisense_stamp_link_token above: recover the unstuffed length from LEN, patch the body,
+ * redo the checksum, re-stuff. The frame is copied to a local first, so in == out is fine.
+ * PURE -> host-testable, and checked byte for byte against the ESPHome path's stamp_beep(). */
+size_t hisense_stamp_beep(const uint8_t *in, size_t len, bool beep, uint8_t *out, size_t out_cap) {
+  if (in == NULL || out == NULL || len < 13) {
+    return 0;
+  }
+  if (in[0] != HISENSE_STX1 || in[1] != HISENSE_STX2) {
+    return 0;
+  }
+  size_t unstuffed = (size_t) in[4] + 9;
+  if (unstuffed < 13 || unstuffed > len || unstuffed > HISENSE_TX_MAX_FRAME) {
+    return 0;
+  }
+  uint8_t f[HISENSE_TX_MAX_FRAME];
+  memcpy(f, in, unstuffed);
+  if (f[13] == 0x65 && unstuffed >= HISENSE_CMD_FRAME_LEN) {
+    if (beep) {
+      f[HISENSE_CMD_BEEP_BYTE] |= HISENSE_CMD_BEEP_BIT;
+    } else {
+      f[HISENSE_CMD_BEEP_BYTE] &= (uint8_t) ~HISENSE_CMD_BEEP_BIT;
+    }
+    finalize_frame(f, unstuffed - 4, unstuffed - 2);
+  }
   return hisense_stuff_checksum(f, unstuffed, out, out_cap);
 }
 
@@ -1021,6 +1064,16 @@ static int hisense_transact(const uint8_t *frame, size_t len, int timeout_ms, ui
   if (!(len > 13 && frame[13] == 0x0A)) {
     txlen = hisense_stamp_link_token(frame, len, s_link_tok[0], s_link_tok[1], txbuf, sizeof txbuf);
   }
+  // Beeper off: clear the buzzer bit. Only a 0x65 command carries it, and the builders write
+  // it set, so with the beeper on (the default) this is skipped and the frame is byte for byte
+  // what it was before the option existed. In place when the token stamp already filled txbuf.
+  if (!s_beeper && len > 13 && frame[13] == 0x65) {
+    size_t bl = (txlen > 0) ? hisense_stamp_beep(txbuf, txlen, false, txbuf, sizeof txbuf)
+                            : hisense_stamp_beep(frame, len, false, txbuf, sizeof txbuf);
+    if (bl > 0) {
+      txlen = bl;
+    }
+  }
   if (txlen > 0) {
     hisense_tx_raw(txbuf, txlen);
   } else {
@@ -1061,6 +1114,7 @@ static int hisense_transact(const uint8_t *frame, size_t len, int timeout_ms, ui
     }
     vTaskDelay(pdMS_TO_TICKS(2));
   }
+  s_reply_timeouts++;
   return 0;  // timeout -- no reply
 }
 
@@ -1402,8 +1456,11 @@ static void hisense_bus_task(void *pvParameters) {
         // copies a whole item before returning pdTRUE.
         // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
         n = hisense_transact(item.data, item.len, 500, 0x00);  // may echo a 0x66 status
-        if (n > 0)
+        if (n > 0) {
           hisense_consume_status((size_t) n);
+        } else {
+          s_unanswered_cmds++;  // the write is gone: nothing resends a queued frame
+        }
       }
     }
 
@@ -1418,6 +1475,9 @@ static void hisense_bus_task(void *pvParameters) {
 
     // Link-health edge -> fire the callback once on lost/restored (#56).
     int edge = hisense_link_health_edge(link_miss >= HISENSE_LINK_LOST_POLLS, &s_link_down);
+    if (edge > 0) {
+      s_link_losses++;
+    }
     if (edge != 0 && s_link_cb != NULL) {
       s_link_cb(edge < 0);  // edge<0 = restored, edge>0 = lost
     }
