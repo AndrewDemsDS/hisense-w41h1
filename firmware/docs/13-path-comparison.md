@@ -215,8 +215,9 @@ image in a slot of 1472 or 1712 KiB.
 On 2026-10-10 it ran on a module for the first time: one unit with the factory layout, converted
 over the air from the Matter firmware, with two ESPHome updates after that. It is not in the
 table because one afternoon on one unit is not a comparison. The sdk and native layouts have not
-run. The bus receiver stopped twice for a reason nobody has found, and the build now restarts the
-serial port when that happens. LibreTiny rates the chip family 2 out of 5 for stability, nothing
+run. The bus receiver stopped twice, from a lost count in LibreTiny's receive buffer that the
+component now prevents, and a second converted unit went silent on the bus for a reason that is
+still open. LibreTiny rates the chip family 2 out of 5 for stability, nothing
 rolls a bad update back, the return to the Matter firmware has not been tried, and an image built
 for the wrong flash layout bricks the unit at its first update. The full list is in
 [`15-esphome-path.md`](15-esphome-path.md#the-stock-module-through-libretiny).

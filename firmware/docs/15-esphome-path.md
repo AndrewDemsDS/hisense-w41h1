@@ -369,26 +369,91 @@ Measured that day:
 | ESPHome to ESPHome updates | two, with `esphome upload` (`firmware.uf2`). The running slot went 2, 1, 2 and the node was back within about 10 s each time |
 | Reboot | no hang, with the workaround flags in the image. One mains power cycle also came back clean |
 | Bus | status frames decode and commands are answered. The reply verdict logs `Command answered (class 0x65, echo, ack)`, so the echo-plus-ACK layout the component marks VERIFY is seen on this unit |
-| **Receiver** | **stopped twice** and stayed stopped until a power cycle (next paragraph) |
+| **Receiver** | **stopped twice** and stayed stopped until a power cycle. A cause was found and is fixed (next paragraphs) |
 | A second module, read with the clip | also the factory layout, with the vendor firmware (serial 100) in both slots and nothing in `0x3D0000..0x3D8000` |
+| A second module, converted | link up for about a minute, then its bus went silent at the pin within four minutes and stayed silent (see "The silent unit") |
 
 **The receiver stall.** Twice the bus link dropped and did not come back until the unit was power
 cycled: once within the first minute of the first boot after the conversion, and once right after
 the first command sent to a unit that had been idle for five minutes. The unit obeyed that command
 and later ones, so transmit kept working. Only receive was dead, and the node reported the link
-as lost while still controlling the unit. The cause is not established. 115 forced preference
-writes to flash did not reproduce it, and neither did repeated commands. LibreTiny's serial driver
-enables only the receive-data interrupt on this port.
+as lost while still controlling the unit. 115 forced preference writes to flash did not reproduce
+it, and neither did repeated commands.
 
-**The recovery.** Closing and reopening the port (`Serial0.end()`, `Serial0.begin()`) restores it.
-With the receive interrupt switched off on purpose, the link was reported lost after 5 silent
-polls and was back 0.6 s after the restart. `packages/amebaz2.yaml` therefore restarts the port
-the moment the hub reports the link lost and every 15 s while it stays down, logs a warning each
-time and counts the restarts in a `Serial port restarts` diagnostic sensor. The timing rule is a
-plain function with a host test (`amebaz2/w41h1_uart_policy.h`,
+**A cause: LibreTiny's receive buffer loses count.** LibreTiny 1.13.0 keeps received bytes in the
+Arduino `RingBufferN`. The reader, on the main loop, ends with `_numElems--`. The receive
+interrupt ends with `_numElems++`. The decrement is a load, a subtract and a store, and the
+interrupt is not masked around it. When the interrupt lands between the load and the store, the
+store writes the old count minus one and the byte the interrupt just stored is never counted. It
+stays in the buffer. From then on `available()` is one short, every frame is read one byte late
+and one byte short, and the frame assembler never completes a frame: reply timeouts with no
+checksum error, while transmit works. Nothing puts the count right again except a new buffer.
+The same race is reported against the Arduino core API (arduino/ArduinoCore-API issue 195).
+
+Measured on a module, with UART0 in internal loopback so that the real interrupt and the real
+buffer are used and nothing reaches the bus:
+
+| Reader | Baud | Bytes | Times the count fell behind |
+|---|---|---|---|
+| no lock, one read at a random time within 127 us | 115200 | 142558 | 21, the first after 0.8 s. 21 bytes behind at the end |
+| interrupts masked around the read (PRIMASK) | 115200 | 142551 | 0 |
+| ESPHome `InterruptLock` around the read | 115200 | 142485 | 0 |
+| no lock, reads in groups every 2 to 10 ms, as the main loop reads | 9600 | 233034 | 5, the first after 59 s: one a minute |
+| ESPHome `InterruptLock`, same reader | 9600 | 233287 | 0 |
+| no lock, one read within 127 us of each byte | 9600 | 178420 | 0: every read is over before the next byte |
+
+No byte was lost or reordered in any run: the bytes arrive, the count is wrong. The 9600 baud
+run with grouped reads is the bus's own case, with bytes arriving all the time: one loss a
+minute. On the bus, bytes arrive for roughly a quarter of each second (a 160-byte status frame
+and the shorter replies), which gives a loss every three to four minutes. The unit that showed
+the stalls, once the restart below was in place, dropped its link at random intervals with a
+median of 169 s, each drop ending 0.4 to 1.5 s later with the restart, with no checksum errors.
+
+**The fix.** On LibreTiny the component reads the port under ESPHome's `InterruptLock`
+(`HisenseAC::bus_read`), one buffered byte at a time, a few microseconds each. The other
+platforms are not touched: their UART drivers do not use this buffer.
+
+**The recovery, now a fallback.** Closing and reopening the port (`Serial0.end()`,
+`Serial0.begin()`) makes a new buffer, which is why it brought the link back. With the receive
+interrupt switched off on purpose, the link was reported lost after 5 silent polls and was back
+0.6 s after the restart. `packages/amebaz2.yaml` still restarts the port when the hub reports the
+link lost and every 15 s while it stays down, as a net for a stall with some other cause. It logs
+a warning each time and counts the restarts in a `Serial port restarts` diagnostic sensor. It no
+longer fires while the hub holds the transceiver in transmit: closing the port takes the TX pin
+away from the UART, and with DE high that puts a break on the pair. The timing rule is a plain
+function with a host test (`amebaz2/w41h1_uart_policy.h`,
 `firmware/test/test_esphome_uart_policy.cpp`). It lives in the board package because `Serial0` is
-LibreTiny's: ESPHome's uart component can reload a port's settings only on ESP32 and ESP8266. This
-is a recovery, not a fix.
+LibreTiny's: ESPHome's uart component can reload a port's settings only on ESP32 and ESP8266.
+If the counter stays at 0 through a soak on a unit that answers, the restart can go.
+
+**DE timing, measured.** With an API client and Home Assistant connected, over about 150 frames:
+the write blocks for up to 12.5 ms (LibreTiny waits for room in the 16-byte transmit FIFO, so it
+returns with up to 16 bytes still to send), and DE fell 23.9 to 25.9 ms after the last stop bit.
+The 25 ms hold is kept to within 1 ms: the deadline is counted from before the write and
+includes the frame's wire time, and the loop runs every 1 to 5 ms while DE is high. The longest
+single pass of the main loop in the same period was 53 ms, so a hold of up to about 75 ms is
+possible. That would cost one reply, and the link is reported lost only after five in a row. The time the A/C takes to answer could not be
+measured (the unit this was timed on did not answer at all).
+
+**The silent unit.** A second module, in another A/C, ran ESPHome with the link up for about a
+minute, then lost the link five times within two and a half minutes, the fifth time for good.
+The first timeout came 1.1 s after Home Assistant connected. This is not the buffer fault and no
+firmware state explains it:
+
+- The receive pin never went low: 0 of 2.3 million samples taken in the 120 ms after our frames,
+  0 bytes in the receive FIFO, no framing, break or overrun flag, with the receive interrupt
+  enabled throughout.
+- Our side looks right: the TX pin toggles during a frame (low in 71 % of samples), the baud
+  divisor gives 9604 baud, DE is low when idle (read back as an input)
+  and is driven around every frame. 16 bytes left the transmit FIFO in 16.66 ms.
+- It made no difference whether DE fell 25 ms or 0.95 ms after the last stop bit.
+- About 100 port restarts, eight software resets and one power-on reset did not bring a reply.
+  Nor did five minutes without transmitting, twice.
+
+What is left is outside the chip: the transceiver, the wiring, or the A/C not answering. Whether
+that unit still obeys commands was not checked. It needs someone at the unit: a command with the
+beeper on, a scope or a second transceiver on the pair, and the same module on the unit that
+works.
 
 Not measured: the sdk and native layouts, any run longer than an afternoon, an interrupted or
 failed update, the return to the Matter firmware, and the image without the reboot workaround.
@@ -480,7 +545,7 @@ has not run on the sdk or native layout, and a mismatch has not been provoked on
    Wi-Fi, digital I/O, flash I/O and the watchdog as untested on this family and OTA as not
    implemented, although the OTA code is there and users report it working. On this module Wi-Fi,
    the DE pin, flash writes and two updates worked on the day of the test. The serial
-   receiver did not stay up (risk 12).
+   receive buffer loses count without a lock (risk 12).
 2. **Reboot hang.** LibreTiny 1.13.0 restarts the chip with a CPU-only reset. On other RTL8720C
    modules that leaves it dark after a restart or an OTA until power has been off for about
    30 seconds (libretiny-eu/libretiny issue 396). The fix, a watchdog system reset, is proposed in
@@ -510,12 +575,14 @@ has not run on the sdk or native layout, and a mismatch has not been provoked on
    LibreTiny replaces the bootloader, and what its one selects has not been checked. Scope PA17
    during boot with the module off the A/C bus.
 7. **DE while the chip boots.** PA17's level between reset and `setup()` is whatever LibreTiny's
-   boot leaves it at. A high DE holds the A/C's bus. It has not been measured.
+   boot leaves it at. A high DE holds the A/C's bus. Read back as an input on a running module,
+   PA17 is low even with the chip's pull-up switched on, so the board pulls DE down while nothing
+   drives it. What the boot code does with the pin before `setup()` has not been measured.
 8. **Loop blocking.** A command frame holds the main loop for about 50 ms. ESPHome warns above
    50 ms ("took a long time for an operation"), so the log may show that warning once or twice.
    The Wi-Fi stack runs in its own tasks and is not held. ESPHome's own components, the API
-   among them, wait for the write. Whether DE is released on time with the rest of ESPHome
-   sharing the loop is a scope measurement.
+   among them, wait for the write. DE is released within 1 ms of its 25 ms hold, timed in the
+   firmware ("DE timing, measured" above). A scope has not been on it.
 9. **Settings storage.** ESPHome's preferences go to LibreTiny's key-value area, 32 KiB at the
    address the layout gives: `0x3D0000` for factory and sdk, `0x3F8000` for native. `0x3D0000` is
    above the second slot in both layouts. The converted unit booted and ran with the area as the
@@ -530,9 +597,13 @@ has not run on the sdk or native layout, and a mismatch has not been provoked on
 11. **The wrong layout.** Covered above. The build-time guard is tested (a wrong or missing
     layout file fails the build). The run-time guard has reported `ok` on one correct unit. It
     has not been seen to report a mismatch on hardware.
-12. **The receiver stall.** Described under the hardware results. The cause is unknown, so the
-    restart is a recovery that may not cover every way the port can fail. A `Serial port restarts`
-    sensor that keeps climbing means the port is failing repeatedly on that unit.
+12. **The receiver stall.** Described under the hardware results. One cause is found and
+    prevented. The restart stays for any other, and a `Serial port restarts` sensor that keeps
+    climbing on a unit that answers means the port is failing in a way that is not understood.
+13. **A unit that stops answering.** One of two converted modules went silent on the bus within
+    four minutes and nothing in the firmware brought it back ("The silent unit" above). Until the
+    cause is known, a conversion can end with a unit that has to go back to the Matter firmware
+    with the clip.
 
 ### What is left to test
 
@@ -542,8 +613,9 @@ one update, and watch DE on a scope for the settle and drain times and for its l
 against `virtual_ac.py` on the bus pads.
 
 Beyond that: the sdk and native layouts, a soak of days on the converted unit with the restart
-counter watched, the cause of the receiver stall, `hil_esphome_actuation.py` against this build,
-and a return to the Matter firmware.
+counter watched (it should now stay at 0), the cause of the silent unit, the time the A/C takes
+to answer (DE fall to first received byte), `hil_esphome_actuation.py` against this build, and a
+return to the Matter firmware.
 
 ## Deliberately not attempted
 

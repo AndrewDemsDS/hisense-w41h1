@@ -165,12 +165,16 @@ Wi-Fi, the layout check reports a match, the A/C answers status polls and comman
 updates with `esphome upload` went through, each back within about 10 seconds. One mains power
 cycle came back clean.
 
-**One fault was found.** Twice the receive side of the bus port stopped and stayed stopped until a
-power cycle, while commands still reached the unit. The cause is not known. Reopening the port
-restores it, so the board package restarts the port when the bus link drops and every 15 seconds
-while it stays down. Each restart logs a warning and counts in the `Serial port restarts`
-diagnostic sensor. On a healthy bus that sensor stays at 0. If yours climbs, the unit is
-recovering from something that is not understood yet.
+**One fault was found and fixed.** Twice the receive side of the bus port stopped and stayed
+stopped until a power cycle, while commands still reached the unit. The cause is in LibreTiny's
+receive buffer, which loses count of a byte when the receive interrupt lands inside a read. The
+component now reads with interrupts masked on this platform. Reopening the port also clears it,
+so the board package still restarts the port when the bus link drops and every 15 seconds while
+it stays down, as a fallback. Each restart logs a warning and counts in the `Serial port
+restarts` diagnostic sensor. On a unit that answers, that sensor stays at 0. If yours climbs
+while the unit answers, it is recovering from something that is not understood yet. It also
+climbs on a unit that does not answer at all, which a restart cannot cure: one of the two
+converted modules ended that way, for a reason outside the chip that is still open.
 
 **Not measured:** the sdk and native layouts (they compile only), any run longer than an
 afternoon, an interrupted update, and the return to the Matter firmware. It is the newest and

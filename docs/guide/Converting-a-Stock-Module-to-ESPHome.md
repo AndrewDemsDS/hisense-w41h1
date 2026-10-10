@@ -53,9 +53,13 @@ On one module, 2026-10-10:
   back clean.
 - The A/C bus works: status frames decode and commands are answered.
 - **The bus receiver stopped twice** and stayed stopped until a power cycle, while commands still
-  reached the unit. The cause is not known. The board package now restarts the serial port when
-  the link drops, which was shown to bring it back (see
+  reached the unit. A cause was found and fixed the same day: LibreTiny's receive buffer loses
+  count of a byte when its interrupt lands inside a read. The board package also restarts the
+  serial port when the link drops, as a fallback (see
   [ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board)).
+- **A second converted module went silent on the bus within four minutes** and stayed silent
+  through restarts, resets and a power-on. Nothing reaches its receive pin, so the cause is
+  outside the chip and is not known yet.
 
 Not measured: the sdk layout, a run longer than an afternoon, a failed or interrupted update, a
 power cut during an update, and the return to the Matter firmware.
@@ -75,8 +79,11 @@ power cut during an update, and the return to the Matter firmware.
   the Matter clip image, written with the SOIC-8 clip
   ([Recovery & Reflash](Recovery-and-Reflash#amebaz2-module-ch341a-clip)). Returning over the air
   has not been tried.
-- **The receiver fault above has no known cause.** The recovery restores the link in under a
-  second, but a unit that needs it often is not healthy. Watch the `Serial port restarts` sensor.
+- **One of two converted units stopped answering on the bus,** for a reason that is not known
+  and that the firmware cannot work around. Be ready to go back with the clip.
+- **The receiver fault above is fixed, with a fallback.** The port restart restores the link in
+  under a second if the receiver stalls for another reason. Watch the `Serial port restarts`
+  sensor: on a unit that answers it should stay at 0.
 - **Home Assistant sees a different device.** Entity ids change, and the Matter node has to be
   removed by hand.
 
