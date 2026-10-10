@@ -990,6 +990,30 @@ def _write_raw(path, text):
         f.write(text)
 
 
+# The sleep profiles of the ep6 ModeSelect, in firmware order: the mode value is the Hisense sleep
+# profile number (matter_drivers.cpp writes CurrentMode = sleep_raw / 2). Same five labels the ESP32
+# build creates in code, so one name set reaches Home Assistant from either Matter target.
+SLEEP_MODE_LABELS = ("Off", "General", "Old", "Young", "Kids")
+
+
+def edit_mode_select_sleep_profiles(text):
+    """Replace the Realtek example's coffee options on endpoint 1 with our sleep profiles on ep6.
+
+    The manager file is Realtek's and is not vendored, so a fresh or restored SDK brings back the
+    stock table. With it, ep6 has no entry: SupportedModes reads back as an empty list and Home
+    Assistant shows the sleep select as unavailable, although CurrentMode still works."""
+    if '"General"' in text:
+        return text
+    body = "".join(f'    buildModeOptionStruct("{label}", {mode}, List<const SemanticTag>()),\n'
+                   for mode, label in enumerate(SLEEP_MODE_LABELS))
+    text, n = re.subn(r"(coffeeOptions\[\] = \{\n).*?(\};)", lambda m: m.group(1) + body.rstrip(",\n") + "\n" + m.group(2),
+                      text, count=1, flags=re.S)
+    if n != 1:
+        return text
+    return re.sub(r"EndpointSpanPair\(1, (.*?\))\s*// Options for Endpoint 1",
+                  r"EndpointSpanPair(6, \1 // Sleep profiles on endpoint 6", text, count=1)
+
+
 def _edit_file(path, fn, done, applied, marker=None, missing_ok=False):
     """Apply one transform in place. `marker` must be in the result, or the SDK changed under us."""
     path = Path(path)
@@ -1049,6 +1073,13 @@ def apply_sdk_edits(cfg):
                "ModeSelect span guard already applied",
                "applied ModeSelect null-span guard (orphaned endpoint type inflates the generated count)",
                "mSpan.data() == nullptr")
+    # The same file's option table: Realtek's coffee example on endpoint 1 -> our sleep profiles
+    # on endpoint 6. Without it the ep6 SupportedModes list is empty.
+    _edit_file(f"{sdk}/ameba-rtos-z2/component/common/application/matter/drivers/matter_drivers/"
+               "mode_select/ameba_mode_select_manager.cpp", edit_mode_select_sleep_profiles,
+               "ModeSelect sleep profiles already on endpoint 6",
+               "replaced the stock ModeSelect options with the sleep profiles on endpoint 6",
+               'EndpointSpanPair(6, ')
     gcc_rel = f"{sdk}/ameba-rtos-z2/project/realtek_amebaz2_v0_example/GCC-RELEASE"
     for mk in ("application.is.matter.mk", "application.is.mk"):
         # The SDK's build_info target regenerates .ver on EVERY build by shelling out to `date`, so

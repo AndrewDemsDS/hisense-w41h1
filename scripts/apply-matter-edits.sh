@@ -41,11 +41,13 @@ if [ -f "$MK" ]; then
 else echo "  [!!] not found: $MK (verify the make path for your SDK version)"; fi
 
 # 4) Sleep-profile ModeSelect: the supported-modes manager is a Realtek file (NOT vendored here).
-#    Point it at endpoint 6 with our profiles -- exact block in firmware/src/sdk-edits/README.md.
+#    Its stock table is a coffee example on endpoint 1, which leaves our ep6 with an empty
+#    SupportedModes list. `dev.py ota amebaz2 build` rewrites it on every build
+#    (edit_mode_select_sleep_profiles), so nothing is done by hand; this only reports the state.
 MSM="$M/drivers/matter_drivers/mode_select/ameba_mode_select_manager.cpp"
 if grep -q 'coffeeOptions' "$MSM" 2>/dev/null && ! grep -q '"General"' "$MSM" 2>/dev/null; then
-  echo "  [MANUAL] $MSM : replace coffeeOptions[] with Off/General/Old/Young/Kids and"
-  echo "           EndpointSpanPair(6, ...) -- see firmware/src/sdk-edits/README.md (Sleep ModeSelect)."
+  echo "  [note] $MSM still has the stock options; dev.py ota amebaz2 build replaces them"
+  echo "         with the sleep profiles on endpoint 6."
 fi
 
 # 5) IPv6 SLAAC on the station netif. lwIP creates every netif with ip6_autoconfig_enabled = 0
