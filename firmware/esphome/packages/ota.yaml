@@ -1,0 +1,6 @@
+# ESPHome's own update server, as is. Every board file includes it except the AmebaZ2 ones, whose
+# package (amebaz2.yaml) declares the same server with an id so it can switch it off when the
+# image does not match the module's flash layout.
+
+ota:
+  - platform: esphome

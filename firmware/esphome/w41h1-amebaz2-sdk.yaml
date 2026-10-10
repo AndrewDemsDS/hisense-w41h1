@@ -1,0 +1,27 @@
+# Hisense A/C over RS-485, ESPHome variant: the stock AEH-W41H1 module itself, SDK flash layout.
+#
+# For a module whose flash was first written with this repo's clip image
+# (flash_rac-integrated-*.bin): it has the Realtek SDK's partition table. Slots at 0x00C000 and
+# 0x1B8000, 0x1AC000 bytes each.
+#
+# The layout is not a preference. It has to be the one already in the module's flash, or the
+# first update bricks the unit. How to tell which one a unit has:
+# firmware/docs/15-esphome-path.md, "Which flash layout a unit has".
+#
+# STATUS: compiles, hardware test pending.
+#
+#   build:   esphome compile firmware/esphome/w41h1-amebaz2-sdk.yaml
+
+substitutions:
+  name: hisense-ac
+  friendly_name: Air Conditioner
+  layout: sdk
+  # The module's own wiring: UART0 to the RS-485 transceiver, DE on PA17. Not a choice.
+  tx_pin: PA14
+  rx_pin: PA13
+  de_pin: PA17
+
+packages:
+  node: !include packages/node.yaml
+  hisense_ac: !include packages/hisense-ac.yaml
+  amebaz2: !include packages/amebaz2.yaml

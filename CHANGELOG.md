@@ -7,6 +7,29 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 
 ## Unreleased
 
+### ESPHome: one entity definition for every board, and a build for the stock module
+- The node config is split. `firmware/esphome/packages/hisense-ac.yaml` holds the bus, the hub and
+  every entity, `packages/node.yaml` holds logger, API and Wi-Fi, `packages/ota.yaml` the update
+  server, and each board file holds only its name, pins and platform block. `w41h1.yaml` validates to the same configuration as
+  before, with or without the `-s` board overrides, so existing nodes are unaffected.
+- New board files: `w41h1-esp32c3.yaml` (the C3 SuperMini, same node the `-s` overrides build),
+  and two compile-only examples, `w41h1-esp8266.yaml` and `w41h1-rp2040.yaml`.
+- **`w41h1-amebaz2-factory.yaml`, `-sdk.yaml`, `-native.yaml`: ESPHome for the stock module's own
+  RTL8710C through LibreTiny. They compile (601 KB) and have not run on hardware.** There is one
+  file per flash layout a module can have and no default, because an image built for the wrong
+  layout bricks the unit at its first update. The layouts are tracked in
+  `firmware/esphome/amebaz2/`. The build fails if the image's addresses are not those of the
+  layout it names, and at run time a `Flash layout` diagnostic sensor compares them with the
+  bootloader's partition table and switches the update server off on a mismatch. The files also
+  carry the linker workaround for the LibreTiny reboot hang (issue 396). The open risks are listed
+  in `firmware/docs/15-esphome-path.md`. `dev.py test|build esphome --board amebaz2-<layout>`
+  validate and compile one, and `dev.py` refuses to flash any of them.
+- The component needed no change to build there. Host tests now cover a UART write that blocks
+  until the bytes are out (LibreTiny) and a loop that polls the bus only every 16 ms: DE is still
+  released 25 ms after the last byte.
+- CI validates every board file and compiles all three AmebaZ2 ones, failing if the component
+  warns.
+
 ### Fixed (AmebaZ2 1.3.50)
 - The Kitchen-style AmebaZ2 node published an empty sleep profile list (ep6 ModeSelect
   `SupportedModes`), so Home Assistant showed the sleep select as unavailable. The list lives in a

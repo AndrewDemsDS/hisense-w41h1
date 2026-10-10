@@ -1,0 +1,28 @@
+# Hisense A/C over RS-485, ESPHome variant: ESP8266 (D1 mini).
+#
+# STATUS: example, compiles, never run on hardware. It exists to show that the component and the
+# entity set are not tied to one chip. The ESP32 board files are the hardware-validated ones.
+#
+#   flash:   esphome run firmware/esphome/w41h1-esp8266.yaml
+
+substitutions:
+  name: hisense-ac
+  friendly_name: Air Conditioner
+  # UART0 on its alternate ("swapped") pins, D8 / D7. That keeps the bus on the hardware UART and
+  # off GPIO1 / GPIO3, where the boot ROM prints and the board's USB adapter sits. GPIO15 must
+  # be low at reset, which the D1 mini's own pull-down takes care of.
+  tx_pin: GPIO15
+  rx_pin: GPIO13
+  de_pin: GPIO5
+
+packages:
+  node: !include packages/node.yaml
+  ota: !include packages/ota.yaml
+  hisense_ac: !include packages/hisense-ac.yaml
+
+esp8266:
+  board: d1_mini
+
+logger:
+  # UART0 is the A/C bus on this board, so the log goes out on UART1 (TX only, GPIO2 / D4).
+  hardware_uart: UART1

@@ -99,6 +99,9 @@ class SimAC : public H::BusIO {
   uint32_t reply_delay = 40;
   uint8_t devtype_hi = 0x01, devtype_lo = 0x02;
   uint8_t setpoint = 22;
+  // bus_write() returns only once the bytes are on the wire, as on a platform whose UART write
+  // waits on the transmit FIFO (LibreTiny) instead of queueing into a driver buffer (ESP-IDF).
+  bool blocking_write = false;
 
   std::vector<Write> writes;
   std::vector<DeEdge> de;
@@ -114,6 +117,8 @@ class SimAC : public H::BusIO {
     writes.push_back({g_now, de_high, std::vector<uint8_t>(data, data + len)});
     if (responsive)
       respond_(writes.back().bytes);
+    if (blocking_write)
+      g_now += H::bus_tx_time_ms(len);
   }
   void bus_flush() override {}
   int bus_read() override {
@@ -749,6 +754,80 @@ static void test_millis_rollover() {
   g_now = saved;
 }
 
+// The drain deadline is counted from the time poll() was given, which is before the write. That
+// is what keeps DE correct on both kinds of UART: a write that only queues the bytes returns at
+// once and they leave during the wait, and a write that blocks until they are out returns with
+// the wire time already spent. Either way DE has to fall 25 ms after the last byte, not 25 ms
+// plus a second wire time, or it would still be driving the bus when the unit answers.
+static void check_de_release(const SimAC &ac, uint32_t slack, const char *what) {
+  for (auto &w : ac.writes) {
+    uint32_t fell = 0;
+    for (auto &e : ac.de) {
+      if (!e.high && e.t > w.t && fell == 0)
+        fell = e.t;
+    }
+    uint32_t last_byte = w.t + H::bus_tx_time_ms(w.bytes.size());
+    CHECK(w.de_high, "%s: write at %u with DE high", what, (unsigned) w.t);
+    CHECK(fell >= last_byte + 25 && fell <= last_byte + 25 + slack, "%s: DE falls %d ms after the last byte", what,
+          (int) (fell - last_byte));
+    CHECK(fell < last_byte + ac.reply_delay, "%s: DE is down before the reply starts", what);
+  }
+}
+
+static void test_blocking_write() {
+  printf("-- a UART write that blocks until the bytes are out\n");
+  SimAC ac;
+  ac.blocking_write = true;
+  Recorder rec;
+  H::BusScheduler bus;
+  rec.bus = &bus;
+  bus.setup(&ac, &rec, true);
+  run(bus, 3000);
+  uint8_t cmd[64];
+  size_t n = H::build_command(H::AcCommand{}, cmd, sizeof(cmd));
+  CHECK(bus.enqueue(cmd, n), "enqueue a 50-byte command");
+  run(bus, 4000);
+
+  check_de_release(ac, 1, "blocking");
+  std::vector<uint32_t> hb;
+  for (auto &w : ac.writes)
+    if (cls(w) == 0x1E)
+      hb.push_back(w.t);
+  CHECK(hb.size() >= 6, "heartbeats kept coming (%zu)", hb.size());
+  for (size_t i = 2; i < hb.size(); i++)
+    CHECK(hb[i] - hb[i - 1] >= 1000 && hb[i] - hb[i - 1] <= 1060, "cycle %zu period %u ms", i,
+          (unsigned) (hb[i] - hb[i - 1]));
+  CHECK(rec.statuses >= 5, "status delivered (%d)", rec.statuses);
+  CHECK(rec.timeouts == 0, "no reply window closed empty (%d)", rec.timeouts);
+  CHECK(rec.links.empty(), "no link edge");
+  CHECK(rec.commands.size() == 1 && rec.commands[0].first, "the command went out once and was answered");
+  CHECK(bus.unanswered_commands() == 0 && bus.command_resends() == 0, "nothing sent twice");
+}
+
+// ESPHome's loop runs about every 16 ms unless a component asks for a tight one, and other
+// components take their turn in between. The scheduler must stay correct when it is polled that
+// coarsely: DE is released late by at most one loop period and every reply is still taken.
+static void test_coarse_loop() {
+  printf("-- polled every 16 ms, with and without a blocking write\n");
+  for (int blocking = 0; blocking < 2; blocking++) {
+    SimAC ac;
+    ac.blocking_write = blocking != 0;
+    ac.reply_delay = 60;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    uint32_t end = g_now + 6000;
+    while (static_cast<int32_t>(end - g_now) > 0) {
+      bus.poll(g_now);
+      g_now += 16;
+    }
+    check_de_release(ac, 16, blocking ? "coarse blocking" : "coarse");
+    CHECK(rec.statuses >= 4, "status delivered (%d)", rec.statuses);
+    CHECK(rec.timeouts == 0, "no reply window closed empty (%d)", rec.timeouts);
+    CHECK(rec.links.empty(), "no link edge");
+  }
+}
+
 int main() {
   printf("== ESPHome bus scheduler vs the original bus task's contract ==\n");
   test_boot_and_cycle();
@@ -761,6 +840,8 @@ int main() {
   test_stale_frame_in_command_window();
   test_truncated_reply();
   test_millis_rollover();
+  test_blocking_write();
+  test_coarse_loop();
   printf("  %d checks, %d failed\n", g_checks, g_fail);
   printf(g_fail ? "== BUS SCHEDULER FAILED ==\n" : "== BUS SCHEDULER OK ==\n");
   return g_fail ? 1 : 0;

@@ -1,0 +1,70 @@
+# The stock AEH-W41H1 module's own MCU (Realtek RTL8710C, AmebaZ2 family) through ESPHome's
+# LibreTiny platform. Included by the three w41h1-amebaz2-*.yaml board files, which differ only in
+# the flash layout they name.
+#
+# STATUS: compiles, hardware test pending. Read firmware/docs/15-esphome-path.md ("The stock
+# module through LibreTiny") before flashing a module.
+#
+# Substitutions the including file must define: layout (factory, sdk or native), plus the pins.
+# There is no default layout on purpose: the wrong one bricks the unit at its first update.
+
+esphome:
+  # Copies amebaz2/ into the build: the layout files and w41h1_slots.h, which is also included.
+  includes:
+    - amebaz2
+  platformio_options:
+    # Overrides the board's slot and settings addresses. The path is relative to the build
+    # directory, where the line above has just put the file.
+    custom_board: src/amebaz2/layout-${layout}.json
+  build_flags:
+    # w41h1_slots.h fails the build unless the image's offsets are those of this layout.
+    - -DW41H1_LAYOUT_${layout}=1
+    # LibreTiny 1.13.0 reboots this family with a CPU-only reset, which can leave the chip dark
+    # until power has been off for half a minute: after a restart, and after every OTA
+    # (libretiny-eu/libretiny issue 396, fix proposed in pull request 397, not released). These
+    # two flags point lt_reboot() at the SDK's watchdog system reset instead, the workaround
+    # confirmed in that issue. They stay harmless once the fix ships.
+    - -Wl,--wrap=lt_reboot
+    - -Wl,--defsym=__wrap_lt_reboot=sys_reset
+  on_boot:
+    priority: -100
+    then:
+      - lambda: |-
+          char report[96];
+          w41h1_layout_report(report, sizeof(report));
+          if (w41h1_layout_ok()) {
+            ESP_LOGI("w41h1", "Flash layout: %s", report);
+            return;
+          }
+          // The bootloader's partition table is not the one this image was built for. An update
+          // would be written to the wrong place and the running image invalidated, so the
+          // update server is switched off. Reflash with the board file for this unit's layout.
+          ESP_LOGE("w41h1", "Flash layout: %s", report);
+          ESP_LOGE("w41h1", "OTA is disabled: this image was built for another flash layout");
+          id(ota_server).mark_failed();
+
+ota:
+  - platform: esphome
+    id: ota_server
+
+rtl87xx:
+  # A Tuya module with the same chip (RTL8720CM class, 4 MB flash). It is used for its pin map:
+  # it is the board definition that names PA13 / PA14 as UART0, which the
+  # generic-rtl8720cm-4mb-1712k one does not. Its flash layout is replaced by the file above.
+  board: cr3l
+
+# The logger keeps LibreTiny's default port, UART2: TX on PA16, the module's own log console pad,
+# at 115200 baud. It must never be moved to UART0, which is the A/C bus.
+
+text_sensor:
+  # The running slot, the address the bootloader gives for the next update, and whether that
+  # agrees with the layout this image was built for. "MISMATCH" means: do not update this unit.
+  - platform: template
+    name: Flash layout
+    icon: mdi:memory
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      char report[96];
+      w41h1_layout_report(report, sizeof(report));
+      return std::string(report);

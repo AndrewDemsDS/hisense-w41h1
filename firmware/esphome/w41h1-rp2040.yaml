@@ -1,0 +1,22 @@
+# Hisense A/C over RS-485, ESPHome variant: Raspberry Pi Pico W (RP2040).
+#
+# STATUS: example, compiles, never run on hardware. It exists to show that the component and the
+# entity set are not tied to one chip. The ESP32 board files are the hardware-validated ones.
+#
+#   flash:   esphome run firmware/esphome/w41h1-rp2040.yaml
+
+substitutions:
+  name: hisense-ac
+  friendly_name: Air Conditioner
+  # UART1 (GP4 / GP5), which leaves UART0 and USB free for the log.
+  tx_pin: GPIO4
+  rx_pin: GPIO5
+  de_pin: GPIO6
+
+packages:
+  node: !include packages/node.yaml
+  ota: !include packages/ota.yaml
+  hisense_ac: !include packages/hisense-ac.yaml
+
+rp2:
+  board: rpipicow

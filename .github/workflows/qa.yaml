@@ -59,13 +59,18 @@ jobs:
       # The ESPHome variant has no other gate: its component is Python + C++ that the host tests
       # only reach through esphome_aircon_map.h, so a broken schema or a renamed option would
       # otherwise reach a user's first `esphome run`. `config` validates the YAML AND every
-      # platform schema in components/hisense_ac without a toolchain, in seconds. A full compile
-      # would need ESP-IDF and belongs on the self-hosted runner, not here.
+      # platform schema in components/hisense_ac without a toolchain, in seconds. The one full
+      # compile is the esphome-amebaz2 job below.
       - name: ESPHome config validation
         run: |
           cd firmware/esphome
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
-          pipx run esphome==2026.7.4 config w41h1.yaml
+          # Every board file: they share packages/, so a change made for one chip is checked
+          # against all of them.
+          for b in w41h1*.yaml; do pipx run esphome==2026.7.4 config "$b"; done
+          # The exact invocation `dev.py --board c3` makes, which the deployed nodes were built with.
+          pipx run esphome==2026.7.4 -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 \
+            config w41h1.yaml
           # The upstream-shaped component test (tests/components/hisense_ac/) sets every option of every
           # platform, which w41h1.yaml does not.
           for t in tests/build*.yaml; do pipx run esphome==2026.7.4 config "$t"; done
@@ -98,6 +103,65 @@ jobs:
             echo "::error::softwareVersion must strictly increase ($new <= $old) -- bump firmware/src/version.txt"
             exit 1
           fi
+
+  # The stock module's own MCU through ESPHome's LibreTiny platform (w41h1-amebaz2-*.yaml, one
+  # per flash layout a unit can have). These are the board files nobody builds on the way to an
+  # ESP32, and the one platform whose toolchain is small enough for a hosted runner (about 800 MB,
+  # kept in the cache), so they get a real compile and not only `config`. All three layouts are
+  # built because each one is checked at compile time: amebaz2/w41h1_slots.h fails the build when
+  # the image's slot addresses are not those of the layout the file names. Compile-only: the
+  # images carry the placeholder secrets and are thrown away. They say nothing about a module,
+  # which needs the hardware test.
+  esphome-amebaz2:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # PlatformIO's tree: the LibreTiny platform, the Realtek SDK and the ARM toolchain. Every run
+      # restores the newest entry. Only main saves one, so PR runs cannot fill the cache quota.
+      - name: Restore the PlatformIO tree
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.platformio
+          key: pio-esphome-amebaz2-${{ github.run_id }}
+          restore-keys: |
+            pio-esphome-amebaz2-
+
+      - name: Compile every flash layout
+        run: |
+          cd firmware/esphome
+          cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
+          # layout:address of the first slot. The app image is named after the address it is
+          # built for, so the file name shows that the layout file was applied.
+          for want in factory:0x010000 sdk:0x00C000 native:0x010000; do
+            layout=${want%%:*}
+            # Its own name, so each layout gets its own build directory.
+            if ! pipx run esphome==2026.7.4 -s name "ac-$layout" compile "w41h1-amebaz2-$layout.yaml" \
+                > build.log 2>&1; then
+              tail -n 200 build.log
+              exit 1
+            fi
+            echo "== $layout"
+            grep -a -E '^(RAM|Flash):|Successfully compiled' build.log
+            # The SDK and the platform warn about their own code. Ours has to build clean here
+            # too: this is the only target with a different compiler and integer widths.
+            if grep -a -E 'components/hisense_ac/.*(warning|error)' build.log; then
+              echo "::error::hisense_ac does not compile cleanly for AmebaZ2 (see above)"
+              exit 1
+            fi
+            # The reboot workaround points lt_reboot() at the SDK's sys_reset with two linker
+            # flags. If a platform update drops sys_reset the link fails above.
+            out=".esphome/build/ac-$layout/.pioenvs/ac-$layout"
+            ls -l "$out/firmware.uf2" "$out/image_firmware_is.${want##*:}.bin"
+          done
+
+      - name: Save the PlatformIO tree
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.platformio
+          key: pio-esphome-amebaz2-${{ github.run_id }}
 
   # ESPHome's own CI gates, run against the hisense_ac component placed in a checkout of
   # esphome/esphome (see firmware/scripts/esphome-upstream-check.sh). The pinned-release run is

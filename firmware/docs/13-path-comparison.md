@@ -105,9 +105,9 @@ AmebaZ2 build has more ways to silently produce a wrong image.
 
 ESPHome is the smallest of the three by a wide margin: `pipx install esphome`, then `esphome run`.
 It pulls its own ESP-IDF and needs no esp-matter checkout, no `sdk/` symlink and no release script.
-The driver and the ESP-IDF HAL are reused unchanged, registered as local IDF components from the
-custom component's `__init__.py`, so there is still exactly one copy of the protocol code in the
-repo. See [`15-esphome-path.md`](15-esphome-path.md).
+The component carries its own port of the codec, held byte for byte equal to the shared driver by
+a host test, and uses nothing outside ESPHome's own API. See
+[`15-esphome-path.md`](15-esphome-path.md).
 
 Practically: a newcomer can stand up the ESP32 toolchain unattended, and the ESPHome one in a
 minute. The AmebaZ2 toolchain needs the SDK obtained separately and placed correctly first.
@@ -201,6 +201,21 @@ anything other than Home Assistant need to see this A/C?
 The AmebaZ2 path keeps its own strong justification: it is the only one that needs **no added
 hardware at all**, and it proves the module can be fully de-clouded in place, which is the thing
 this project set out to demonstrate.
+
+## A fourth combination, not yet a path: ESPHome on the stock module
+
+The table above has ESPHome only on an ESP32. Since October 2026 the same ESPHome configuration
+also compiles for the stock module's RTL8710C through ESPHome's LibreTiny platform
+(`firmware/esphome/w41h1-amebaz2-*.yaml`, one per flash layout a module can have): no added
+hardware, no proprietary SDK to obtain (LibreTiny fetches what it needs, about 800 MB), a 601 KB
+image in a slot of 1472 or 1712 KiB.
+
+It is not in the table because it has not run on a module. The first flash still needs the clip
+or UART download mode, LibreTiny rates the chip family 2 out of 5 for stability, a known reboot
+hang is worked around but unproven here, nothing rolls a bad update back, and an image built for
+the wrong flash layout bricks the unit at its first update. The full list is in
+[`15-esphome-path.md`](15-esphome-path.md#the-stock-module-through-libretiny-compiles-hardware-test-pending).
+Until that test is done, the choice for a working module is still the AmebaZ2 Matter build.
 
 ## What this comparison does not settle
 
