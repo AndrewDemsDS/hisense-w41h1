@@ -16,6 +16,9 @@ on:
       - 'firmware/src/rs485-driver/**'
       - 'versions.env'
       - '.github/workflows/esp32-build.yaml'
+      # Prose cannot break the build: a README or doc edit in these directories skips the run.
+      - '!firmware/esp32-matter/**/*.md'
+      - '!firmware/src/rs485-driver/**/*.md'
   push:
     branches: [main]
     paths:
@@ -23,6 +26,9 @@ on:
       - 'firmware/src/rs485-driver/**'
       - 'versions.env'
       - '.github/workflows/esp32-build.yaml'
+      # Prose cannot break the build: a README or doc edit in these directories skips the run.
+      - '!firmware/esp32-matter/**/*.md'
+      - '!firmware/src/rs485-driver/**/*.md'
   workflow_dispatch:
 
 permissions:
@@ -51,7 +57,9 @@ jobs:
     needs: pins
     runs-on: ubuntu-latest
     # Espressif's own image for the pinned IDF tag: toolchains and the IDF Python env preinstalled.
-    container: espressif/idf:${{ needs.pins.outputs.idf }}
+    # Pulled through Google's public mirror of Docker Hub. The same image, without Docker Hub's
+    # anonymous pull limit, which fails the job with "toomanyrequests" on shared runner addresses.
+    container: mirror.gcr.io/espressif/idf:${{ needs.pins.outputs.idf }}
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +68,10 @@ jobs:
     env:
       ESP_MATTER_PATH: /opt/esp/esp-matter
       ESP_MATTER_PIN: ${{ needs.pins.outputs.esp_matter }}
+      # idf.py wraps the compilers in ccache (already in the image) when this is set.
+      IDF_CCACHE_ENABLE: '1'
+      CCACHE_DIR: /opt/ccache
+      CCACHE_MAXSIZE: 600M
     defaults:
       run:
         shell: bash
@@ -98,6 +110,18 @@ jobs:
           # --no-host-tool skips chip-tool/chip-cert, which the firmware build does not use.
           ./install.sh --no-host-tool
 
+      # Compiler cache. Most of a build is connectedhomeip, which only changes with a pin, so a
+      # warm cache leaves the handful of files a PR touched. Every run restores the newest entry
+      # for its target and pin pair. Only main saves one, so PR runs cannot fill the repository's
+      # cache quota and push out the esp-matter entry above.
+      - name: Restore ccache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /opt/ccache
+          key: ccache-${{ matrix.target }}-${{ needs.pins.outputs.idf }}-${{ needs.pins.outputs.esp_matter }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ matrix.target }}-${{ needs.pins.outputs.idf }}-${{ needs.pins.outputs.esp_matter }}-
+
       - name: Build ${{ matrix.target }}
         run: |
           . "$IDF_PATH/export.sh"
@@ -106,3 +130,11 @@ jobs:
           idf.py set-target "${{ matrix.target }}"
           idf.py build
           ls -l build/hisense_ac_matter.bin
+          ccache --show-stats
+
+      - name: Save ccache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /opt/ccache
+          key: ccache-${{ matrix.target }}-${{ needs.pins.outputs.idf }}-${{ needs.pins.outputs.esp_matter }}-${{ github.run_id }}
