@@ -118,8 +118,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # PlatformIO's tree: the LibreTiny platform, the Realtek SDK and the ARM toolchain. Every run
-      # restores the newest entry. Only main saves one, so PR runs cannot fill the cache quota.
+      # PlatformIO's tree: the LibreTiny platform, the Realtek SDK and the ARM toolchain. The three
+      # layouts share all of it (one platform, one board, one toolchain), so one entry covers them.
+      # The same directory holds PlatformIO's build cache (PLATFORMIO_BUILD_CACHE_DIR below): every
+      # compiled object, kept by content. A layout's flags differ from the other two, so each has
+      # its own objects, and a run only recompiles what changed since the entry was saved. Every
+      # run restores the newest entry. Only main saves one, so PR runs cannot fill the cache quota.
       - name: Restore the PlatformIO tree
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -132,6 +136,10 @@ jobs:
         run: |
           cd firmware/esphome
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
+          # An object served from the build cache prints no compiler output, so the warning check
+          # below only sees what this run compiled. That is enough: an entry is saved only by a
+          # main run that passed this step, so every cached object compiled clean.
+          export PLATFORMIO_BUILD_CACHE_DIR="$HOME/.platformio/w41h1-build-cache"
           # layout:address of the first slot. The app image is named after the address it is
           # built for, so the file name shows that the layout file was applied.
           for want in factory:0x010000 sdk:0x00C000 native:0x010000; do
@@ -153,8 +161,24 @@ jobs:
             # The reboot workaround points lt_reboot() at the SDK's sys_reset with two linker
             # flags. If a platform update drops sys_reset the link fails above.
             out=".esphome/build/ac-$layout/.pioenvs/ac-$layout"
+            # LibreTiny writes the slot image as a side effect of the link step. A checkout is
+            # new, so ESPHome's build stamp differs, one file compiles and the link runs. Should
+            # the cache ever hand back the linked firmware whole, the image is missing: build
+            # that layout once more without the cache.
+            if [ ! -f "$out/image_firmware_is.${want##*:}.bin" ]; then
+              echo "no slot image after a fully cached build: building $layout without the cache"
+              rm -f "$out/raw_firmware.elf" "$out/firmware.uf2"
+              env -u PLATFORMIO_BUILD_CACHE_DIR pipx run esphome==2026.7.4 -s name "ac-$layout" \
+                compile "w41h1-amebaz2-$layout.yaml" > build.log 2>&1 || { tail -n 200 build.log; exit 1; }
+            fi
             ls -l "$out/firmware.uf2" "$out/image_firmware_is.${want##*:}.bin"
           done
+          # PlatformIO never prunes the build cache. Start it again once it has grown past what
+          # three layouts need several times over (about 80 MB each).
+          if [ "$(du -sm "$PLATFORMIO_BUILD_CACHE_DIR" | cut -f1)" -gt 1024 ]; then
+            echo "build cache over 1 GB: emptied, the next run fills it again"
+            rm -rf "$PLATFORMIO_BUILD_CACHE_DIR"
+          fi
 
       - name: Save the PlatformIO tree
         if: github.ref == 'refs/heads/main'
