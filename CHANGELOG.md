@@ -32,6 +32,14 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   of pings and commands did not reach the unit. With `none`: 100 of 100, a command taken in
   0.5 s. The radio no longer sleeps between beacons, so the board draws more on average. A board
   on a weak supply can go back with `-s wifi_power_save light`.
+- **Changes existing ESPHome nodes: three diagnostics on every board.** `packages/node.yaml` adds
+  the sensors `Uptime` and `WiFi signal` (every 60 s) and the text sensor `Reset reason` (from
+  the `debug:` component), all in the diagnostic category. The validated configuration of
+  `w41h1.yaml` and of every other board file gains these three entities at its next build: 31
+  become 34, the set the nodes in the field already expose from their own configs. The stock
+  module's files have 36, with `Flash layout` and `Serial port restarts` on top. All three exist
+  on ESP32, ESP8266, RP2040 and LibreTiny, and all seven board files compile with them. The
+  wording of `Reset reason` is each platform's own.
 - `dev.py convert esphome --board amebaz2-factory [--stage]` makes the conversion image: it
   re-signs the built ESPHome image, verifies it the way the bootloader will, refuses one that
   does not fit the slot, and writes the `.ota` and its manifest. Host-tested, and checked byte for

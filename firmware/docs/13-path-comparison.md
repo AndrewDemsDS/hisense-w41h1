@@ -209,7 +209,7 @@ this project set out to demonstrate.
 The table above has ESPHome only on an ESP32. Since October 2026 the same ESPHome configuration
 also builds for the stock module's RTL8710C through ESPHome's LibreTiny platform
 (`firmware/esphome/w41h1-amebaz2-*.yaml`, one per flash layout a module can have): no added
-hardware, no proprietary SDK to obtain (LibreTiny fetches what it needs, about 800 MB), a 602 KB
+hardware, no proprietary SDK to obtain (LibreTiny fetches what it needs, about 800 MB), a 605 KB
 image in a slot of 1472 or 1712 KiB.
 
 On 2026-10-10 it ran on a module for the first time: one unit with the factory layout, converted

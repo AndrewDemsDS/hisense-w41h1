@@ -51,9 +51,9 @@ after the previous one, so a combined preset such as `eco_sleep_old` takes about
 While turbo, quiet or a sleep profile is active they own the fan, and a fan change is refused
 rather than silently undone a second later. The switches and the select still work and share the
 same pacing, so keep them for dashboards or delete them if the presets are all you use.
-| `sensor` | indoor, outdoor and coil temperature, compressor Hz, power, voltage, current, bus checksum errors |
+| `sensor` | indoor, outdoor and coil temperature, compressor Hz, power, voltage, current, bus checksum errors, uptime, Wi-Fi signal |
 | `binary_sensor` | aux heat relay, bus link, aggregate fault, 18 per-bit faults, 13 capability flags |
-| `text_sensor` | A/C device type (the learned link bytes) |
+| `text_sensor` | A/C device type (the learned link bytes), reset reason |
 
 Plus what ESPHome gives for free: OTA, a captive-portal AP fallback, logs streamed over the API on
 the deployed image, and `total_daily_energy` feeding the HA Energy dashboard.

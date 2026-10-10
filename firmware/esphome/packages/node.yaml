@@ -1,4 +1,4 @@
-# The node itself: identity, logging, the Home Assistant API and Wi-Fi. Nothing here names a
+# The node itself: identity, logging, the Home Assistant API, Wi-Fi and the node's own diagnostics. Nothing here names a
 # chip, so every board file includes it as is. A board file adds its platform block and whatever
 # that platform needs on top (see w41h1-amebaz2.yaml for an example).
 #
@@ -46,3 +46,24 @@ wifi:
     ssid: ${name}-setup
 
 captive_portal:
+
+# Node diagnostics, the same three on every board, so a node built from any board file shows what
+# the nodes in the field show. All three exist on every platform the board files use (ESP32,
+# ESP8266, RP2040, LibreTiny). The wording of "Reset reason" is the platform's own, so it differs
+# between chips.
+debug:
+
+sensor:
+  - platform: uptime
+    name: Uptime
+    entity_category: diagnostic
+  - platform: wifi_signal
+    name: WiFi signal
+    entity_category: diagnostic
+    update_interval: 60s
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: Reset reason
+      entity_category: diagnostic

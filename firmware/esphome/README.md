@@ -36,17 +36,18 @@ same node as `w41h1-esp32c3.yaml`.
 
 | File | Board | TX / RX / DE | Status | Image (ESPHome 2026.7.4) |
 |---|---|---|---|---|
-| `w41h1.yaml` | classic ESP32 (`esp32dev`), board and pins overridable with `-s` | 19 / 18 / 4 | runs on a live A/C | 919 KB, 50 % of the slot |
-| `w41h1-esp32c3.yaml` | ESP32-C3 SuperMini | 5 / 6 / 10 | runs on a live A/C | 973 KB, 53 % |
-| `w41h1-amebaz2-factory.yaml`, `-sdk.yaml`, `-native.yaml` | the stock W41H1 module itself (RTL8710C through LibreTiny), one file per flash layout | PA14 / PA13 / PA17 | **factory layout runs on one module in an A/C (2026-10-10)**; sdk and native compile, never run | 602 KB, 40 % of the factory layout's slot, 34 % of the other two |
-| `w41h1-esp8266.yaml` | ESP8266 D1 mini | GPIO15 / GPIO13 / GPIO5 | example, compiles, never run | 500 KB, 48 % |
-| `w41h1-rp2040.yaml` | Raspberry Pi Pico W | GPIO4 / GPIO5 / GPIO6 | example, compiles, never run | 587 KB, 56 % |
+| `w41h1.yaml` | classic ESP32 (`esp32dev`), board and pins overridable with `-s` | 19 / 18 / 4 | runs on a live A/C | 923 KB, 50 % of the slot |
+| `w41h1-esp32c3.yaml` | ESP32-C3 SuperMini | 5 / 6 / 10 | runs on a live A/C | 978 KB, 53 % |
+| `w41h1-amebaz2-factory.yaml`, `-sdk.yaml`, `-native.yaml` | the stock W41H1 module itself (RTL8710C through LibreTiny), one file per flash layout | PA14 / PA13 / PA17 | **factory layout runs on one module in an A/C (2026-10-10)**; sdk and native compile, never run | 605 KB, 40 % of the factory layout's slot, 35 % of the other two |
+| `w41h1-esp8266.yaml` | ESP8266 D1 mini | GPIO15 / GPIO13 / GPIO5 | example, compiles, never run | 506 KB, 48 % |
+| `w41h1-rp2040.yaml` | Raspberry Pi Pico W | GPIO4 / GPIO5 / GPIO6 | example, compiles, never run | 590 KB, 56 % |
 
 Every board file is three things: the node's name, the pins, and the platform block. Everything
 else comes from two packages that all of them include, so the entity names and object ids are the
 same on every chip:
 
-- `packages/node.yaml`: logger, API, Wi-Fi and the fallback access point. Wi-Fi power saving is
+- `packages/node.yaml`: logger, API, Wi-Fi, the fallback access point, and three diagnostics every
+  board has (`Uptime`, `WiFi signal`, `Reset reason`). Wi-Fi power saving is
   off (`power_save_mode: none`): on an ESP32-C3 with a weak signal ESPHome's default, `light`,
   lost 65 % of pings and commands did not arrive. A board on a weak supply can go back with the
   `wifi_power_save` substitution (`-s wifi_power_save light`).

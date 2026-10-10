@@ -466,7 +466,7 @@ has not run on the sdk or native layout, and a mismatch has not been provoked on
 
 | Check | Result |
 |---|---|
-| `esphome config` and `esphome compile`, ESPHome 2026.7.4, LibreTiny 1.13.0, all three layouts | pass. Flash 602,065 bytes: 39.9 % of the factory layout's 1,507,328 byte slot, 34.3 % of the 1,753,088 byte slot of the other two. Static RAM 13,337 of 262,144 bytes |
+| `esphome config` and `esphome compile`, ESPHome 2026.7.4, LibreTiny 1.13.0, all three layouts | pass. Flash 604,881 bytes: 40.1 % of the factory layout's 1,507,328 byte slot, 34.5 % of the 1,753,088 byte slot of the other two. Static RAM 13,369 of 262,144 bytes |
 | Layout applied | each build's slot and settings addresses are those of its layout (compile-time check), and the application image is built for the first slot's address (`0x010000`, `0x00C000`, `0x010000`) |
 | Warnings from `components/hisense_ac/` | none, also with every option of every platform declared (`tests/build.rtl87xx-ard.yaml`) |
 | UART write blocks (LibreTiny waits on the TX FIFO, about 1 ms per byte) | host test: DE still falls 25 ms after the last byte, the cycle stays at 1 s, no reply is missed |
