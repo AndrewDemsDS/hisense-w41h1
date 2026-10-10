@@ -30,7 +30,8 @@ Layers 1–2 (and the Layer-4 mapping test) run host-only, CI-friendly, exit non
 firmware/test/run_tests.sh
 ```
 
-It builds and runs three things:
+It prints one header per layer and ends with `ALL QA LAYERS PASSED`. The numbering in the script
+is its own and does not line up with the pyramid above. The first three:
 - **Layer 1a: codec golden regression** (`test_codec.cpp`): 36 assertions of every command
   byte and parsed status field against hardware-confirmed golden values (AUTO→`0x90`, fan
   `0x0B..0x13`, eco `0x30`, checksum, F4-stuffing, malformed-frame rejection).
@@ -41,6 +42,25 @@ It builds and runs three things:
 - **Layer 2: virtual A/C round-trip**: `virtual_ac.py` (a software model of the indoor unit)
   encodes → `decode_ac_frames.py` reads back the same state; driver golden command bytes →
   simulator mutates correctly.
+
+The rest of what it runs:
+
+| Header in the output | Test | Proves |
+|---|---|---|
+| Layer 1c | `test_esphome_map.cpp` | ESPHome enum mapping against the same wire bytes |
+| Layer 1d | `test_esphome_codec_parity.cpp` | the ESPHome codec port equals the shared driver, builder by builder and parser by parser, including the beeper stamp |
+| Layer 1e | `test_esphome_bus.cpp` | the ESPHome bus scheduler against a simulated A/C: timing, re-send of an unanswered frame, wire order |
+| Layer 1f | `test_esphome_edge_cases.cpp` | shadow and power rules, boundaries, damaged byte streams |
+| Layer 1g | `test_esphome_confirm.cpp` | confirm and retry, and power plus mode in one frame: each decision, and scenarios against a unit model that loses frames |
+| Layer 3 | `test_diag_contract.py` | the fault and capability bit maps match the `hisense-unified-ac` integration (skipped without the submodule) |
+| Layer 4 | `test_image_chain.py` | the AmebaZ2 image signing chain |
+| Layer 5 | `test_ota_guards.py` | the OTA pre-flight and staging guards refuse a bad release |
+| Layer 6 | `test_image_epoch.sh` | the AmebaZ2 build clock survives a merge and a cherry-pick |
+| Layer 7 | `test_dev_release.py` | `dev.py` version, endpoint and tag rules, and the SDK edits `build` applies (the sleep profile table among them) |
+| Layer 8 | `test_zap_edit.py` | the headless `.zap` editor, and that the `.zap`, the cluster XML, the id header and `matter_aircon_map.h` agree on the beeper endpoint and the manufacturer-cluster ids |
+
+One caveat on Layer 1g: the ESPHome hub cannot be built on a host, so the test repeats its glue.
+That copy can drift from the hub.
 
 Run a single layer by compiling its `.cpp` directly, e.g.:
 
@@ -124,6 +144,9 @@ for, in short:
 - **Layer 5, HIL**: the only layer covering RF, real bus timing and the physical unit. The DI-tap
   sniffer (`decode_ac_frames.py --port <tap>`) is the hardware assertion; the scripted HIL checks
   (`hil_display_actuation.py`, `hil_esphome_actuation.py`) stay out of `run_tests.sh` on purpose.
+  The ESPHome one drives every control over the native API, checks that nothing else moved, and
+  ends with the bus counter deltas: retries are listed, a rise in `Failed commands` fails the run.
+  It restores the state it found, and leaves the unit off if it had to switch it on.
 - **Standing rule for glue code**: `matter_drivers.cpp` cannot run on the host, so any glue
   *decision* goes into a pure, tested function in `matter_aircon_map.h`. The three concrete test
   requirements that follow from it are in docs/04.

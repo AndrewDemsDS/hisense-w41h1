@@ -92,9 +92,16 @@ new ESP32-C3 SuperMini, 2026-08-07.
 ## Status detail
 
 Full functional and structural parity with the AmebaZ2 build (summary and endpoint list in the
-guide). Built with ESP-IDF v5.5.4 and esp-matter, commissioned into matter-server, every cluster
+guide). Built with ESP-IDF v5.5.5 and esp-matter (the pins in `versions.env`), commissioned into matter-server, every cluster
 carrying live A/C data. Every endpoint has a UserLabel `ha_entitylabel` (via a minimal in-RAM
 `DeviceInfoProvider`) so Home Assistant names the entities.
+
+Since 1.1.19 the node also has the beeper switch on endpoint 11 (a non-volatile OnOff, default on,
+applied to the driver before the bus task starts), the bus diagnostics on the manufacturer cluster
+(`0x0014` to `0x0019`) and `MinSetpointDeadBand` 0 so setpoints cover 16 to 32 C. The dead band
+attribute is non-volatile: a node on which a controller once wrote another value keeps it until 0
+is written again. The release C3 image is close to the size at which ESP-IDF warns that the app
+partition is nearly full (240 bytes under it at 1.1.19, pull request #178).
 
 Done: **#63** (write/control direction proven, a `SystemMode=Cool` from HA powered the A/C on),
 **#64** (compile-tune), **#65** (`on_recommission` 1:1 port + Wi-Fi-gated BLE), **#66**

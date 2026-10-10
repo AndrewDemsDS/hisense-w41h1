@@ -44,7 +44,7 @@ source and by live inspection:
 
 matter-server stores **any** device-reported attribute keyed by a plain numeric path,
 `"<endpoint>/<cluster_id_dec>/<attr_id>"`, with **no** cluster registration required. Verified
-live: nodes 14/35/62 already carry the Hisense cluster's Eco/Turbo/Mute/SleepProfile at
+live: three commissioned nodes already carried the Hisense cluster's Eco/Turbo/Mute/SleepProfile at
 `"<ep>/4294048768/{0,1,2,3}"` (`0xFFF1FC00` = `4294048768`) in the matter-server node store,
 despite that cluster never being registered anywhere. `CompressorHz` (16) is now compiled in and
 read live (v1.1.4, #38/#82); `OutdoorTemp` (17) stays **absent** from every node's `attributeList`
@@ -92,7 +92,7 @@ already ship via standard clusters. Keep as-is.
   client-side. The bit map in `const.py` stays in lockstep with `hisense_rs485.h`, and a host-side
   test asserts agreement (`firmware/test/test_diag_contract.py`, wired into `run_tests.sh`).
 
-**Phase 2b (firmware done in AmebaZ2 1.3.49 / ESP32 1.1.19, not yet on hardware):** the bus
+**Phase 2b (done: AmebaZ2 1.3.49 / ESP32 1.1.19, read by `hisense-unified-ac` 1.6.0):** the bus
 diagnostics the ESPHome build shows as sensors, on the same ep1 cluster, read-only:
 
 | id | name | type | ESPHome entity | source |
@@ -111,13 +111,26 @@ which is also when the liveness attributes go null. Both targets create the attr
 same ids and types (`MATTER_HISENSE_ATTR_*` in `matter_aircon_map.h`). The integration side reads
 them like `Features1`: raw paths `1/4294048768/20` to `1/4294048768/25`.
 
+Status. Both Matter builds with these attributes are deployed on the maintainer's units
+(2026-10-10). The integration side shipped in `hisense-unified-ac` 1.6.0: one sensor per counter,
+`AC device type` from `LinkToken`, and `AC bus link` from `BusLink` when the node reports it,
+falling back to the Phase 1 availability heuristic on older firmware. That release was tested
+against Home Assistant in CI only. Its own pull request lists as unverified the `get_node` reply
+shape on a real server, which is where the counters come from. No reading of the counters through
+the integration on a live node is recorded.
+
+The ESPHome build has two more counters, `command_retries` and `failed_commands`. They have no
+Matter attribute because the Matter builds do not re-send commands. What each counter means and how
+to read it: the guide page "Entities, Endpoints and Diagnostics".
+
 **Phase 4 (optional, only if native `matter`-integration entities are specifically wanted):** file
 a `matter-python-client` cluster-class PR + a matching `home-assistant/core` `MatterDiscoverySchema`
 PR. Not required; Phases 1-3 already cover all four diagnostics end to end with full fidelity.
 
 ## Task split (who does what)
 
-**ZAP GUI (manual):** open `room-air-conditioner-app.zap` (and the ESP32 esp-matter app for
+**ZAP GUI (manual; how Phase 2 was done. Phase 2b used `firmware/scripts/zap_edit.py` instead, see
+`sdk-edits/README.md`):** open `room-air-conditioner-app.zap` (and the ESP32 esp-matter app for
 parity) via the `run_zaptool.sh` recipe in CLAUDE.md; on the **existing** ep1 `Hisense Aircon`
 cluster, tick `CompressorHz` (`0x0010`) included and add the two `bitmap32` attributes `Features1`
 (`0x0012`) + `Faults1` (`0x0013`), matching the storage pattern of Eco/Turbo/Mute/SleepProfile. No

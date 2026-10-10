@@ -12,10 +12,17 @@ everything else as separate entities on the same device.
 |---|---|
 | climate | power, mode (auto / cool / heat / dry / fan only), setpoint 16 to 32 °C, fan speed (auto / low / medium_low / medium / medium_high / high), swing, and the special modes as presets |
 | Eco, Turbo, Quiet, Panel display switches | the special modes, written straight to the A/C |
+| Beeper switch | off stops the unit beeping for commands from this node (the remote still beeps). Stored on the node, on by default |
 | Sleep profile select | Off / General / Old / Young / Kids |
 | Outdoor temperature, Coil temperature, Compressor frequency | what the unit is doing |
 | Power, Voltage, Current, Energy today | add **Energy today** to the HA Energy dashboard |
 | AC bus link, Fault, per-fault and capability flags | diagnostics; `AC bus link` off means the node cannot hear the A/C |
+| Bus checksum errors, Bus reply timeouts, Unanswered commands, Command retries, Failed commands, Bus link losses, AC device type | bus health, counted since boot ([Entities, Endpoints and Diagnostics](Entities-and-Diagnostics#bus-counters)) |
+
+A command the unit misses is sent again by the node, so a write can take a few seconds longer to
+settle than it used to. If the unit never takes it, the entity goes back to what the unit reports
+and `Failed commands` rises
+([how it works and its limits](Entities-and-Diagnostics#confirm-and-retry-esphome-only)).
 
 Eco and Turbo are exclusive on the A/C itself, so switching one on can turn the other off. The
 capability flags tell you which features your unit has; delete the entities it lacks from
@@ -60,18 +67,26 @@ HA's Matter integration presents the raw W41H1 as **several** entities on one de
 - a **climate** entity (HVAC mode + setpoint),
 - a **separate fan** entity (speed + oscillate/swing),
 - a redundant device-mandated **Power** switch,
-- unnamed **On/Off switches** for the special modes, plus a sleep select.
+- **On/Off switches** for Eco, Quiet, Turbo, the panel display and the beeper, named from each
+  endpoint's label (`Switch (Eco)`, `Switch (Beeper)`), plus a sleep select,
+- temperature sensors for outdoor and coil, power, voltage and current, and contact sensors for
+  the aux heat relay and the aggregate fault.
 
 Usable, but split across tiles. HVAC modes: off / cool / heat / auto / dry / fan-only (the firmware
 advertises Heat, Cool and Auto in the Thermostat FeatureMap; dry and fan-only need the companion
 integration below). Setpoint is only honored in **cool/heat**. A temp change in dry / fan /
 auto / off is a no-op.
 
+The setpoint range is 16 to 32 °C from AmebaZ2 1.3.49 and ESP32 1.1.19. Earlier builds refused
+cooling setpoints below about 18 °C and heating setpoints above about 30 °C. The beeper switch
+needs the same versions, and a node re-interview after the update. The full endpoint list and the
+version each feature needs are in [Entities, Endpoints and Diagnostics](Entities-and-Diagnostics).
+
 ## The unified climate integration (recommended for Matter)
 
-`integrations/hisense-unified-ac` is a HACS custom integration that **merges those entities into one
+`hisense-unified-ac` is a HACS custom integration that **merges those entities into one
 climate entity**, so you get a single Thermostat card with the special modes as presets. Details:
-`integrations/hisense-unified-ac/README.md`.
+the [integration's README](https://github.com/AndrewDemsDS/hisense-unified-ac#readme).
 
 It gives you:
 - HVAC: off / cool / heat / auto / dry / fan-only
@@ -79,6 +94,14 @@ It gives you:
 - Swing: off / vertical
 - Presets: **none / eco / quiet / turbo / eco_quiet / sleep_\* / eco_sleep_\*** (folded in from the special-mode switches + sleep select)
 - Setpoint gated to cool/heat (a temp change elsewhere shows no target and is a no-op)
+
+From 1.6.0 the unified device also carries the rest of the ESPHome build's entities under the same
+names, so a unit looks the same in Home Assistant on either firmware: Eco, Turbo, Quiet, Panel
+display and Beeper switches, Outdoor and Coil temperature, Power, Voltage, Current, Aux heat relay,
+one binary sensor per fault and per capability flag, the four bus counters, `AC device type` and
+`AC bus link`. An entity is created only when the firmware backs it, so the Beeper switch and the
+bus counters appear once the node runs AmebaZ2 1.3.49 or ESP32 1.1.19 and has been re-interviewed.
+There is no energy sensor on the Matter path: feed Power to a Riemann sum helper.
 
 **Install (HACS):**
 1. HACS → Integrations → ⋮ → **Custom repositories** → add the repo, category **Integration**.

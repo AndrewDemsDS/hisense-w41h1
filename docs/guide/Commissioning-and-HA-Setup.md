@@ -105,3 +105,7 @@ HA builds entities from the node structure at setup and caches it. After an OTA 
 endpoints/clusters, the new entities don't appear until a **node re-interview**. The OTA `flash`
 step (`dev.py ota <target> flash`, also run by `release --flash`) auto-calls `interview_node` on success; if entities still lag, reload the Matter integration
 (Settings → Devices & Services → **Matter** → ⋮ → **Reload**). See [OTA Updates](OTA-Updates).
+
+The update to AmebaZ2 1.3.49 or ESP32 1.1.19 is such an OTA: it adds endpoint 11, the Beeper switch.
+Endpoints 0 to 10 keep their numbers, so existing entities are not disturbed. The endpoint list is
+in [Entities, Endpoints and Diagnostics](Entities-and-Diagnostics).

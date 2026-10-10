@@ -10,6 +10,18 @@ commissioning. **ESP32 with Matter** if Apple Home, Google Home or Alexa must se
 only if you want to keep the original module and are happy with a one-time clip write.
 ([User Guide](User-Guide#pick-a-firmware))
 
+## Is Matter support going away?
+
+It is proposed and undecided. Issue #182 argues for keeping ESPHome as the only firmware once it
+runs on the stock module too, which it does not yet. Until then both Matter builds are supported.
+([Home](Home#state-of-the-project))
+
+## Can I switch an ESP32 node from Matter to ESPHome without opening the unit?
+
+Yes, through the Matter firmware's HTTP break-glass path. It has been done once, on a C3, and
+there is no automatic rollback. Read the risks first:
+[Migrating an ESP32 Node from Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome).
+
 ## ESPHome: the `AC bus link` sensor stays off.
 
 The node is running but hears nothing from the A/C. In order of likelihood:
@@ -111,6 +123,27 @@ and shows no target (the unified integration gates this explicitly). ([Everyday 
 The ESPHome build refuses the write while the unit runs in dry, fan-only or auto and logs a warning,
 so the entity keeps the setpoint the unit reports. In auto the unit holds its own value: a write
 used to show for about four seconds and then revert.
+
+On the Matter builds, a cooling setpoint below about 18 °C or a heating setpoint above about 30 °C
+was rejected before AmebaZ2 1.3.49 and ESP32 1.1.19 (the Thermostat server's default dead band).
+Those versions accept the full 16 to 32 °C.
+
+## A command did not take. How do I tell what happened?
+
+Look at the bus counters ([Entities, Endpoints and Diagnostics](Entities-and-Diagnostics#bus-counters)).
+`Unanswered commands` rising means the unit did not acknowledge a frame. The ESPHome build sends
+such a command again and counts it in `Command retries`, or in `Failed commands` if it gave up.
+The Matter builds send once: the write is lost and the entity returns to the unit's real state.
+
+## Can I stop the indoor unit beeping on every command?
+
+Yes, with the **Beeper** switch, on all three firmwares (Matter: AmebaZ2 1.3.49 or ESP32 1.1.19
+and later, after a re-interview). It only silences commands from the node. The remote still beeps.
+
+## The sleep select is unavailable on an AmebaZ2 node.
+
+Some AmebaZ2 builds before 1.3.50 shipped an empty sleep profile list, so Home Assistant had no
+options to show. Update to 1.3.50 or later and re-interview the node.
 
 ## Eco/Turbo/Mute/Sleep don't respond on the raw device.
 

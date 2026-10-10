@@ -338,8 +338,9 @@ Three traps specific to flavours:
 | ESP32 built on the wrong IDF | live `idf.py --version` vs `dependencies.lock` | `dev.py ota esp32 build` |
 
 **The IDF-mismatch guard (ESP32).** `dependencies.lock` records the IDF that produced the last
-committed build. Sourcing a different `export.sh` (easy to do: `~/esp/esp-idf` is **v5.3.1** while
-`~/esp/esp-idf-v5.5.4` is the locked one) silently builds against another toolchain. The image still
+committed build (v5.5.5 since 2026-10, matching `IDF_PIN` in `versions.env`). Sourcing a different
+`export.sh` (easy to do when an older checkout sits beside the pinned one) silently builds against
+another toolchain. The image still
 boots and passes every functional check, so nothing catches it at runtime, but:
 
 - the whole binary shifts, so the **delta-OTA patch balloons** (measured: a 45 KB patch became
@@ -347,7 +348,8 @@ boots and passes every functional check, so nothing catches it at runtime, but:
 - the build **rewrites `dependencies.lock` as a side effect**, so the drift only surfaces in
   `git status` afterwards.
 
-This shipped 1.0.9 on 5.3.1 against a 5.5.4 lock and cost a version plus an extra OTA cycle. The
+This shipped 1.0.9 on 5.3.1 against the lock of the time (5.5.4) and cost a version plus an extra
+OTA cycle. The
 check runs **before** the build (the build itself rewrites the lock). Intentional bumps:
 `ESP32_ALLOW_IDF_MISMATCH=1`, then commit the lock change deliberately.
 
@@ -520,6 +522,15 @@ already print.
 This covers the existing manufacturer cluster too: 1.3.49 added six attributes to it this way,
 after adding them to `hisense-aircon-cluster.xml` and `HisenseAircon-ClusterId.h`. A manufacturer
 cluster that is not on any endpoint yet still needs the GUI plus the `zzz_generated` edits.
+
+**Data-model facts that are not in the `.zap`.** The ep6 ModeSelect option list (the sleep
+profiles) is a C++ table in Realtek's `ameba_mode_select_manager.cpp`, which this repo cannot
+vendor. The `.zap` only enables the cluster. A restored SDK brings back Realtek's stock table, and
+an image built from it reports an empty `SupportedModes` on ep6 with no build error: Home
+Assistant then shows the sleep select as unavailable. `dev.py ota amebaz2 build` rewrites that
+table on every build from 1.3.50 (`edit_mode_select_sleep_profiles`) and stops if the endpoint 6
+entry is missing afterwards. `zap_edit.py check` cannot see this, because the table is not
+generated from the `.zap`.
 
 A passing check and a clean build are **build-verified, not runtime-verified**: the 2026-07-19
 model passed every build gate and broke subscriptions. The subscription gate in the flash path

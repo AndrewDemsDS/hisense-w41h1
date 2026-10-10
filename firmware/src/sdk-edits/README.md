@@ -47,6 +47,31 @@ matter_drivers into the example dir): `hisense_rs485.{h,cpp}`, `matter_aircon_ma
 
 The three callback **definitions** (no-op) are in `matter_drivers.cpp`.
 
+## Edits `dev.py ota amebaz2 build` applies on every build
+
+These are transforms in `firmware/scripts/dev.py` (`apply_sdk_edits()`), not files or patches.
+The table lists the main ones.
+Each one is idempotent, reports whether it changed anything, and stops the build if the expected
+marker is missing afterwards. They exist because the files are Realtek's and cannot be vendored,
+so a fresh or restored SDK silently loses a hand edit. Host tests for the transforms are in
+`firmware/test/test_dev_release.py`.
+
+| File | Change |
+|------|--------|
+| `connectedhomeip/src/platform/Ameba/CHIPPlatformConfig.h` | the MRP tuning block from `chip-ameba-ota-hardening.h` (above) |
+| `core/matter_interaction.cpp` | DownlinkTask stack 1024 to 4096 words |
+| `examples/room_air_conditioner/example_matter_room_air_conditioner.cpp` | example init task stack 2048 to 8192 words |
+| `drivers/matter_drivers/mode_select/ameba_mode_select_manager.cpp` | a null-span guard in the options lookup |
+| same file | **the sleep profiles.** Realtek's example table (three coffee options on endpoint 1) becomes Off, General, Old, Young, Kids as modes 0 to 4 on endpoint 6. Added in 1.3.50 |
+| `GCC-RELEASE/application.is.matter.mk`, `application.is.mk` | build clock and builder identity pinned, for a reproducible image |
+
+The sleep profile row is the one that bit. It used to be a manual step that
+`scripts/apply-matter-edits.sh` only printed a reminder for. The SDK copy on the build machine
+went back to the stock table, endpoint 6 had no entry, and every image built from it shipped an
+empty `SupportedModes` list on ep6 while `CurrentMode` kept working (#181). The mode value is the
+Hisense sleep profile number, and the five labels are the ones the ESP32 build creates in code.
+`apply-matter-edits.sh` now only reports the state of that file.
+
 ## Manufacturer cluster notes (`0xFFF1FC00`)
 
 A truly-custom cluster (not one CHIP ships) needs its Id + callback decls in the SDK's

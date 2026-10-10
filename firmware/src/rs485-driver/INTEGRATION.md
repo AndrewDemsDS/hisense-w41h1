@@ -25,7 +25,7 @@ recipe + the actual diffs): read that instead.
 | Heat | 4 | `HISENSE_MODE_HEAT` | 1 |
 | FanOnly | 7 | `HISENSE_MODE_FAN` | 0 |
 | Dry | 8 | `HISENSE_MODE_DRY` | 3 |
-| (Auto -- not in this SDK example's SystemMode set) | -- | `HISENSE_MODE_AUTO` | **5** (CONFIRMED on hardware; value 4 is skipped) |
+| Auto | 1 | `HISENSE_MODE_AUTO` | 4 (the command index: byte 18 = `0x90`). The *status* frame reports Auto as 5, and value 4 is skipped there |
 
 Fan: use `FanControl::mapPercentToMode()`'s existing percent thresholds,
 translated to `HisenseFanSpeed` (`HISENSE_FAN_AUTO`=0/off,
@@ -44,13 +44,9 @@ Off/Low/Medium/High/On/Auto/Smart; Hisense has Auto/Mute/Low/Med/Max).
   (Fahrenheit samples) via `raw = value*2+1`. **No confirmed 0.5-degree-step encoding**: docs/05's
   "Raw units may be 0.5° steps" note is unconfirmed speculation, treat as whole degrees until a
   bench capture proves otherwise.
-- Hisense status frame: **VERIFY** -- the reference project decodes both
-  `indoor_temperature_setting` and `indoor_temperature_status` via
-  `(raw - 32) * 0.5556`, i.e. as if `raw` were a plain Fahrenheit integer,
-  which is a DIFFERENT raw encoding than the command side's `2n+1` scheme.
-  This driver ports that formula as-is (see `hisense_parse_status()`); do not
-  trust the resulting `indoor_temp_c`/`setpoint_c` numbers until a real
-  capture confirms which encoding the status frame actually uses.
+- Hisense status frame: setpoint (byte 19) and room temperature (byte 20) are direct integers in
+  whole degrees C, hardware-confirmed. The reference project's `(raw - 32) * 0.5556` formula was
+  wrong for this unit and is not used (RE docs/03, status-frame byte map).
 
 Always round Matter's hundredths-of-a-degree to the nearest whole degree
 before calling `hisense_build_command()` (see the `OccupiedCoolingSetpoint`
@@ -72,8 +68,40 @@ rules above (>=100ms gap, >=10ms RX-quiet, 1500ms post-send idle) before it
 puts the next queued frame on the wire. So callers -- the poll task and the
 Matter uplink handler -- can both call `hisense_send_frame()` freely and their
 bytes will never interleave. (The 3s ACK-timeout/soft-fail is not yet modeled;
-a dropped reply just means the next poll re-requests status. Add it to the bus
-task if you want explicit retry.)
+a dropped reply just means the next poll re-requests status.)
+
+**A command is sent once.** The bus task accepts a reply of any class as the answer to a queued
+command frame and does not inspect it. With no reply inside the window it counts the frame in
+`hisense_unanswered_command_count()` and moves on: nothing sends it again. Both Matter glues build
+on this, so a write the unit misses is lost (issue #168). The ESPHome component has its own bus
+scheduler (`firmware/esphome/components/hisense_ac/hisense_bus.*`) that keeps an unanswered frame
+at the head of its queue for up to three sends and then checks the status. A design for the same
+in this driver is written up in pull request #173 and is not implemented.
+
+## 5b. Bus counters, link state and the beeper
+
+Added in AmebaZ2 1.3.49 / ESP32 1.1.19 so the Matter builds report what the ESPHome build does.
+All are declared in `hisense_rs485.h`.
+
+| Call | Returns |
+|---|---|
+| `hisense_checksum_mismatch_count()` | `0x66` frames that passed framing and failed the checksum, since boot |
+| `hisense_reply_timeout_count()` | reply windows that closed empty, any frame class |
+| `hisense_unanswered_command_count()` | queued command frames among those |
+| `hisense_link_loss_count()` | link-lost edges (five silent status polls in a row) |
+| `hisense_link_is_up()` | false while the status poll is silent. True from boot until the first loss |
+| `hisense_get_link_token(&hi, &lo)` | the A/C's device type and sub type. False until a DevType reply supplied them |
+
+The counters are written by the bus task only. A reader on another task may see a value one
+increment old, never a torn one.
+
+`hisense_set_beeper(false)` makes the bus task clear the buzzer bit (frame byte 23 bit 2, the stock
+`t_beep`) on every class `0x65` frame it sends from then on, through the pure
+`hisense_stamp_beep()`, which also redoes the checksum. The default is on, and with it on every
+frame is byte for byte what the builders produce. The driver does not persist the choice: the glue
+reads its stored value (the ep11 OnOff attribute) and calls `hisense_set_beeper()` before the first
+command. The decision of what to pass, including "a failed read means on", is
+`matter_beeper_setting()` in `matter_aircon_map.h`.
 
 ## 6. `// VERIFY` checklist
 

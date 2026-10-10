@@ -192,6 +192,21 @@ H-swing-capable variant.
   the wanted behavior.
 - **`sleep` level**: written as `0x00` = "don't touch" (was `0x01`, which forced sleep-level-0).
   Not yet exposed as a Matter field.
+- **Class `0x67`**: the stock module sends a class `0x67` frame (payload `67 00 00`) after each
+  ProductType (`0x66` sub `40`) exchange, about once a minute. Captured on a bench against a
+  synthetic A/C only (issue #110), never against a real unit. Payload meaning and the expected
+  reply are unknown. An earlier statement in `docs/10` that `0x67` never appears on the bus was
+  wrong and is corrected there. Our driver does not send it and ignores it.
+- **Command byte 18 also carries power.** The stock module ORs power-on (`0x0C`) into the mode
+  byte: `0x5C` cool, `0x3C` heat, `0x04` off (`docs/10` §5b-2, disassembly). The ESPHome build
+  sends power and mode this way since 2026-10. `0x9C`, `0x7C` and `0x1C` for auto, dry and fan
+  follow the same field rule and are not confirmed against a capture.
+- **Command byte 23 bit 2 is the beeper** (`t_beep`, stock default 1). Clearing it makes the unit
+  take the command without beeping: found by static analysis, then heard on a unit driven by the
+  ESPHome build (2026-10-10).
+- **Status byte 18, mode field width.** The stock capability table defines the mode as three bits
+  (bits 4 to 6). The driver read four until 2026-10 and decoded a frame with bit 7 set as an
+  unknown mode. It now masks three. What bit 7 carries is unknown.
 - **Poll interval** (10 s) is carried over from the DHT11 stub, not derived from the bus;
   tighten once bench timing is known (reference polls ~5 s).
 

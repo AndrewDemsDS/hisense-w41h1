@@ -44,6 +44,11 @@ Cluster id `(VID << 16) | 0xFC00` (VID from the attestation certs):
 - `0x0010 CompressorHz` uint8 RO ← status @42
 - `0x0011 OutdoorTemp` int8 RO ← status @44
 
+Added since (all read-only, all enabled): `0x0012 Features1` and `0x0013 Faults1` (packed
+capability and fault bits), `0x0014` to `0x0017` (bus counters: checksum errors, reply timeouts,
+unanswered commands, link losses), `0x0018 LinkToken` and `0x0019 BusLink`. The id table with
+types is in `firmware/src/sdk-edits/README.md`, the design in `docs/14`.
+
 ## Phases (each a go/no-go gate)
 
 0. **Toolchain + attestation gate.** Build STOCK `aircon_port`+`is_matter`, flash via CH341A
@@ -85,8 +90,8 @@ minimal set of generated-table edits (`ClusterId.h` + include + callback decls +
 defs). The clean-but-heavy alternative is `zap_regen_all.py`. Full recipe in
 `firmware/src/sdk-edits/README.md`.
 
-> This doc is the sole source of truth for the manufacturer-cluster layout and the
-> CompressorHz/OutdoorTemp telemetry gap above, other docs (e.g. `docs/05`) cite it rather
+> This doc is the source of truth for the original manufacturer-cluster layout (`0x0000` to
+> `0x0011`) and the CompressorHz/OutdoorTemp telemetry gap above, other docs (e.g. `docs/05`) cite it rather
 > than restate the byte-level mapping.
 
 ## Residuals carried from driver validation (non-blocking)

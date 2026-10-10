@@ -24,6 +24,13 @@ If Home Assistant is your only controller, use ESPHome. If anything else must se
 ESP32 Matter build. Reflash the stock module only when you want to keep the original hardware.
 The full trade-off, with measured figures, is `firmware/docs/13-path-comparison.md`.
 
+All three expose the same controls and diagnostics
+([Entities, Endpoints and Diagnostics](Entities-and-Diagnostics)). Only ESPHome sends a command
+again when the unit missed it. Issue #182 proposes retiring the two Matter builds
+([state of the project](Home#state-of-the-project)); an ESP32 board that starts on Matter can be
+moved to ESPHome later without a cable
+([how](Migrating-ESP32-Matter-to-ESPHome)).
+
 Both ESP32 targets need the wiring from [Hardware & Wiring](Hardware-and-Wiring) and the GPIO
 warnings in [ESP32 Replacement Build](ESP32-Replacement-Build).
 

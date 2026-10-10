@@ -21,7 +21,8 @@ reverse-engineering write-ups, all searchable in one place. The site is generate
 - **Local Matter control**: the A/C commissions into `python-matter-server` / Home Assistant; no
   ConnectLife, no `hijuconn` cloud.
 - **Full control surface**: HVAC mode (incl. Auto), setpoint (16–32 °C), fan (6 speeds), vertical
-  swing, and Eco / Quiet / Turbo / Sleep special modes.
+  swing, Eco / Quiet / Turbo / Sleep special modes, the panel display and the command beeper.
+- **Bus diagnostics**: link state, error and timeout counters, per-fault and capability flags.
 - **Energy monitoring**: live power (W) + voltage, derived from the bus current proxy.
 - **OTA updates over Wi-Fi**: after the first CH341 flash, everything else is wireless.
 - **Three firmwares, one driver**, in order of preference: an ESP32 board running ESPHome (Home
@@ -43,6 +44,15 @@ The module runs the Realtek AmebaZ2 Matter `room_air_conditioner` example with *
 driver** bridging Matter attributes ↔ the A/C's internal RS-485 bus (protocol
 reverse-engineered + sniff-validated, see [`reverse-engineering/docs/03`](reverse-engineering/docs/03-rs485-ac-protocol.md)).
 
+## State of the project
+
+As of 2026-10-10 the three firmwares expose the same controls and diagnostics. Only the ESPHome
+build confirms a command and sends it again when the unit missed it.
+[Issue #182](https://github.com/AndrewDemsDS/hisense-w41h1/issues/182) proposes retiring the two
+Matter builds and keeping ESPHome as the only firmware. It is open and undecided: ESPHome on the
+stock module's own MCU compiles through LibreTiny and has not run on hardware. Both Matter builds
+stay supported until that issue is settled.
+
 ## Get started
 
 ```
@@ -58,7 +68,9 @@ python3 firmware/scripts/dev.py walk esphome   # or esp32, or amebaz2; asks befo
 | 2. run Matter on an ESP32 | [ESP32 Replacement Build](docs/guide/ESP32-Replacement-Build.md) |
 | 3. flash a stock AmebaZ2 module (CH341A clip, once) | [Installing the Firmware](docs/guide/Installing-Custom-Firmware.md), prebuilt images on [Releases](https://github.com/AndrewDemsDS/hisense-w41h1/releases) |
 | commission a Matter build into Home Assistant | [Commissioning & HA Setup](docs/guide/Commissioning-and-HA-Setup.md) |
+| see what each firmware exposes and read the bus counters | [Entities, Endpoints and Diagnostics](docs/guide/Entities-and-Diagnostics.md) |
 | update over the air | [OTA Updates](docs/guide/OTA-Updates.md) (`dev.py ota <target> release`) |
+| move an ESP32 node from Matter to ESPHome over the air | [Migrating an ESP32 Node](docs/guide/Migrating-ESP32-Matter-to-ESPHome.md) |
 | un-brick or go back to stock | [Recovery & Reflash](docs/guide/Recovery-and-Reflash.md) |
 | the detail behind each `dev.py` step | [Build, Flash & Test](docs/guide/Build-Flash-Test.md) |
 | find my way around the repo and the SDK overlay model | [Repo Map & Build Pipeline](docs/guide/Repo-Map-and-Build-Pipeline.md) |

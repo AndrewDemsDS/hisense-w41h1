@@ -9,8 +9,10 @@
 - [Installing on the AmebaZ2 Module](Installing-Custom-Firmware)
 - [Commissioning & HA Setup](Commissioning-and-HA-Setup)
 - [Everyday Control](Everyday-Control)
+- [Entities & Diagnostics](Entities-and-Diagnostics)
 - [Climate Groups](Climate-Groups)
 - [OTA Updates](OTA-Updates)
+- [Migrating ESP32 Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome)
 - [Recovery & Reflash](Recovery-and-Reflash)
 - [FAQ & Gotchas](FAQ-Gotchas)
 

@@ -23,6 +23,16 @@ Three firmwares are documented, all running on real units. In order of preferenc
 One script, `python3 firmware/scripts/dev.py`, builds, flashes, tests and updates all three.
 Start with the **[User Guide](guide/User-Guide.html)**.
 
+## State of the project
+
+As of 2026-10-10 the three firmwares expose the same controls and diagnostics
+([side by side](guide/Entities-and-Diagnostics.html)). Only the ESPHome build confirms a command
+and sends it again when the unit missed it.
+[Issue #182](https://github.com/AndrewDemsDS/hisense-w41h1/issues/182) proposes retiring the two
+Matter builds in favour of ESPHome. It is open and undecided: ESPHome on the stock module's own MCU
+compiles through LibreTiny and has not run on hardware. Both Matter builds remain supported until
+the issue is settled.
+
 Everything below is written from a working system, not a plan. The RS-485 protocol was
 reverse-engineered from the stock firmware and validated against live hardware.
 
@@ -37,12 +47,15 @@ without opening anything.
 |---|---|
 | [User guide](guide/User-Guide.html) | pick a firmware, then `dev.py` from clone to running node |
 | [Hardware and wiring](guide/Hardware-and-Wiring.html) | pinout, the 4-pin module port, RS-485 A/B |
+| [ESP32 build environment](guide/ESP32-Build-Environment.html) | from a clean Linux machine to a flashed ESP32, every step by hand |
 | [ESPHome build](guide/ESPHome-Build.html) | recommended: ESP32, native to Home Assistant |
 | [ESP32 Matter build](guide/ESP32-Replacement-Build.html) | the same ESP32 board running Matter |
 | [Installing on the AmebaZ2 module](guide/Installing-Custom-Firmware.html) | flashing the stock module over a CH341A SPI clip |
 | [Commissioning and Home Assistant](guide/Commissioning-and-HA-Setup.html) | pairing a Matter build into python-matter-server and HA |
 | [Everyday control](guide/Everyday-Control.html) | modes, fan, swing, Eco / Quiet / Turbo / Sleep |
+| [Entities, endpoints and diagnostics](guide/Entities-and-Diagnostics.html) | the three firmwares side by side, the beeper, the bus counters, confirm and retry |
 | [OTA updates](guide/OTA-Updates.html) | Matter OTA, the break-glass HTTP path, and the serial trap |
+| [Migrating ESP32 Matter to ESPHome](guide/Migrating-ESP32-Matter-to-ESPHome.html) | move an esp-matter board to ESPHome over the air |
 | [Recovery and reflash](guide/Recovery-and-Reflash.html) | getting back from a bad flash |
 | [FAQ and gotchas](guide/FAQ-Gotchas.html) | the things that actually bite |
 
