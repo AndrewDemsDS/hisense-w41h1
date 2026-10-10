@@ -240,7 +240,9 @@ docs/10 §1 and §9.
 
 The `.zap` is the **only** data-model source. `endpoint_config.h`, `.matter`, and
 everything under `build/chip/codegen/` are **generated outputs**; never hand-edit them. Edit
-via the ZAP GUI, then re-capture the `.zap` into `sdk-edits/`. A **new manufacturer cluster**
+with `firmware/scripts/zap_edit.py` (attributes, defaults, appended endpoints; its `check` runs the
+build's generation on a scratch copy) or via the ZAP GUI, then re-capture the `.zap` into
+`sdk-edits/`. A **new manufacturer cluster**
 additionally needs minimal `zzz_generated` edits (`ClusterId.h` + callback decls/defs). Full
 recipe + the ZAP GUI invocation: `firmware/src/sdk-edits/README.md`.
 **Never** run `scripts/tools/zap_regen_all.py` for routine changes. It whole-tree-regenerates

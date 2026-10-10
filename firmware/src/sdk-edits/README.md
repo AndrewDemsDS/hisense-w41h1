@@ -21,7 +21,8 @@ is_matter` in `ameba-rtos-z2/project/realtek_amebaz2_v0_example/GCC-RELEASE`.
   so the long BDX OTA survives marginal Wi-Fi. This file is the canonical copy; the SDK
   header is a derived target, never hand-edit it.
 - `room-air-conditioner-app.zap` → same path, endpoint config (Phase 2 fan/swing
-  /setpoint feature flags + Phase 3 Hisense Aircon cluster on ep1, GUI-authored).
+  /setpoint feature flags + Phase 3 Hisense Aircon cluster on ep1). First authored in the ZAP
+  GUI; changed since with `firmware/scripts/zap_edit.py` (see "Editing the data model" below).
 - `hisense-aircon-cluster.xml` → `connectedhomeip/src/app/zap-templates/zcl/data-model/chip/`,
   the `0xFFF1FC00` manufacturer cluster definition.
 - `HisenseAircon-ClusterId.h` → `connectedhomeip/zzz_generated/app-common/clusters/HisenseAircon/ClusterId.h`,
@@ -55,6 +56,23 @@ are ember-RAM stored; writes reach the uplink handler via the global attribute-c
 (raw cluster/attr ids `0xFFF1FC00` / `0x0000-3`, `0x0010-11`), read-back via
 `emberAfWriteAttribute(...)` since a custom cluster has no generated `::Set` accessors.
 
+Attribute ids (the XML is the definition, `HisenseAircon-ClusterId.h` the C++ names, and
+`firmware/test/test_zap_edit.py` fails when the XML, the header, `matter_aircon_map.h` and the
+`.zap` disagree):
+
+| id | name | type | access | meaning |
+|---|---|---|---|---|
+| `0x0000` to `0x0003` | Eco, Turbo, Mute, SleepProfile | boolean x3, int8u | read/write | mirrors of the ep3/4/5/6 controls |
+| `0x0010` | CompressorHz | int8u | read | compressor frequency |
+| `0x0011` | OutdoorTemp | int8s | read | declared, not enabled (ep2 carries it) |
+| `0x0012`, `0x0013` | Features1, Faults1 | int32u | read | packed capability and fault bits (docs/14) |
+| `0x0014` | ChecksumErrors | int32u | read | 0x66 frames with a bad checksum, since boot |
+| `0x0015` | ReplyTimeouts | int32u | read | reply windows that closed empty, since boot |
+| `0x0016` | UnansweredCommands | int32u | read | command frames the unit never answered, since boot |
+| `0x0017` | LinkLosses | int32u | read | link-lost edges, since boot |
+| `0x0018` | LinkToken | int16u | read | A/C device type (high byte) and sub type; 0 until learned |
+| `0x0019` | BusLink | boolean | read | true while status polls are answered |
+
 ## To rebuild from a fresh SDK
 
 1. Re-apply the in-place edits above (or keep the SDK tree).
@@ -73,6 +91,54 @@ regenerated `endpoint_config.h` ships stale unless `attribute-storage.cpp` is re
 `zap_regen_all.py` warning, are canonical in
 [`firmware/docs/10-firmware-ota-procedure.md`](../../docs/10-firmware-ota-procedure.md). See there;
 don't duplicate them here.
+
+### Without the GUI: `firmware/scripts/zap_edit.py`
+
+This is the supported route for adding an attribute, changing a default or storage option, and
+appending an endpoint. The `.zap` is JSON in a fixed layout (2-space indent, no trailing
+newline), so the tool's output is byte-identical to a GUI save for everything it leaves alone.
+Attribute names and types come from the ZCL XML that ZAP loads, never from the command line.
+
+```bash
+python3 firmware/scripts/zap_edit.py list
+# a standard attribute that was not enabled, with a default:
+python3 firmware/scripts/zap_edit.py add-attribute --endpoint 1 --cluster Thermostat \
+    --attribute MinSetpointDeadBand --default 0
+# an attribute of the manufacturer cluster (add it to hisense-aircon-cluster.xml and
+# HisenseAircon-ClusterId.h first):
+python3 firmware/scripts/zap_edit.py add-attribute --endpoint 1 --cluster "Hisense Aircon" \
+    --attribute ChecksumErrors
+# a new endpoint: copy an existing one's type, then adjust the copy
+python3 firmware/scripts/zap_edit.py clone-endpoint --from 9
+python3 firmware/scripts/zap_edit.py set-attribute --endpoint 11 --cluster On/Off \
+    --attribute OnOff --default 1 --storage NVM
+# then, with the SDK present, before building:
+python3 firmware/scripts/zap_edit.py check
+```
+
+`clone-endpoint` only appends (the next free id, its own endpoint type), so endpoints stay
+contiguous and no existing endpoint moves. An endpoint also needs its number in
+`matter_drivers.cpp`, a UserLabel there, and the same endpoint created in the same position in
+`firmware/esp32-matter/main/app_main.cpp`.
+
+`check` copies the `.zap` next to the SDK example and runs the `GENERATE_ZAP` steps of the SDK
+Makefile (both `generate.py` passes, `codegen.py`, `zap_cluster_list.py`), the same commands
+`dev.py ota amebaz2 build` reaches through `make`. It fails when a step fails, when the
+generated endpoint array differs from the `.zap`, when an attribute enabled in the `.zap` is
+missing from the generated `.matter` (a hand-added block that codegen ignores), or when ZAP
+prints a warning of a kind the committed `.zap` does not already print. `--keep DIR` saves the
+generated files and both logs.
+
+The warning test compares kinds, with the endpoint number taken out, because this model already
+prints 45 kinds of compliance warning on every generation. The switch endpoints are On/Off
+plug-in units without Groups, Scenes Management or the Lighting feature (on purpose: Home
+Assistant would grow a "power-on behaviour" entity per switch), and the root endpoint lacks four
+items a newer specification made mandatory. A new plug-in endpoint repeats the warnings its
+siblings already have and passes. Any other warning fails the check.
+
+The tool does not cover removing or reordering endpoints, or enabling a cluster that is not on
+the endpoint yet. Use the GUI for those. Neither route replaces the runtime check: a model can
+generate and build cleanly and still break subscriptions (docs/10 §16).
 
 Two details specific to this integration (not repeated in docs/10):
 - **Open the `.zap` GUI:** `ZAP_INSTALL_PATH=~/ameba-dev/connectedhomeip/.environment/cipd/packages/zap run_zaptool.sh <app>.zap`
