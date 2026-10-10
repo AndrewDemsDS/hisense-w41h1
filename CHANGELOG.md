@@ -32,6 +32,9 @@ Built and host-tested. Not on hardware yet.
 - With the beeper on, every frame is byte for byte what the previous version sent.
 
 ### Tooling
+- CI: the hosted ESP32 build is faster and no longer fails on Docker Hub's pull limit. It pulls
+  Espressif's image through Google's public mirror, keeps a compiler cache per target and SDK pin
+  pair (saved from `main`, restored everywhere), and skips changes that only touch markdown.
 - `firmware/scripts/zap_edit.py` edits the AmebaZ2 `.zap` without the ZAP GUI (add an attribute,
   set a default or storage option, append an endpoint) and `zap_edit.py check` runs the build's
   generation steps on a scratch copy, failing on a dropped attribute or a new kind of ZAP warning.
