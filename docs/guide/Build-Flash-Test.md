@@ -63,8 +63,9 @@ standalone command:
 | `ota <amebaz2\|esp32> <step> [args]` | Matter OTA through the release scripts, see [OTA Updates](OTA-Updates) |
 
 `--board` defaults to `c3`. It picks the IDF target (`esp32c3` or `esp32`) and, for ESPHome, the
-board and pin substitutions passed to `esphome -s`. For ESPHome there is also `--board amebaz2`,
-the stock module through LibreTiny: `test` and `build` only, because that image has not run on
+board and pin substitutions passed to `esphome -s`. For ESPHome there are also `--board amebaz2-factory`,
+`amebaz2-sdk` and `amebaz2-native`, the stock module through LibreTiny by the flash layout the
+unit has: `test` and `build` only, because that image has not run on
 hardware yet ([ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board-hardware-test-pending)).
 
 ## ESPHome

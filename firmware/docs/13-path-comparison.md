@@ -206,12 +206,14 @@ this project set out to demonstrate.
 
 The table above has ESPHome only on an ESP32. Since October 2026 the same ESPHome configuration
 also compiles for the stock module's RTL8710C through ESPHome's LibreTiny platform
-(`firmware/esphome/w41h1-amebaz2.yaml`): no added hardware, no proprietary SDK to obtain (LibreTiny
-fetches what it needs, about 800 MB), a 599 KB image in a 1712 KiB slot.
+(`firmware/esphome/w41h1-amebaz2-*.yaml`, one per flash layout a module can have): no added
+hardware, no proprietary SDK to obtain (LibreTiny fetches what it needs, about 800 MB), a 601 KB
+image in a slot of 1472 or 1712 KiB.
 
 It is not in the table because it has not run on a module. The first flash still needs the clip
 or UART download mode, LibreTiny rates the chip family 2 out of 5 for stability, a known reboot
-hang is worked around but unproven here, and nothing rolls a bad update back. The full list is in
+hang is worked around but unproven here, nothing rolls a bad update back, and an image built for
+the wrong flash layout bricks the unit at its first update. The full list is in
 [`15-esphome-path.md`](15-esphome-path.md#the-stock-module-through-libretiny-compiles-hardware-test-pending).
 Until that test is done, the choice for a working module is still the AmebaZ2 Matter build.
 

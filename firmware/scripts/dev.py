@@ -51,8 +51,9 @@ ESP32 env switches: ESP32_FLAVOUR=release|debug (default debug), ESP32_TARGET, E
 ESP32_ALLOW_IDF_MISMATCH=1, ESP32_ALLOW_NO_RECOVERY=1.
 
 Targets: amebaz2 | esp32 | esphome. Board (esp32/esphome): --board c3 (ESP32-C3 SuperMini, default)
-or --board classic (ESP32-D0WDQ6). esphome also takes --board amebaz2 (the stock module through
-LibreTiny: test and build only, hardware test pending). ESPHome node identity: --name <hostname> and --friendly-name <text>
+or --board classic (ESP32-D0WDQ6). esphome also takes --board amebaz2-factory, amebaz2-sdk or
+amebaz2-native (the stock module through LibreTiny, by the flash layout the unit has: test and build
+only, hardware test pending). ESPHome node identity: --name <hostname> and --friendly-name <text>
 (default hisense-ac / "Air Conditioner"; give every node after the first its own). Env: IDF_PATH / ESP_MATTER_PATH (esp32; default ~/esp/esp-idf and
 ~/esp/esp-matter), ESPHOME (esphome command, default `esphome`), ENVF (the release env file, default
 firmware/scripts/ota-release.env; the self-hosted runner copies its secrets file to that exact path).
@@ -87,7 +88,8 @@ TEST = REPO / "firmware/test"
 ENVF = Path(os.environ.get("ENVF") or HERE / "ota-release.env")
 sys.path.insert(0, str(HERE))
 import ota_guards  # noqa: E402  (pure guard verdicts shared by both targets, host-tested)
-ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2 only has test and build: the image has not run on a module yet, and "
+ESPHOME_AMEBAZ2_BOARDS = ("amebaz2-factory", "amebaz2-sdk", "amebaz2-native")
+ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2-* only has test and build: the image has not run on a module yet, and "
                         "a first flash is a clip or UART download-mode job (firmware/docs/15-esphome-path.md)")
 ESPHOME_PIN = "2026.7.4"   # CI's `esphome config` pin (.github/workflows/qa.yaml); keep in step
 
@@ -220,14 +222,18 @@ class Ctx:
             self.idf_tgt, self.pins, self.esphome_board = "esp32c3", (5, 6, 10), "esp32-c3-devkitm-1"
         elif board == "classic":
             self.idf_tgt, self.pins, self.esphome_board = "esp32", (19, 18, 4), "esp32dev"
-        elif board == "amebaz2" and target == "esphome":
+        elif board in ESPHOME_AMEBAZ2_BOARDS and target == "esphome":
             # The stock module's own MCU through LibreTiny. Its pins are fixed by the module and
             # live in the board file, so nothing is passed as a substitution.
             self.idf_tgt, self.pins, self.esphome_board = None, ("PA14", "PA13", "PA17"), "cr3l"
-        elif board == "amebaz2":
-            die("--board amebaz2 is esphome-only (the Matter build for the module is the amebaz2 target)")
+        elif board == "amebaz2" and target == "esphome":
+            # No default: an image built for the wrong layout bricks the unit at its first update.
+            die("--board amebaz2 needs the unit's flash layout: amebaz2-factory, amebaz2-sdk or "
+                "amebaz2-native (firmware/docs/15-esphome-path.md, 'Which flash layout a unit has')")
+        elif board.startswith("amebaz2"):
+            die(f"--board {board} is esphome-only (the Matter build for the module is the amebaz2 target)")
         else:
-            die("--board must be c3 or classic (esphome also takes amebaz2)")
+            die("--board must be c3 or classic (esphome also takes amebaz2-factory, amebaz2-sdk, amebaz2-native)")
 
     @property
     def versions(self):
@@ -259,10 +265,10 @@ class Ctx:
         config = "w41h1.yaml"
         subs = ["-s", "board", self.esphome_board, "-s", "tx_pin", str(self.pins[0]),
                 "-s", "rx_pin", str(self.pins[1]), "-s", "de_pin", str(self.pins[2])]
-        if self.board == "amebaz2":
+        if self.board in ESPHOME_AMEBAZ2_BOARDS:
             if sub not in ("config", "compile"):
                 die(ESPHOME_AMEBAZ2_ONLY)
-            config, subs = "w41h1-amebaz2.yaml", []
+            config, subs = f"w41h1-{self.board}.yaml", []
         # A second node needs its own hostname: two boards both called hisense-ac fight over the
         # same mDNS name and Home Assistant device.
         if self.name:
@@ -3107,7 +3113,7 @@ def main(argv):
     if name and not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?", name):
         die(f"--name '{name}' is not a valid hostname (lowercase letters, digits, hyphens; max 31)")
     ctx = Ctx(target, board, port, sim_port, name, friendly_name)
-    if board == "amebaz2" and cmd not in ("doctor", "fetch", "test", "build"):
+    if board in ESPHOME_AMEBAZ2_BOARDS and cmd not in ("doctor", "fetch", "test", "build"):
         die(ESPHOME_AMEBAZ2_ONLY)
 
     dispatch = {"walk": walk, "doctor": doctor, "fetch": fetch, "test": test_target,

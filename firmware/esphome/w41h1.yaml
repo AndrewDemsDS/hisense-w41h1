@@ -6,7 +6,8 @@
 # boards have a file of their own beside it (w41h1-*.yaml). All of them include the same two
 # packages, so the entities are defined once:
 #
-#   packages/node.yaml        identity, logger, API, OTA, Wi-Fi
+#   packages/node.yaml        identity, logger, API, Wi-Fi
+#   packages/ota.yaml         the update server
 #   packages/hisense-ac.yaml  the bus, the hub and every entity
 #
 # Wiring is identical to the esp-matter ESP32 path; the pin tables and the C3 GPIO warnings in
@@ -31,6 +32,7 @@ substitutions:
 
 packages:
   node: !include packages/node.yaml
+  ota: !include packages/ota.yaml
   hisense_ac: !include packages/hisense-ac.yaml
 
 esp32:

@@ -75,7 +75,7 @@ every board.
 |---|---|---|
 | `w41h1.yaml` | classic ESP32, TX 19 / RX 18 / DE 4 | runs on a live A/C |
 | `w41h1-esp32c3.yaml` | ESP32-C3 SuperMini, 5 / 6 / 10 | runs on a live A/C |
-| `w41h1-amebaz2.yaml` | the stock W41H1 module itself | compiles, hardware test pending (see below) |
+| `w41h1-amebaz2-factory.yaml`, `-sdk.yaml`, `-native.yaml` | the stock W41H1 module itself, one file per flash layout | compiles, hardware test pending (see below) |
 | `w41h1-esp8266.yaml`, `w41h1-rp2040.yaml` | ESP8266 D1 mini, Raspberry Pi Pico W | examples, compile only, never run |
 
 TX and RX go to the `uart:` block and DE to the `hisense_ac:` component, all three through the
@@ -138,9 +138,25 @@ the missing mode disappears.
 
 ## The stock module, without a replacement board (hardware test pending)
 
-`w41h1-amebaz2.yaml` builds this same firmware for the chip inside the AEH-W41H1 itself, a Realtek
-RTL8710C, through ESPHome's LibreTiny platform. If it works, the module that came with the A/C
-runs ESPHome and nothing is added to the unit.
+The `w41h1-amebaz2-*.yaml` files build this same firmware for the chip inside the AEH-W41H1
+itself, a Realtek RTL8710C, through ESPHome's LibreTiny platform. If it works, the module that
+came with the A/C runs ESPHome and nothing is added to the unit.
+
+There are three files because a module has one of three flash layouts, and the image must be
+built for the one it has. An image built for another layout writes its first update to the wrong
+place and then invalidates the running image, which leaves a unit only the clip recovers.
+
+| File | For a module that |
+|---|---|
+| `w41h1-amebaz2-factory.yaml` | went from the vendor firmware to this project's Matter firmware over the air |
+| `w41h1-amebaz2-sdk.yaml` | was first written with this project's clip image |
+| `w41h1-amebaz2-native.yaml` | was written from scratch with LibreTiny's own partition table and bootloader |
+
+If you do not know the unit's history, the Matter firmware (1.3.9 or later) can tell you:
+`dev.py ota amebaz2 revert --backup <unit-ip>` prints the address of the inactive slot. `0x10000`
+or `0x190000` means factory, `0xC000` or `0x1B8000` means sdk. Once a unit runs ESPHome, its
+`Flash layout` diagnostic sensor reports whether the image matches the module, and an image that
+does not match refuses updates.
 
 **It compiles. It has not run on a module.** Do not flash it into an A/C you depend on. Before
 anyone tries it on hardware, these are the known risks:

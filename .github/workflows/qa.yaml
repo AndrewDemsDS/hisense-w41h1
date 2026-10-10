@@ -104,11 +104,14 @@ jobs:
             exit 1
           fi
 
-  # The stock module's own MCU through ESPHome's LibreTiny platform (w41h1-amebaz2.yaml). This
-  # is the board file nobody builds on the way to an ESP32, and the one platform whose toolchain
-  # is small enough for a hosted runner (about 800 MB, kept in the cache), so it gets a real
-  # compile and not only `config`. Compile-only: the image carries the placeholder secrets and is
-  # thrown away. It says nothing about a module, which needs the hardware test.
+  # The stock module's own MCU through ESPHome's LibreTiny platform (w41h1-amebaz2-*.yaml, one
+  # per flash layout a unit can have). These are the board files nobody builds on the way to an
+  # ESP32, and the one platform whose toolchain is small enough for a hosted runner (about 800 MB,
+  # kept in the cache), so they get a real compile and not only `config`. All three layouts are
+  # built because each one is checked at compile time: amebaz2/w41h1_slots.h fails the build when
+  # the image's slot addresses are not those of the layout the file names. Compile-only: the
+  # images carry the placeholder secrets and are thrown away. They say nothing about a module,
+  # which needs the hardware test.
   esphome-amebaz2:
     if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
@@ -125,24 +128,33 @@ jobs:
           restore-keys: |
             pio-esphome-amebaz2-
 
-      - name: Compile w41h1-amebaz2.yaml
+      - name: Compile every flash layout
         run: |
           cd firmware/esphome
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
-          if ! pipx run esphome==2026.7.4 compile w41h1-amebaz2.yaml > build.log 2>&1; then
-            tail -n 200 build.log
-            exit 1
-          fi
-          grep -a -E '^(RAM|Flash):|Successfully compiled' build.log
-          # The SDK and the platform warn about their own code. Ours has to build clean here too:
-          # this is the only target with a different compiler and different integer widths.
-          if grep -a -E 'components/hisense_ac/.*(warning|error)' build.log; then
-            echo "::error::hisense_ac does not compile cleanly for AmebaZ2 (see above)"
-            exit 1
-          fi
-          # The reboot workaround in the board file points lt_reboot() at the SDK's sys_reset with
-          # two linker flags. If a platform update drops sys_reset the link fails above.
-          ls -l .esphome/build/hisense-ac/.pioenvs/hisense-ac/firmware.uf2
+          # layout:address of the first slot. The app image is named after the address it is
+          # built for, so the file name shows that the layout file was applied.
+          for want in factory:0x010000 sdk:0x00C000 native:0x010000; do
+            layout=${want%%:*}
+            # Its own name, so each layout gets its own build directory.
+            if ! pipx run esphome==2026.7.4 -s name "ac-$layout" compile "w41h1-amebaz2-$layout.yaml" \
+                > build.log 2>&1; then
+              tail -n 200 build.log
+              exit 1
+            fi
+            echo "== $layout"
+            grep -a -E '^(RAM|Flash):|Successfully compiled' build.log
+            # The SDK and the platform warn about their own code. Ours has to build clean here
+            # too: this is the only target with a different compiler and integer widths.
+            if grep -a -E 'components/hisense_ac/.*(warning|error)' build.log; then
+              echo "::error::hisense_ac does not compile cleanly for AmebaZ2 (see above)"
+              exit 1
+            fi
+            # The reboot workaround points lt_reboot() at the SDK's sys_reset with two linker
+            # flags. If a platform update drops sys_reset the link fails above.
+            out=".esphome/build/ac-$layout/.pioenvs/ac-$layout"
+            ls -l "$out/firmware.uf2" "$out/image_firmware_is.${want##*:}.bin"
+          done
 
       - name: Save the PlatformIO tree
         if: github.ref == 'refs/heads/main'

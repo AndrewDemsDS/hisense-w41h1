@@ -15,6 +15,7 @@ substitutions:
 
 packages:
   node: !include packages/node.yaml
+  ota: !include packages/ota.yaml
   hisense_ac: !include packages/hisense-ac.yaml
 
 rp2:

@@ -1,7 +1,8 @@
 # Repo-only harness: every option of every hisense_ac platform on the stock module's own MCU
-# (AmebaZ2 through LibreTiny), which w41h1-amebaz2.yaml does not set. There is no upstream-shaped
-# test.rtl87xx-ard.yaml beside the others: ESPHome ships no shared UART test package for this
-# platform, so the bus and the DE pin are given here.
+# (AmebaZ2 through LibreTiny), which the w41h1-amebaz2-*.yaml board files do not set. There is
+# no upstream-shaped test.rtl87xx-ard.yaml beside the others: ESPHome ships no shared UART test
+# package for this platform, so the bus and the DE pin are given here. Never flash this one: it
+# names no flash layout.
 esphome:
   name: hisense-ac-test
 

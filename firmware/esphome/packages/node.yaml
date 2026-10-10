@@ -1,4 +1,4 @@
-# The node itself: identity, logging, the Home Assistant API, OTA and Wi-Fi. Nothing here names a
+# The node itself: identity, logging, the Home Assistant API and Wi-Fi. Nothing here names a
 # chip, so every board file includes it as is. A board file adds its platform block and whatever
 # that platform needs on top (see w41h1-amebaz2.yaml for an example).
 #
@@ -22,9 +22,6 @@ api:
   # a log stream plus a test client get refused mid-handshake ("EOF received"), which reads like
   # a broken device rather than a full table. Bench work needs the room.
   max_connections: 8
-
-ota:
-  - platform: esphome
 
 wifi:
   ssid: !secret wifi_ssid

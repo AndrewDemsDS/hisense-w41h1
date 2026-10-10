@@ -334,23 +334,79 @@ If it works on hardware, the ESPHome path no longer needs a replacement board.
 
 ### What exists
 
-- `firmware/esphome/w41h1-amebaz2.yaml`: board `cr3l`, UART0 on PA14 (TX) and PA13 (RX), DE on
-  PA17, the module's own wiring. It includes the same two packages as the ESP32 board files, so
-  the entities are identical.
-- Board `cr3l` is a Tuya module with the same chip class and flash layout (4 MB, two 1712 KiB app
-  slots). It is used because it is the LibreTiny board definition that names PA13 and PA14 as
-  UART0. ESPHome's LibreTiny UART only accepts a port's fixed hardware pins, and
-  `generic-rtl8720cm-4mb-1712k` does not define them.
+- `firmware/esphome/w41h1-amebaz2-factory.yaml`, `-sdk.yaml` and `-native.yaml`: one board file
+  per flash layout a module can have (next section). All three use board `cr3l`, UART0 on PA14
+  (TX) and PA13 (RX) and DE on PA17, the module's own wiring, and share
+  `packages/amebaz2.yaml`. They include the same entity package as the ESP32 board files and add
+  one diagnostic text sensor, `Flash layout`.
+- Board `cr3l` is a Tuya module with the same chip class. It is used because it is the LibreTiny
+  board definition that names PA13 and PA14 as UART0. ESPHome's LibreTiny UART only accepts a
+  port's fixed hardware pins, and `generic-rtl8720cm-4mb-1712k` does not define them. Its flash
+  layout is not used: each board file replaces it with a file from `firmware/esphome/amebaz2/`.
 - The logger stays on LibreTiny's default port, UART2 (TX on PA16), which is the module's log
   console pad.
-- CI compiles the file on every push (`esphome-amebaz2` in `.github/workflows/qa.yaml`) and fails
-  if the component warns.
+- CI compiles all three on every push (`esphome-amebaz2` in `.github/workflows/qa.yaml`) and
+  fails if the component warns.
+
+### Which flash layout a unit has
+
+There is no default layout, and the choice is not a preference. It has to be the layout already
+in the module's flash.
+
+LibreTiny takes the two slot addresses from the build: where an update is written, which image
+counts as valid, and which one to invalidate once the update is in. The module's bootloader takes
+them from the partition table in flash. If the image was built for other addresses than the table
+holds, the first ESPHome to ESPHome update is written inside the wrong region and the running
+image is then invalidated. Neither slot boots after that, and the unit needs the clip.
+
+The fleet has two layouts, and LibreTiny brings a third:
+
+| Layout | Board file | FW1 | FW2 | Settings (kvs) | A unit has it when |
+|---|---|---|---|---|---|
+| factory | `w41h1-amebaz2-factory.yaml` | `0x010000` + `0x170000` | `0x190000` + `0x170000` | `0x3D0000` | it went from the vendor firmware to this project's firmware over the air, so it kept the factory partition table |
+| sdk | `w41h1-amebaz2-sdk.yaml` | `0x00C000` + `0x1AC000` | `0x1B8000` + `0x1AC000` | `0x3D0000` | its flash was first written with this repo's clip image (`flash_rac-integrated-*.bin`), which carries the Realtek SDK's partition table |
+| native | `w41h1-amebaz2-native.yaml` | `0x010000` + `0x1AC000` | `0x1BC000` + `0x1AC000` | `0x3F8000` | it was written from scratch with LibreTiny's own partition table and bootloader |
+
+LibreTiny's stock layout for `cr3l` is the native row. It is right only for a module that was
+given LibreTiny's partition table and bootloader with the clip. On a converted unit it is the
+brick described above, and its settings area at `0x3F8000..0x3FFFFF` also lies over data the
+Matter firmware and the Realtek SDK keep at the top of flash (the tail of the DCT, UART settings
+at `0x3FB000`, the Bluetooth FTL at `0x3FC000`). The factory and sdk layouts put the settings at
+`0x3D0000`, above the second slot in both.
+
+To tell which layout a unit has:
+
+- **Its history.** Converted over the air from the vendor firmware and never clipped: factory.
+  First written with this repo's clip image: sdk.
+- **Ask the Matter firmware** (1.3.9 or later) for the address of the inactive slot:
+  `dev.py ota amebaz2 revert --backup <unit-ip>` prints `addr=`. `0x10000` or `0x190000` is the
+  factory layout, `0xC000` or `0x1B8000` is the sdk layout. The command only reads.
+- **A clip dump.** The second firmware image starts at `0x190000` (factory), `0x1B8000` (sdk) or
+  `0x1BC000` (native).
+
+Two guards keep a wrong choice from going unnoticed. Both are in
+`firmware/esphome/amebaz2/w41h1_slots.h`:
+
+- At build time, the header checks that the image's slot and settings addresses are exactly those
+  of the layout the board file names. A layout file that is missing, misnamed or not applied
+  fails the build. So does a build of the package with no layout named.
+- At run time, the image asks the Realtek SDK where the bootloader's partition table puts the next
+  update (`sys_update_ota_prepare_addr()`) and compares that with its own two slots. The result is
+  logged at boot and published as the `Flash layout` sensor, for example
+  `factory ok slot=2 next=0x010000 fw1_sn=... fw2_sn=...`. On `MISMATCH` the image also switches
+  its own update server off, so the bricking update cannot be started. ESPHome's safe mode does
+  not run that check, so a unit in safe mode still accepts an update.
+
+The run-time check has not run on a module. If the SDK call answers differently under LibreTiny
+than under the Realtek SDK, it could report a mismatch on a correct unit, and that unit would
+refuse updates.
 
 ### What was checked without hardware
 
 | Check | Result |
 |---|---|
-| `esphome config` and `esphome compile`, ESPHome 2026.7.4, LibreTiny 1.13.0 | pass. Flash 599,425 of 1,753,088 bytes (34.2 %), static RAM 13,337 of 262,144 bytes |
+| `esphome config` and `esphome compile`, ESPHome 2026.7.4, LibreTiny 1.13.0, all three layouts | pass. Flash 601,073 bytes: 39.9 % of the factory layout's 1,507,328 byte slot, 34.3 % of the 1,753,088 byte slot of the other two. Static RAM 13,337 of 262,144 bytes |
+| Layout applied | each build's slot and settings addresses are those of its layout (compile-time check), and the application image is built for the first slot's address (`0x010000`, `0x00C000`, `0x010000`) |
 | Warnings from `components/hisense_ac/` | none, also with every option of every platform declared (`tests/build.rtl87xx-ard.yaml`) |
 | UART write blocks (LibreTiny waits on the TX FIFO, about 1 ms per byte) | host test: DE still falls 25 ms after the last byte, the cycle stays at 1 s, no reply is missed |
 | Receive buffer | LibreTiny's is 256 bytes and filled from an interrupt. A status frame, the longest the unit sends, is 160 bytes |
@@ -372,9 +428,12 @@ If it works on hardware, the ESPHome path no longer needs a replacement board.
 3. **No automatic rollback.** The ESP32 bootloader goes back to the previous image when a new one
    fails to boot. Nothing does that here. ESPHome's safe mode covers an image that boots and then
    crash-loops. An image that does not get that far needs the clip.
-4. **First flash.** Either the SOIC-8 clip on the GD25Q32, or UART download mode: UART2 (PA15 RX,
-   PA16 TX), with PA0 held at 3.3 V through reset and PA13 not pulled low. Whether PA0 and PA15 can
-   be reached on the W41H1 board is not known.
+4. **First flash.** With the factory or sdk layout the module keeps the bootloader and partition
+   table it has, and only the application image is new: it goes into a firmware slot. With the
+   native layout the partition table, the bootloader and the application are all LibreTiny's, by
+   SOIC-8 clip on the GD25Q32 or by UART download mode: UART2 (PA15 RX, PA16 TX), with PA0 held at
+   3.3 V through reset and PA13 not pulled low. Whether PA0 and PA15 can be reached on the W41H1
+   board is not known.
 5. **Calibration data.** Flash `0x1000..0x3FFF` holds per-module data, including the flash
    controller's calibration table at `0x1040` that the boot code reads. The full-flash image
    LibreTiny builds is blank there apart from two bytes at `0x1028`. Written whole with a clip, it
@@ -391,11 +450,16 @@ If it works on hardware, the ESPHome path no longer needs a replacement board.
    The Wi-Fi stack runs in its own tasks and is not held. ESPHome's own components, the API
    among them, wait for the write. Whether DE is released on time with the rest of ESPHome
    sharing the loop is a scope measurement.
-9. **Settings storage.** ESPHome's preferences go to LibreTiny's key-value area at `0x3F8000`.
-   On a module that ran the stock firmware that region holds the vendor's data, and how FlashDB
-   treats it on first boot has not been seen.
+9. **Settings storage.** ESPHome's preferences go to LibreTiny's key-value area, 32 KiB at the
+   address the layout gives: `0x3D0000` for factory and sdk, `0x3F8000` for native. `0x3D0000` is
+   above the second slot in both layouts. What the vendor firmware or the Matter firmware may
+   have left there, and how FlashDB treats it on first boot, has not been seen. The native
+   address must not be used on a unit that may go back to the Matter firmware without a full
+   clip restore: it overwrites data that firmware keeps at the top of flash.
 10. **Going back.** Returning to the stock or the Matter firmware is a full clip write of a dump
     taken before the first flash. Take the dump and verify it first.
+11. **The wrong layout.** Covered above. The build-time guard is tested (a wrong or missing
+    layout file fails the build). The run-time guard is untested on hardware.
 
 ### A hardware test, in order
 

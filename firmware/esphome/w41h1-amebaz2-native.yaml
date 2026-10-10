@@ -1,0 +1,29 @@
+# Hisense A/C over RS-485, ESPHome variant: the stock AEH-W41H1 module itself, LibreTiny's own
+# flash layout.
+#
+# Only for a module written from scratch with the clip: LibreTiny's partition table, its
+# bootloader and this image, all three. Slots at 0x010000 and 0x1BC000, 0x1AC000 bytes each,
+# settings at 0x3F8000. On a module that still has the factory or the SDK partition table this
+# image bricks the unit at its first update, and its settings area lands on data the Matter
+# firmware keeps at the top of flash. Use w41h1-amebaz2-factory.yaml or -sdk.yaml there.
+#
+# How to tell which layout a unit has: firmware/docs/15-esphome-path.md, "Which flash layout a
+# unit has".
+#
+# STATUS: compiles, hardware test pending.
+#
+#   build:   esphome compile firmware/esphome/w41h1-amebaz2-native.yaml
+
+substitutions:
+  name: hisense-ac
+  friendly_name: Air Conditioner
+  layout: native
+  # The module's own wiring: UART0 to the RS-485 transceiver, DE on PA17. Not a choice.
+  tx_pin: PA14
+  rx_pin: PA13
+  de_pin: PA17
+
+packages:
+  node: !include packages/node.yaml
+  hisense_ac: !include packages/hisense-ac.yaml
+  amebaz2: !include packages/amebaz2.yaml
