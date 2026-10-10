@@ -96,6 +96,21 @@ edit(dev.edit_mode_select_span_guard,
      "    {\n        if (endpointSpanPair.mSpan.data() == nullptr) { continue; }"
      "  // orphaned endpoint type pads this array\n"
      "        if (endpointSpanPair.mEndpointId == endpointId)\n        {\n", "ModeSelect null-span guard inserted")
+edit(dev.edit_mode_select_sleep_profiles,
+     'storage_value_type M::coffeeOptions[] = {\n'
+     '    buildModeOptionStruct("Black", 0, List<const SemanticTag>(semanticTagsBlack)),\n'
+     '    buildModeOptionStruct("Espresso", 7, List<const SemanticTag>(semanticTagsEspresso))\n'
+     '};\n'
+     '        EndpointSpanPair(1, Span<storage_value_type>(M::coffeeOptions)) // Options for Endpoint 1\n',
+     'storage_value_type M::coffeeOptions[] = {\n'
+     '    buildModeOptionStruct("Off", 0, List<const SemanticTag>()),\n'
+     '    buildModeOptionStruct("General", 1, List<const SemanticTag>()),\n'
+     '    buildModeOptionStruct("Old", 2, List<const SemanticTag>()),\n'
+     '    buildModeOptionStruct("Young", 3, List<const SemanticTag>()),\n'
+     '    buildModeOptionStruct("Kids", 4, List<const SemanticTag>())\n'
+     '};\n'
+     '        EndpointSpanPair(6, Span<storage_value_type>(M::coffeeOptions)) // Sleep profiles on endpoint 6\n',
+     "ModeSelect options: stock coffee list on ep1 -> sleep profiles on ep6")
 edit(dev.edit_build_info_determinism,
      '\t@echo \\#define UTS_VERSION \\"`date +%Y/%m/%d-%T`\\" >> .ver\n'
      '\t@echo \\#define RTL8710CFW_COMPILE_BY \\"`id -u -n`\\" >> .ver\n'

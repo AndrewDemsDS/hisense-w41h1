@@ -7,6 +7,13 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 
 ## Unreleased
 
+### Fixed (AmebaZ2 1.3.50)
+- The Kitchen-style AmebaZ2 node published an empty sleep profile list (ep6 ModeSelect
+  `SupportedModes`), so Home Assistant showed the sleep select as unavailable. The list lives in a
+  Realtek SDK file that was edited by hand, and a restored SDK brought back the stock table.
+  `dev.py ota amebaz2 build` now writes the five profiles (Off, General, Old, Young, Kids) on
+  endpoint 6 on every build, with a host test.
+
 ### Matter (AmebaZ2 1.3.49, ESP32 1.1.19): the controls and diagnostics the ESPHome build has
 Built and host-tested. Not on hardware yet.
 - **Beeper switch**, endpoint 11 on both targets: an On/Off plug-in unit labelled "Beeper", on by
