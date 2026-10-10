@@ -7,6 +7,27 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 
 ## Unreleased
 
+### ESPHome on the stock module: the receiver stall has a cause and a fix (2026-10-10)
+- **Fixed: the bus receiver stops on the stock module.** LibreTiny keeps received bytes in the
+  Arduino `RingBufferN`, whose reader decrements its count with the receive interrupt enabled. An
+  interrupt inside that decrement stores a byte that is never counted, and from then on every
+  frame is read one byte late and one byte short: reply timeouts, no checksum error, transmit
+  still working, until the port is reopened. Reproduced on a module with the UART in loopback:
+  at 9600 baud, read in groups as the main loop reads, the count fell behind 5 times in 233034
+  bytes without a lock (one a minute) and 0 times in 233287 with interrupts masked around the
+  read. At 115200 baud: 21 times in 142558 bytes against 0 in 285036. The component now reads
+  under ESPHome's `InterruptLock` on LibreTiny. ESP32, ESP8266 and RP2040 builds are unchanged.
+- **The serial port restart stays, as a fallback, and no longer fires mid-frame.** It worked
+  because reopening the port makes a new buffer. It now waits while the hub holds the transceiver
+  in transmit, where closing the port would put a break on the pair. `Serial port restarts`
+  should stay at 0 on a unit that answers. The hub gains `bus_transmitting()` for this.
+- **DE timing on the stock module, measured in the firmware:** DE falls 23.9 to 25.9 ms after the
+  last stop bit, for a 25 ms hold, with Home Assistant connected. It was not the fault.
+- **Open: a second converted module went silent on the bus within four minutes** and no restart,
+  reset or power-on brought a reply. The receive pin never goes low after our frames, so the
+  cause is outside the chip (transceiver, wiring or the A/C) and needs someone at the unit.
+  `firmware/docs/15-esphome-path.md` has the measurements.
+
 ### ESPHome on the stock module: first run on hardware, and what it found (2026-10-10)
 - **The factory-layout build runs on a module in an A/C.** It boots under the factory bootloader,
   joins Wi-Fi, reports its flash layout as matching, drives the bus, and has taken two ESPHome

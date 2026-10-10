@@ -637,6 +637,17 @@ void HisenseAC::bus_write(const uint8_t *data, size_t len) {
 }
 void HisenseAC::bus_flush() { this->flush(); }
 int HisenseAC::bus_read() {
+#ifdef USE_LIBRETINY
+  // LibreTiny's Serial keeps received bytes in the Arduino RingBufferN, whose reader decrements
+  // its element count with the receive interrupt enabled. An interrupt that lands inside that
+  // decrement stores a byte and the count loses it: from then on the byte sits in the buffer
+  // uncounted and every frame arrives short by one byte, late by one byte, which the assembler
+  // can only time out on. Measured on an RTL8710C with the UART in loopback at 9600 baud, read
+  // in groups as this loop reads: 5 such losses in 233034 bytes without this lock, none in
+  // 233287 with it (firmware/docs/15-esphome-path.md has the runs). The lock covers one buffered
+  // byte, a few microseconds.
+  InterruptLock lock;
+#endif
   uint8_t b;
   if (this->available() > 0 && this->read_byte(&b))
     return b;

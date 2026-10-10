@@ -21,14 +21,19 @@ struct W41h1UartWatch {
 //   - the link has just dropped: at once, since a stopped receiver is the one cause a restart cures;
 //   - the link is still down: again every W41H1_UART_RETRY_MS;
 //   - the link has never been up (boot, or a unit that is off): the first restart comes one retry
-//     period after the first look, not at once, so a healthy boot is left alone.
+//     period after the first look, not at once, so a healthy boot is left alone;
+//   - the hub holds the transceiver in transmit (`transmitting`): never. Closing the port takes
+//     the TX pin away from the UART, and with DE high that puts a break on the pair in the middle
+//     of our own frame. The restart that was due stays due and happens at the next look.
 // Elapsed-time arithmetic, so the 49.7-day millis() wrap needs no special case.
-static inline bool w41h1_uart_restart_due(W41h1UartWatch *w, bool link_up, uint32_t now_ms) {
+static inline bool w41h1_uart_restart_due(W41h1UartWatch *w, bool link_up, bool transmitting, uint32_t now_ms) {
   if (link_up) {
     w->was_up = true;
     w->started = true;
     return false;
   }
+  if (transmitting)
+    return false;
   if (w->was_up) {
     w->was_up = false;
     w->last_ms = now_ms;

@@ -91,11 +91,15 @@ build if the image does not have the addresses of the layout it names, and at ru
 them with the bootloader's partition table: the result is the `Flash layout` diagnostic sensor,
 and on a mismatch the image switches its own update server off.
 
-One fault showed up on hardware. The receive side of the bus port stopped twice and stayed
-stopped until a power cycle, while commands still reached the unit. The cause is not known.
-Reopening the port restores it, so `packages/amebaz2.yaml` restarts the port when the hub reports
-the link lost and every 15 s while it stays down, logs a warning each time, and counts the
-restarts in a `Serial port restarts` diagnostic sensor. On a healthy bus that sensor stays at 0.
+One fault showed up on hardware and is fixed. The receive side of the bus port stopped twice and
+stayed stopped until a power cycle, while commands still reached the unit. LibreTiny's receive
+buffer loses count of a byte when its interrupt lands inside a read, so the component reads with
+interrupts masked on this platform. Reopening the port also clears it, so
+`packages/amebaz2.yaml` still restarts the port when the hub reports the link lost and every 15 s
+while it stays down, as a fallback. It logs a warning each time and counts the restarts in a
+`Serial port restarts` diagnostic sensor. On a unit that answers, that sensor stays at 0. A
+second converted module went silent on the bus for a reason outside the chip that is still open
+(`firmware/docs/15-esphome-path.md`, "The silent unit").
 
 The other open risks, in short:
 
