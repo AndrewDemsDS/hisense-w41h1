@@ -7,6 +7,23 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
 
 ## Unreleased
 
+### ESPHome: one entity definition for every board, and a build for the stock module
+- The node config is split. `firmware/esphome/packages/hisense-ac.yaml` holds the bus, the hub and
+  every entity, `packages/node.yaml` holds logger, API, OTA and Wi-Fi, and each board file holds
+  only its name, pins and platform block. `w41h1.yaml` validates to the same configuration as
+  before, with or without the `-s` board overrides, so existing nodes are unaffected.
+- New board files: `w41h1-esp32c3.yaml` (the C3 SuperMini, same node the `-s` overrides build),
+  and two compile-only examples, `w41h1-esp8266.yaml` and `w41h1-rp2040.yaml`.
+- **`w41h1-amebaz2.yaml`: ESPHome for the stock module's own RTL8710C through LibreTiny. It
+  compiles (599 KB of a 1712 KiB slot) and has not run on hardware.** It carries the linker
+  workaround for the LibreTiny reboot hang (issue 396). The open risks are listed in
+  `firmware/docs/15-esphome-path.md`. `dev.py test|build esphome --board amebaz2` validate and
+  compile it, and `dev.py` refuses to flash it.
+- The component needed no change to build there. Host tests now cover a UART write that blocks
+  until the bytes are out (LibreTiny) and a loop that polls the bus only every 16 ms: DE is still
+  released 25 ms after the last byte.
+- CI validates every board file and compiles the AmebaZ2 one, failing if the component warns.
+
 ### Fixed (AmebaZ2 1.3.50)
 - The Kitchen-style AmebaZ2 node published an empty sleep profile list (ep6 ModeSelect
   `SupportedModes`), so Home Assistant showed the sleep select as unavailable. The list lives in a

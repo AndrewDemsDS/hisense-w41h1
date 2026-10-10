@@ -67,8 +67,19 @@ without change, including the ground-loop rule for bench work and the warning ag
 module. The shipped defaults are the validated classic-ESP32 set (TX 19, RX 18, DE 4); an ESP32-C3
 SuperMini uses 5 / 6 / 10.
 
-TX and RX are set on the YAML's `uart:` block and DE on the `hisense_ac:` component, all three
-through the `tx_pin`, `rx_pin` and `de_pin` substitutions. The component drives DE itself with the
+There is one file per board in `firmware/esphome/`, and each holds only the node's name, the three
+pins and the platform block. The entities come from a shared package, so they are the same on
+every board.
+
+| File | Board | Status |
+|---|---|---|
+| `w41h1.yaml` | classic ESP32, TX 19 / RX 18 / DE 4 | runs on a live A/C |
+| `w41h1-esp32c3.yaml` | ESP32-C3 SuperMini, 5 / 6 / 10 | runs on a live A/C |
+| `w41h1-amebaz2.yaml` | the stock W41H1 module itself | compiles, hardware test pending (see below) |
+| `w41h1-esp8266.yaml`, `w41h1-rp2040.yaml` | ESP8266 D1 mini, Raspberry Pi Pico W | examples, compile only, never run |
+
+TX and RX go to the `uart:` block and DE to the `hisense_ac:` component, all three through the
+`tx_pin`, `rx_pin` and `de_pin` substitutions. The component drives DE itself with the
 hardware-validated timing (5 ms settle, 25 ms drain).
 
 ## Flash it
@@ -87,10 +98,14 @@ By hand:
 pipx install esphome==2026.7.4            # the pinned version; plain pip is refused on recent distro Pythons
 cd firmware/esphome
 cp secrets.yaml.example secrets.yaml      # Wi-Fi credentials + an API encryption key
-esphome run w41h1.yaml                    # classic ESP32 defaults: build, flash, follow the logs
-esphome -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 run w41h1.yaml   # C3 SuperMini
+esphome run w41h1.yaml                    # classic ESP32: build, flash, follow the logs
+esphome run w41h1-esp32c3.yaml            # C3 SuperMini
 esphome logs w41h1.yaml                   # logs only, later
 ```
+
+The older form, `esphome -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 run
+w41h1.yaml`, still works and builds the same node as `w41h1-esp32c3.yaml`. It is what `dev.py
+--board c3` runs.
 
 Home Assistant discovers the node over mDNS and adopts it with the API key from `secrets.yaml`.
 
@@ -121,19 +136,35 @@ answers with, then trim the YAML to match. For the presets, set `supports_eco`, 
 `supports_turbo` or `supports_sleep` to `false` on the climate platform; every preset that needs
 the missing mode disappears.
 
-## Shared code, one copy
+## The stock module, without a replacement board (hardware test pending)
 
-Nothing under `firmware/esphome/` reimplements the protocol. The component registers
-`firmware/src/rs485-driver/` and the ESP-IDF HAL from the Matter build as **local ESP-IDF
-components**, so both compile in place, unmodified, with no sync step and no second copy. A
-protocol fix lands once and reaches all three firmwares, which is how the two 2026-08 bus fixes
-(the panel-display collateral and the missing single-field frame marker) reached the Matter builds
-from ESPHome bring-up. The only ESPHome-specific file is an enum-mapping header covered by a host
-test.
+`w41h1-amebaz2.yaml` builds this same firmware for the chip inside the AEH-W41H1 itself, a Realtek
+RTL8710C, through ESPHome's LibreTiny platform. If it works, the module that came with the A/C
+runs ESPHome and nothing is added to the unit.
 
-Symlinks and copied headers both fail here: on the ESP-IDF framework ESPHome forwards only `-D` and
-`-W` compiler flags, so no `-I` can reach the driver's angle-bracket HAL includes. Registering real
-IDF components is what makes them resolve.
+**It compiles. It has not run on a module.** Do not flash it into an A/C you depend on. Before
+anyone tries it on hardware, these are the known risks:
+
+- LibreTiny rates this chip family 2 out of 5 for stability.
+- A restart or an update can leave the chip dark until power has been off for about 30 seconds
+  (LibreTiny issue 396). The file carries the workaround reported there. It is unproven here.
+- Nothing rolls a bad update back, unlike the ESP32. An image that does not boot needs the clip.
+- The first flash needs the SOIC-8 clip or UART download mode, as on the Matter build for the
+  module ([Installing Custom Firmware](Installing-Custom-Firmware)).
+- Flash `0x1000..0x3FFF` holds the module's own calibration data and must not be overwritten. The
+  full-flash image the build produces is blank there, so it cannot be written as it is.
+- Dump the whole chip first. The dump is the only way back.
+
+The checks done so far and the full list are in `firmware/docs/15-esphome-path.md`.
+
+## One component, its own codec
+
+The component under `firmware/esphome/components/hisense_ac/` carries its own port of the protocol
+code and talks to the bus through ESPHome's `uart:` component. It uses nothing from ESP-IDF, which
+is why it builds for every board in the table above. The port cannot drift from the shared driver
+the Matter builds use: a host test runs every frame builder and parser of both over the same
+inputs and compares them byte for byte, and it runs in CI. A protocol fix lands in the shared
+driver first and is then ported until that test passes again.
 
 ## Status
 

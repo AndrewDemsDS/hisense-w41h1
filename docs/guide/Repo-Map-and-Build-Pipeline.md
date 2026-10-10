@@ -139,7 +139,7 @@ C/C++ files, and `stop-slop.sh` on staged markdown (bypass: `--no-verify`).
 
 - **`qa.yaml`** runs on every push/PR: shellcheck, ruff, `cpp-lint.sh check` (clang-format,
   custom rules and clang-tidy on the C/C++ we own), `esp32-lint.sh` (ESP32 version consistency), `dev.py ota amebaz2 lint` (host codec/map tests, `.zap` contiguity, version sanity),
-  `esphome config` on `w41h1.yaml`, and a check that `firmware/src/version.txt` strictly increases
+  `esphome config` on every board file in `firmware/esphome/` and a compile of the AmebaZ2 one, and a check that `firmware/src/version.txt` strictly increases
   when firmware changed. It is hardware-free, so it runs on a GitHub-hosted runner, using the same
   commands as the pre-commit hook so CI and local never drift.
 - **`esp32-release.yaml`** builds the ESP32 firmware on an `esp32-vX.Y.Z` tag and attaches the
