@@ -56,7 +56,8 @@ using `dev.py bench esphome`. ([Build, Flash & Test](Build-Flash-Test#bench-stag
 ## How do I update it?
 
 Over the air, with `esphome run` on the node's board file from `firmware/esphome/` (or the same
-`-s` board overrides you flashed with). No version bump involved.
+`-s` board overrides you flashed with). No version bump involved: the version is that of the
+tree you build from ([ESPHome Build](ESPHome-Build#updates)).
 ([ESPHome Build](ESPHome-Build#updates))
 
 ## My ESP32 board won't flash or has stopped booting.
@@ -83,8 +84,12 @@ backwards. (`firmware/docs/10-stock-module-boot-and-recovery.md`)
 Press the remote's swing button **6 times** and the display shows **"77"**. On the vendor firmware
 that resets the module's Wi-Fi and starts pairing. There is no reset frame: the mainboard sets a
 request bit in its heartbeat reply, and the display lights when the module reports that it is
-provisioning. The ESPHome firmware does not act on the request. To give a node new Wi-Fi, use its
-setup hotspot or re-flash. ([Protocol Overview](Protocol-Overview#the-77-request))
+provisioning. The ESPHome firmware takes the request as "open Wi-Fi setup": the panel shows "77"
+and the node opens its hotspot, `<name>-setup`, where a captive portal takes a new network. It
+ends in a restart, when the new network has connected, when the gesture is repeated, or after
+10 minutes, and a gesture made by mistake leaves the node on the network it had.
+([ESPHome Build](ESPHome-Build#wi-fi-setup-mode-and-the-status-led),
+[Protocol Overview](Protocol-Overview#the-77-request))
 
 ## Setpoint changes do nothing sometimes.
 

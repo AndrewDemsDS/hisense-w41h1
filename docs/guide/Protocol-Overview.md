@@ -161,10 +161,14 @@ frame, then clears. Conversely, the A/C lights "77" iff the module reports `prov
 section.
 
 The vendor firmware uses the request to reset Wi-Fi and start pairing. The retired Matter builds
-used it to reopen their commissioning window. The ESPHome firmware has no pairing step and does
-not act on it: a node gets new Wi-Fi through its setup hotspot. The reference driver under
-`firmware/test/reference-driver/` still carries the handler (edge-triggered on `0x08|0x20`, with a
-re-entry lockout) for anyone who needs the behaviour.
+used it to reopen their commissioning window. The ESPHome firmware has no pairing step. Its
+component reports the request as the `on_setup_request` trigger and can light "77" with the
+`hisense_ac.set_setup_indicator` action, and the shipped configuration binds the two to Wi-Fi
+setup mode: the node opens its hotspot and captive portal, and "77" stays on the panel until
+setup mode ends ([ESPHome Build](ESPHome-Build#wi-fi-setup-mode-and-the-status-led)). `0x20` is
+taken at once, `0x08` has to hold for three replies, and a second request within 10 s is
+ignored. The reference driver under `firmware/test/reference-driver/` still carries the first
+handler (edge-triggered on `0x08|0x20`, with a re-entry lockout).
 
 > ⚠️ **Bring-up ordering on the stock module.** Initialize the DE GPIO (PA_17) and UART from a
 > **task**, after the RTOS scheduler and SDK HAL are up, never from a static constructor. Doing it
