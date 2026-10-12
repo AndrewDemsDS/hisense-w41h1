@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "hisense_mapping.h"
 #include "hisense_protocol.h"
 
 namespace esphome::hisense_ac {
@@ -205,9 +206,9 @@ inline void special_apply(SpecialState *s, const SpecialOp &op) {
 // frame, so the climate entity refuses it instead.
 inline int forced_fan_index(const SpecialState &s) {
   if (s.turbo)
-    return 6;
+    return FAN_INDEX_HIGH;
   if (s.mute || s.sleep != 0)
-    return 2;
+    return FAN_INDEX_LOW;
   return -1;
 }
 
@@ -216,8 +217,8 @@ inline bool fan_request_allowed(const SpecialState &s, uint8_t wanted_idx) {
   int pin = forced_fan_index(s);
   if (pin < 0)
     return true;
-  if (pin == 2)
-    return wanted_idx == 1 || wanted_idx == 2;
+  if (pin == FAN_INDEX_LOW)
+    return wanted_idx == FAN_INDEX_QUIET || wanted_idx == FAN_INDEX_LOW;
   return wanted_idx == static_cast<uint8_t>(pin);
 }
 

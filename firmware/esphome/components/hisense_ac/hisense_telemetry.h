@@ -42,6 +42,21 @@ inline uint64_t energy_mwh(uint64_t acc_mw_ms) { return acc_mw_ms / 3600000ULL; 
 // refresh keeps integrating sensors (total_daily_energy) advancing through a steady load.
 static constexpr uint32_t TELEMETRY_REFRESH_MS = 60000;
 
+// The periodic refresh: due on the first call and then once per TELEMETRY_REFRESH_MS. Elapsed-time
+// form, so it stays right across the clock wrap.
+struct TelemetryRefresh {
+  uint32_t last_ms{0};
+  bool started{false};
+};
+
+inline bool telemetry_refresh_due(TelemetryRefresh *refresh, uint32_t now_ms) {
+  if (refresh->started && now_ms - refresh->last_ms < TELEMETRY_REFRESH_MS)
+    return false;
+  refresh->last_ms = now_ms;
+  refresh->started = true;
+  return true;
+}
+
 inline bool telemetry_publish_due(bool has_state, float last, float value, bool refresh_due) {
   if (!has_state || refresh_due)
     return true;

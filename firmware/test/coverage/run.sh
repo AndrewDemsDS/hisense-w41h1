@@ -71,6 +71,8 @@ build_and_run test_esphome_edge_cases -I"$comp" \
   "$test_dir/test_esphome_edge_cases.cpp" "$comp/hisense_protocol.cpp"
 build_and_run test_esphome_confirm -I"$comp" \
   "$test_dir/test_esphome_confirm.cpp" "$comp/hisense_protocol.cpp"
+build_and_run test_esphome_entities -I"$comp" \
+  "$test_dir/test_esphome_entities.cpp" "$comp/hisense_protocol.cpp"
 build_and_run test_esphome_setup_request -I"$comp" \
   "$test_dir/test_esphome_setup_request.cpp" "$comp/hisense_bus.cpp" "$comp/hisense_protocol.cpp"
 build_and_run test_esphome_uart_policy -I"$module" "$test_dir/test_esphome_uart_policy.cpp"
@@ -91,7 +93,7 @@ filters=(
   --filter "$comp/hisense_protocol\.cpp" --filter "$comp/hisense_protocol\.h"
   --filter "$comp/hisense_mapping\.h" --filter "$comp/hisense_special\.h"
   --filter "$comp/hisense_confirm\.h" --filter "$comp/hisense_telemetry\.h"
-  --filter "$comp/hisense_commands\.h" --filter "$comp/hisense_bus\.cpp" --filter "$comp/hisense_bus\.h"
+  --filter "$comp/hisense_commands\.h" --filter "$comp/hisense_entities\.h" --filter "$comp/hisense_bus\.cpp" --filter "$comp/hisense_bus\.h"
   --filter "$module/w41h1_uart_policy\.h"
 )
 # gcovr: $GCOVR when set (a command, with arguments if it needs any), otherwise through uvx at

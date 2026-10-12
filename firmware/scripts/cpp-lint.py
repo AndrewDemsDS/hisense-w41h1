@@ -311,6 +311,7 @@ TIDY_UNITS = [
     ("firmware/test/test_esphome_bus_stress.cpp", C17_PORT),
     ("firmware/test/test_esphome_codec_gaps.cpp", C17_PORT),
     ("firmware/test/test_esphome_confirm.cpp", C17_PORT),
+    ("firmware/test/test_esphome_entities.cpp", C17_PORT),
     ("firmware/test/test_esphome_setup_edges.cpp", C17_PORT),
     ("firmware/test/test_esphome_setup_request.cpp", C17_PORT),
     ("firmware/test/test_esphome_uart_policy.cpp", C17_MODULE),
@@ -321,6 +322,7 @@ TIDY_UNITS = [
     ("firmware/esphome/components/hisense_ac/hisense_special.h", HDR + C17_PORT),
     ("firmware/esphome/components/hisense_ac/hisense_confirm.h", HDR + C17_PORT),
     ("firmware/esphome/components/hisense_ac/hisense_telemetry.h", HDR + C17_PORT),
+    ("firmware/esphome/components/hisense_ac/hisense_entities.h", HDR + C17_PORT),
     ("firmware/esphome/components/hisense_ac/hisense_commands.h", HDR + C17_PORT),
     ("firmware/esphome/components/w41h1_module/w41h1_uart_policy.h", HDR + C17_MODULE),
 ]

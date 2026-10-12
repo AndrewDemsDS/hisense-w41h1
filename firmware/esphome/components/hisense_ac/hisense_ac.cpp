@@ -226,12 +226,7 @@ void HisenseAC::publish_telemetry_(const AcState &state) {
 #ifdef USE_SENSOR
   // An unchanged value is still republished once per refresh period: integrating sensors such as
   // total_daily_energy only advance when their source publishes.
-  const uint32_t now = millis();
-  const bool refresh = !this->telemetry_refreshed_ || now - this->last_refresh_ms_ >= TELEMETRY_REFRESH_MS;
-  if (refresh) {
-    this->last_refresh_ms_ = now;
-    this->telemetry_refreshed_ = true;
-  }
+  const bool refresh = telemetry_refresh_due(&this->telemetry_refresh_, millis());
   this->publish_sensor_(this->indoor_temperature_sensor_, state.indoor_temp_c, refresh);
   // Both read -20 C for a while after mains power returns: the unit's "not measured yet" value.
   // Those frames go out as unknown (see outdoor_temps_measured in hisense_map.h).

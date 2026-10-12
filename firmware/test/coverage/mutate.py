@@ -4,7 +4,8 @@
     firmware/test/coverage/mutate.py [--target NAME ...] [--sample N] [--seed S]
                                      [--baseline] [--jobs J] [--out DIR]
 
-Targets: protocol_cpp, protocol_h, mapping_h, special_h, confirm_h, telemetry_h, commands_h, uart_h
+Targets: protocol_cpp, protocol_h, mapping_h, special_h, confirm_h, telemetry_h, commands_h, entities_h,
+uart_h
 (default: all of them). hisense_map.h only includes the four parts, so it is not a target.
 
 For each target the mutants come from universalmutator (`uvx --from universalmutator mutate`).
@@ -62,6 +63,7 @@ PRODUCT = {
     "hisense_confirm.h": COMP / "hisense_confirm.h",
     "hisense_telemetry.h": COMP / "hisense_telemetry.h",
     "hisense_commands.h": COMP / "hisense_commands.h",
+    "hisense_entities.h": COMP / "hisense_entities.h",
     "hisense_bus.cpp": COMP / "hisense_bus.cpp",
     "hisense_bus.h": COMP / "hisense_bus.h",
     "w41h1_uart_policy.h": MODULE / "w41h1_uart_policy.h",
@@ -74,6 +76,7 @@ TARGETS = {
     "confirm_h": "hisense_confirm.h",
     "telemetry_h": "hisense_telemetry.h",
     "commands_h": "hisense_commands.h",
+    "entities_h": "hisense_entities.h",
     "uart_h": "w41h1_uart_policy.h",
 }
 
@@ -81,6 +84,7 @@ P_H = "hisense_protocol.h"
 # hisense_map.h and the four headers it includes: who reads one reads them all.
 M_H = ("hisense_map.h", "hisense_mapping.h", "hisense_special.h", "hisense_confirm.h", "hisense_telemetry.h")
 C_H = "hisense_commands.h"
+E_H = "hisense_entities.h"
 B_H = "hisense_bus.h"
 U_H = "w41h1_uart_policy.h"
 REF_INC = [f"-I{TEST_DIR / 'stubinc'}", f"-I{TEST_DIR}", f"-I{REF}"]
@@ -94,6 +98,7 @@ UNITS = {
     "t_bus.o": (TEST_DIR / "test_esphome_bus.cpp", {P_H, *M_H, B_H}, []),
     "t_edge.o": (TEST_DIR / "test_esphome_edge_cases.cpp", {P_H, *M_H}, []),
     "t_confirm.o": (TEST_DIR / "test_esphome_confirm.cpp", {P_H, *M_H, C_H}, []),
+    "t_entities.o": (TEST_DIR / "test_esphome_entities.cpp", {P_H, *M_H, E_H}, []),
     "t_setup.o": (TEST_DIR / "test_esphome_setup_request.cpp", {P_H, B_H}, []),
     "t_uart.o": (TEST_DIR / "test_esphome_uart_policy.cpp", {U_H}, []),
     "t_codec_gaps.o": (TEST_DIR / "test_esphome_codec_gaps.cpp", {P_H}, []),
@@ -105,6 +110,7 @@ TESTS = {
     "codec_gaps": ["t_codec_gaps.o", "protocol.o"],
     "map_gaps": ["t_map_gaps.o", "protocol.o"],
     "uart": ["t_uart.o"],
+    "entities": ["t_entities.o", "protocol.o"],
     "confirm": ["t_confirm.o", "protocol.o"],
     "parity": ["t_parity.o", "protocol.o", "driver.o"],
     "setup": ["t_setup.o", "bus.o", "protocol.o"],
@@ -150,7 +156,7 @@ def fresh_work(work: Path):
     for name, src in PRODUCT.items():
         shutil.copyfile(src, work / name)
     (work / "probe.cpp").write_text(
-        '#include "hisense_map.h"\n#include "hisense_commands.h"\n#include "hisense_bus.h"\n'
+        '#include "hisense_map.h"\n#include "hisense_commands.h"\n#include "hisense_entities.h"\n#include "hisense_bus.h"\n'
         '#include "w41h1_uart_policy.h"\n'
         "bool probe_reply_class_ok(unsigned char a, unsigned char b) "
         "{ return esphome::hisense_ac::reply_class_ok(a, b); }\n"

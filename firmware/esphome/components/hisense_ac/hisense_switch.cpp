@@ -26,68 +26,33 @@ void HisenseSwitch::setup() {
 void HisenseSwitch::write_state(bool state) {
   if (this->parent_ == nullptr)
     return;
+  SpecialOp op;
   if (this->kind_ == SWITCH_BEEPER) {
     // Rides the next command frame. Nothing to send now, and no hold-off to start.
     this->parent_->set_beeper(state);
-    this->publish_state(state);
-    return;
-  }
-  switch (this->kind_) {
+  } else if (switch_special_op(this->kind_, state, &op)) {
     // Eco, turbo and quiet are special modes: they go through the hub's paced queue, shared
     // with the climate presets, so a switch flipped right after a preset change is not
-    // swallowed by the A/C's debounce.
-    case SWITCH_ECO:
-      // Eco and turbo share one command byte and are mutually exclusive on this bus, so
-      // clearing eco sends the explicit eco-off value rather than the neutral one (which
-      // clears turbo instead).
-      // A request the hub did not take is not shown: the switch keeps its state.
-      if (!this->parent_->enqueue_special({SPECIAL_OP_FEATURE, (uint8_t) (state ? FEATURE_ECO : FEATURE_ECO_OFF)}))
-        return;
-      break;
-    case SWITCH_TURBO:
-      if (!this->parent_->enqueue_special({SPECIAL_OP_FEATURE, (uint8_t) (state ? FEATURE_TURBO : FEATURE_NONE)}))
-        return;
-      break;
-    case SWITCH_QUIET:
-      if (!this->parent_->enqueue_special({SPECIAL_OP_MUTE, (uint8_t) (state ? 1 : 0)}))
-        return;
-      break;
-    case SWITCH_DISPLAY:
-      // Standing preference, re-asserted on every later frame. See the note on
-      // HisenseAC::set_display_pref: byte 36 rides every command and 0x00 lights the panel.
-      this->parent_->set_display_pref(state);
-      this->parent_->send_command();
-      break;
-    case SWITCH_BEEPER:
-      break;
+    // swallowed by the A/C's debounce. A request the hub did not take is not shown.
+    if (!this->parent_->enqueue_special(op))
+      return;
+  } else {
+    // The display: a standing preference, re-asserted on every later frame (see
+    // HisenseAC::set_display_pref). The frame sent now only carries it early, so the switch
+    // shows the preference whether or not that frame could be queued.
+    this->parent_->set_display_pref(state);
+    this->parent_->send_command();
+    this->parent_->note_user_command();
   }
-
-  this->parent_->note_user_command();
   this->publish_state(state);
 }
 
 void HisenseSwitch::on_status(const AcState &state) {
-  if (this->parent_->in_command_holdoff() || this->parent_->special_busy())
+  if (!special_entity_follows_status(this->parent_->in_command_holdoff(), this->parent_->special_busy()))
     return;
-  switch (this->kind_) {
-    case SWITCH_ECO:
-      this->publish_state(state.eco_on);
-      break;
-    case SWITCH_TURBO:
-      this->publish_state(state.turbo_on);
-      break;
-    case SWITCH_QUIET:
-      this->publish_state(state.mute_on);
-      break;
-    case SWITCH_DISPLAY:
-      // The status frame carries no display bit, so this one is write-only. Publishing the
-      // standing preference at least keeps the switch honest about what the firmware is
-      // asserting, which is what the panel will be showing unless the remote changed it.
-      this->publish_state(this->parent_->display_pref_on());
-      break;
-    case SWITCH_BEEPER:
-      break;
-  }
+  bool on;
+  if (switch_state_from_status(this->kind_, state, this->parent_->display_pref_on(), &on))
+    this->publish_state(on);
 }
 
 void HisenseSwitch::dump_config() { LOG_SWITCH("", "Hisense A/C switch", this); }

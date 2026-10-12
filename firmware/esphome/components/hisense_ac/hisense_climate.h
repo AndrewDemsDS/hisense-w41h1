@@ -13,11 +13,6 @@
 
 namespace esphome::hisense_ac {
 
-/// The two ladder steps ESPHome has no built-in fan-mode name for (indices 3 and 5).
-/// The other five ride the built-in enum; see the note in hisense_climate.cpp. ESPHome matches
-/// custom modes by pointer into the entity vector, so these strings are the one definition.
-extern const char *const FAN_CUSTOM_NAMES[2];
-
 class HisenseClimate : public climate::Climate, public Component {
  public:
   void setup() override;
@@ -35,8 +30,8 @@ class HisenseClimate : public climate::Climate, public Component {
   /// Called from the hub on the main loop with a freshly decoded status frame.
   void update_from_bus(const AcState &state, bool holdoff);
 
-  /// Publish a ladder index using the right representation: built-in enum for the five steps
-  /// ESPHome names, custom string for the two it does not.
+  /// Set the fan fields for a ladder index (as published, see fan_published_index): built-in enum
+  /// for the five steps ESPHome names, custom string for the two it does not.
   void publish_fan_index(uint8_t idx);
 
   /// Publish a preset row using the right representation: built-in enum for none/eco,
@@ -45,7 +40,7 @@ class HisenseClimate : public climate::Climate, public Component {
 
  protected:
   void control(const climate::ClimateCall &call) override;
-  int preset_request_index_(const climate::ClimateCall &call) const;
+  ClimateShown shown_() const;
 
   HisenseAC *parent_{nullptr};
   float visual_min_{16.0f};

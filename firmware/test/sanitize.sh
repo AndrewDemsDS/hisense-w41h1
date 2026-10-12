@@ -33,6 +33,7 @@ TESTS=(
   "test_esphome_bus|-I$PORT|c++17:test_esphome_bus.cpp c++17:$PORT/hisense_bus.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_edge_cases|-I$PORT|c++17:test_esphome_edge_cases.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_confirm|-I$PORT|c++17:test_esphome_confirm.cpp c++17:$PORT/hisense_protocol.cpp"
+  "test_esphome_entities|-I$PORT|c++17:test_esphome_entities.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_setup_request|-I$PORT|c++17:test_esphome_setup_request.cpp c++17:$PORT/hisense_bus.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_uart_policy|-I$MODULE|c++17:test_esphome_uart_policy.cpp"
   "test_esphome_setup_edges|-I$PORT|c++17:test_esphome_setup_edges.cpp c++17:$PORT/hisense_bus.cpp c++17:$PORT/hisense_protocol.cpp"

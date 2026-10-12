@@ -23,6 +23,7 @@
 
 #include "hisense_bus.h"
 #include "hisense_commands.h"
+#include "hisense_entities.h"
 #include "hisense_map.h"
 #include "hisense_protocol.h"
 
@@ -207,8 +208,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   uint32_t logged_faults_{0};
   // Status frames arrive about once a second and almost never differ, so telemetry goes out on
   // change plus one refresh per TELEMETRY_REFRESH_MS.
-  uint32_t last_refresh_ms_{0};
-  bool telemetry_refreshed_{false};
+  TelemetryRefresh telemetry_refresh_{};
   // Whether the outdoor and coil bytes have held a real reading since the link came up.
   OutdoorTempGate outdoor_gate_{};
   // Defaults to ON to match the switch's boot state; the A/C ships with the panel lit.

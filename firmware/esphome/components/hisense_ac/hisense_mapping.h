@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #include "hisense_protocol.h"
 
@@ -46,6 +47,9 @@ static constexpr uint8_t CLIMATE_FAN_MIDDLE_VALUE = 6;
 static constexpr uint8_t CLIMATE_FAN_FOCUS_VALUE = 7;
 static constexpr uint8_t CLIMATE_FAN_DIFFUSE_VALUE = 8;
 static constexpr uint8_t CLIMATE_FAN_QUIET_VALUE = 9;
+
+static constexpr uint8_t CLIMATE_PRESET_NONE_VALUE = 0;
+static constexpr uint8_t CLIMATE_PRESET_ECO_VALUE = 5;
 
 // ---- Mode --------------------------------------------------------------------------------------
 // Hisense AUTO is CLIMATE_MODE_AUTO: the unit picks heating or cooling itself. HEAT_COOL means
@@ -173,6 +177,12 @@ static constexpr uint8_t FAN_RAW_AUTO = 0x01;
 
 // Fan index as the climate entity sees it: 0 = auto, 1..6 = the ladder's speeds.
 static constexpr uint8_t FAN_INDEX_AUTO = 0;
+static constexpr uint8_t FAN_INDEX_QUIET = 1;  // the mute flag showing through, not a speed to command
+static constexpr uint8_t FAN_INDEX_LOW = 2;
+static constexpr uint8_t FAN_INDEX_MEDIUM_LOW = 3;
+static constexpr uint8_t FAN_INDEX_MEDIUM = 4;
+static constexpr uint8_t FAN_INDEX_MEDIUM_HIGH = 5;
+static constexpr uint8_t FAN_INDEX_HIGH = 6;
 static constexpr uint8_t FAN_INDEX_MAX = 6;
 
 inline const FanRow *fan_row_by_raw(uint8_t raw) {
@@ -227,26 +237,65 @@ inline FanSpeed fan_index_to_hisense(uint8_t idx) {
 inline uint8_t climate_fan_to_index(uint8_t fan_mode) {
   switch (fan_mode) {
     case CLIMATE_FAN_QUIET_VALUE:
-      return 1;
+      return FAN_INDEX_QUIET;
     case CLIMATE_FAN_LOW_VALUE:
-      return 2;
+      return FAN_INDEX_LOW;
     case CLIMATE_FAN_MIDDLE_VALUE:
-      return 3;
+      return FAN_INDEX_MEDIUM_LOW;
     case CLIMATE_FAN_MEDIUM_VALUE:
-      return 4;
+      return FAN_INDEX_MEDIUM;
     case CLIMATE_FAN_FOCUS_VALUE:
-      return 5;
+      return FAN_INDEX_MEDIUM_HIGH;
     case CLIMATE_FAN_HIGH_VALUE:
     case CLIMATE_FAN_ON_VALUE:
-      return 6;
+      return FAN_INDEX_HIGH;
     default:
       return FAN_INDEX_AUTO;
   }
 }
 
-// Quiet (index 1) is only reachable through the mute flag, i.e. the `quiet` preset, so as a fan mode
-// it is published as low.
-inline uint8_t fan_published_index(uint8_t idx) { return idx == 1 ? 2 : idx; }
+// Quiet is only reachable through the mute flag, i.e. the `quiet` preset, so as a fan mode it is
+// published as low.
+inline uint8_t fan_published_index(uint8_t idx) { return idx == FAN_INDEX_QUIET ? FAN_INDEX_LOW : idx; }
+
+// How the climate entity names a ladder step. Five of the seven are ESPHome's BUILT-IN fan enum
+// and only the two it has no name for are custom. Mixing is not cosmetic: ClimateCall converts a
+// name matching a built-in into the enum, and its validation then DISCARDS that enum unless the
+// traits advertise it, so publishing everything as custom would make "High" unsettable.
+// ESPHome keeps a pointer to the custom name it is given, so these strings are the one definition.
+inline constexpr const char *const FAN_CUSTOM_NAMES[2] = {"medium_low", "medium_high"};
+
+inline bool fan_index_is_custom(uint8_t idx) { return idx == FAN_INDEX_MEDIUM_LOW || idx == FAN_INDEX_MEDIUM_HIGH; }
+
+// The custom name of a step that has one (fan_index_is_custom).
+inline const char *fan_custom_name(uint8_t idx) { return FAN_CUSTOM_NAMES[idx == FAN_INDEX_MEDIUM_LOW ? 0 : 1]; }
+
+// Custom name -> ladder index, or -1.
+inline int fan_custom_index(const char *name) {
+  if (name == nullptr)
+    return -1;
+  if (std::strcmp(name, FAN_CUSTOM_NAMES[0]) == 0)
+    return FAN_INDEX_MEDIUM_LOW;
+  if (std::strcmp(name, FAN_CUSTOM_NAMES[1]) == 0)
+    return FAN_INDEX_MEDIUM_HIGH;
+  return -1;
+}
+
+// The built-in fan enum value a step without a custom name is published as. The quiet step is not
+// a fan mode and shows as low.
+inline uint8_t fan_index_to_climate_fan(uint8_t idx) {
+  switch (idx) {
+    case FAN_INDEX_AUTO:
+      return CLIMATE_FAN_AUTO_VALUE;
+    case FAN_INDEX_QUIET:
+    case FAN_INDEX_LOW:
+      return CLIMATE_FAN_LOW_VALUE;
+    case FAN_INDEX_MEDIUM:
+      return CLIMATE_FAN_MEDIUM_VALUE;
+    default:
+      return CLIMATE_FAN_HIGH_VALUE;
+  }
+}
 
 // ---- Setpoint ----------------------------------------------------------------------------------
 inline int clamp_setpoint_c(int c) {
