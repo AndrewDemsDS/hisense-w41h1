@@ -3,14 +3,14 @@
 // Plain integers only, no Arduino and no ESPHome, so the host tests compile it as it is
 // (firmware/test/test_esphome_uart_policy.cpp). The restart itself is in w41h1_module.cpp.
 #pragma once
-#include <stdint.h>
+#include <cstdint>
 
 // While the link stays down the port is restarted this often. A restart costs one poll at most.
 // A unit that is switched off at the mains while the node stays powered gets a restart four
 // times a minute for nothing, which is harmless.
 static const uint32_t W41H1_UART_RETRY_MS = 15000;
 
-struct W41h1UartWatch {
+struct W41H1UartWatch {
   bool started{false};   // the retry clock is running
   bool was_up{false};    // the link was up at the previous look
   uint32_t last_ms{0};   // when the link dropped, or the last restart
@@ -26,7 +26,7 @@ struct W41h1UartWatch {
 //     the TX pin away from the UART, and with DE high that puts a break on the pair in the middle
 //     of our own frame. The restart that was due stays due and happens at the next look.
 // Elapsed-time arithmetic, so the 49.7-day millis() wrap needs no special case.
-static inline bool w41h1_uart_restart_due(W41h1UartWatch *w, bool link_up, bool transmitting, uint32_t now_ms) {
+static inline bool w41h1_uart_restart_due(W41H1UartWatch *w, bool link_up, bool transmitting, uint32_t now_ms) {
   if (link_up) {
     w->was_up = true;
     w->started = true;

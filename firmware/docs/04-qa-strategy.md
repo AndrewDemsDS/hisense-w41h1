@@ -60,8 +60,9 @@ toolchain, in seconds. CI also compiles all three stock-module layouts for real,
 the one platform with a different compiler and integer widths, and because the build itself checks
 that the image's slot addresses are those of the layout the file names.
 
-ESPHome's own CI scripts run against the component too (`esphome-upstream-check.sh`), on the
-pinned release and on their development branch.
+ESPHome's own CI scripts run against the component too (`esphome-upstream-check.sh`): on the
+pinned release in every pull request that changes the firmware, and on their development branch
+every night.
 
 ## Layer 4: bench
 

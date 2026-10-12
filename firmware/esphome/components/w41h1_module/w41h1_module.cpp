@@ -4,6 +4,7 @@
 
 #ifdef USE_LIBRETINY
 
+#include "esphome/core/application.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -29,10 +30,17 @@ void W41H1Module::setup() {
     // would be written to the wrong place and the running image invalidated, so the update
     // server is switched off. Reflash with the layout this unit has.
     ESP_LOGE(TAG, "Flash layout: %s", report);
-    ESP_LOGE(TAG, "OTA is disabled: this image was built for another flash layout");
-    this->ota_->mark_failed();
+    // The schema requires ota_id, so the pointer is only null in a node put together by hand in
+    // C++. Then nothing can be switched off here, and the log has to say so.
+    if (this->ota_ != nullptr) {
+      ESP_LOGE(TAG, "OTA is disabled: this image was built for another flash layout");
+      this->ota_->mark_failed();
+    } else {
+      ESP_LOGE(TAG, "This image was built for another flash layout: do NOT update this unit over the air");
+    }
   }
-  this->set_interval(UART_WATCH_INTERVAL_MS, [this]() { this->watch_serial_port_(); });
+  // The first look at the port comes one interval after setup, not in the first loop.
+  this->last_look_ms_ = millis();
 }
 
 void W41H1Module::update() {
@@ -93,8 +101,12 @@ void W41H1Module::dump_config() {
 // while the hub is transmitting (w41h1_uart_policy.h). This lives in this component and not in
 // the hub because the port is LibreTiny's: ESPHome's uart component can only reload a port's
 // settings on ESP32 and ESP8266.
-void W41H1Module::watch_serial_port_() {
-  if (!w41h1_uart_restart_due(&this->uart_watch_, this->hub_->link_up(), this->hub_->bus_transmitting(), millis()))
+void W41H1Module::loop() {
+  const uint32_t now = App.get_loop_component_start_time();
+  if (now - this->last_look_ms_ < UART_WATCH_INTERVAL_MS)
+    return;
+  this->last_look_ms_ = now;
+  if (!w41h1_uart_restart_due(&this->uart_watch_, this->parent_->link_up(), this->parent_->bus_transmitting(), now))
     return;
   this->restart_serial_port_();
   ESP_LOGW(TAG, "A/C bus silent: serial port restarted (%u so far)", (unsigned) this->uart_watch_.restarts);

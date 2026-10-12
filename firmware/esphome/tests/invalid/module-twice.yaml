@@ -1,6 +1,5 @@
 # w41h1_module listed twice.
-# The message is ESPHome's own for a component that takes one instance.
-# expect: expected a dictionary
+# expect: w41h1_module can be listed only once
 esphome:
   name: invalid-case
 

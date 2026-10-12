@@ -51,9 +51,9 @@ nothing. "Compiles" and "ran on a unit" are different claims, and the docs keep 
 - **AI assistance:** if you used an AI tool, add an `Assisted-by: AI` trailer (vendor-neutral). Do
   **not** use `Co-authored-by:` for AI.
 - Open an issue for anything non-trivial before a big PR, so we can agree on the approach.
-- CI is hardware-free: `.github/workflows/qa.yaml` runs the lints, `firmware/test/run_tests.sh`,
-  `esphome config` on every board file and a compile for the ESP32 boards and the stock module on
-  every push and PR. The pre-commit hook (`git config core.hooksPath firmware/.githooks`) runs
+- CI is hardware-free: `.github/workflows/qa.yaml` runs the lints, `firmware/test/run_tests.sh`
+  and `esphome config` on every board file on every push and PR, and a compile for the ESP32
+  boards and the stock module when the firmware changed. The pre-commit hook (`git config core.hooksPath firmware/.githooks`) runs
   the same host tests.
 - **Changelog:** a change under `firmware/esphome/components/` or `firmware/esphome/packages/`
   needs an entry under `## Unreleased` in `CHANGELOG.md`, and CI fails the pull request without
@@ -76,7 +76,9 @@ For the maintainer. The firmware version lives in one file,
    If the tree already has the number that is being released (as for 2.0.0), only the changelog
    changes.
 3. **Check it:** `python3 firmware/scripts/version-lint.py --tag vX.Y.Z` has to pass on that
-   commit. It is the check the release workflow starts with.
+   commit. It is the check the release workflow starts with. For the whole workflow without a
+   release, `gh workflow run esphome-release.yaml --ref main` is a dry run: every gate and every
+   compile, and the run's summary shows the release text. It creates no tag and no release.
 4. **Tag and push the tag:** `git tag -s vX.Y.Z -m "ESPHome firmware X.Y.Z"` on the merged commit,
    then `git push origin vX.Y.Z`.
 

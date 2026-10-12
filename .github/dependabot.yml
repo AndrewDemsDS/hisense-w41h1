@@ -2,12 +2,25 @@ version: 2
 # Automated dependency-update PRs. GitHub Actions are SHA-pinned in the workflows
 # (supply-chain safety); Dependabot proposes the bumps as reviewable PRs so the pins
 # stay current without hand-resolving SHAs. Python ecosystems track the pinned
-# requirements files of the clip flasher and the reverse-engineering tooling.
+# requirements files: the clip flasher, the reverse-engineering tooling, the lint
+# tools CI installs, and the ESPHome release the firmware is built with.
+#
+# Every entry waits a week after a release before proposing it (cooldown): a version
+# that is pulled or found malicious in its first days never reaches a pull request.
+#
+# What nothing here can follow, because Dependabot reads no shell or YAML variables:
+#   - clang-format and clang-tidy in firmware/scripts/cpp-lint.sh. They are ESPHome's own
+#     pins and move when the ESPHome release moves, not when a newer clang exists.
+#   - the ESP-IDF container image of the esp32-recon job in nightly.yaml, and the
+#     espressif/mdns component of firmware/esp32-recon/main/idf_component.yml.
+#   - the three other places that name the ESPHome release (see .github/ci/esphome/).
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: ci
     groups:
@@ -18,6 +31,8 @@ updates:
     directory: /firmware/flasher
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: build
 
@@ -25,5 +40,32 @@ updates:
     directory: /reverse-engineering/tools
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build
+
+  # actionlint, zizmor, cppcheck, ruff, gcovr: the versions the QA workflow installs.
+  - package-ecosystem: pip
+    directory: /.github/ci/lint
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+    groups:
+      lint-tools:
+        patterns: ["*"]
+
+  # The ESPHome release. The pull request is a reminder more than a change: it fails the
+  # lint-extra job until the other places that pin the release are bumped in it
+  # (.github/ci/esphome/requirements.txt says which). Monthly: ESPHome releases monthly.
+  - package-ecosystem: pip
+    directory: /.github/ci/esphome
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: build

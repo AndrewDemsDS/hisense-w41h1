@@ -1,0 +1,12 @@
+# The ESP32 family (classic ESP32, ESP32-C3) on ESP-IDF, which is the framework every ESP32 node of
+# this project has run on. The board file names the chip through `board`. Anything a board needs on
+# top (sdkconfig options, for example) goes in an `esp32:` block of its own, which is merged
+# over this one.
+#
+# Substitutions the including file must define: board (a PlatformIO board id: esp32dev,
+# esp32-c3-devkitm-1, ...).
+
+esp32:
+  board: ${board}
+  framework:
+    type: esp-idf

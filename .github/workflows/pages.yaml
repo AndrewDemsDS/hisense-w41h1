@@ -44,6 +44,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Assemble the site
         run: |
@@ -79,6 +81,8 @@ jobs:
       # as a repo secret. Never allowed to fail the workflow -- a submission endpoint being down
       # says nothing about whether the site published.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Ping IndexNow
         continue-on-error: true
         env:

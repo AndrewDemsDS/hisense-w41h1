@@ -83,9 +83,10 @@ bridge.
 
 ## CI
 
-A hardware-free gate runs on every push and pull request: lints, the host test suite,
-`esphome config` on every board file, a real compile for the stock module, and ESPHome's own CI
-checks against the component. Details:
+A hardware-free gate runs on every push and pull request: lints, the host test suite and
+`esphome config` on every board file. A change to the firmware also gets a real compile for the
+ESP32 boards and the stock module and ESPHome's own CI checks against the component. A nightly run
+fuzzes the codec and compiles the remaining board files. Details:
 [Repo Map & Build Pipeline](docs/guide/Repo-Map-and-Build-Pipeline.md#continuous-integration-github-actions).
 
 ## De-clouding your whole home
