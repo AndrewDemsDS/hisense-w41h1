@@ -56,7 +56,7 @@ def tree(tmp, name, version="2.0.0", changelog="# Changelog\n\n## Unreleased\n\n
     repo = pathlib.Path(tmp) / name
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
-    # Nothing below may run unless the repository really is the new one in the temporary directory.
+    # Nothing below may run unless the repository is the new one in the temporary directory.
     if not (repo / ".git" / "HEAD").is_file():
         sys.exit(f"test_version_lint: git init did not create {repo}/.git, refusing to go on")
     write(repo, VERSION_FILE, version_yaml(version))
