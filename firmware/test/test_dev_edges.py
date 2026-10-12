@@ -14,12 +14,13 @@ nothing is written outside that directory. About 2 s.
 """
 
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
 
 import edge_harness
-from edge_harness import CLEAN_ENV, ROOT, SCRIPTS, check, died, environ, known_failure, patched, quiet, raised, script
+from edge_harness import CLEAN_ENV, ROOT, SCRIPTS, check, died, environ, patched, quiet, raised, script
 import dev
 
 DEV = SCRIPTS / "dev.py"
@@ -142,15 +143,25 @@ check(died(dev.Ctx, "esphome", "", None, None) is not None, "an empty board is r
 # Which esphome is run: $ESPHOME, then PATH, then pipx's directory.
 pipx_bin = TMP / "pipx-bin"
 with environ(ESPHOME="/opt/x/esphome", PIPX_BIN_DIR=None):
-    check(dev.Ctx("esphome", "c3", None, None).esphome_cmd() == "/opt/x/esphome", "$ESPHOME names the command")
+    check(dev.esphome_argv() == ["/opt/x/esphome"], "$ESPHOME names the command")
 with environ(ESPHOME=None, PIPX_BIN_DIR=str(pipx_bin)), patched(dev, have=lambda tool: False):
-    c = dev.Ctx("esphome", "c3", None, None)
-    check(c.esphome_cmd() == "esphome", "no esphome anywhere: the bare name, so the error names it")
+    check(dev.esphome_argv() == ["esphome"], "no esphome anywhere: the bare name, so the error names it")
     pipx_bin.mkdir()
     (pipx_bin / "esphome").write_text("#!/bin/sh\n")
-    check(c.esphome_cmd() == "esphome", "a pipx esphome that is not executable is not used")
+    check(dev.esphome_argv() == ["esphome"], "a pipx esphome that is not executable is not used")
     script(pipx_bin / "esphome", "#!/bin/sh\n")
-    check(c.esphome_cmd() == str(pipx_bin / "esphome"), "an executable esphome in PIPX_BIN_DIR is used when PATH has none")
+    check(dev.esphome_argv() == [str(pipx_bin / "esphome")], "an executable esphome in PIPX_BIN_DIR is used when PATH has none")
+# $ESPHOME may be a command with arguments. It is split into words, never given to a shell.
+spaced = script(TMP / "my tools" / "esphome", "#!/bin/sh\n")
+for text, argv in (("uvx esphome", ["uvx", "esphome"]), ("python3 -m esphome", ["python3", "-m", "esphome"]),
+                   ("'/opt/my tools/esphome' -v", ["/opt/my tools/esphome", "-v"]), (str(spaced), [str(spaced)]),
+                   ("x; touch f", ["x;", "touch", "f"])):
+    with environ(ESPHOME=text):
+        check(dev.esphome_argv() == argv, f"ESPHOME={text.replace(str(TMP), '<tmp>')!r} is {len(argv)} word(s)")
+for text, needle in (("", "set and empty"), ("   ", "set and empty"), ("'unclosed", "is not a command line")):
+    with environ(ESPHOME=text):
+        msg = died(dev.esphome_argv)
+        check(msg and needle in msg, f"ESPHOME={text!r} is refused with a message")
 
 # esphome_run: what it refuses, and the command line it builds.
 calls = []
@@ -317,37 +328,47 @@ check(order == ["doctor", "fetch", "test_target", "build", "flash"] and ctx.port
 # ================================================================================================
 print("== dev.py edges: the environment it runs in ==")
 
-# $ESPHOME goes into `bash -c "command -v $ESPHOME"` as text.
+# $ESPHOME used to go into `bash -c "command -v $ESPHOME"` as text, so anything after a `;` ran.
 marker = TMP / "ran-from-ESPHOME"
-cli("doctor", "esphome", ESPHOME=f"nonexistent-tool; touch {marker}")
-known_failure(not marker.exists(),
-              "$ESPHOME is looked up as a command name, not run as shell text",
-              "dev.py:123 have(): the tool name is interpolated into `bash -c`, so anything after a `;` runs "
-              "(same pattern at dev.py:305). shutil.which() does the lookup without a shell")
+for cmd in ("doctor", "build", "test"):
+    r = cli(cmd, "esphome", ESPHOME=f"nonexistent-tool; touch {marker}")
+check(not marker.exists(), "$ESPHOME is looked up as a command name, not run as shell text (doctor, build, test)")
+r = cli("erase", "esphome", "--port", "/dev/null", stdin="ERASE\n", ESPHOME=f"nonexistent-tool; touch {marker}", PATH=str(TMP / "empty-path"))
+check(not marker.exists() and r.returncode == 1 and "Traceback" not in r.stderr, "nor by erase, which looks for the python beside it")
 
-# A command with arguments in $ESPHOME ("uvx esphome", "python3 -m esphome") passes the lookup
-# (bash finds the first word) and then fails as one file name.
-with patched(dev, ESPHOME_DIR=esphome_dir), environ(ESPHOME="true --with-an-argument"), quiet():
-    how = raised(dev.Ctx("esphome", "c3", None, None).esphome_run, "config")
-known_failure(how in (None, "Die"),
-              "an $ESPHOME with arguments in it runs, or is refused with a message",
-              "dev.py:204 esphome_run(): the string is used as one argv[0], so subprocess raises FileNotFoundError "
-              "after have() said the command exists")
+# A command with arguments in $ESPHOME ("uvx esphome", "python3 -m esphome") runs as that command.
+(esphome_dir / "secrets.yaml").write_text("")
+seen = TMP / "esphome-args"
+launcher = script(TMP / "fake-bin" / "launcher", f'#!/bin/sh\nprintf "%s\\n" "$@" > {seen}\n')
+with patched(dev, ESPHOME_DIR=esphome_dir), environ(ESPHOME=f"{launcher} esphome --quiet"), quiet():
+    how = raised(dev.Ctx("esphome", "classic", None, None).esphome_run, "config")
+check(how is None and seen.read_text().split("\n")[:2] == ["esphome", "--quiet"] and "config" in seen.read_text(),
+      "an $ESPHOME with arguments in it runs: the words after the command come first, then dev.py's own")
+with patched(dev, ESPHOME_DIR=esphome_dir), environ(ESPHOME="no-such-launcher esphome"), quiet():
+    msg = died(dev.Ctx("esphome", "c3", None, None).esphome_run, "config")
+check(msg and "'no-such-launcher' not found" in msg, "and one whose command does not exist is refused by name")
+unrunnable = TMP / "fake-bin" / "not-a-program"
+unrunnable.write_text("this is not a program\n")
+unrunnable.chmod(0o755)
+with patched(dev, ESPHOME_DIR=esphome_dir), environ(ESPHOME=str(unrunnable)), quiet():
+    msg = died(dev.Ctx("esphome", "c3", None, None).esphome_run, "config")
+check(msg and msg.startswith("cannot run"), "a command that is there and cannot be executed is a message, not a traceback")
 
-# dev.py says it needs only python3. Its tool lookup needs bash.
+# dev.py says it needs only python3. Its tool lookup used to need bash.
 only_python = TMP / "only-python"
 only_python.mkdir()
 (only_python / "python3").symlink_to(sys.executable)
 r = subprocess.run([sys.executable, str(DEV), "doctor", "esphome"], capture_output=True, text=True,
                    env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
-known_failure(r.returncode == 1 and "Traceback" not in r.stderr,
-              "doctor on a PATH without bash lists what is missing",
-              "dev.py:123 have(): `bash -c command -v` raises FileNotFoundError when bash itself is absent, "
-              "so doctor ends in a traceback instead of a gap list")
+check(r.returncode == 1 and "Traceback" not in r.stderr and "git not on PATH" in r.stdout,
+      "doctor on a PATH without bash lists what is missing")
+r = subprocess.run([sys.executable, str(DEV), "test", "esphome"], capture_output=True, text=True,
+                   env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
+check(r.returncode == 1 and "Traceback" not in r.stderr and "cannot run bash" in r.stderr,
+      "test on a PATH without bash says it cannot run bash (the host tests are a bash script)")
 
 # A PATH with python3 and bash and nothing else: doctor lists every gap and exits 1.
-bash_path = subprocess.run(["bash", "-c", "command -v bash"], capture_output=True, text=True).stdout.strip()
-(only_python / "bash").symlink_to(bash_path)
+(only_python / "bash").symlink_to(shutil.which("bash"))
 r = subprocess.run([sys.executable, str(DEV), "doctor", "esphome"], capture_output=True, text=True,
                    env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
 check(r.returncode == 1 and all(gap in r.stdout for gap in ("git not on PATH", "g++ not on PATH", "esphome not installed",

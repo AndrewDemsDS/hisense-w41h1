@@ -35,6 +35,8 @@ retired. The last tree that has them is the tag `matter-final`.
 
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -89,15 +91,41 @@ def run(args, env=None, cwd=None, check=True):
     """Print the command then execute it, streaming output."""
     shown = " ".join(str(a) for a in args)
     print(f"{C['grey']}  $ {shown}{C['off']}")
-    r = subprocess.run([str(a) for a in args], env=env, cwd=str(cwd) if cwd else None)
+    try:
+        r = subprocess.run([str(a) for a in args], env=env, cwd=str(cwd) if cwd else None)
+    except OSError as e:
+        die(f"cannot run {args[0]}: {e.strerror}")
     if check and r.returncode != 0:
         die(f"command failed ({r.returncode}): {shown}")
     return r.returncode
 
 
 def have(tool):
-    return subprocess.run(["bash", "-c", f"command -v {tool}"],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    """True when `tool` is a command on PATH (or an executable path). No shell is involved."""
+    return shutil.which(str(tool)) is not None
+
+
+def esphome_argv():
+    """The esphome command as an argument list: $ESPHOME, then PATH, then pipx's directory.
+    $ESPHOME may be a command with arguments ("uvx esphome", "python3 -m esphome"). It is split
+    the way a shell splits words and never handed to one, so nothing in it is executed as text."""
+    text = os.environ.get("ESPHOME")
+    if text is not None:
+        if have(text):                 # one path, spaces and all
+            return [text]
+        try:
+            argv = shlex.split(text)
+        except ValueError as e:
+            die(f"ESPHOME={text!r} is not a command line ({e})")
+        if not argv:
+            die("ESPHOME is set and empty: unset it, or name the esphome command")
+        return argv
+    if have("esphome"):
+        return ["esphome"]
+    # `pipx install` puts the app in ~/.local/bin (or PIPX_BIN_DIR), which a fresh Ubuntu shell
+    # does not have on PATH until the next login. Use it there instead of reporting it missing.
+    pipx_bin = Path(os.environ.get("PIPX_BIN_DIR", str(Path.home() / ".local/bin"))) / "esphome"
+    return [str(pipx_bin)] if pipx_bin.is_file() and os.access(pipx_bin, os.X_OK) else ["esphome"]
 
 
 
@@ -132,16 +160,6 @@ class Ctx:
         if not self.port:
             die(f"{cmd} needs --port <serial device> (e.g. /dev/ttyACM0)")
 
-    def esphome_cmd(self):
-        if "ESPHOME" in os.environ:
-            return os.environ["ESPHOME"]
-        if have("esphome"):
-            return "esphome"
-        # `pipx install` puts the app in ~/.local/bin (or PIPX_BIN_DIR), which a fresh Ubuntu shell
-        # does not have on PATH until the next login. Use it there instead of reporting it missing.
-        pipx_bin = Path(os.environ.get("PIPX_BIN_DIR", str(Path.home() / ".local/bin"))) / "esphome"
-        return str(pipx_bin) if pipx_bin.is_file() and os.access(pipx_bin, os.X_OK) else "esphome"
-
     def esphome_build_dir(self):
         return build_dir(self.name)
 
@@ -149,9 +167,9 @@ class Ctx:
         return slot_image(self.board, self.name)
 
     def esphome_run(self, sub, *args, cache=True):
-        cmd = self.esphome_cmd()
-        if not have(cmd):
-            die(f"'{cmd}' not found (dev.py fetch esphome, or set ESPHOME=)")
+        cmd = esphome_argv()
+        if not have(cmd[0]):
+            die(f"'{cmd[0]}' not found (dev.py fetch esphome, or set ESPHOME=)")
         if not (ESPHOME_DIR / "secrets.yaml").is_file():
             die(f"no {ESPHOME_DIR}/secrets.yaml -- cp secrets.yaml.example secrets.yaml and fill it in")
         config = "w41h1.yaml"
@@ -172,7 +190,7 @@ class Ctx:
             subs += ["-s", "friendly_name", self.friendly_name]
         env = esphome_env(os.environ) if cache else {k: v for k, v in os.environ.items()
                                                       if k != "PLATFORMIO_BUILD_CACHE_DIR"}
-        run([cmd, *subs, sub, config, *args], cwd=ESPHOME_DIR, env=env)
+        run([*cmd, *subs, sub, config, *args], cwd=ESPHOME_DIR, env=env)
 
 
 def build_dir(name=None):
@@ -217,9 +235,12 @@ def doctor(ctx):
     say("doctor: esphome")
     have_tool("git", gaps); have_tool("python3", gaps)
     have_tool("g++", gaps, "the host tests compile C++: sudo apt install g++, or pacman -S gcc")
-    cmd = ctx.esphome_cmd()
-    if have(cmd):
-        ver = subprocess.run([cmd, "version"], stdout=subprocess.PIPE, text=True).stdout.split()
+    cmd = esphome_argv()
+    if have(cmd[0]):
+        try:
+            ver = subprocess.run([*cmd, "version"], stdout=subprocess.PIPE, text=True).stdout.split()
+        except OSError:
+            ver = []
         ver = ver[-1] if ver else "?"
         ok(f"esphome {ver}") if ver == ESPHOME_PIN else gaps.append(f"esphome is {ver}, CI pins {ESPHOME_PIN}")
     else:
@@ -283,9 +304,9 @@ def erase(ctx):
         confirm = ""
     if confirm != "ERASE":
         die("not confirmed; nothing erased")
-    cmd = ctx.esphome_cmd()
-    py = Path(os.path.realpath(subprocess.run(["bash", "-c", f"command -v {cmd}"],
-              stdout=subprocess.PIPE, text=True).stdout.strip() or cmd)).parent / "python"
+    # esptool comes with ESPHome: the python beside the esphome command has it.
+    cmd = esphome_argv()[0]
+    py = Path(os.path.realpath(shutil.which(cmd) or cmd)).parent / "python"
     py = str(py) if py.is_file() and os.access(py, os.X_OK) else "python3"
     run([py, "-m", "esptool", "--port", ctx.port, "erase_flash"])
 

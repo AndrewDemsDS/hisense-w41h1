@@ -114,6 +114,8 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   file names, runs them for any file under `firmware/scripts/`, `firmware/flasher/` and the hook
   itself, and runs `docs/guide/lint.py` when a guide page is staged. `stop-slop.sh` also reads
   renamed files, files with non-ASCII names and `.mdx`.
+- **`dev.py`**: `$ESPHOME` is split into words and never run by a shell, so `ESPHOME="uvx esphome"`
+  works and text after a `;` in it is no longer executed. Tool lookups need no bash.
 
 ## Matter and ESPHome side by side - 2026-10-10
 
