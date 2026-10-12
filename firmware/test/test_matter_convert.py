@@ -511,7 +511,8 @@ def backup(reply, out_name="backup.bin", base="1100"):
     """Run backup against a unit that sends `reply`. Returns (exit code, stdout, file)."""
     unit = FakeUnit(lambda c: c.sendall(reply))
     out_file = TMP / out_name
-    out_file.unlink(missing_ok=True)
+    if out_file.parent.is_dir():
+        out_file.unlink(missing_ok=True)
     cfg = {"BREAKGLASS_TOKEN": "tok", "BREAKGLASS_PORT": str(unit.port), "SERIAL_BASE": base}
     code = None
     with patched(mc, load_env=lambda required=(): cfg), quiet() as (out, err):
@@ -539,9 +540,9 @@ for label, reply, needle in (
         ("the stream ending early", header(SLOT[:0x1000], length=len(SLOT)), "connection closed at 0x1000"),
         ("no header in the first 4 KB", b"x" * 5000, "no backup header in the first 4 KB"),
         ("the connection closing at once", b"", "connection closed before the backup header"),
-        ("a slot with no erased tail", header(stock), "no 4096-byte 0xFF run"),
-        ("an erased slot", header(b"\xff" * 0x100000), "outside [0x100000,0x180000]"),
-        ("an image too small to be one", header(fake_image(5) + b"\xff" * 0x2000), "outside [0x100000,0x180000]"),
+        ("a slot with no erased tail", header(stock), "no application image in the backup"),
+        ("an erased slot", header(b"\xff" * 0x100000), "no application image in the backup"),
+        ("an image too small to be one", header(fake_image(5) + b"\xff" * 0x2000), "0x100000 to 0x180000 bytes long"),
         ("one flipped byte", header(SLOT[:0x400] + bytes([SLOT[0x400] ^ 1]) + SLOT[0x401:]), "does not verify"),
         ("a stale byte-sum", header(stock[:-1] + bytes([stock[-1] ^ 1]) + b"\xff" * 0x2000), "byte-sum = MISMATCH"),
 ):
@@ -551,17 +552,26 @@ code, out, f, got = backup(header(SLOT), base="5")
 check(code == 1 and "CUSTOM image, not stock" in out and not f.exists(),
       "backup: a serial at or above SERIAL_BASE is this project's image, not the vendor's, and is not saved")
 
-# With no file name the backup goes to firmware/built-images/, which only `convert` creates.
+# With no file name the backup goes to firmware/built-images/, which a fresh tree does not have.
 unit = FakeUnit(lambda c: c.sendall(header(SLOT)))
 fresh = TMP / "fresh-clone"
 cfg = {"BREAKGLASS_TOKEN": "tok", "BREAKGLASS_PORT": str(unit.port)}
 with patched(mc, load_env=lambda required=(): cfg, REPO=fresh), quiet():
     how = raised(mc.backup, "127.0.0.1")
 unit.close()
-known_failure(how is None and (fresh / "firmware/built-images/stock-backup-1-sn5.bin").is_file(),
-              "backup: the default file is written on a tree that has no built-images directory yet",
-              "matter-convert.py (was dev.py:735) matter_backup(): nothing creates firmware/built-images/, so after the whole slot has "
-              "been fetched and verified the save ends in a FileNotFoundError traceback and the backup is lost")
+saved = fresh / "firmware/built-images/stock-backup-1-sn5.bin"
+check(how is None and saved.is_file() and saved.read_bytes() == SLOT,
+      "backup: the default file is written on a tree that has no built-images directory yet")
+code, out, f, got = backup(header(SLOT), out_name="new/dir/backup.bin")
+check(code is None and f.read_bytes() == SLOT, "backup: a directory named in the file name is created")
+# A save that cannot work (the path runs through a file) must not lose a slot that was fetched and verified.
+(TMP / "a-file").write_text("")
+code, out, f, got = backup(header(SLOT), out_name="a-file/backup.bin")
+rescue = [ln.split(" is in ", 1)[1].split(" instead", 1)[0] for ln in out.splitlines() if "the backup is in " in ln]
+check(code is None and len(rescue) == 1 and pathlib.Path(rescue[0]).read_bytes() == SLOT,
+      "backup: when the file cannot be written the slot is saved in a temporary file, and the path is printed")
+for r in rescue:
+    pathlib.Path(r).unlink()
 
 for ip, tag in (("10.0.0.7", "7"), ("1.2.3", "1-2-3"), ("unit.local", "unit-local"), ("::1", "1"), ("", "")):
     check(mc.backup_file_tag(ip) == tag, f"backup file tag of {ip!r} is {tag!r}")

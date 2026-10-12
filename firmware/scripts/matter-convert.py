@@ -36,6 +36,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -217,6 +218,9 @@ def pi_stage(cfg, manifest, *others):
 
 
 SLOT_MAX = 0x1AC000
+# A vendor application image is between these lengths. A slot whose image is outside them is
+# empty or holds something else.
+CARVE_MIN, CARVE_MAX = 0x100000, 0x180000
 
 
 def serial_base(cfg):
@@ -380,14 +384,11 @@ def backup(ip, out=""):
     finally:
         s.close()
     print(f"[backup] backup received: addr={addr} len={length:#x}")
-    # Process like the repackage carve: image end = first 4096-byte 0xFF run, then a 4-byte trailer.
-    i = buf.find(b"\xff" * 4096)
-    if i < 0:
-        fail("no 4096-byte 0xFF run in the backup -- slot empty or not a stock image?")
-    imglen = i - 4
-    if not 0x100000 <= imglen <= 0x180000:
-        fail(f"carved length {imglen:#x} outside [0x100000,0x180000]")
-    image, trailer = buf[:imglen], buf[imglen:imglen + 4]
+    carved = amebaz2_image.split_payload(buf, CARVE_MIN, CARVE_MAX)
+    if carved is None:
+        fail(f"no application image in the backup: it has to end in a 4 KB run of erased flash and be "
+             f"{CARVE_MIN:#x} to {CARVE_MAX:#x} bytes long -- slot empty or not a stock image?")
+    image, trailer = carved
     serial = amebaz2_image.read_serial(image)
     if serial >= base:
         fail(f"serial@0xF4={serial} >= {base} -- the inactive slot holds a CUSTOM image, not stock "
@@ -397,10 +398,18 @@ def backup(ip, out=""):
         print(f"[backup]   {ln}")
     if not good:
         fail("the backup does not verify: " + "; ".join(amebaz2_image.failures(lines)))
-    if not out:
-        out = str(REPO / "firmware/built-images" / f"stock-backup-{backup_file_tag(ip)}-sn{serial}.bin")
-    with open(out, "wb") as f:
-        f.write(buf)                               # raw slot bytes: image + trailer + 0xFF pad
+    out = Path(out) if out else REPO / "firmware/built-images" / f"stock-backup-{backup_file_tag(ip)}-sn{serial}.bin"
+    # The slot has been fetched and verified, and the next update on the unit overwrites it: a
+    # save that fails must not lose it. Raw slot bytes: image + trailer + 0xFF pad.
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(buf)
+    except OSError as e:
+        fd, rescue = tempfile.mkstemp(prefix=f"stock-backup-{backup_file_tag(ip)}-sn{serial}-", suffix=".bin")
+        with os.fdopen(fd, "wb") as f:
+            f.write(buf)
+        print(f"[backup] could not write {out} ({e.strerror}): the backup is in {rescue} instead, move it somewhere safe")
+        out = rescue
     print(f"[backup] saved {out} ({len(buf):#x} bytes, stock serial {serial})")
     print(f"[backup] all checks passed: serial {serial} < {base}, manifest sig + every sub-image trailer + byte-sum OK")
     print("[backup] keep this file: once an update overwrites that slot, it is the only copy of the "
