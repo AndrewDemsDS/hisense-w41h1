@@ -321,7 +321,7 @@ class CommandTracker {
         this->event_(CommandEvent::SHADOW_MODE_KEPT, static_cast<uint16_t>(state.mode));
       // Validated in the wire unit: a raw copy would drop the F flag and let an out-of-range report
       // poison the shadow, which silently kills every later Cool/Heat/Auto frame.
-      if (!sync_shadow_setpoint(state.setpoint_c, state.temp_unit_f, &this->cmd_))
+      if (!sync_shadow_setpoint(state, &this->cmd_))
         this->event_(CommandEvent::SHADOW_SETPOINT_KEPT, static_cast<uint8_t>(state.setpoint_c));
       this->cmd_.vswing = state.vswing_on ? SWING_MODE_SWING : SWING_MODE_OFF;
       this->cmd_.hswing = state.hswing_on ? SWING_MODE_SWING : SWING_MODE_OFF;

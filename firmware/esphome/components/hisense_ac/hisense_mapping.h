@@ -337,6 +337,23 @@ inline bool sync_shadow_setpoint(int8_t setpoint_c, bool temp_unit_f, AcCommand 
   return true;
 }
 
+// The same from a decoded status frame, and the one the command tracker uses. On a Fahrenheit panel
+// the shadow takes the frame's own byte (setpoint_raw). Going through setpoint_c would turn whole
+// F into whole C and back, and whole Celsius is the coarser of the two: 13 of the 30 values an F
+// panel can show came back one degree off (62 F as 63, 65 as 64), and since the shadow rides every
+// combined frame, the next fan, swing or mode change from Home Assistant moved a setpoint chosen
+// on the remote.
+inline bool sync_shadow_setpoint(const AcState &st, AcCommand *cmd) {
+  if (!st.temp_unit_f)
+    return sync_shadow_setpoint(st.setpoint_c, false, cmd);
+  // As int8_t a byte above 127 is negative, and so out of range like any other bad value.
+  if (!setpoint_in_range(static_cast<int8_t>(st.setpoint_raw), true))
+    return false;
+  cmd->setpoint = static_cast<int8_t>(st.setpoint_raw);
+  cmd->fahrenheit = true;
+  return true;
+}
+
 // ---- Power intent -------------------------------------------------------------------------------
 // The status frame lags a power frame by a poll or two, and the hold-off keeps the entity showing the
 // request meanwhile. A decision that needs the unit's power state in that window (does this mode

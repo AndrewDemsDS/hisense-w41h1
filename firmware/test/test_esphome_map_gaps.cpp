@@ -280,33 +280,57 @@ static void test_setpoint() {
   }
 }
 
-// DEFECT (reported, not fixed here). On a Fahrenheit panel the status setpoint is a whole number
-// of F. parse_status() turns it into whole Celsius and sync_shadow_setpoint() turns that back
-// into F for the command shadow. Whole Celsius is coarser than whole Fahrenheit, so 13 of the 30
-// values the panel can show do not come back: 62 F becomes 63, 65 becomes 64. The shadow rides
-// every combined frame, so the next fan, swing or mode change from Home Assistant also moves the
-// setpoint the user chose on the remote by one degree F.
+// Was a DEFECT, fixed. On a Fahrenheit panel the status setpoint is a whole number of F.
+// parse_status() turns it into whole Celsius, and the shadow used to be filled from that, converted
+// back: 13 of the 30 values the panel can show did not come back (62 F became 63, 65 became 64),
+// and the next combined frame moved the setpoint the user chose on the remote. The shadow now takes
+// the frame's own byte (AcState::setpoint_raw).
 static void test_fahrenheit_shadow_round_trip() {
   printf("-- an F panel's setpoint through the status frame and back into the shadow\n");
-  int drifted = 0;
-  int first_in = 0, first_out = 0;
+  int via_celsius = 0;
   for (int f = H::SETPOINT_MIN_F; f <= H::SETPOINT_MAX_F; f++) {
-    H::AcCommand cmd;
     // What parse_status() stores for status byte 19 = f on an F panel.
-    const int8_t status_c = H::f_to_c(f);
-    CHECK(H::sync_shadow_setpoint(status_c, true, &cmd), "%d F reported is accepted into the shadow", f);
-    CHECK(cmd.setpoint >= f - 1 && cmd.setpoint <= f + 1, "%d F comes back within one degree (got %d)", f,
-          cmd.setpoint);
-    if (cmd.setpoint != f) {
-      if (drifted == 0) {
-        first_in = f;
-        first_out = cmd.setpoint;
-      }
-      drifted++;
-    }
+    H::AcState st;
+    st.valid = true;
+    st.temp_unit_f = true;
+    st.setpoint_raw = (uint8_t) f;
+    st.setpoint_c = H::f_to_c(f);
+    H::AcCommand cmd;
+    CHECK(H::sync_shadow_setpoint(st, &cmd) && cmd.setpoint == f && cmd.fahrenheit,
+          "%d F reported is %d F in the shadow", f, cmd.setpoint);
+    // The old path, still there for the Celsius side and for parity with the reference driver.
+    H::AcCommand old;
+    CHECK(H::sync_shadow_setpoint(st.setpoint_c, true, &old) && old.setpoint >= f - 1 && old.setpoint <= f + 1,
+          "%d F through Celsius comes back within one degree (got %d)", f, old.setpoint);
+    via_celsius += old.setpoint != f;
   }
-  KNOWN_DEFECT(drifted == 0, "F panel: %d of 30 reported setpoints change in the shadow (first: %d F becomes %d F)",
-               drifted, first_in, first_out);
+  CHECK(via_celsius == 13, "through Celsius, %d of 30 values would move: that is what the raw byte avoids",
+        via_celsius);
+  // Out of range on an F panel: the shadow is left alone, both fields.
+  for (int bad : {0, 60, 91, 127, 128, 200, 255}) {
+    H::AcState st;
+    st.temp_unit_f = true;
+    st.setpoint_raw = (uint8_t) bad;
+    st.setpoint_c = H::f_to_c(72);  // a setpoint_c that would pass must not rescue a bad raw byte
+    H::AcCommand cmd;
+    cmd.setpoint = 21;
+    CHECK(!H::sync_shadow_setpoint(st, &cmd) && cmd.setpoint == 21 && !cmd.fahrenheit, "F panel reporting %d: refused",
+          bad);
+  }
+  // A Celsius panel goes by setpoint_c as before, whatever setpoint_raw holds.
+  for (int c = H::SETPOINT_MIN_C; c <= H::SETPOINT_MAX_C; c++) {
+    H::AcState st;
+    st.setpoint_c = (int8_t) c;
+    st.setpoint_raw = 77;
+    H::AcCommand cmd;
+    cmd.fahrenheit = true;
+    CHECK(H::sync_shadow_setpoint(st, &cmd) && cmd.setpoint == c && !cmd.fahrenheit, "C panel: %d C taken", c);
+  }
+  H::AcState cold;
+  cold.setpoint_c = 15;
+  cold.setpoint_raw = 15;
+  H::AcCommand kept;
+  CHECK(!H::sync_shadow_setpoint(cold, &kept) && kept.setpoint == 24, "C panel reporting 15: refused");
   // Every whole Celsius value does survive C -> F -> C, so the Celsius side of ESPHome is exact.
   for (int c = H::SETPOINT_MIN_C; c <= H::SETPOINT_MAX_C; c++)
     CHECK(H::f_to_c(H::c_to_f(c)) == c, "%d C survives the trip through F", c);

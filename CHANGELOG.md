@@ -31,6 +31,10 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   or the sleep profile changed several times within the 10 s pacing now cost one frame for the
   final value, where every change was queued and sent 10 s apart. A request the queue cannot
   take is refused and the entity keeps its state.
+- **Fahrenheit panels: a setpoint chosen on the remote is no longer moved by one degree.** The
+  command shadow takes the status frame's own setpoint byte. It used to go through whole Celsius
+  and back, which changed 13 of the 30 values (62 F became 63), and the next fan, swing or mode
+  change from Home Assistant sent the changed value. Celsius panels are unaffected.
 
 ### Board files, the stock-module component and CI (2026-10-12)
 - **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air
