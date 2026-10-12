@@ -52,6 +52,27 @@ bool BusScheduler::features(AcFeatures *out) const {
   return true;
 }
 
+void BusScheduler::set_setup_indicator(bool on, uint32_t now) {
+  if (on == this->setup_indicator_)
+    return;
+  this->setup_indicator_ = on;
+  // Whatever closed the mode, the press that did it must not open it again (issue 69).
+  if (!on)
+    setup_request_lockout(&this->setup_, now);
+}
+
+// The A/C's 0x1E reply carries the remote's setup request ("77"). Any 0x1E frame counts, whichever
+// transaction it arrived in: the unit answers the heartbeat with it about once a second.
+void BusScheduler::check_link_reply_(const uint8_t *frame, size_t n, uint32_t now) {
+  uint8_t bits;
+  if (!link_request_bits(frame, n, &bits))
+    return;
+  this->link_request_ = bits;
+  const uint8_t request = setup_request_step(&this->setup_, bits, this->setup_indicator_, now);
+  if (request != 0 && this->listener_ != nullptr)
+    this->listener_->on_bus_setup_request(request);
+}
+
 void BusScheduler::discard_rx_() {
   while (this->io_->bus_read() >= 0) {
   }
@@ -95,6 +116,12 @@ void BusScheduler::finish_transaction_(size_t reply_len, uint32_t now) {
 void BusScheduler::poll(uint32_t now) {
   if (this->io_ == nullptr)
     return;
+  if (!this->setup_started_) {
+    // A smart-config pulse in the first seconds after a start is not acted on: leaving setup mode
+    // usually ends in a restart, and the press that asked for it may still be on its way.
+    this->setup_started_ = true;
+    setup_request_lockout(&this->setup_, now);
+  }
   // Several phases can complete in one call (a reply already buffered, a zero wait); the bound
   // only guards against a logic error spinning here.
   for (int guard = 0; guard < 16; guard++) {
@@ -132,6 +159,7 @@ void BusScheduler::poll(uint32_t now) {
           const uint8_t *f = this->rx_.data();
           if (this->listener_ != nullptr)
             this->listener_->on_bus_frame(f, n);
+          this->check_link_reply_(f, n, now);
           // A completed frame of the wrong class is a late reply to something else: drop it and
           // keep listening within this window.
           if (n > FRAME_CLASS_OFFSET && reply_class_ok(f[FRAME_CLASS_OFFSET], this->expect_class_)) {
@@ -196,7 +224,7 @@ void BusScheduler::start_step_(uint32_t now) {
     case Step::HEARTBEAT: {
       // Byte 16 bit 6 says whether we have heard the A/C's 0x1E. Any reply class is accepted:
       // the A/C sometimes answers the heartbeat with a 0x66.
-      size_t n = build_link_heartbeat(this->heard_ac_, f, sizeof(f));
+      size_t n = build_link_heartbeat(this->heard_ac_, this->setup_indicator_, f, sizeof(f));
       this->begin_transaction_(f, n, 0x00, now);
       return;
     }

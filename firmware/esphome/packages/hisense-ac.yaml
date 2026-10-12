@@ -31,6 +31,10 @@ hisense_ac:
   id: ac_bus
   uart_id: uart_bus
   de_pin: ${de_pin}
+  # The remote's "77" gesture: horizontal airflow pressed six times. node.yaml opens the Wi-Fi
+  # setup hotspot on it and closes it on the next one.
+  on_setup_request:
+    - script.execute: wifi_setup_toggle
 
 climate:
   - platform: hisense_ac

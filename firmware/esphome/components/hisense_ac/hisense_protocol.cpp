@@ -343,14 +343,93 @@ size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap) {
   return stuff_checksum(frame, CMD_FRAME_LEN, out, out_cap);
 }
 
-size_t build_link_heartbeat(bool heard_ac, uint8_t *out, size_t out_cap) {
+size_t build_link_heartbeat(bool heard_ac, bool provisioning, uint8_t *out, size_t out_cap) {
   if (out == nullptr || out_cap < LINK_HEARTBEAT_LEN + 2)
     return 0;
   uint8_t f[LINK_HEARTBEAT_LEN];
   std::memcpy(f, LINK_HEARTBEAT, LINK_HEARTBEAT_LEN);
   f[16] = heard_ac ? 0xB0 : 0xF0;  // bit 6 = "not yet heard the A/C's 0x1E"
+  // Byte 17 is 0x80 | selftest << 5 | scan << 4 | prov << 3 in the vendor module's builder. With
+  // prov set the panel shows "77" (bench, 2026-07-09).
+  if (provisioning)
+    f[LINK_FLAGS_OFFSET] |= LINK_FLAG_PROVISIONING;
   finalize_frame(f, 24, 26);
   return stuff_checksum(f, LINK_HEARTBEAT_LEN, out, out_cap);
+}
+
+size_t build_link_heartbeat(bool heard_ac, uint8_t *out, size_t out_cap) {
+  return build_link_heartbeat(heard_ac, false, out, out_cap);
+}
+
+// ---- Setup request ("77") ----------------------------------------------------------------------
+bool link_request_bits(const uint8_t *frame, size_t len, uint8_t *bits) {
+  if (frame == nullptr || bits == nullptr)
+    return false;
+  // Bytes 0 to 17, then at least the checksum and the end tag.
+  if (len < LINK_FLAGS_OFFSET + 5 || frame[FRAME_CLASS_OFFSET] != CLASS_LINK)
+    return false;
+  if (!status_checksum_ok(frame, len))
+    return false;
+  *bits = frame[LINK_FLAGS_OFFSET] & LINK_REQ_MASK;
+  return true;
+}
+
+int setup_request_debounce(uint8_t req_bits, uint8_t *streak, bool *latched, uint8_t hold_frames) {
+  if (req_bits != 0) {
+    if (*streak < 0xFF)
+      (*streak)++;
+    if (*streak >= hold_frames && !*latched) {
+      *latched = true;
+      return 1;
+    }
+    return 0;
+  }
+  // The request is gone. Only one that had counted reports its end.
+  const bool was_latched = *latched;
+  *streak = 0;
+  *latched = false;
+  return was_latched ? -1 : 0;
+}
+
+uint8_t smartcfg_lockout_mask(uint8_t req_bits, uint32_t now_ms, bool armed, uint32_t since_ms) {
+  if (armed && now_ms - since_ms < SETUP_REQUEST_LOCKOUT_MS)
+    req_bits &= static_cast<uint8_t>(~LINK_REQ_SMARTCFG);
+  return req_bits;
+}
+
+void setup_request_lockout(SetupRequestTracker *tracker, uint32_t now_ms) {
+  tracker->lockout_armed = true;
+  tracker->lockout_since = now_ms;
+}
+
+uint8_t setup_request_step(SetupRequestTracker *tracker, uint8_t req_bits, bool indicating, uint32_t now_ms) {
+  uint8_t req = req_bits & LINK_REQ_MASK;
+  // Bit 3 while the module's own flag is on the wire, or before a reply without it, is not a
+  // request anyone made.
+  if (indicating) {
+    tracker->reconfig_quiet = false;
+  } else if ((req & LINK_REQ_RECONFIG) == 0) {
+    tracker->reconfig_quiet = true;
+  }
+  if (!tracker->reconfig_quiet)
+    req &= static_cast<uint8_t>(~LINK_REQ_RECONFIG);
+  // A request that changes kind without a quiet reply in between starts over, so the second kind
+  // is not swallowed by the first one's latch.
+  if (req != 0 && req != tracker->last_req) {
+    tracker->streak = 0;
+    tracker->latched = false;
+  }
+  tracker->last_req = req;
+  // An expired lockout is disarmed here, or it would read as running again after a clock wrap.
+  if (tracker->lockout_armed && now_ms - tracker->lockout_since >= SETUP_REQUEST_LOCKOUT_MS)
+    tracker->lockout_armed = false;
+  const uint8_t gated = smartcfg_lockout_mask(req, now_ms, tracker->lockout_armed, tracker->lockout_since);
+  // Only bit 3 can be handed back, so only a request that includes it has to be held.
+  const uint8_t hold = gated == LINK_REQ_SMARTCFG ? 1 : SETUP_REQUEST_HOLD_FRAMES;
+  if (setup_request_debounce(gated, &tracker->streak, &tracker->latched, hold) <= 0)
+    return 0;
+  setup_request_lockout(tracker, now_ms);
+  return gated;
 }
 
 // ---- Parsers -----------------------------------------------------------------------------------

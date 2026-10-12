@@ -12,8 +12,10 @@ static const char *const TAG = "hisense_ac";
 // What each log level shows:
 //   WARN          the bus link dropping, a frame that could not be sent, a bad checksum, a fault,
 //                 a command that got no reply, was sent again, or was given up on
-//   INFO          the bus link coming back, a fault clearing, a command taken on a re-send
-//   DEBUG         a status change, every command sent, the unit's capabilities
+//   INFO          the bus link coming back, a fault clearing, a command taken on a re-send, a setup
+//                 request from the remote, the "77" indication going on or off
+//   DEBUG         a status change, every command sent, the unit's capabilities, a change in the
+//                 request bits of the unit's 0x1E reply
 //   VERBOSE       every decoded status frame, every poll that got no reply
 //   VERY_VERBOSE  the raw bytes of every frame sent and received
 
@@ -100,6 +102,15 @@ void HisenseAC::on_bus_link(bool up) {
   this->link_dirty_ = true;
 }
 
+void HisenseAC::on_bus_setup_request(uint8_t request) { this->setup_request_pending_ = request; }
+
+void HisenseAC::set_setup_indicator(bool on) {
+  if (on == this->bus_.setup_indicator())
+    return;
+  ESP_LOGI(TAG, "Panel setup indication (\"77\") %s", on ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
+  this->bus_.set_setup_indicator(on, millis());
+}
+
 void HisenseAC::setup() {
   if (this->de_pin_ != nullptr) {
     this->de_pin_->setup();
@@ -130,10 +141,13 @@ void HisenseAC::loop() {
 
   if (this->link_dirty_) {
     this->link_dirty_ = false;
+    // The warning flag is what a status LED blinks on.
     if (this->link_up_) {
       ESP_LOGI(TAG, "A/C bus link restored");
+      this->status_clear_warning();
     } else {
       ESP_LOGW(TAG, "A/C bus link lost: the unit is not answering");
+      this->status_set_warning(LOG_STR("A/C bus link down"));
     }
 #ifdef USE_BINARY_SENSOR
     // publish_telemetry_() only runs on a decoded frame, so it can only ever publish true; the
@@ -151,6 +165,20 @@ void HisenseAC::loop() {
 
   if (have_state)
     this->process_status_(state);
+
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_DEBUG
+  // Every change, taken or not: this is how to see what a given unit raises for the gesture.
+  if (this->bus_.link_request() != this->logged_link_request_) {
+    this->logged_link_request_ = this->bus_.link_request();
+    ESP_LOGD(TAG, "0x1E reply request bits now 0x%02X", this->logged_link_request_);
+  }
+#endif
+  if (this->setup_request_pending_ != 0) {
+    const uint8_t request = this->setup_request_pending_;
+    this->setup_request_pending_ = 0;
+    ESP_LOGI(TAG, "Setup requested from the remote (0x1E reply request bits 0x%02X)", request);
+    this->setup_request_callback_.call(request);
+  }
 }
 
 void HisenseAC::process_status_(const AcState &state) {
@@ -158,6 +186,7 @@ void HisenseAC::process_status_(const AcState &state) {
   // is healthy from boot never produces a "restored" edge and link_up_ would sit at its initial
   // false forever, reporting a working bus as down.
   this->link_up_ = true;
+  this->status_clear_warning();
   ESP_LOGV(TAG, "Status: power=%d mode=%d setpoint=%d indoor=%d fan_raw=0x%02X holdoff=%d", state.power_on,
            (int) state.mode, state.setpoint_c, state.indoor_temp_c, state.fan_raw, this->in_command_holdoff());
   // A frame arrives about once a second, so DEBUG gets it only when something a user would
@@ -616,6 +645,8 @@ void HisenseAC::dump_config() {
   }
   this->check_uart_settings(BUS_BAUD_RATE, 1, uart::UART_CONFIG_PARITY_NONE, 8);
   ESP_LOGCONFIG(TAG, "  link: %s", this->link_up_ ? LOG_STR_LITERAL("up") : LOG_STR_LITERAL("down"));
+  ESP_LOGCONFIG(TAG, "  panel setup indication (\"77\"): %s",
+                this->bus_.setup_indicator() ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
   if (this->last_.valid) {
     ESP_LOGCONFIG(TAG, "  last status: power=%d mode=%d setpoint=%dC indoor=%dC", this->last_.power_on,
                   (int) this->last_.mode, this->last_.setpoint_c, this->last_.indoor_temp_c);

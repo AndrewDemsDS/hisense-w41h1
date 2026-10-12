@@ -5,9 +5,11 @@
 // from a bus capture or from the vendor Wi-Fi module's firmware. `VERIFY` marks values not yet
 // confirmed on hardware.
 //
-// Deliberately NOT implemented, because they belong to the vendor module's cloud pairing flow and
-// ESPHome has no use for them: the "77" recommission debounce and its smart-config lockout, the
-// provisioning flag, exit-77, and the raw 0x1E link-frame diagnostics.
+// The remote's "77" gesture is carried as a setup request: the request bits of the A/C's 0x1E
+// reply, their debounce and lockout, and the heartbeat bit that puts "77" on the panel. What the
+// request means is left to whoever listens (packages/node.yaml opens the Wi-Fi setup hotspot).
+// Deliberately NOT implemented: the rest of the vendor module's cloud pairing flow (smart-config
+// itself, the binding token of bit 0) and the raw 0x1E link-frame diagnostics.
 //
 // No ESPHome includes, so this file can be compiled and tested on a host without ESPHome.
 
@@ -305,6 +307,9 @@ size_t build_sleep_frame(uint8_t profile, uint8_t *out, size_t out_cap);  // byt
 size_t build_producttype_request(uint8_t *out, size_t out_cap);
 // 0x1E heartbeat. Byte 16 = 0xB0 once the A/C's own 0x1E has been heard, 0xF0 before.
 size_t build_link_heartbeat(bool heard_ac, uint8_t *out, size_t out_cap);
+// The same heartbeat with the module's provisioning flag (byte 17 bit 3) set or clear. While it is
+// set the panel shows "77".
+size_t build_link_heartbeat(bool heard_ac, bool provisioning, uint8_t *out, size_t out_cap);
 // Re-stamp a finished frame's envelope bytes 7/8 with the A/C's device type and fix the checksum.
 // 0 when the envelope is not recognised.
 size_t stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8_t lo, uint8_t *out, size_t out_cap);
@@ -323,6 +328,62 @@ bool parse_features(const uint8_t *buf, size_t len, AcFeatures *out);
 bool parse_faults(const uint8_t *buf, size_t len, AcFaults *out);
 // Device type and sub-type from a 0x0A DevType reply: inner payload [3]/[4] = frame 16/17.
 bool devtype_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo);
+
+// ---- Setup request: the remote's "77" gesture --------------------------------------------------
+// Horizontal airflow pressed six times on the remote makes the mainboard set a request bit in
+// payload[4] (frame byte 17) of its reply to the 0x1E heartbeat. The vendor module tests exactly
+// these two bits there (reverse-engineering/docs/03-rs485-ac-protocol.md, "Recommission (77)").
+static constexpr size_t LINK_FLAGS_OFFSET = 17;
+// Bit 5: smart-config pairing. Bench unit, 2026-07-20: set for exactly one reply per gesture, about
+// one second, and never transmitted by the module, so the unit cannot be handing it back.
+static constexpr uint8_t LINK_REQ_SMARTCFG = 0x20;
+// Bit 3: reset and reconfigure, from the vendor firmware's handler. VERIFY: not seen from the bench
+// unit, which raises bit 5 instead. The module transmits the same bit position as its provisioning
+// flag (below), so a single reply carrying it proves nothing.
+static constexpr uint8_t LINK_REQ_RECONFIG = 0x08;
+static constexpr uint8_t LINK_REQ_MASK = LINK_REQ_RECONFIG | LINK_REQ_SMARTCFG;
+// Outbound, same byte: the module's "I am provisioning" flag. Injected on the bench on 2026-07-09,
+// it lit "77" on the panel.
+static constexpr uint8_t LINK_FLAG_PROVISIONING = 0x08;
+// Replies in a row (about 1 s apart) that must carry a request before it counts, when bit 3 is
+// part of it. Bit 5 alone counts at once: one reply is all the unit ever sends.
+static constexpr uint8_t SETUP_REQUEST_HOLD_FRAMES = 3;
+// How long bit 5 is ignored after a request was taken and after the indication was switched off.
+// The gesture is also how a user leaves the mode, and the press that ends it makes a pulse of its
+// own a reply later, which reopened what had just been closed (project issue 69).
+static constexpr uint32_t SETUP_REQUEST_LOCKOUT_MS = 10000;
+
+// The request bits of a 0x1E reply, masked to LINK_REQ_MASK. False for any other class, a short
+// frame or a bad checksum: one reply is enough to act on, so a damaged one must not count.
+bool link_request_bits(const uint8_t *frame, size_t len, uint8_t *bits);
+
+// One step of the debounce, for one reply's request bits. +1 once when the request has been there
+// for `hold_frames` replies in a row, -1 when a request that had counted goes away, 0 otherwise.
+int setup_request_debounce(uint8_t req_bits, uint8_t *streak, bool *latched, uint8_t hold_frames);
+
+// `req_bits` without bit 5 while the lockout runs: `armed`, and less than SETUP_REQUEST_LOCKOUT_MS
+// since `since_ms`. Bit 3 is never removed here. Elapsed time on a 32 bit clock, so it is right
+// through the 49.7 day wrap as long as the caller disarms an expired lockout (the tracker does).
+uint8_t smartcfg_lockout_mask(uint8_t req_bits, uint32_t now_ms, bool armed, uint32_t since_ms);
+
+// All of the above for a stream of replies. Zero-initialised is the boot state.
+struct SetupRequestTracker {
+  uint8_t streak{0};
+  bool latched{false};
+  uint8_t last_req{0};
+  // Bit 3 only counts after a reply without it, seen while the module's own flag was off the
+  // wire. That covers a unit that hands the flag back, and a request still standing at boot,
+  // which would otherwise be taken again after every restart.
+  bool reconfig_quiet{false};
+  bool lockout_armed{false};
+  uint32_t lockout_since{0};
+};
+// Start (or restart) the bit 5 lockout. Call at boot and whenever the indication is switched off.
+void setup_request_lockout(SetupRequestTracker *tracker, uint32_t now_ms);
+// Feed one reply's request bits (from link_request_bits). `indicating`: the module's provisioning
+// flag is on the wire. Returns the request bits once per accepted request, 0 otherwise. An
+// accepted request starts the lockout by itself.
+uint8_t setup_request_step(SetupRequestTracker *tracker, uint8_t req_bits, bool indicating, uint32_t now_ms);
 
 // ---- Receive-side frame assembler --------------------------------------------------------------
 // Feeds one byte at a time. Accepts only A/C -> module frames (frame[2] == 0x01, which also drops

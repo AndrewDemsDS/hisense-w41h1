@@ -5,6 +5,7 @@
 //
 // ESPHome's uart component carries the bytes and the scheduler runs in loop(). No task, no
 // global state.
+#include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/hal.h"
@@ -109,6 +110,18 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   /// frame by a poll or two.
   bool power_expected() const { return hisense_ac::power_expected(this->power_intent_, this->last_.power_on); }
 
+  /// Show "77" on the unit's panel, or take it off again. While on, the heartbeat tells the unit
+  /// that the module is being set up, as the stock module does while it is pairing. It changes
+  /// nothing else: the unit keeps running and keeps taking commands.
+  void set_setup_indicator(bool on);
+  bool setup_indicator() const { return this->bus_.setup_indicator(); }
+  /// Called from loop() when the user asks for setup from the remote (horizontal airflow six
+  /// times, the "77" gesture), once per request. The argument is the request bits of the unit's
+  /// 0x1E reply: 0x20, 0x08 or both (LINK_REQ_* in hisense_protocol.h).
+  template<typename F> void add_on_setup_request_callback(F &&callback) {
+    this->setup_request_callback_.add(std::forward<F>(callback));
+  }
+
   bool link_up() const { return this->link_up_; }
   /// True while the transceiver is held in transmit (DE high around a frame). Board code that
   /// touches the serial port from outside the component must leave it alone during that time.
@@ -124,6 +137,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   void on_bus_checksum_error(const uint8_t *frame, size_t len) override;
   void on_bus_timeout(uint8_t expect_class) override;
   void on_bus_command(bool answered, uint8_t reply_class) override;
+  void on_bus_setup_request(uint8_t request) override;
 
   // BusIO, over uart::UARTDevice and the DE pin.
   void bus_set_de(bool high) override;
@@ -186,6 +200,10 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   bool pending_valid_{false};
   bool link_up_{false};
   bool link_dirty_{false};
+  // A setup request is parked by poll() too, and its automations run from loop().
+  uint8_t setup_request_pending_{0};
+  uint8_t logged_link_request_{0};
+  CallbackManager<void(uint8_t)> setup_request_callback_;
 
   BusScheduler bus_;
   GPIOPin *de_pin_{nullptr};
@@ -234,6 +252,13 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
 #endif
 
   static constexpr uint32_t COMMAND_HOLDOFF_MS = 4000;
+};
+
+template<typename... Ts> class SetSetupIndicatorAction final : public Action<Ts...>, public Parented<HisenseAC> {
+ public:
+  TEMPLATABLE_VALUE(bool, state)
+
+  void play(const Ts &...x) override { this->parent_->set_setup_indicator(this->state_.value(x...)); }
 };
 
 // The verdict on a command has to be in before the hold-off lets a status frame reach the entities.
