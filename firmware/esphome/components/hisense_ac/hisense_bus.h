@@ -8,7 +8,8 @@
 // bus.
 //
 // Boot: DevType (0x0A) handshake, up to 10 tries 500 ms apart, then 0x07.
-// Each ~1 s cycle: a DevType re-handshake if 5 status polls in a row went unanswered, the 0x1E
+// Each ~1 s cycle: a DevType re-handshake if 5 status polls in a row went unanswered (and one
+// more if the unit came back in a cycle whose probe it had not answered), the 0x1E
 // heartbeat, the queued commands that fit (command_slot_open below), the 0x66 status poll (the
 // link-liveness signal), and the 0x66/40 ProductType poll on the first heard cycle and every 60th
 // after.
@@ -191,7 +192,7 @@ class BusScheduler {
     BOOT_DEVTYPE,  // DevType probe, up to BUS_BOOT_TRIES
     BOOT_07,       // 0x07, once
     CYCLE_BEGIN,   // sends nothing: notes the time and picks RECOVER or HEARTBEAT
-    RECOVER,       // DevType probe, only while the link is lost
+    RECOVER,       // DevType probe, while the link is lost and once more if the unit came back unprobed
     HEARTBEAT,     // 0x1E
     COMMANDS,      // the queue, one frame per transaction, while command_slot_open()
     STATUS,        // 0x66 poll
@@ -216,6 +217,8 @@ class BusScheduler {
   void status_done_(size_t reply_len, uint32_t now);
   void product_done_(size_t reply_len, uint32_t now);
   bool consume_(size_t n);
+  // BUS_LINK_LOST_POLLS status polls in a row went unanswered.
+  bool link_silent_() const { return this->link_miss_ >= BUS_LINK_LOST_POLLS; }
   void check_link_reply_(const uint8_t *frame, size_t n, uint32_t now);
   void discard_rx_();
 
@@ -257,6 +260,9 @@ class BusScheduler {
   bool token_seen_{false};
 
   uint8_t boot_tries_{0};
+  // The last recovery probe got no usable answer. If the unit starts answering its status poll
+  // in that same cycle, one more probe is owed, so that the device type is asked for again.
+  bool handshake_owed_{false};
   bool heard_ac_{false};
   uint8_t link_miss_{0};
   bool link_down_{false};

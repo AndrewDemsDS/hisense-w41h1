@@ -236,12 +236,14 @@ void BusScheduler::start_step_(uint32_t now) {
     case Step::CYCLE_BEGIN:
       this->cycle_start_ = now;
       this->cycle_commands_ = 0;
-      // Cooperative link recovery: one DevType handshake per cycle while the A/C is silent.
-      this->step_ = this->link_miss_ >= BUS_LINK_LOST_POLLS ? Step::RECOVER : Step::HEARTBEAT;
+      // Cooperative link recovery: one DevType handshake per cycle while the A/C is silent, and
+      // one after it if the unit came back without having answered any.
+      this->step_ = this->link_silent_() || this->handshake_owed_ ? Step::RECOVER : Step::HEARTBEAT;
       this->start_step_(now);
       return;
     case Step::RECOVER:
-      this->heard_ac_ = false;
+      if (this->link_silent_())
+        this->heard_ac_ = false;
       this->begin_transaction_(LINK_INIT_0A, LINK_INIT_0A_LEN, CLASS_DEVTYPE, &BusScheduler::recover_done_, now);
       return;
     case Step::HEARTBEAT: {
@@ -314,8 +316,13 @@ void BusScheduler::boot_devtype_done_(size_t reply_len, uint32_t now) {
 
 void BusScheduler::boot_07_done_(size_t reply_len, uint32_t now) { this->step_ = Step::CYCLE_BEGIN; }
 
-// The device type, if the probe was answered, was latched as the reply arrived.
-void BusScheduler::recover_done_(size_t reply_len, uint32_t now) { this->step_ = Step::HEARTBEAT; }
+// The device type, if the probe was answered, was latched as the reply arrived. An unanswered
+// probe is owed again only while the unit is silent: once it answers its status poll it gets this
+// one more and no further, so a unit that never answers the probe is not asked every second.
+void BusScheduler::recover_done_(size_t reply_len, uint32_t now) {
+  this->handshake_owed_ = this->link_silent_() && !(reply_len > 0 && this->reply_sound_);
+  this->step_ = Step::HEARTBEAT;
+}
 
 void BusScheduler::heartbeat_done_(size_t reply_len, uint32_t now) {
   if (reply_len > 0) {
@@ -362,7 +369,7 @@ void BusScheduler::status_done_(size_t reply_len, uint32_t now) {
   } else if (this->link_miss_ < 0xFF) {
     this->link_miss_++;
   }
-  const bool silent = this->link_miss_ >= BUS_LINK_LOST_POLLS;
+  const bool silent = this->link_silent_();
   if (silent != this->link_down_) {
     this->link_down_ = silent;
     if (silent) {

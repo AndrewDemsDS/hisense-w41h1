@@ -94,6 +94,7 @@ class SimAC : public H::BusIO {
   bool stale_1e_before_ack = false;  // a late 0x1E lands in the command's window, ahead of its ack
   uint32_t ack_starts = 0, ack_ends = 0;
   bool truncate_next_status = false;  // one status reply cut off after 60 bytes
+  bool deaf_to_devtype = false;       // hears everything except the 0x0A probe
   int corrupt_devtype_left = 0;       // this many DevType replies arrive with one flipped bit in byte 17
   bool corrupt_link_reply = false;    // every 0x1E reply arrives with one flipped bit in its checksum
   // Time of the last byte of the newest reply queued, to tell whether a write overlaps a reply.
@@ -146,7 +147,9 @@ class SimAC : public H::BusIO {
   void respond_(const std::vector<uint8_t> &req) {
     uint32_t at = g_now + H::bus_tx_time_ms(req.size()) + reply_delay;
     uint8_t cls = req[13];
-    if (cls == 0x0A) {
+    if (cls == 0x0A && deaf_to_devtype) {
+      return;
+    } else if (cls == 0x0A) {
       auto f = ac_frame(24, 0x0A, 0x04);  // type at 16/17 needs a body past the checksum
       f[16] = devtype_hi;
       f[17] = devtype_lo;
@@ -528,6 +531,59 @@ static void test_damaged_frames_are_not_believed() {
       if (cls(ac.writes[i]) == 0x1E && ac.writes[i].bytes[16] == 0xB0)
         now_heard = true;
     CHECK(now_heard, "a whole reply turns it to heard");
+  }
+}
+
+// The recovery probe opens the cycle and the status poll comes later in it. A unit that returns
+// between the two answers the poll, the link is up again, and no probe would follow: it was taken
+// back without being asked for its device type. One more probe goes out in the next cycle.
+static void test_return_between_probe_and_poll() {
+  printf("-- the unit comes back between the recovery probe and the status poll\n");
+  for (int deaf = 0; deaf < 2; deaf++) {
+    SimAC ac;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 2500);
+    ac.responsive = false;
+    run(bus, 9000);
+    CHECK(rec.links.size() == 1 && !rec.links[0].second, "silent: link lost");
+    // Run to the next recovery probe, let it go unanswered, then bring the unit back as another
+    // model (or one that does not answer the probe at all).
+    size_t n = ac.writes.size();
+    while (ac.writes.size() == n || cls(ac.writes.back()) != 0x0A)
+      run(bus, 1);
+    ac.devtype_hi = 0x03;
+    ac.devtype_lo = 0x07;
+    ac.deaf_to_devtype = deaf != 0;
+    ac.responsive = true;
+    size_t back = ac.writes.size();
+    run(bus, 6000);
+    CHECK(rec.links.size() == 2 && rec.links[1].second, "back: link up");
+    size_t probes = 0, first_probe = 0;
+    for (size_t i = back; i < ac.writes.size(); i++) {
+      if (cls(ac.writes[i]) != 0x0A)
+        continue;
+      probes++;
+      if (first_probe == 0)
+        first_probe = i;
+    }
+    CHECK(probes == 1, "%s: exactly one more probe after the unit is back (%zu)",
+          deaf ? "deaf to the probe" : "answering", probes);
+    CHECK(first_probe > back && cls(ac.writes[first_probe + 1]) == 0x1E,
+          "it opens the next cycle, ahead of the heartbeat");
+    uint8_t hi = 0, lo = 0;
+    bus.link_token(&hi, &lo);
+    if (deaf) {
+      CHECK(hi == 0x01 && lo == 0x02, "unanswered: the device type known before stays (%02X %02X)", hi, lo);
+    } else {
+      CHECK(hi == 0x03 && lo == 0x07, "answered: the device type is learned again (%02X %02X)", hi, lo);
+      CHECK(ac.writes.back().bytes[7] == 0x03 && ac.writes.back().bytes[8] == 0x07, "and stamped from then on");
+    }
+    bool heard = false;
+    for (size_t i = first_probe; i < ac.writes.size(); i++)
+      heard = heard || (cls(ac.writes[i]) == 0x1E && ac.writes[i].bytes[16] == 0xB0);
+    CHECK(heard, "the extra probe does not put the heartbeat back to not-heard");
   }
 }
 
@@ -961,6 +1017,7 @@ int main() {
   test_correlation_and_checksum();
   test_boot_retries();
   test_damaged_frames_are_not_believed();
+  test_return_between_probe_and_poll();
   test_peripheral_de();
   test_command_fate();
   test_stale_frame_in_command_window();
