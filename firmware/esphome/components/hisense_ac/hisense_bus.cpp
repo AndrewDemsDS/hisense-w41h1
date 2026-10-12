@@ -324,7 +324,8 @@ void BusScheduler::boot_07_done_(size_t reply_len, uint32_t now) { this->step_ =
 // probe is owed again only while the unit is silent: once it answers its status poll it gets this
 // one more and no further, so a unit that never answers the probe is not asked every second.
 void BusScheduler::recover_done_(size_t reply_len, uint32_t now) {
-  this->handshake_owed_ = this->link_silent_() && !(reply_len > 0 && this->reply_sound_);
+  const bool answered = reply_len > 0 && this->reply_sound_;
+  this->handshake_owed_ = this->link_silent_() && !answered;
   this->step_ = Step::HEARTBEAT;
 }
 
