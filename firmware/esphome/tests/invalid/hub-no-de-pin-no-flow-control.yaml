@@ -1,0 +1,28 @@
+# No de_pin and no flow_control_pin on the UART: nothing drives the transceiver's DE line.
+# accepted: right for a transceiver that switches direction by itself, and silent for one that
+# does not: the node then never transmits and only shows "link down". At least a warning is due.
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus

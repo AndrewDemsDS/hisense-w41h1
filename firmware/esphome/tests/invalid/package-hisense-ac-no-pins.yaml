@@ -1,0 +1,21 @@
+# packages/hisense-ac.yaml without tx_pin, rx_pin and de_pin.
+# expect: 'tx_pin' is undefined
+# expect: 'rx_pin' is undefined
+# expect: 'de_pin' is undefined
+# expect: Cannot resolve pin name '\$\{tx_pin\}'
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  w41h1_components:
+    type: local
+    path: ../../components
+
+packages:
+  node: !include ../../packages/node.yaml
+  ota: !include ../../packages/ota.yaml
+  hisense_ac: !include ../../packages/hisense-ac.yaml
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf

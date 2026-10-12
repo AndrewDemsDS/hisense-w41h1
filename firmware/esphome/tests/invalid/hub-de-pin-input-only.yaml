@@ -1,0 +1,28 @@
+# de_pin on GPIO34 of a classic ESP32, which is input only.
+# expect: GPIO34 .*does not support output pin mode
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO17
+    rx_pin: GPIO16
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: GPIO34

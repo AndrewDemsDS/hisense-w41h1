@@ -1,0 +1,34 @@
+# w41h1_module with no hisense_ac: hub.
+# expect: Component w41h1_module requires component hisense_ac
+esphome:
+  name: invalid-case
+
+rtl87xx:
+  board: cr3l
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac, w41h1_module]
+
+wifi:
+  ssid: example-ssid
+  password: example-password
+
+ota:
+  - platform: esphome
+    id: ota_server
+
+uart:
+  - id: uart_bus
+    tx_pin: PA14
+    rx_pin: PA13
+    baud_rate: 9600
+
+w41h1_module:
+  layout: factory
+  uart_id: uart_bus
+  ota_id: ota_server

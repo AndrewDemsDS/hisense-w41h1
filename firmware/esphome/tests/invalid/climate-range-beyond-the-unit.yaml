@@ -1,0 +1,35 @@
+# A setpoint range the unit cannot take: the bus carries 16 to 32 C.
+# accepted: climate.py does not bound the range to SETPOINT_MIN_C..SETPOINT_MAX_C (16..32,
+# hisense_protocol.h). Home Assistant offers 5 to 60 and the command is clamped without a word.
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: GPIO10
+
+climate:
+  - platform: hisense_ac
+    name: AC
+    min_temperature: 5
+    max_temperature: 60

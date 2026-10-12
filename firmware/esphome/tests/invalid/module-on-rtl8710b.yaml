@@ -1,0 +1,41 @@
+# w41h1_module on the other Realtek family (RTL8710B, AmebaZ).
+# expect: w41h1_module is only for the stock AEH-W41H1 module, an RTL8710C
+# expect: This board's family is RTL8710B
+esphome:
+  name: invalid-case
+
+rtl87xx:
+  board: generic-rtl8710bn-2mb-788k
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac, w41h1_module]
+
+wifi:
+  ssid: example-ssid
+  password: example-password
+
+ota:
+  - platform: esphome
+    id: ota_server
+
+uart:
+  - id: uart_bus
+    tx_pin: PA23
+    rx_pin: PA18
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: PA12
+
+w41h1_module:
+  layout: factory
+  hisense_ac_id: ac_bus
+  uart_id: uart_bus
+  ota_id: ota_server

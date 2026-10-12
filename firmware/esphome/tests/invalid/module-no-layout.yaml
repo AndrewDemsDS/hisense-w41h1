@@ -1,0 +1,39 @@
+# w41h1_module without layout. There is no default on purpose.
+# expect: 'layout' is a required option for \[w41h1_module\]
+esphome:
+  name: invalid-case
+
+rtl87xx:
+  board: cr3l
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac, w41h1_module]
+
+wifi:
+  ssid: example-ssid
+  password: example-password
+
+ota:
+  - platform: esphome
+    id: ota_server
+
+uart:
+  - id: uart_bus
+    tx_pin: PA14
+    rx_pin: PA13
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: PA17
+
+w41h1_module:
+  hisense_ac_id: ac_bus
+  uart_id: uart_bus
+  ota_id: ota_server

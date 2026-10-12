@@ -1,0 +1,17 @@
+# packages/amebaz2.yaml without the layout substitution.
+# expect: 'layout' is undefined
+# expect: Unknown value '\$\{layout\}', valid options are 'factory', 'sdk', 'native'
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  tx_pin: PA14
+  rx_pin: PA13
+  de_pin: PA17
+  w41h1_components:
+    type: local
+    path: ../../components
+
+packages:
+  node: !include ../../packages/node.yaml
+  hisense_ac: !include ../../packages/hisense-ac.yaml
+  amebaz2: !include ../../packages/amebaz2.yaml

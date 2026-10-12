@@ -1,0 +1,33 @@
+# w41h1_module with no update server to switch off.
+# expect: Component w41h1_module requires component ota
+esphome:
+  name: invalid-case
+
+rtl87xx:
+  board: cr3l
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac, w41h1_module]
+
+wifi:
+  ssid: example-ssid
+  password: example-password
+
+uart:
+  - id: uart_bus
+    tx_pin: PA14
+    rx_pin: PA13
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: PA17
+
+w41h1_module:
+  layout: factory
