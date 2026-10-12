@@ -365,7 +365,7 @@ safe mode ([`../docs/15-esphome-path.md`](../docs/15-esphome-path.md#which-flash
 |---|---|
 | `w41h1.yaml` | the classic ESP32 board file and the original entry point; board and pins are substitutions |
 | `w41h1-*.yaml` | one file per other board (see [Boards](#boards)) |
-| `packages/` | what the board files include: `node.yaml`, `version.yaml` (through `node.yaml`), `hisense-ac.yaml`, `ota.yaml`, the optional `status-led.yaml` and `status-pixel.yaml`, and `amebaz2.yaml` for the stock module (configuration only) |
+| `packages/` | what the board files include: `node.yaml`, `version.yaml` (through `node.yaml`), `hisense-ac.yaml`, `ota.yaml`, `esp32.yaml` for the ESP32 boards, the optional `status-led.yaml` and `status-pixel.yaml`, and `amebaz2.yaml` for the stock module (configuration only) |
 | `components/hisense_ac/` | the custom component: hub, climate, switches, select, sensors |
 | `components/w41h1_module/` | the stock module's own component, `rtl87xx` only: its flash layouts (`layout-*.json`), the layout guard (`w41h1_slots.h`), the reboot workaround, and the serial port recovery (`w41h1_module.cpp`, with its timing rule in `w41h1_uart_policy.h`) |
 | `tests/components/hisense_ac/` | every option of every platform, at the path and in the shape ESPHome's own `tests/components/<name>/` uses, so it moves upstream unchanged |
@@ -376,8 +376,8 @@ safe mode ([`../docs/15-esphome-path.md`](../docs/15-esphome-path.md#which-flash
 
 Every file of the `hisense_ac` component passes ESPHome's own gates on the release this repo
 builds with: `script/ci-custom.py`, their `.clang-format` and `.clang-tidy`, ruff, and pylint
-(`firmware/scripts/esphome-upstream-check.sh`, a required CI job). The same job runs against
-their `dev` branch for information. `w41h1_module` is held to the same clang-format and custom
+(`firmware/scripts/esphome-upstream-check.sh`, a CI job on every change to the firmware). The
+nightly workflow runs the same gates against their `dev` branch for information. `w41h1_module` is held to the same clang-format and custom
 source rules by `cpp-lint.sh`. It is not put through ESPHome's Python gates: it is specific to
 this module and not meant for upstream.
 

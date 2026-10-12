@@ -3,11 +3,24 @@ name: QA
 # Hardware-free gate: the lints, the host test suite the pre-commit hook runs (codec goldens, the
 # ESPHome component against the reference driver, virtual-AC round-trip, image signing), and the
 # ESPHome config and compile checks. No A/C, no chip.
+#
+# What runs where:
+#   every push and pull request   host-qa (the one required check), version, lint-extra
+#   when the firmware changed     esphome-esp32, esphome-amebaz2, esphome-upstream (job `changes`)
+#   pushes to main only           coverage (a table in the job summary, never blocking)
+#   every night                   nightly.yaml: fuzzing, the board files no job here compiles,
+#                                 ESPHome's dev-branch gates, the esp32-recon build
 on:
   push:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+
+# A newer push to the same branch or pull request replaces the run in progress: three pushes
+# within half a minute used to run three full workflows side by side.
+concurrency:
+  group: qa-${{ github.ref }}
+  cancel-in-progress: true
 
 # Least privilege: this gate only reads the tree (checkout + host scripts), never writes. Every
 # job repeats it, so a job added later has to state its own.
@@ -15,34 +28,79 @@ permissions:
   contents: read
 
 # The ESPHome release every job builds with, written once. firmware/scripts/version-lint.py holds
-# it equal to the pins in dev.py, esphome-upstream-check.sh and esphome-release.yaml.
+# it equal to the pins in dev.py, esphome-upstream-check.sh and esphome-release.yaml, and the
+# lint-extra job holds .github/ci/esphome/requirements.txt (the copy Dependabot reads) equal to it.
 env:
   ESPHOME_VERSION: "2026.7.4"
 
 jobs:
-  host-qa:
+  # Whether this run touches anything the three compile jobs build from. A change to the docs,
+  # the host tests or the flasher skips them, which takes a pull request from about three minutes
+  # to the length of host-qa. host-qa, version and lint-extra do not ask: they always run, so the
+  # required check always reports.
+  changes:
     # GitHub-only: Gitea mirrors this repo and auto-reads .github/workflows, but has no
-    # ubuntu-latest runner. Skip on Gitea so the job doesn't queue forever there.
+    # ubuntu-latest runner. Skip on Gitea so the job doesn't queue forever there. The compile
+    # jobs need this one, so they are skipped with it.
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      firmware: ${{ steps.diff.outputs.firmware }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2   # the commit and its parents
+          persist-credentials: false
+      - name: Does this run change the firmware?
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # What the compile jobs read: the components, packages, board files and test configs,
+          # the scripts they call, and this workflow. Markdown under those paths is not built.
+          inputs='^(firmware/esphome/|firmware/scripts/(esphome-|version-lint)|\.github/(workflows/qa\.yaml|scripts/board-groups\.sh|ci/esphome/))'
+          files=""
+          if [ "$EVENT" = pull_request ]; then
+            # The checkout is the pull request merged into its base, so the first parent is the base.
+            files="$(git diff --name-only HEAD^1 HEAD)"
+          elif git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            files="$(git diff --name-only "$BEFORE" HEAD)"
+          fi
+          # No list (a new branch, a forced push, a push of several commits): compile.
+          firmware=true
+          if [ -n "$files" ] && ! grep -vE '\.mdx?$' <<<"$files" | grep -qE "$inputs"; then
+            firmware=false
+          fi
+          echo "firmware=$firmware" >> "$GITHUB_OUTPUT"
+          echo "changed files: $(wc -l <<<"$files"), compile jobs: $firmware"
+
+  host-qa:
+    # GitHub-only, as above.
     if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # Static lint first (cheap, fails fast). Run these same two commands locally for parity.
-      # shellcheck ships on the runner image; --severity=warning gates real bugs (quoting, unset
-      # vars, logic) and skips the info/style nits the scripts intentionally use. ruff reads the
-      # committed ruff.toml; it's pinned via pipx (bump with the local version + Dependabot).
+      # Static lint first (cheap, fails fast). shellcheck ships on the runner image;
+      # --severity=warning gates real bugs (quoting, unset vars, logic) and skips the info/style
+      # nits the scripts intentionally use. Every tracked shell script and both hooks, from git,
+      # so a script added anywhere in the tree is linted without a change here.
       - name: Shell lint (shellcheck)
         run: |
           shellcheck --version
-          shellcheck --severity=warning firmware/scripts/*.sh firmware/test/*.sh \
-            firmware/test/fuzz/*.sh firmware/test/coverage/*.sh \
-            firmware/.githooks/pre-commit firmware/.githooks/prepare-commit-msg
+          git ls-files -z '*.sh' 'firmware/.githooks/*' | xargs -0 shellcheck --severity=warning
 
+      # ruff reads the committed ruff.toml. Its version is the one in the lint requirements file,
+      # where Dependabot bumps it.
       - name: Python lint (ruff)
-        run: pipx run ruff==0.15.20 check .
+        run: pipx run --spec "$(grep -oE '^ruff==[0-9.]+' .github/ci/lint/requirements.txt)" ruff check .
 
       # C/C++ lint over every tree we own: clang-format
       # --dry-run -Werror, the ESPHome-derived custom rules, and clang-tidy over the host-compilable
@@ -64,11 +122,11 @@ jobs:
       - name: Sanitizers (ASan + UBSan, g++ and clang++)
         run: bash firmware/test/sanitize.sh
 
-      # The ESPHome variant has no other gate: its component is Python + C++ that the host tests
-      # only reach through esphome_aircon_map.h, so a broken schema or a renamed option would
-      # otherwise reach a user's first `esphome run`. `config` validates the YAML AND every
-      # platform schema in components/hisense_ac without a toolchain, in seconds. The one full
-      # compile is the esphome-amebaz2 job below.
+      # The ESPHome variant has no other gate that always runs: its component is Python + C++
+      # that the host tests only reach through the pure headers, so a broken schema or a renamed
+      # option would otherwise reach a user's first `esphome run`. `config` validates the YAML AND
+      # every platform schema of the components without a toolchain, in seconds. The real
+      # compiles are the esphome-esp32 and esphome-amebaz2 jobs below.
       - name: ESPHome config validation
         run: |
           pipx install "esphome==$ESPHOME_VERSION"
@@ -99,6 +157,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # the merge base and the tags
+          persist-credentials: false
       - name: Version, changelog and release tags
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -109,6 +168,102 @@ jobs:
             python3 firmware/scripts/version-lint.py
           fi
 
+  # The lints nothing else runs: the workflows themselves, the guide pages, and a second static
+  # analyzer on the components. The tools come from .github/ci/lint/requirements.txt, one version
+  # each, so the same commands give the same result on a workstation:
+  #   python3 -m venv /tmp/lint && /tmp/lint/bin/pip install -r .github/ci/lint/requirements.txt
+  lint-extra:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the lint tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/lint"
+          "$RUNNER_TEMP/lint/bin/pip" install --quiet -r .github/ci/lint/requirements.txt
+          echo "$RUNNER_TEMP/lint/bin" >> "$GITHUB_PATH"
+
+      # Syntax, expression types and contexts, and shellcheck on every `run:` block.
+      - name: Workflows (actionlint)
+        run: actionlint -color
+
+      # Security audit of the workflows and of dependabot.yml: unpinned actions, credentials left
+      # in a checkout, template injection, excessive permissions. Offline: it needs no token.
+      # A finding is fixed in the workflow, not suppressed.
+      - name: Workflows (zizmor)
+        run: zizmor --offline --color=always .
+
+      # Broken links, heading structure, the sidebar, and the leak denylist (home paths, LAN
+      # addresses, node numbers) over docs/guide/.
+      - name: Guide pages (docs/guide/lint.py)
+        run: python3 docs/guide/lint.py
+
+      # cppcheck on the code that compiles without ESPHome: the codec and the bus scheduler, and
+      # two host tests that pull in the header-only parts (hisense_map.h, w41h1_uart_policy.h).
+      # Gated on warning, performance and portability, which are clean. `style` is left out: its
+      # findings are naming and "condition always true" in the tests, not defects. The ESPHome
+      # glue is not checked here: cppcheck cannot parse it without ESPHome's headers (SUB_SENSOR
+      # stops the analysis of every glue file), and clang-tidy covers the pure files in host-qa.
+      - name: Components (cppcheck)
+        run: |
+          cppcheck --version
+          c=firmware/esphome/components
+          cppcheck --enable=warning,performance,portability --inconclusive --check-level=exhaustive \
+            --std=c++17 --language=c++ --inline-suppr --quiet --error-exitcode=1 \
+            --suppress=missingIncludeSystem -I "$c/hisense_ac" -I "$c/w41h1_module" \
+            "$c/hisense_ac/hisense_protocol.cpp" "$c/hisense_ac/hisense_bus.cpp" \
+            firmware/test/test_esphome_map_gaps.cpp firmware/test/test_esphome_uart_policy.cpp
+
+      # The copy of the ESPHome pin that Dependabot bumps has to be the release the jobs build
+      # with. A Dependabot pull request fails here until the other pins are bumped in it too.
+      - name: The ESPHome pin Dependabot reads is the one in use
+        run: |
+          if ! grep -qx "esphome==$ESPHOME_VERSION" .github/ci/esphome/requirements.txt; then
+            echo "::error file=.github/ci/esphome/requirements.txt::this file names $(grep -oE '^esphome==.*' .github/ci/esphome/requirements.txt) and the workflows build with $ESPHOME_VERSION: bump ESPHOME_VERSION in qa.yaml and esphome-release.yaml, ESPHOME_PIN in firmware/scripts/dev.py and ESPHOME_SPEC in firmware/scripts/esphome-upstream-check.sh in the same pull request"
+            exit 1
+          fi
+
+  # Line and branch coverage of the pure code under the host tests, as a table in the job
+  # summary. On main only, and never blocking: the number is there to be looked at when a change
+  # lands, not to fail one.
+  coverage:
+    if: ${{ github.server_url == 'https://github.com' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Coverage of the pure code (gcov + gcovr)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/lint"
+          "$RUNNER_TEMP/lint/bin/pip" install --quiet -r .github/ci/lint/requirements.txt
+          export PATH="$RUNNER_TEMP/lint/bin:$PATH"
+          # The script runs gcovr through uvx, which takes the version from this file.
+          export UV_CONSTRAINT="$PWD/.github/ci/lint/requirements.txt"
+          out="$RUNNER_TEMP/coverage"
+          bash firmware/test/coverage/run.sh --out "$out" > "$out.log" 2>&1 || { tail -n 60 "$out.log"; exit 1; }
+          {
+            echo "## Coverage of the pure code under the host tests"
+            echo
+            echo "Lines:"
+            echo '```'
+            cat "$out/lines.txt"
+            echo '```'
+            echo "Branches:"
+            echo '```'
+            cat "$out/branches.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$out/lines.txt" "$out/branches.txt"
+
   # The stock module's own MCU through ESPHome's LibreTiny platform (w41h1-amebaz2-*.yaml, one
   # per flash layout a unit can have). These are the board files nobody builds on the way to an
   # ESP32, and the one platform whose toolchain is small enough for a hosted runner (about 800 MB,
@@ -118,26 +273,48 @@ jobs:
   # file names. Compile-only: the images carry the placeholder secrets and are thrown away. They
   # say nothing about a module, which needs the hardware test.
   esphome-amebaz2:
-    if: ${{ github.server_url == 'https://github.com' }}
+    needs: changes
+    if: ${{ needs.changes.outputs.firmware == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # PlatformIO's tree: the LibreTiny platform, the Realtek SDK and the ARM toolchain. The three
-      # layouts share all of it (one platform, one board, one toolchain), so one entry covers them.
-      # The same directory holds PlatformIO's build cache (PLATFORMIO_BUILD_CACHE_DIR below): every
-      # compiled object, kept by content. A layout's flags differ from the other two, so each has
-      # its own objects, and a run only recompiles what changed since the entry was saved. Every
-      # run restores the newest entry. Only main saves one, so PR runs cannot fill the cache quota.
+      # Two cache entries, because they change at different times.
+      #
+      # PlatformIO's tree: the LibreTiny platform, the Realtek SDK and the ARM toolchain. The
+      # three layouts share all of it, and it changes only with the ESPHome release, which is its
+      # key. The entry is saved once per release.
+      #
+      # PlatformIO's build cache (PLATFORMIO_BUILD_CACHE_DIR below): every compiled object, kept
+      # by content. Nearly all of them are the SDK's and the framework's, which depend on the
+      # release and on the YAML, so that is the key. A change to the components recompiles the
+      # few files of the components and saves nothing.
+      #
+      # Every run restores. Only main saves, and only an entry that does not exist yet, so a
+      # pull request cannot fill the cache quota and a push that changes neither key saves
+      # nothing. (The key used to be the run id: each push to main saved the whole tree again.)
       - name: Restore the PlatformIO tree
+        id: tree
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.platformio
-          key: pio-esphome-amebaz2-${{ github.run_id }}
+          key: pio-amebaz2-tree-${{ env.ESPHOME_VERSION }}
+          # An entry from before the split, until the first save under the key above.
           restore-keys: |
             pio-esphome-amebaz2-
+
+      - name: Restore the build cache
+        id: objects
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/w41h1/pio-objects
+          key: pio-amebaz2-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1-amebaz2-*.yaml') }}
+          restore-keys: |
+            pio-amebaz2-objects-${{ env.ESPHOME_VERSION }}-
 
       - name: Compile every flash layout
         run: |
@@ -147,7 +324,16 @@ jobs:
           # An object served from the build cache prints no compiler output, so the warning check
           # below only sees what this run compiled. That is enough: an entry is saved only by a
           # main run that passed this step, so every cached object compiled clean.
-          export PLATFORMIO_BUILD_CACHE_DIR="$HOME/.platformio/w41h1-build-cache"
+          export PLATFORMIO_BUILD_CACHE_DIR="$HOME/.cache/w41h1/pio-objects"
+          # An entry from before the split holds the build cache inside the tree: move it out,
+          # so it is used now and is not saved with the tree.
+          if [ -d "$HOME/.platformio/w41h1-build-cache" ]; then
+            if [ ! -d "$PLATFORMIO_BUILD_CACHE_DIR" ]; then
+              mkdir -p "$(dirname "$PLATFORMIO_BUILD_CACHE_DIR")"
+              mv "$HOME/.platformio/w41h1-build-cache" "$PLATFORMIO_BUILD_CACHE_DIR"
+            fi
+            rm -rf "$HOME/.platformio/w41h1-build-cache"
+          fi
           # layout:address of the first slot. The app image is named after the address it is
           # built for, so the file name shows that the layout file was applied.
           for want in factory:0x010000 sdk:0x00C000 native:0x010000; do
@@ -181,6 +367,13 @@ jobs:
             fi
             ls -l "$out/firmware.uf2" "$out/image_firmware_is.${want##*:}.bin"
           done
+          # Every layout the tree has is one of the three built above.
+          for b in $(bash ../../.github/scripts/board-groups.sh amebaz2); do
+            case "$b" in
+              w41h1-amebaz2-factory.yaml | w41h1-amebaz2-sdk.yaml | w41h1-amebaz2-native.yaml) ;;
+              *) echo "::error::$b is a stock-module board file this job does not build: add its layout and slot address to the list above"; exit 1 ;;
+            esac
+          done
           # PlatformIO never prunes the build cache. Start it again once it has grown past what
           # three layouts need several times over (about 80 MB each).
           if [ "$(du -sm "$PLATFORMIO_BUILD_CACHE_DIR" | cut -f1)" -gt 1024 ]; then
@@ -189,83 +382,118 @@ jobs:
           fi
 
       - name: Save the PlatformIO tree
-        if: github.ref == 'refs/heads/main'
+        if: ${{ github.ref == 'refs/heads/main' && steps.tree.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.platformio
-          key: pio-esphome-amebaz2-${{ github.run_id }}
+          key: pio-amebaz2-tree-${{ env.ESPHOME_VERSION }}
 
-  # The ESP32 boards, which are the ones that run in A/C units: a real compile of the classic
-  # ESP32 file and of both ESP32-C3 files (the SuperMini with its status LED, the Plus with its
-  # RGB pixel and the RMT driver), plus the hub with no entity platform. `esphome config` in
-  # host-qa cannot see a C++ error, and the AmebaZ2 job builds with another compiler. ESPHome
-  # builds these with ESP-IDF's own tools, not PlatformIO, and keeps the framework, the two
-  # toolchains (Xtensa and RISC-V) and a ccache under ~/.cache/esphome/idf, so that is the
-  # directory cached. ccache replays a cached object's compiler output, so the warning check
-  # below also sees warnings from objects this run did not compile. Compile-only: the images
-  # carry the placeholder secrets and are thrown away.
+      - name: Save the build cache
+        if: ${{ github.ref == 'refs/heads/main' && steps.objects.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/w41h1/pio-objects
+          key: pio-amebaz2-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1-amebaz2-*.yaml') }}
+
+  # The ESP32 boards, which are the ones that run in A/C units: a real compile of every board
+  # file that includes packages/esp32.yaml (the classic ESP32 file and both ESP32-C3 files: the
+  # SuperMini with its status LED, the Plus with its RGB pixel and the RMT driver), plus the hub
+  # with no entity platform. `esphome config` in host-qa cannot see a C++ error, and the AmebaZ2
+  # job builds with another compiler. ESPHome builds these with ESP-IDF's own tools, not
+  # PlatformIO, and keeps the framework and the two toolchains (Xtensa and RISC-V) under
+  # ~/.cache/esphome/idf. ccache replays a cached object's compiler output, so the warning check
+  # also sees warnings from objects this run did not compile. Compile-only: the images carry the
+  # placeholder secrets and are thrown away.
   esphome-esp32:
-    if: ${{ github.server_url == 'https://github.com' }}
+    needs: changes
+    if: ${{ needs.changes.outputs.firmware == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # Every run restores the newest entry. Only main saves one, as in esphome-amebaz2.
+      # Two entries, keyed as in esphome-amebaz2: the framework and the toolchains by the ESPHome
+      # release (about 1 GB, saved once per release), the ccache by the release and the YAML
+      # (capped below). Every run restores, only main saves, and only a key that is new.
       - name: Restore the ESP-IDF tree
+        id: tree
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/esphome/idf
-          key: idf-esphome-esp32-${{ github.run_id }}
+          key: idf-esp32-tree-${{ env.ESPHOME_VERSION }}
+          # An entry from before the split, until the first save under the key above.
           restore-keys: |
             idf-esphome-esp32-
 
+      - name: Restore the ccache
+        id: ccache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/w41h1/ccache
+          key: idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1*.yaml', 'firmware/esphome/tests/build.hub-only.*.yaml') }}
+          restore-keys: |
+            idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-
+
       - name: Compile the ESP32 board files
         env:
-          # ESPHome switches ccache on when the binary is there and keeps the cache in the
-          # directory above. Capped, so the saved entry stays well inside the cache quota.
+          # ESPHome switches ccache on when the binary is there. Capped, so the saved entry stays
+          # well inside the cache quota.
           CCACHE_MAXSIZE: 600M
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ccache
           pipx install "esphome==$ESPHOME_VERSION"
-          bash firmware/scripts/esphome-compile-check.sh w41h1.yaml w41h1-esp32c3.yaml \
-            w41h1-esp32c3-plus.yaml tests/build.hub-only.esp32-c3-idf.yaml
+          # ESPHome's default is a ccache inside the ESP-IDF tree. It gets a directory of its
+          # own, so the tree's entry holds no objects.
+          export CCACHE_DIR="$HOME/.cache/w41h1/ccache"
+          # An entry from before the split holds the ccache inside the tree: move it out, so it
+          # is used now and is not saved with the tree.
+          if [ -d "$HOME/.cache/esphome/idf/ccache" ]; then
+            if [ ! -d "$CCACHE_DIR" ]; then
+              mkdir -p "$(dirname "$CCACHE_DIR")"
+              mv "$HOME/.cache/esphome/idf/ccache" "$CCACHE_DIR"
+            fi
+            rm -rf "$HOME/.cache/esphome/idf/ccache"
+          fi
+          # Word splitting is wanted: the script prints a list of file names.
+          # shellcheck disable=SC2046
+          bash firmware/scripts/esphome-compile-check.sh $(bash .github/scripts/board-groups.sh esp32) \
+            tests/build.hub-only.esp32-c3-idf.yaml
+          ccache --show-stats | head -n 12 || true
 
       - name: Save the ESP-IDF tree
-        if: github.ref == 'refs/heads/main'
+        if: ${{ github.ref == 'refs/heads/main' && steps.tree.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/esphome/idf
-          key: idf-esphome-esp32-${{ github.run_id }}
+          key: idf-esp32-tree-${{ env.ESPHOME_VERSION }}
+
+      - name: Save the ccache
+        if: ${{ github.ref == 'refs/heads/main' && steps.ccache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/w41h1/ccache
+          key: idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1*.yaml', 'firmware/esphome/tests/build.hub-only.*.yaml') }}
 
   # ESPHome's own CI gates, run against the hisense_ac component placed in a checkout of
-  # esphome/esphome (see firmware/scripts/esphome-upstream-check.sh). The pinned-release run is
-  # required. The dev run is informational: their rules move ahead of the release this repo builds
-  # with (dev wants ESPHOME_LOG_TAG, which the pinned release does not define). A dev failure is
-  # reported as a warning annotation and the job still passes, so it shows what an upstream pull
-  # request would have to change without marking every commit as failed.
+  # esphome/esphome at the release this repo builds with (firmware/scripts/esphome-upstream-check.sh).
+  # The same gates against their dev branch run in nightly.yaml, not here: that run installs
+  # whatever their dev branch requires that day, which has no place in every pull request, and its
+  # result does not depend on the pull request anyway (it is informational, and it changes when
+  # their branch moves, not when this tree does).
   esphome-upstream:
-    if: ${{ github.server_url == 'https://github.com' }}
+    needs: changes
+    if: ${{ needs.changes.outputs.firmware == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        ref: [pinned, dev]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: ESPHome upstream gates (${{ matrix.ref }})
-        env:
-          REF: ${{ matrix.ref }}
-        run: |
-          if [ "$REF" = dev ]; then
-            if ! ESPHOME_UPSTREAM_REF=dev bash firmware/scripts/esphome-upstream-check.sh; then
-              echo "::warning title=ESPHome dev gates::The component does not pass ESPHome's dev-branch gates. See this job's log. Informational, not blocking."
-            fi
-          else
-            bash firmware/scripts/esphome-upstream-check.sh
-          fi
+        with:
+          persist-credentials: false
+      - name: ESPHome upstream gates (the pinned release)
+        run: bash firmware/scripts/esphome-upstream-check.sh

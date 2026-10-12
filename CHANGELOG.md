@@ -27,6 +27,13 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 - **`w41h1_module` tidied, same behaviour:** the port is looked at from `loop()` once a second
   where a scheduler lambda did it, the hub is the component's parent (`Parented`), a missing
   update server is logged and no longer dereferenced, and `W41h1UartWatch` is `W41H1UartWatch`.
+- **CI:** a newer push cancels the run before it, a change that touches no firmware skips the
+  three compile jobs, and the caches are saved when their inputs change and not on every push.
+  New `lint-extra` job (actionlint, zizmor, the guide linter, cppcheck) and a coverage table on
+  `main`. A nightly workflow fuzzes each harness for ten minutes, compiles the ESP8266 and RP2040
+  files, builds `esp32-recon` and runs ESPHome's dev-branch gates, which left the pull requests.
+- **The release workflow has a dry run** (`gh workflow run esphome-release.yaml`): every gate and
+  compile, no tag and no release. Its board matrix comes from the board files.
 
 ### The firmware has a version, releases are tags, and CI compiles the ESP32 boards (2026-10-12)
 - **The version is written once**, in `firmware/esphome/packages/version.yaml`: semver, starting
