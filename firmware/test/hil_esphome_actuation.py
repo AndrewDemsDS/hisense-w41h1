@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """HIL: ESPHome actuation + no-collateral regression (needs a real A/C).
 
-The ESPHome counterpart of hil_display_actuation.py, which drives Matter nodes through
-matter-server. This one drives the node over the ESPHome native API, so it needs the A/C
-online and the node adopted.
+Drives the node over the ESPHome native API, so it needs the A/C online and the node
+adopted.
 
     python3 hil_esphome_actuation.py <host> [--key <noise_psk>]
 
 NOT part of run_tests.sh: that suite is deliberately hardware-free.
 
-Two properties per control, the same pair the Matter HIL script checks:
+Two properties per control:
 
 1. ACTUATION. The command lands AND the entity really transitions. A command matching the
    current value is a no-op that proves nothing, so every step forces a genuine change.
