@@ -59,6 +59,9 @@ class BusListener {
   // sends the frame again. `reply_class` is the class of the frame that ended the window, 0 when
   // there was none, and command_reply() is what that frame says.
   virtual void on_bus_command(bool answered, uint8_t reply_class) {}
+  // The remote's "77" gesture, debounced: once per accepted request. `request` is the request bits
+  // of the A/C's 0x1E reply (LINK_REQ_* in hisense_protocol.h).
+  virtual void on_bus_setup_request(uint8_t request) {}
 };
 
 // Timing, from the vendor module's byte-writer and transaction primitive.
@@ -107,6 +110,14 @@ class BusScheduler {
   bool features(AcFeatures *out) const;
   size_t queued() const { return this->queue_len_; }
 
+  // While on, every heartbeat carries the module's provisioning flag and the panel shows "77".
+  // Switching it off starts the lockout that keeps the closing press from opening it again.
+  void set_setup_indicator(bool on, uint32_t now_ms);
+  bool setup_indicator() const { return this->setup_indicator_; }
+  // Request bits of the last 0x1E reply with a good checksum, before any debounce. For diagnostics:
+  // it tells "the unit never asked" from "the request was not taken".
+  uint8_t link_request() const { return this->link_request_; }
+
  protected:
   enum class Phase : uint8_t { IDLE, TX_SETTLE, TX_DRAIN, LISTEN, WAIT };
   enum class Step : uint8_t {
@@ -126,6 +137,7 @@ class BusScheduler {
   void finish_transaction_(size_t reply_len, uint32_t now);
   void on_step_done_(size_t reply_len, uint32_t now);
   bool consume_(size_t n);
+  void check_link_reply_(const uint8_t *frame, size_t n, uint32_t now);
   void discard_rx_();
 
   BusIO *io_{nullptr};
@@ -160,6 +172,10 @@ class BusScheduler {
   bool heard_ac_{false};
   uint8_t link_miss_{0};
   bool link_down_{false};
+  SetupRequestTracker setup_{};
+  bool setup_started_{false};
+  bool setup_indicator_{false};
+  uint8_t link_request_{0};
   uint8_t pt_poll_{0};
   uint32_t chk_mismatch_{0};
   uint32_t reply_timeouts_{0};
