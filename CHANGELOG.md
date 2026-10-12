@@ -27,6 +27,10 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   silence and was then carried out if the unit came back within 20 s. Now the entity keeps its
   state and the log says `Command refused: the unit is not answering`. A special-mode write
   whose turn came in the loop pass that reported the link lost is no longer sent either.
+- **Special-mode requests that undo each other before they are sent merge.** Eco, turbo, quiet
+  or the sleep profile changed several times within the 10 s pacing now cost one frame for the
+  final value, where every change was queued and sent 10 s apart. A request the queue cannot
+  take is refused and the entity keeps its state.
 
 ### Board files, the stock-module component and CI (2026-10-12)
 - **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air

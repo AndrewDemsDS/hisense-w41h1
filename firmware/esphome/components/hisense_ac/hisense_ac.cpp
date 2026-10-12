@@ -443,7 +443,7 @@ void HisenseAC::on_command_event(CommandEvent event, uint16_t fields, uint16_t c
       }
       break;
     case CommandEvent::SPECIAL_QUEUE_FULL:
-      ESP_LOGW(TAG, "Special-mode queue full, op %u dropped", fields);
+      ESP_LOGW(TAG, "Special-mode queue full, op %u refused", fields);
       break;
     case CommandEvent::SPECIAL_NOT_SENT:
       ESP_LOGW(TAG, "Special-mode command (op %u, value %u) could not be queued for the bus, given up", fields, count);

@@ -482,6 +482,79 @@ static void test_special_plan() {
   }
   printf("  %d lost-write cases planned again\n", steps);
 
+  // A user's write joining the queue: what it makes pointless goes.
+  {
+    const H::SpecialState none;
+    H::SpecialState turbo_on;
+    turbo_on.turbo = true;
+    H::SpecialOp q[4];
+    size_t n = 0;
+    CHECK(H::special_queue_push(none, q, &n, 4, {H::SPECIAL_OP_MUTE, 1}) && n == 1, "first write queued");
+    CHECK(H::special_queue_push(none, q, &n, 4, {H::SPECIAL_OP_MUTE, 0}) && n == 1 && q[0].value == 0,
+          "quiet on then off: the off replaces the on");
+    CHECK(H::special_queue_push(none, q, &n, 4, {H::SPECIAL_OP_SLEEP, 2}) && n == 2, "another kind is added");
+    CHECK(H::special_queue_push(none, q, &n, 4, {H::SPECIAL_OP_MUTE, 1}) && n == 2 &&
+              q[0].kind == H::SPECIAL_OP_SLEEP && q[1].kind == H::SPECIAL_OP_MUTE && q[1].value == 1,
+          "the newest write goes last, the one it replaces goes");
+    // Byte 33 is one field with four values: eco on also clears turbo, so with turbo on, eco on
+    // followed by eco off is not the same as eco off alone, and both writes stay.
+    n = 0;
+    H::special_queue_push(turbo_on, q, &n, 4, {H::SPECIAL_OP_FEATURE, H::FEATURE_ECO});
+    CHECK(H::special_queue_push(turbo_on, q, &n, 4, {H::SPECIAL_OP_FEATURE, H::FEATURE_ECO_OFF}) && n == 2,
+          "turbo on: eco on, eco off keeps both (the first one is what clears turbo)");
+    n = 0;
+    H::special_queue_push(none, q, &n, 4, {H::SPECIAL_OP_FEATURE, H::FEATURE_ECO});
+    CHECK(H::special_queue_push(none, q, &n, 4, {H::SPECIAL_OP_FEATURE, H::FEATURE_ECO_OFF}) && n == 1 &&
+              q[0].value == H::FEATURE_ECO_OFF,
+          "nothing on: eco on, eco off is the eco off alone");
+    CHECK(H::special_queue_push(none, q, &n, 4, {H::SPECIAL_OP_FEATURE, H::FEATURE_TURBO}) && n == 1 &&
+              q[0].value == H::FEATURE_TURBO,
+          "then turbo on: turbo alone");
+    // Whatever the order of requests, the merged queue ends where the unmerged one would.
+    int cases = 0;
+    for (unsigned start = 0; start < 16; start++) {
+      for (unsigned seq = 0; seq < 7 * 7 * 7 * 7 * 7 * 7; seq++) {
+        static const H::SpecialOp OPS[7] = {{H::SPECIAL_OP_FEATURE, H::FEATURE_NONE},
+                                            {H::SPECIAL_OP_FEATURE, H::FEATURE_ECO},
+                                            {H::SPECIAL_OP_FEATURE, H::FEATURE_TURBO},
+                                            {H::SPECIAL_OP_FEATURE, H::FEATURE_ECO_OFF},
+                                            {H::SPECIAL_OP_MUTE, 0},
+                                            {H::SPECIAL_OP_MUTE, 1},
+                                            {H::SPECIAL_OP_SLEEP, 2}};
+        H::SpecialState from;
+        from.eco = (start & 1) != 0;
+        from.turbo = (start & 2) != 0;
+        from.mute = (start & 4) != 0;
+        from.sleep = (start & 8) != 0 ? 1 : 0;
+        H::SpecialState plain = from;
+        H::SpecialOp merged[8];
+        size_t len = 0;
+        bool fits = true;
+        unsigned rest = seq;
+        H::SpecialOp last{};
+        for (int k = 0; k < 6; k++, rest /= 7) {
+          last = OPS[rest % 7];
+          H::special_apply(&plain, last);
+          fits = fits && H::special_queue_push(from, merged, &len, 4, last);
+        }
+        const H::SpecialState got = H::special_wanted(from, merged, len);
+        cases++;
+        if (!fits || len == 0 || merged[len - 1].kind != last.kind || merged[len - 1].value != last.value ||
+            got.eco != plain.eco || got.turbo != plain.turbo || got.mute != plain.mute || got.sleep != plain.sleep) {
+          CHECK(false, "start %u, sequence %u: merged queue of %zu ends elsewhere, or lost the newest write", start,
+                seq, len);
+          break;
+        }
+      }
+    }
+    CHECK(cases == 16 * 117649, "%d request sequences end where the unmerged queue would, in at most four writes",
+          cases);
+    n = 0;
+    H::special_queue_push(none, q, &n, 1, {H::SPECIAL_OP_MUTE, 1});
+    CHECK(!H::special_queue_push(none, q, &n, 1, {H::SPECIAL_OP_SLEEP, 1}) && n == 1,
+          "a write that does not fit is refused and the queue is left alone");
+  }
+
   // A write the user has since reversed is not planned again.
   H::SpecialState unit;  // nothing on, and the eco write was lost
   H::SpecialState projected;
@@ -1024,16 +1097,23 @@ static void test_scenarios() {
     h.run(20000);
     CHECK(u.v.special.mute && !u.v.special.eco && h.shown.special.mute && h.failed() == 1, "which lands");
   }
-  {  // The special-mode queue is full: the caller is told.
+  {  // Writes that undo each other before they are sent merge: no 10 s wait per toggle.
     Unit u = running();
     Rig h(&u);
     h.user_special({H::SPECIAL_OP_MUTE, 1});
     h.run(100);  // sent, and now pending: nothing else drains
     bool taken = true;
-    for (int i = 0; i < H::CommandTracker::SPECIAL_QUEUE_CAP; i++)
-      taken = taken && h.user_special({H::SPECIAL_OP_SLEEP, (uint8_t) (1 + i % 4)});
-    CHECK(taken && h.t.special_queued() == H::CommandTracker::SPECIAL_QUEUE_CAP, "eight writes fit");
-    CHECK(!h.user_special({H::SPECIAL_OP_FEATURE, H::FEATURE_ECO}), "the ninth is refused, and says so");
+    for (int i = 0; i < 5; i++)  // the eco switch flipped five times, ending on
+      taken = taken &&
+              h.user_special({H::SPECIAL_OP_FEATURE, (uint8_t) (i % 2 == 0 ? H::FEATURE_ECO : H::FEATURE_ECO_OFF)});
+    for (uint8_t profile = 1; profile <= 3; profile++)  // and the sleep select moved three times
+      taken = taken && h.user_special({H::SPECIAL_OP_SLEEP, profile});
+    CHECK(taken, "every request is taken");
+    CHECK(h.t.special_queued() == 2, "eight requests are two writes (%zu queued)", h.t.special_queued());
+    h.run(40000);
+    CHECK(u.heard.size() == 3 && !h.busy() && h.failed() == 0, "three frames and done inside 40 s (%zu frames)",
+          u.heard.size());
+    CHECK(u.v.special.eco && u.v.special.sleep == 3, "the unit is where the last requests put it");
   }
 }
 

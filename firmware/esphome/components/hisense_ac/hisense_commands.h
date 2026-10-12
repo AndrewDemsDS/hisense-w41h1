@@ -148,12 +148,23 @@ class CommandTracker {
   /// bus: the A/C swallows a special-mode command that lands within ~8 s of the previous one, so
   /// every op waits SPECIAL_SETTLE_MS after the last. Presets, switches and the sleep select all
   /// share it, so they can never race each other on the wire.
-  /// False when the op was not taken (the queue is full): the caller must not show the request.
+  /// A queued write that the new one makes pointless is dropped (special_queue_push), so a switch
+  /// toggled back and forth costs one frame and one wait, not one of each per toggle.
+  /// False when the op was not taken: the caller must not show the request.
   bool enqueue_special(const SpecialOp &op, uint32_t now) {
     if (this->refused_link_down_())
       return false;
+    size_t len = this->special_len_;
+    if (!special_queue_push(this->projected_, this->special_queue_, &len, SPECIAL_QUEUE_CAP, op)) {
+      this->event_(CommandEvent::SPECIAL_QUEUE_FULL, op.kind);
+      return false;
+    }
+    this->special_len_ = static_cast<uint8_t>(len);
     this->special_resends_ = 0;  // a new request from the user: a fresh allowance of re-sends
-    return this->push_special_(op, now);
+    // Held from the moment of the request, not the send, so a readback that predates it cannot
+    // flip the entity back while the op waits out the settle.
+    this->note_user_command(now);
+    return true;
   }
 
   /// Replace whatever is still queued with the plan for preset `target` (a row index), computed
@@ -216,8 +227,8 @@ class CommandTracker {
   size_t special_queued() const { return this->special_len_; }
 
   static constexpr uint32_t COMMAND_HOLDOFF_MS = 4000;
-  // Paced special-mode queue. Fixed size: a preset plan is at most PRESET_PLAN_MAX ops, and
-  // anything that would overflow is dropped with a warning rather than allocated.
+  // Paced special-mode queue. Fixed size: a preset plan is at most PRESET_PLAN_MAX ops, user writes
+  // merge (special_queue_push), and a write that still does not fit is refused, never allocated.
   static constexpr uint8_t SPECIAL_QUEUE_CAP = 8;
 
  protected:
@@ -438,16 +449,10 @@ class CommandTracker {
     this->note_user_command(now);
   }
 
-  bool push_special_(const SpecialOp &op, uint32_t now) {
-    if (this->special_len_ >= SPECIAL_QUEUE_CAP) {
-      this->event_(CommandEvent::SPECIAL_QUEUE_FULL, op.kind);
-      return false;
-    }
+  // One write of a plan. A plan is at most PRESET_PLAN_MAX writes into an emptied queue, so it fits.
+  void push_special_(const SpecialOp &op, uint32_t now) {
     this->special_queue_[this->special_len_++] = op;
-    // Held from the moment of the request, not the send, so a readback that predates it cannot
-    // flip the entity back while the op waits out the settle.
     this->note_user_command(now);
-    return true;
   }
 
   BusTicket execute_special_(const SpecialOp &op) {
@@ -491,6 +496,7 @@ class CommandTracker {
   bool link_lost_{false};
 };
 
+static_assert(PRESET_PLAN_MAX <= CommandTracker::SPECIAL_QUEUE_CAP, "a plan must fit the special-mode queue");
 // The verdict on a command has to be in before the hold-off lets a status frame reach the entities.
 static_assert(CONFIRM_SETTLE_MS < CommandTracker::COMMAND_HOLDOFF_MS,
               "confirm settle must end inside the command hold-off");

@@ -879,6 +879,40 @@ inline SpecialState special_wanted(const SpecialState &projected, const SpecialO
   return s;
 }
 
+// A user's special-mode write joining the writes that are queued and not yet sent. A queued write of
+// the same kind that the new one makes pointless is dropped: one whose absence leaves the unit in
+// the same place once everything has landed. Quiet switched on and off again before the first
+// write went out is one frame, not two, and since every write waits SPECIAL_SETTLE_MS for its
+// turn, that is 10 s saved each. The user's newest write always stays, so the last thing asked
+// for is stated on the wire even when the unit should be there already.
+// False when the queue is full after merging; with the three kinds there are, that takes a `cap`
+// below four.
+inline bool special_queue_push(const SpecialState &projected, SpecialOp *queue, size_t *len, size_t cap,
+                               const SpecialOp &op) {
+  SpecialState target = special_wanted(projected, queue, *len);
+  special_apply(&target, op);
+  for (size_t i = *len; i-- > 0;) {
+    if (queue[i].kind != op.kind)
+      continue;
+    SpecialState without = projected;
+    for (size_t j = 0; j < *len; j++) {
+      if (j != i)
+        special_apply(&without, queue[j]);
+    }
+    special_apply(&without, op);
+    if (without.eco != target.eco || without.turbo != target.turbo || without.mute != target.mute ||
+        without.sleep != target.sleep)
+      continue;
+    for (size_t j = i + 1; j < *len; j++)
+      queue[j - 1] = queue[j];
+    (*len)--;
+  }
+  if (*len >= cap)
+    return false;
+  queue[(*len)++] = op;
+  return true;
+}
+
 // ---- Power estimate ----------------------------------------------------------------------------
 // Calibrated against a panel meter: status byte 55 tracks sqrt(power), P[W] = 4.15 * raw^2. Byte 50
 // is supply voltage in whole volts, about 6% low.
