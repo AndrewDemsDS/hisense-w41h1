@@ -106,7 +106,9 @@ void BusScheduler::begin_transaction_(const uint8_t *frame, size_t len, uint8_t 
     this->io_->bus_write(this->tx_, this->tx_len_);
     this->phase_ = Phase::LISTEN;
     this->phase_until_ = now + BUS_REPLY_TIMEOUT_MS;
+    this->tx_done_at_ = now + bus_tx_time_ms(this->tx_len_);
   }
+  this->transmitting_ = true;
 }
 
 void BusScheduler::finish_transaction_(size_t reply_len, uint32_t now) {
@@ -125,6 +127,8 @@ void BusScheduler::poll(uint32_t now_ms) {
   }
   // Here and not only when a reply arrives: a silent unit must not keep an old lockout armed.
   setup_request_expire(&this->setup_, now_ms);
+  if (!this->has_de_ && this->transmitting_ && reached(now_ms, this->tx_done_at_))
+    this->transmitting_ = false;
   // Several phases can complete in one call (a reply already buffered, a zero wait); the bound
   // only guards against a logic error spinning here.
   for (int guard = 0; guard < 16 && this->advance_(now_ms); guard++) {
@@ -154,6 +158,7 @@ bool BusScheduler::advance_(uint32_t now) {
         return false;
       this->io_->bus_flush();        // already empty by now; guarantees it before DE drops
       this->io_->bus_set_de(false);  // release: back to receive
+      this->transmitting_ = false;
       this->phase_ = Phase::LISTEN;
       this->phase_until_ = now + BUS_REPLY_TIMEOUT_MS;
       return true;

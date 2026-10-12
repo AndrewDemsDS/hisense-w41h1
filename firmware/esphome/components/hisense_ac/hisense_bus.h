@@ -147,8 +147,13 @@ class BusScheduler {
   // Queue a finished frame (from the builders) for the next cycle's command slot. False when the
   // queue is full or the frame is empty or too long.
   bool enqueue(const uint8_t *frame, size_t len);
-  // True while DE timing is running, so the hub can ask ESPHome for a tight loop.
+  // True while DE timing is running, so the hub can ask ESPHome for a tight loop. Always false
+  // when the UART peripheral owns DE: there is no timing to keep then.
   bool wants_fast_loop() const { return this->phase_ == Phase::TX_SETTLE || this->phase_ == Phase::TX_DRAIN; }
+  // True while a frame is on its way out, as of the last poll(): from DE going high until it is
+  // released, or, without a DE pin, from the write until the last byte has had time to leave at
+  // 9600 baud. Code that touches the serial port from outside has to leave it alone meanwhile.
+  bool transmitting() const { return this->transmitting_; }
 
   bool link_token(uint8_t *hi, uint8_t *lo) const;  // false until a DevType reply supplied it
   // Complete frames received with a bad checksum, of any class, since boot.
@@ -223,6 +228,10 @@ class BusScheduler {
   uint32_t phase_until_{0};
   uint32_t cycle_start_{0};
   uint8_t expect_class_{CLASS_ANY};
+  // For transmitting(). Without a DE pin nothing marks the end of a transmission, so the time the
+  // bytes need is kept.
+  bool transmitting_{false};
+  uint32_t tx_done_at_{0};
   StepDone on_done_{nullptr};
   // The frame in rx_ passed its checksum. Set for every frame received, read by its consumers.
   bool reply_sound_{false};

@@ -831,6 +831,7 @@ void Rig::check_(uint32_t dt) {
   // nothing written without it, flushed before every release.
   if (has_de) {
     CHECK(ac.de_high == bus.wants_fast_loop(), "DE %d, wants_fast_loop %d", ac.de_high, bus.wants_fast_loop());
+    CHECK(ac.de_high == bus.transmitting(), "DE %d, transmitting %d", ac.de_high, bus.transmitting());
     CHECK(!(ac.de_high && bus.listening()), "listening with DE high");
     CHECK(!ac.de.empty() && ac.flushes == (ac.de.size() - 1) / 2, "one flush per DE release (%u flushes, %zu edges)",
           (unsigned) ac.flushes, ac.de.size());
@@ -1774,20 +1775,32 @@ static void script_de_blocking(Rig &r) {
   r.audit_commands();
 }
 
-// WEAKNESS (reported): HisenseAC::bus_transmitting() is wants_fast_loop(), which is DE timing and
-// nothing else. Without a DE pin it is false for the whole of every transmission, so board code that
-// asks "is the port busy sending" (w41h1_module's serial restart) is told no while up to 52 ms of
-// frame are still leaving the UART. Every shipped board file sets a DE pin, so nothing is hit today.
+// Was a weakness: HisenseAC::bus_transmitting() was wants_fast_loop(), which is DE timing and
+// nothing else. Without a DE pin it was false for the whole of every transmission, so board code
+// that asks "is the port busy sending" (w41h1_module's serial restart) was told no while up to
+// 52 ms of frame were still leaving the UART. transmitting() keeps the time the bytes need.
 static void script_no_de_transmitting(Rig &r) {
   r.has_de = false;
-  bool ever = false;
+  bool fast = false;
+  size_t seen = 0;
   uint32_t end = g_now + 4000;
   while (static_cast<int32_t>(end - g_now) > 0) {
-    r.step();
-    ever = ever || r.bus.wants_fast_loop();
+    r.step();  // polls at g_now, then advances the clock
+    fast = fast || r.bus.wants_fast_loop();
+    // As of that poll: transmitting exactly while the newest frame's bytes are still leaving.
+    bool leaving = false;
+    if (!r.ac.writes.empty()) {
+      const Write &w = r.ac.writes.back();
+      const uint32_t polled = g_now - 1;
+      leaving = static_cast<int32_t>(polled - (w.t + H::bus_tx_time_ms(w.bytes.size()))) < 0;
+      seen += leaving ? 1 : 0;
+    }
+    CHECK(r.bus.transmitting() == leaving, "transmitting() is %d with the last byte %s", r.bus.transmitting(),
+          leaving ? "still to go" : "gone");
   }
   CHECK(r.count(0x66) >= 3, "frames were sent");
-  XFAIL(ever, "the scheduler says it is transmitting at some point while it sends without a DE pin");
+  CHECK(seen > 100, "the scheduler said it was transmitting while it sent without a DE pin (%zu ms)", seen);
+  CHECK(!fast, "and still asks for no fast loop: there is no DE timing to keep");
 }
 
 // ---- The hub's decisions on top of the real scheduler --------------------------------------------
@@ -2357,7 +2370,7 @@ int main(int argc, char **argv) {
 
   // DE.
   everywhere("DE release with a blocking UART write", script_de_blocking, 2300, 31);
-  everywhere("WEAKNESS: bus_transmitting() without a DE pin", script_no_de_transmitting);
+  everywhere("transmitting() without a DE pin", script_no_de_transmitting);
 
   test_random(seeds, run_ms);
 

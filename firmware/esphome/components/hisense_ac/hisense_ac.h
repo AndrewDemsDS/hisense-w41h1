@@ -125,7 +125,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   bool link_up() const { return this->link_up_; }
   /// True while the transceiver is held in transmit (DE high around a frame). Board code that
   /// touches the serial port from outside the component must leave it alone during that time.
-  bool bus_transmitting() const { return this->bus_.wants_fast_loop(); }
+  bool bus_transmitting() const { return this->bus_.transmitting(); }
   bool has_state() const { return this->last_.valid; }
   const AcState &last_state() const { return this->last_; }
 
