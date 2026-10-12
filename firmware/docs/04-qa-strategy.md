@@ -74,7 +74,7 @@ touches the appliance.
 `firmware/test/hil_esphome_actuation.py` drives a node on a real A/C over the native API and
 checks two properties for every control:
 
-1. **Actuation.** The command lands and the entity really transitions. A command that matches the
+1. **Actuation.** The command lands and the entity changes state. A command that matches the
    current value is a no-op that proves nothing, so every step forces a real change.
 2. **No collateral.** Most controls ride the combined command frame, which is rebuilt from the
    command shadow. If the shadow drifts, driving one control retunes the A/C. So after each step
