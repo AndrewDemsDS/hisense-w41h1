@@ -19,7 +19,8 @@ void HisenseSleepSelect::control(const std::string &value) {
   if (!index.has_value())
     return;
   // Option order IS profile order (0 = Off). Paced through the hub's special-mode queue.
-  this->parent_->enqueue_special({SPECIAL_OP_SLEEP, (uint8_t) *index});
+  if (!this->parent_->enqueue_special({SPECIAL_OP_SLEEP, (uint8_t) *index}))
+    return;  // not taken: the select keeps showing the unit's profile
   this->parent_->note_user_command();
   this->published_profile_ = (uint8_t) *index;
   this->publish_state(value);

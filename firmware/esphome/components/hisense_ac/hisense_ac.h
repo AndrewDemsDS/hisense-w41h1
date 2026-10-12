@@ -49,21 +49,23 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   void set_climate(HisenseClimate *climate) { this->climate_ = climate; }
   void add_status_listener(StatusListener *listener) { this->listeners_.push_back(listener); }
 
-  /// A user write of `fields` (CONFIRM_* bits in hisense_map.h), already placed in the shadow.
-  /// Sends the combined frame, with the power-on bits in it when `power_on`, and keeps the request
-  /// until the unit's status agrees with it: a frame the unit did not take is sent again.
-  void send_user_command(uint16_t fields, bool power_on) {
-    this->commands_.send_user_command(fields, power_on, millis());
+  /// A user write of `fields` (CONFIRM_* bits in hisense_map.h): `wanted` is cmd() with those
+  /// fields changed. Sends the combined frame, with the power-on bits in it when `power_on`, and
+  /// keeps the request until the unit's status agrees with it: a frame the unit did not take is
+  /// sent again. False when the frame could not be queued: show nothing of the request then.
+  bool send_user_command(const AcCommand &wanted, uint16_t fields, bool power_on) {
+    return this->commands_.send_user_command(wanted, fields, power_on, millis());
   }
-  /// Switch the unit off, checked and re-sent the same way.
-  void send_user_power_off() { this->commands_.send_user_power_off(millis()); }
+  /// Switch the unit off, checked and re-sent the same way. False when the frame was not queued.
+  bool send_user_power_off() { return this->commands_.send_user_power_off(millis()); }
   /// Build and send the combined command frame from the current shadow, unchecked. For frames
   /// that only carry something the status does not report (the display preference).
   bool send_command() { return this->commands_.send_combined(); }
 
   /// Special modes (eco/turbo byte33, mute, sleep) go through the tracker's paced queue, never
   /// straight to the bus (see CommandTracker::enqueue_special).
-  void enqueue_special(const SpecialOp &op) { this->commands_.enqueue_special(op, millis()); }
+  /// False when the op was not taken: show nothing of the request then.
+  bool enqueue_special(const SpecialOp &op) { return this->commands_.enqueue_special(op, millis()); }
   /// Replace whatever is still queued with the plan for preset `target` (a row index).
   void request_preset(uint8_t target) { this->commands_.request_preset(target, millis()); }
   /// Queue not yet drained, or the last write not yet confirmed: preset/switch readbacks would
@@ -83,8 +85,8 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   void set_beeper(bool on) { this->beeper_ = on; }
   bool beeper() const { return this->beeper_; }
 
-  /// The command shadow. Entities mutate this, then call send_user_command().
-  AcCommand &cmd() { return this->commands_.cmd(); }
+  /// The command shadow: what the next combined frame states.
+  const AcCommand &cmd() const { return this->commands_.cmd(); }
 
   /// A user command just went out, so ignore the A/C's echo of the PREVIOUS state for a moment
   /// (see CommandTracker::note_user_command).

@@ -18,6 +18,11 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 - **A finished frame is credited to the command it belongs to.** A display-preference frame or a
   special-mode write no longer restarts the wait of another command, so a lost command is sent
   again after about 4 s where an unrelated frame used to push that to 7 s.
+- **A command that could not be queued is no longer shown as sent.** The climate entity, the eco,
+  turbo and quiet switches and the sleep select keep their state when the hub refuses a request
+  (transmit queue full, special-mode queue full), where they showed it for 4 s and then went
+  back. The refused values no longer stay in the command shadow, and a special-mode write that
+  could not be queued is counted in `failed_commands` and no longer starts the 10 s pacing.
 
 ### Board files, the stock-module component and CI (2026-10-12)
 - **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air

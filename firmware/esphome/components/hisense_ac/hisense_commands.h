@@ -33,7 +33,8 @@ enum class CommandEvent : uint8_t {
   SPECIAL_GIVEN_UP,            // fields = unmet, count = re-sends
   SPECIAL_REPLANNED,           // fields = unmet, count = writes queued again
   SPECIAL_SENDING,             // fields = the op's kind, count = its value, just before the frame
-  SPECIAL_QUEUE_FULL,          // fields = the kind of the op that was dropped
+  SPECIAL_QUEUE_FULL,          // fields = the kind of the op that was refused
+  SPECIAL_NOT_SENT,            // fields = the op's kind, count = its value: the frame was not queued
   PRESET_QUEUED,               // fields = preset row, count = writes queued
   DROPPED_ON_LINK_LOSS,        // count = commands unconfirmed or unsent
   SHADOW_MODE_KEPT,            // fields = the status mode value that is not a mode
@@ -60,9 +61,9 @@ class CommandTracker {
  public:
   void set_sink(CommandSink *sink) { this->sink_ = sink; }
 
-  /// The command shadow: what the next combined frame states. Entities mutate it, then call
-  /// send_user_command().
-  AcCommand &cmd() { return this->cmd_; }
+  /// The command shadow: what the next combined frame states. An entity copies it, changes what
+  /// the user asked for and hands the copy to send_user_command().
+  const AcCommand &cmd() const { return this->cmd_; }
   const AcState &last_state() const { return this->last_; }
   bool has_state() const { return this->last_.valid; }
 
@@ -101,31 +102,40 @@ class CommandTracker {
   /// the status does not report (the display preference).
   bool send_combined() { return this->send_combined_() != BUS_TICKET_NONE; }
 
-  /// A user write of `fields` (CONFIRM_* bits), already placed in the shadow. Sends the combined
-  /// frame, with the power-on bits in it when `power_on`, and keeps the request until the unit's
-  /// status agrees with it: a frame the unit did not take is sent again.
-  void send_user_command(uint16_t fields, bool power_on, uint32_t now) {
+  /// A user write of `fields` (CONFIRM_* bits): `wanted` is the shadow with those fields changed.
+  /// Sends the combined frame, with the power-on bits in it when `power_on`, and keeps the request
+  /// until the unit's status agrees with it: a frame the unit did not take is sent again.
+  /// False when the frame was not queued. Then nothing has changed: the shadow is what it was, so
+  /// the refused values cannot ride out on a later frame, nothing is tracked, and the caller must
+  /// not show the request.
+  bool send_user_command(const AcCommand &wanted, uint16_t fields, bool power_on, uint32_t now) {
+    const AcCommand before = this->cmd_;
+    this->cmd_ = wanted;
     // Power and mode in one frame, as the stock module sends them: the unit takes both or neither.
     this->cmd_.power_on = power_on;
     const BusTicket ticket = this->send_combined_();
     this->cmd_.power_on = false;  // one frame only, never part of the shadow
-    if (ticket == BUS_TICKET_NONE)
-      return;
+    if (ticket == BUS_TICKET_NONE) {
+      this->cmd_ = before;
+      return false;
+    }
     this->main_ticket_ = ticket;
     if (power_on) {
       power_intent_sent(&this->power_intent_, true);
       fields |= CONFIRM_POWER;
     }
     this->track_(intent_from_command(this->cmd_, fields), now);
+    return true;
   }
 
-  /// Switch the unit off, checked and re-sent the same way.
-  void send_user_power_off(uint32_t now) {
+  /// Switch the unit off, checked and re-sent the same way. False when the frame was not queued.
+  bool send_user_power_off(uint32_t now) {
     const BusTicket ticket = this->send_power_(false);
     if (ticket == BUS_TICKET_NONE)
-      return;
+      return false;
     this->main_ticket_ = ticket;
     this->track_(intent_power_off(), now);
+    return true;
   }
 
   // ---- Special modes ----------------------------------------------------------------------------
@@ -133,9 +143,10 @@ class CommandTracker {
   /// bus: the A/C swallows a special-mode command that lands within ~8 s of the previous one, so
   /// every op waits SPECIAL_SETTLE_MS after the last. Presets, switches and the sleep select all
   /// share it, so they can never race each other on the wire.
-  void enqueue_special(const SpecialOp &op, uint32_t now) {
+  /// False when the op was not taken (the queue is full): the caller must not show the request.
+  bool enqueue_special(const SpecialOp &op, uint32_t now) {
     this->special_resends_ = 0;  // a new request from the user: a fresh allowance of re-sends
-    this->push_special_(op, now);
+    return this->push_special_(op, now);
   }
 
   /// Replace whatever is still queued with the plan for preset `target` (a row index), computed
@@ -169,15 +180,20 @@ class CommandTracker {
       this->special_queue_[i - 1] = this->special_queue_[i];
     this->special_len_--;
     const BusTicket ticket = this->execute_special_(op);
+    if (ticket == BUS_TICKET_NONE) {
+      // Nothing left for the unit: it is not expected to change, the pacing has nothing to wait
+      // out, and the next status frame puts the entities back on what the unit reports.
+      this->failed_commands_++;
+      this->event_(CommandEvent::SPECIAL_NOT_SENT, op.kind, op.value);
+      return;
+    }
     special_apply(&this->projected_, op);
     this->last_special_ms_ = now;
     this->special_sent_ = true;
     this->note_user_command(now);
-    if (ticket != BUS_TICKET_NONE) {
-      this->special_ticket_ = ticket;
-      pending_begin(&this->special_pending_, intent_from_special(op), unit_view_from_status(this->last_), now);
-      this->special_pending_.resends = this->special_resends_;
-    }
+    this->special_ticket_ = ticket;
+    pending_begin(&this->special_pending_, intent_from_special(op), unit_view_from_status(this->last_), now);
+    this->special_pending_.resends = this->special_resends_;
   }
 
   // ---- From the bus -----------------------------------------------------------------------------
@@ -386,15 +402,16 @@ class CommandTracker {
     this->note_user_command(now);
   }
 
-  void push_special_(const SpecialOp &op, uint32_t now) {
+  bool push_special_(const SpecialOp &op, uint32_t now) {
     if (this->special_len_ >= SPECIAL_QUEUE_CAP) {
       this->event_(CommandEvent::SPECIAL_QUEUE_FULL, op.kind);
-      return;
+      return false;
     }
     this->special_queue_[this->special_len_++] = op;
     // Held from the moment of the request, not the send, so a readback that predates it cannot
     // flip the entity back while the op waits out the settle.
     this->note_user_command(now);
+    return true;
   }
 
   BusTicket execute_special_(const SpecialOp &op) {

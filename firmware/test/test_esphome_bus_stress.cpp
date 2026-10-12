@@ -1819,7 +1819,7 @@ struct MiniHub : H::CommandSink {
   H::CommandTracker t;
   H::AcState parked{};
   bool parked_valid = false, link_up = false, link_dirty = false;
-  H::AcCommand &cmd;
+  const H::AcCommand &cmd;  // the shadow
   const H::PendingCommand &pending;
   int retries = 0, failed = 0, dropped_on_link = 0, done = 0, refused = 0;
 
@@ -1862,13 +1862,14 @@ struct MiniHub : H::CommandSink {
   void user(int8_t setpoint, int mode = -1) {
     uint16_t fields = H::CONFIRM_SETPOINT;
     bool power_on = false;
+    H::AcCommand wanted = t.cmd();
     if (mode >= 0) {
-      cmd.mode = static_cast<H::Mode>(mode);
+      wanted.mode = static_cast<H::Mode>(mode);
       fields |= H::CONFIRM_MODE;
       power_on = !t.power_expected();
     }
-    H::setpoint_to_cmd(setpoint, false, &cmd);
-    t.send_user_command(fields, power_on, g_now);
+    H::setpoint_to_cmd(setpoint, false, &wanted);
+    t.send_user_command(wanted, fields, power_on, g_now);
   }
   void user_off() { t.send_user_power_off(g_now); }
   // HisenseAC::loop()

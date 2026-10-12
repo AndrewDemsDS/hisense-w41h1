@@ -619,11 +619,20 @@ struct Rig : H::CommandSink {
   Unit *unit;
   uint32_t now = 100000;
   H::CommandTracker t;
-  H::AcCommand &cmd;  // the shadow, as an entity reaches it
+  // What an entity is about to ask for: the shadow, copied when the first field is set.
+  H::AcCommand next;
+  bool next_open = false;
+  H::AcCommand &want() {
+    if (!next_open)
+      next = t.cmd();
+    next_open = true;
+    return next;
+  }
+  int refuse = 0;  // sends the bus will not queue from now on
   bool link_up = true;
   H::UnitView shown;  // what the entities show
 
-  explicit Rig(Unit *u) : unit(u), cmd(t.cmd()) {
+  explicit Rig(Unit *u) : unit(u) {
     t.set_sink(this);
     shown = u->report();
     t.on_status(status_of(shown), now);
@@ -634,6 +643,10 @@ struct Rig : H::CommandSink {
   H::BusTicket next_ticket = 0;
   std::vector<std::pair<H::BusTicket, uint32_t>> flying;
   H::BusTicket tx(FrameKind kind, const H::AcCommand &c, uint8_t value) {
+    if (refuse > 0) {
+      refuse--;
+      return H::BUS_TICKET_NONE;
+    }
     if (link_up)
       unit->receive({now, kind, c, value});
     if (wire_ms != 0)
@@ -641,9 +654,9 @@ struct Rig : H::CommandSink {
     return ++next_ticket;
   }
   H::BusTicket send_combined(const H::AcCommand &c) override { return tx(F_COMBINED, c, 0); }
-  H::BusTicket send_power(bool on) override { return tx(on ? F_POWER_ON : F_POWER_OFF, cmd, 0); }
-  H::BusTicket send_mute(bool on) override { return tx(F_MUTE, cmd, on ? 1 : 0); }
-  H::BusTicket send_sleep(uint8_t profile) override { return tx(F_SLEEP, cmd, profile); }
+  H::BusTicket send_power(bool on) override { return tx(on ? F_POWER_ON : F_POWER_OFF, t.cmd(), 0); }
+  H::BusTicket send_mute(bool on) override { return tx(F_MUTE, t.cmd(), on ? 1 : 0); }
+  H::BusTicket send_sleep(uint8_t profile) override { return tx(F_SLEEP, t.cmd(), profile); }
 
   bool holdoff() const { return t.in_holdoff(now); }
   bool busy() const { return t.special_busy(); }
@@ -651,9 +664,13 @@ struct Rig : H::CommandSink {
   int failed() const { return (int) t.failed_commands(); }
 
   // climate control(), the switches and the select
-  void user(uint16_t fields, bool power_on) { t.send_user_command(fields, power_on, now); }
-  void user_off() { t.send_user_power_off(now); }
-  void user_special(const H::SpecialOp &op) { t.enqueue_special(op, now); }
+  bool user(uint16_t fields, bool power_on) {
+    want();
+    next_open = false;
+    return t.send_user_command(next, fields, power_on, now);
+  }
+  bool user_off() { return t.send_user_power_off(now); }
+  bool user_special(const H::SpecialOp &op) { return t.enqueue_special(op, now); }
   void user_preset(uint8_t target) { t.request_preset(target, now); }
 
   // process_status_()
@@ -706,7 +723,7 @@ static void test_scenarios() {
   {  // The plain case costs nothing: one frame, no re-send.
     Unit u = running();
     Rig h(&u);
-    h.cmd.setpoint = 26;
+    h.want().setpoint = 26;
     h.user(H::CONFIRM_SETPOINT, false);
     h.run(20000);
     CHECK(u.heard.size() == 1 && h.retries() == 0 && h.failed() == 0 && u.v.setpoint_c == 26, "taken: one frame");
@@ -715,7 +732,7 @@ static void test_scenarios() {
     Unit u = running();
     Rig h(&u);
     u.lose = 1;
-    h.cmd.setpoint = 26;
+    h.want().setpoint = 26;
     h.user(H::CONFIRM_SETPOINT, false);
     h.run(3000);
     CHECK(h.shown.setpoint_c == 24 && h.holdoff(), "entity still holds the request");
@@ -730,12 +747,13 @@ static void test_scenarios() {
     Unit u = running();
     Rig h(&u);
     u.takes_nothing = true;
-    h.cmd.mode = H::MODE_HEAT;
+    h.want().mode = H::MODE_HEAT;
     h.user(H::CONFIRM_MODE, false);
     h.run(60000);
     CHECK(u.heard.size() == 3 && h.retries() == 2 && h.failed() == 1, "three frames, then it gives up (%zu, %d, %d)",
           u.heard.size(), h.retries(), h.failed());
-    CHECK(h.shown.mode == H::MODE_COOL && h.cmd.mode == H::MODE_COOL, "entity and shadow are back on the real mode");
+    CHECK(h.shown.mode == H::MODE_COOL && h.t.cmd().mode == H::MODE_COOL,
+          "entity and shadow are back on the real mode");
     CHECK(u.heard.back().t - u.heard.front().t <= 10000, "all within %u ms",
           (unsigned) (u.heard.back().t - u.heard.front().t));
   }
@@ -743,10 +761,10 @@ static void test_scenarios() {
     Unit u = running();
     Rig h(&u);
     u.lose = 1;
-    h.cmd.mode = H::MODE_HEAT;
+    h.want().mode = H::MODE_HEAT;
     h.user(H::CONFIRM_MODE, false);
     h.run(2000);
-    h.cmd.mode = H::MODE_DRY;
+    h.want().mode = H::MODE_DRY;
     h.user(H::CONFIRM_MODE, false);
     h.run(30000);
     bool heat_after = false;
@@ -759,7 +777,7 @@ static void test_scenarios() {
     Rig h(&u);
     h.user_off();
     h.run(500);
-    h.cmd.mode = H::MODE_AUTO;
+    h.want().mode = H::MODE_AUTO;
     u.lose = 1;
     h.user(H::CONFIRM_MODE, true);
     h.run(30000);
@@ -770,7 +788,7 @@ static void test_scenarios() {
     Unit u;
     u.v = view(false, H::MODE_COOL, 24, 0x01);
     Rig h(&u);
-    h.cmd.mode = H::MODE_HEAT;
+    h.want().mode = H::MODE_HEAT;
     h.user(H::CONFIRM_MODE, true);
     h.run(20000);
     CHECK(u.heard.size() == 1 && u.heard[0].kind == F_COMBINED && u.heard[0].cmd.power_on, "one frame carries both");
@@ -781,7 +799,7 @@ static void test_scenarios() {
     u.v = view(false, H::MODE_COOL, 24, 0x01);
     u.one_frame_power = false;
     Rig h(&u);
-    h.cmd.mode = H::MODE_AUTO;
+    h.want().mode = H::MODE_AUTO;
     h.user(H::CONFIRM_MODE, true);
     h.run(20000);
     CHECK(u.heard.size() == 3 && u.heard[1].kind == F_POWER_ON && u.heard[2].kind == F_COMBINED &&
@@ -800,7 +818,7 @@ static void test_scenarios() {
   {  // Auto pins its own setpoint: no re-send, no failure.
     Unit u = running(H::MODE_AUTO);
     Rig h(&u);
-    h.cmd.setpoint = 19;
+    h.want().setpoint = 19;
     h.user(H::CONFIRM_SETPOINT, false);
     h.run(20000);
     CHECK(u.heard.size() == 1 && h.retries() == 0 && h.failed() == 0, "auto keeps 24: not a lost command");
@@ -810,7 +828,7 @@ static void test_scenarios() {
     Unit u = running();
     Rig h(&u);
     u.lose = 1;
-    h.cmd.mode = H::MODE_HEAT;
+    h.want().mode = H::MODE_HEAT;
     h.user(H::CONFIRM_MODE, false);
     h.run(1500);
     u.v.mode = H::MODE_FAN;  // the remote
@@ -821,7 +839,7 @@ static void test_scenarios() {
     Unit u = running();
     Rig h(&u);
     u.lose = 1;
-    h.cmd.mode = H::MODE_HEAT;
+    h.want().mode = H::MODE_HEAT;
     h.user(H::CONFIRM_MODE, false);
     h.user_special({H::SPECIAL_OP_MUTE, 1});
     h.run(1000);
@@ -893,7 +911,7 @@ static void test_scenarios() {
   {  // Turbo forces cool, 16 C, high. A setpoint written just before it engages is not chased.
     Unit u = running(H::MODE_HEAT);
     Rig h(&u);
-    h.cmd.setpoint = 28;
+    h.want().setpoint = 28;
     h.user(H::CONFIRM_SETPOINT, false);
     h.user_special({H::SPECIAL_OP_FEATURE, H::FEATURE_TURBO});
     h.run(40000);
@@ -908,8 +926,8 @@ static void test_scenarios() {
     Unit u = running();
     u.v.special.mute = true;
     Rig h(&u);
-    h.cmd.mode = H::MODE_HEAT;
-    h.cmd.fan = H::FAN_SPEED_HIGH;
+    h.want().mode = H::MODE_HEAT;
+    h.want().fan = H::FAN_SPEED_HIGH;
     h.user(H::CONFIRM_MODE | H::CONFIRM_FAN, false);
     h.run(20000);
     CHECK(u.heard.size() == 1 && h.retries() == 0 && h.failed() == 0, "fan under quiet reads 0x02: not a lost command");
@@ -919,7 +937,7 @@ static void test_scenarios() {
     Rig h(&u);
     h.wire_ms = 100;
     u.lose = 1;
-    h.cmd.setpoint = 26;
+    h.want().setpoint = 26;
     h.user(H::CONFIRM_SETPOINT, false);
     h.run(2500);
     h.send_mute(false);  // a frame the tracker does not track, ending 2.6 s after the command
@@ -928,6 +946,48 @@ static void test_scenarios() {
     CHECK(u.heard.size() == 3 && u.heard[2].t - u.heard[0].t <= 5000,
           "an unrelated frame does not restart the wait: the re-send is %u ms after the first",
           u.heard.size() == 3 ? (unsigned) (u.heard[2].t - u.heard[0].t) : 0);
+  }
+  {  // A user command the bus does not queue changes nothing.
+    Unit u = running();
+    Rig h(&u);
+    h.refuse = 1;
+    h.want().setpoint = 26;
+    h.want().mode = H::MODE_HEAT;
+    CHECK(!h.user(H::CONFIRM_SETPOINT | H::CONFIRM_MODE, false), "the caller is told the frame was not queued");
+    CHECK(h.t.cmd().setpoint == 24 && h.t.cmd().mode == H::MODE_COOL, "the shadow keeps what the unit reports");
+    CHECK(!h.t.main_pending().active && !h.holdoff(), "nothing is tracked and no hold-off starts");
+    h.user_special({H::SPECIAL_OP_FEATURE, H::FEATURE_ECO});  // the next frame built from the shadow
+    h.run(20000);
+    CHECK(u.v.special.eco && u.v.setpoint_c == 24 && u.v.mode == H::MODE_COOL && h.failed() == 0 && h.retries() == 0,
+          "and the refused values never reach the unit");
+    h.refuse = 1;
+    CHECK(!h.user_off() && !h.t.main_pending().active && h.t.power_expected(), "the same for power off");
+  }
+  {  // A special-mode write the bus does not queue is not taken for sent.
+    Unit u = running();
+    Rig h(&u);
+    h.user_special({H::SPECIAL_OP_FEATURE, H::FEATURE_ECO});
+    h.refuse = 1;
+    h.run(1000);
+    CHECK(u.heard.empty() && !h.t.projected_special().eco && !h.busy(), "the unit is not expected to go to eco");
+    CHECK(h.failed() == 1 && h.retries() == 0, "it is counted as a failed command");
+    h.user_special({H::SPECIAL_OP_MUTE, 1});
+    h.run(1000);
+    CHECK(u.heard.size() == 1 && u.heard[0].kind == F_MUTE,
+          "and the next write does not wait out a pacing it never used");
+    h.run(20000);
+    CHECK(u.v.special.mute && !u.v.special.eco && h.shown.special.mute && h.failed() == 1, "which lands");
+  }
+  {  // The special-mode queue is full: the caller is told.
+    Unit u = running();
+    Rig h(&u);
+    h.user_special({H::SPECIAL_OP_MUTE, 1});
+    h.run(100);  // sent, and now pending: nothing else drains
+    bool taken = true;
+    for (int i = 0; i < H::CommandTracker::SPECIAL_QUEUE_CAP; i++)
+      taken = taken && h.user_special({H::SPECIAL_OP_SLEEP, (uint8_t) (1 + i % 4)});
+    CHECK(taken && h.t.special_queued() == H::CommandTracker::SPECIAL_QUEUE_CAP, "eight writes fit");
+    CHECK(!h.user_special({H::SPECIAL_OP_FEATURE, H::FEATURE_ECO}), "the ninth is refused, and says so");
   }
 }
 

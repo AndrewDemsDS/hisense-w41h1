@@ -127,7 +127,13 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
     ESP_LOGW(TAG, "Command refused: no status from the unit yet");
     return;
   }
-  AcCommand &cmd = this->parent_->cmd();
+  // The shadow with this call's changes. It only becomes the shadow if the frame is queued.
+  AcCommand cmd = this->parent_->cmd();
+  // What the entity shows now, to go back to if the frame cannot be queued.
+  const climate::ClimateMode shown_mode = this->mode;
+  const float shown_target = this->target_temperature;
+  const climate::ClimateSwingMode shown_swing = this->swing_mode;
+  const uint8_t shown_fan = this->fan_index_;
   bool send_combined = false;
   bool powering_on = false;
   uint16_t fields = 0;  // what this call asks of the unit, for the confirm and retry check
@@ -135,7 +141,9 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   if (call.get_mode().has_value()) {
     climate::ClimateMode mode = *call.get_mode();
     if (mode == climate::CLIMATE_MODE_OFF) {
-      this->parent_->send_user_power_off();
+      // A frame that was not queued changes nothing: the entity keeps showing the unit.
+      if (!this->parent_->send_user_power_off())
+        return;
       this->mode = mode;
       this->parent_->note_user_command();
       this->publish_state();
@@ -225,12 +233,20 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
     this->publish_state();
   }
 
-  if (send_combined)
-    this->parent_->send_user_command(fields, powering_on);
-  if (send_combined) {
-    this->parent_->note_user_command();
-    this->publish_state();
+  if (!send_combined)
+    return;
+  if (!this->parent_->send_user_command(cmd, fields, powering_on)) {
+    // Not queued (the hub has logged why): show what was shown before, not a request that the
+    // unit will never see.
+    this->mode = shown_mode;
+    this->target_temperature = shown_target;
+    this->swing_mode = shown_swing;
+    if (shown_fan <= FAN_INDEX_MAX)
+      this->publish_fan_index(shown_fan);
+    return;
   }
+  this->parent_->note_user_command();
+  this->publish_state();
 }
 
 void HisenseClimate::update_from_bus(const AcState &state, bool holdoff) {

@@ -40,13 +40,17 @@ void HisenseSwitch::write_state(bool state) {
       // Eco and turbo share one command byte and are mutually exclusive on this bus, so
       // clearing eco sends the explicit eco-off value rather than the neutral one (which
       // clears turbo instead).
-      this->parent_->enqueue_special({SPECIAL_OP_FEATURE, (uint8_t) (state ? FEATURE_ECO : FEATURE_ECO_OFF)});
+      // A request the hub did not take is not shown: the switch keeps its state.
+      if (!this->parent_->enqueue_special({SPECIAL_OP_FEATURE, (uint8_t) (state ? FEATURE_ECO : FEATURE_ECO_OFF)}))
+        return;
       break;
     case SWITCH_TURBO:
-      this->parent_->enqueue_special({SPECIAL_OP_FEATURE, (uint8_t) (state ? FEATURE_TURBO : FEATURE_NONE)});
+      if (!this->parent_->enqueue_special({SPECIAL_OP_FEATURE, (uint8_t) (state ? FEATURE_TURBO : FEATURE_NONE)}))
+        return;
       break;
     case SWITCH_QUIET:
-      this->parent_->enqueue_special({SPECIAL_OP_MUTE, (uint8_t) (state ? 1 : 0)});
+      if (!this->parent_->enqueue_special({SPECIAL_OP_MUTE, (uint8_t) (state ? 1 : 0)}))
+        return;
       break;
     case SWITCH_DISPLAY:
       // Standing preference, re-asserted on every later frame. See the note on
