@@ -182,10 +182,10 @@ b["stamp_beep_stuffed_passthrough"] = bytes([0x88, 0, 0]) + bytes([0, 0, 0, 0xB0
 
 # ---- roundtrip: [class, length pick, lead-in, repeats] + frame bytes -----------------------------
 r = seeds["roundtrip"]
-r["status_160"] = bytes([0, 160 - 45, 0, 0]) + STATUS_COOL
-r["status_fahrenheit_twice"] = bytes([0, 160 - 45, 3, 1]) + STATUS_HEAT_F
-r["status_all_f4"] = bytes([0, 200 - 45, 0, 2]) + b"\xF4" * 200
-r["features_160"] = bytes([1, 160 - 36, 0, 0]) + FEATURES
+r["status_160"] = bytes([0, 160 - 49, 0, 0]) + STATUS_COOL
+r["status_fahrenheit_twice"] = bytes([0, 160 - 49, 3, 1]) + STATUS_HEAT_F
+r["status_all_f4"] = bytes([0, 200 - 49, 0, 2]) + b"\xF4" * 200
+r["features_160"] = bytes([1, 160 - 40, 0, 0]) + FEATURES
 r["link_reply_28"] = bytes([2, 28 - 22, 5, 0]) + link_reply(0x28)
 r["devtype_24"] = bytes([3, 24 - 22, 0, 0]) + devtype_reply()
 
@@ -248,6 +248,7 @@ u["raw_enqueue"] = b"\x01" + boot + bytes([7, 5, 1, 2, 3, 4, 5]) + cycle
 bad = bytearray(link_reply(0x20))
 bad[24] ^= 0x40
 known["assembler/asm-no-checksum"] = b"\x00" + bytes(bad)
+# Fixed (devtype_from_reply needs 22 bytes). Kept as a plain regression input for the parsers.
 known["parsers/devtype-overlaps-trailer"] = DEVTYPE_20
 known["builders/builder-enum-range"] = cmd(8, 0, 0, 0, 0, 0, 24, fold=0)
 known["builders/single-field-offset"] = bytes([0x86, 0, 0, 0x00])

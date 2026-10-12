@@ -10,7 +10,12 @@
 //
 // Input: byte 0 picks the group, the rest feeds it.
 //
-// Intended differences, NOT compared (see test_esphome_codec_parity.cpp and the two headers):
+// Intended differences (see test_esphome_codec_parity.cpp and the two headers). Each is compared
+// through a stated rule where one exists, and left out only where the two have no common ground:
+//  - Trailer-aware lengths: the port reads a payload byte only when it lies in front of the 4-byte
+//    trailer, the reference when `len > offset`. parse_faults, parse_features and
+//    devtype_from_reply are compared with the reference's answer for a frame 4 bytes shorter;
+//    parse_status with "refused below 49 bytes, the three optional tail fields need 4 more".
 //  - AcCommand.power_on has no counterpart: the reference never ORs the run field into byte 18.
 //    Checked here as a relation instead: same frame, byte 18 | 0x0C, checksum redone.
 //  - build_single_field refuses offset >= 50; the reference's static helper has no guard (its
@@ -79,6 +84,9 @@ static void diff_assembler(Reader &r) {
   delete fa;
 }
 
+// The length at which the reference gives the port's answer (trailer-aware lengths, above).
+static size_t ref_len(size_t len) { return len >= H::FRAME_TRAILER_LEN ? len - H::FRAME_TRAILER_LEN : 0; }
+
 // ---- group 1: parsers on one buffer --------------------------------------------------------------
 static void diff_parsers(Reader &r) {
   uint8_t raw[260];
@@ -91,24 +99,32 @@ static void diff_parsers(Reader &r) {
   memset(&os, 0, sizeof(os));
   bool ro = hisense_parse_status(f, len, &os);
   bool rn = H::parse_status(f, len, &ns);
-  FUZZ_CHECK(ro == rn, "parse_status: reference %d, port %d (len %zu)", ro, rn, len);
-  if (ro)
+  FUZZ_CHECK(rn == (ro && len >= 49), "parse_status: reference %d, port %d (len %zu)", ro, rn, len);
+  if (rn) {
+    if (len < 50)
+      os.coil_temp_c = 0;
+    if (len < 55)
+      os.voltage_raw = 0;
+    if (len < 60)
+      os.current_raw = 0;
     FUZZ_CHECK(same_state(os, ns), "parse_status fields differ (len %zu)", len);
+  }
 
   HisenseFeatures ofe;
   H::AcFeatures nfe;
   memset(&ofe, 0, sizeof(ofe));
-  bool fo = hisense_parse_features(f, len, &ofe);
+  bool fo = hisense_parse_features(f, ref_len(len), &ofe);
   bool fn = H::parse_features(f, len, &nfe);
   FUZZ_CHECK(fo == fn, "parse_features: reference %d, port %d (len %zu)", fo, fn, len);
   if (fo) {
+    ofe.reply_len = static_cast<uint8_t>(len > 255 ? 255 : len);  // the diagnostic length is the real one
     FUZZ_CHECK(same_features(ofe, nfe), "parse_features fields differ (len %zu)", len);
     FUZZ_CHECK(hisense_features_to_bitmap32(&ofe) == H::features_to_bitmap32(nfe), "feature bitmaps differ");
   }
 
   HisenseFaults ofa;
   H::AcFaults nfa;
-  bool ao = hisense_parse_faults(f, len, &ofa);
+  bool ao = hisense_parse_faults(f, ref_len(len), &ofa);
   bool an = H::parse_faults(f, len, &nfa);
   FUZZ_CHECK(ao == an && same_faults(ofa, nfa), "parse_faults differs (len %zu)", len);
   FUZZ_CHECK(hisense_faults_to_bitmap32(&ofa) == H::faults_to_bitmap32(nfa), "fault bitmaps differ");
@@ -116,7 +132,7 @@ static void diff_parsers(Reader &r) {
   FUZZ_CHECK(hisense_status_checksum_ok(f, len) == H::status_checksum_ok(f, len), "checksum_ok differs (len %zu)", len);
 
   uint8_t oh = 0, ol = 0, nh = 0, nl = 0;
-  bool dvo = hisense_devtype_from_reply(f, len, &oh, &ol);
+  bool dvo = hisense_devtype_from_reply(f, ref_len(len), &oh, &ol);
   bool dvn = H::devtype_from_reply(f, len, &nh, &nl);
   FUZZ_CHECK(dvo == dvn && oh == nh && ol == nl, "devtype_from_reply differs (len %zu)", len);
 }

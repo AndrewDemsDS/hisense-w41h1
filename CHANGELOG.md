@@ -83,6 +83,13 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   upstream-shaped test under `tests/components/w41h1_module/`. It uses nothing outside its
   directory, so it also works from a git source.
 
+### Codec and bus scheduler: defects found by the edge-case tests (2026-10-12)
+- **A short frame is no longer read into its own trailer.** The parsers took a payload byte when
+  the frame was merely long enough to hold that offset, so in a short frame a checksum byte or the
+  `F4 FB` tag was read as data. A status frame now needs 49 bytes, a ProductType reply 40 (44 for
+  the extended tier) and a DevType reply 22. The frames real units send (160, 45 and at least 22
+  bytes) decode as before.
+
 ### The Matter firmwares are retired, ESPHome is the only firmware (2026-10-12, #182)
 - **Removed** the AmebaZ2 Matter build (the SDK setup scripts, `patches/`, `versions.env`, the
   `.zap` and `firmware/src/sdk-edits/`, `firmware/src/version.txt` and its CI rule), the ESP32

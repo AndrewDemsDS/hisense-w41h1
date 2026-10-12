@@ -29,6 +29,12 @@ static constexpr uint32_t BUS_BAUD_RATE = 9600;  // 8N1, firmware-confirmed A/C-
 // class: poll 0x0C -> 21, link 0x13 -> 28, command 0x29 -> 50, status 0x97 -> 160.
 static constexpr size_t FRAME_LEN_OVERHEAD = 9;
 static constexpr size_t FRAME_CLASS_OFFSET = 13;
+// Every frame ends with a 2-byte checksum and the F4 FB tag.
+static constexpr size_t FRAME_TRAILER_LEN = 4;
+// True when byte `offset` of a `len`-byte frame is payload: it exists and lies in front of the
+// trailer. In a frame shorter than that the same offset holds a checksum byte or the end tag, so a
+// parser that tested only `len > offset` would read those as data.
+constexpr bool frame_has_payload_byte(size_t len, size_t offset) { return len >= offset + 1 + FRAME_TRAILER_LEN; }
 
 // Message classes (frame[13]).
 static constexpr uint8_t CLASS_DEVTYPE = 0x0A;

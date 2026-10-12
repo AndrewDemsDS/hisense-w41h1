@@ -436,7 +436,8 @@ uint8_t setup_request_step(SetupRequestTracker *tracker, uint8_t req_bits, bool 
 bool parse_status(const uint8_t *buf, size_t len, AcState *out) {
   if (buf == nullptr || out == nullptr)
     return false;
-  if (len < 45 || len != static_cast<size_t>(buf[4]) + FRAME_LEN_OVERHEAD)
+  // Byte 44 (outdoor temperature) is the last one read without a length test of its own.
+  if (!frame_has_payload_byte(len, 44) || len != static_cast<size_t>(buf[4]) + FRAME_LEN_OVERHEAD)
     return false;
   if (buf[0] != FRAME_STX1 || buf[1] != FRAME_STX2)
     return false;
@@ -482,10 +483,10 @@ bool parse_status(const uint8_t *buf, size_t len, AcState *out) {
   out->sleep_raw = buf[17];
   out->sleep_on = buf[17] != 0;
   out->outdoor_temp_c = static_cast<int8_t>(buf[44]);
-  out->coil_temp_c = (len > 45) ? static_cast<int8_t>(buf[45]) : 0;
+  out->coil_temp_c = frame_has_payload_byte(len, 45) ? static_cast<int8_t>(buf[45]) : 0;
   out->compressor_freq = buf[42];
-  out->voltage_raw = (len > 50) ? buf[50] : 0;
-  out->current_raw = (len > 55) ? buf[55] : 0;
+  out->voltage_raw = frame_has_payload_byte(len, 50) ? buf[50] : 0;
+  out->current_raw = frame_has_payload_byte(len, 55) ? buf[55] : 0;
   return true;
 }
 
@@ -494,7 +495,7 @@ bool parse_status(const uint8_t *buf, size_t len, AcState *out) {
 bool parse_features(const uint8_t *buf, size_t len, AcFeatures *out) {
   if (buf == nullptr || out == nullptr)
     return false;
-  if (len <= 35 || buf[FRAME_CLASS_OFFSET] != CLASS_STATUS || buf[14] != SUBTYPE_PRODUCT_TYPE)
+  if (!frame_has_payload_byte(len, 35) || buf[FRAME_CLASS_OFFSET] != CLASS_STATUS || buf[14] != SUBTYPE_PRODUCT_TYPE)
     return false;
   out->cool_heat = (buf[18] & 0x80) != 0;
   out->power_save = (buf[23] & 0x40) != 0;
@@ -508,7 +509,7 @@ bool parse_features(const uint8_t *buf, size_t len, AcFeatures *out) {
   out->swing_dir_8 = (buf[28] & 0x10) != 0;
   out->humidity = (buf[32] & 0x01) != 0;
   out->demand_resp = static_cast<uint8_t>(buf[35] & 0x03);
-  out->ext_valid = len > 39;
+  out->ext_valid = frame_has_payload_byte(len, 39);
   out->q_display = out->ext_valid && (buf[39] & 0x40) != 0;
   out->enable_8heat = out->ext_valid && (buf[39] & 0x04) != 0;
   out->trans_102_64 = out->ext_valid && (buf[38] & 0x08) != 0;
@@ -523,7 +524,7 @@ bool parse_faults(const uint8_t *buf, size_t len, AcFaults *out) {
   if (buf == nullptr || out == nullptr)
     return false;
   *out = AcFaults{};
-  if (len <= FAULT_BYTE_INDOOR)
+  if (!frame_has_payload_byte(len, FAULT_BYTE_INDOOR))
     return false;
 
   out->raw_indoor = buf[FAULT_BYTE_INDOOR];
@@ -536,7 +537,7 @@ bool parse_faults(const uint8_t *buf, size_t len, AcFaults *out) {
   out->in_vzero = (out->raw_indoor & 0x02) != 0;
   out->in_com = (out->raw_indoor & 0x01) != 0;
 
-  if (len > FAULT_BYTE_MODULE) {
+  if (frame_has_payload_byte(len, FAULT_BYTE_MODULE)) {
     out->raw_module = buf[FAULT_BYTE_MODULE];
     out->in_display = (out->raw_module & 0x80) != 0;
     out->in_keys = (out->raw_module & 0x40) != 0;
@@ -544,14 +545,14 @@ bool parse_faults(const uint8_t *buf, size_t len, AcFaults *out) {
     out->in_ele = (out->raw_module & 0x10) != 0;
     out->in_eeprom = (out->raw_module & 0x08) != 0;
   }
-  if (len > FAULT_BYTE_OUTDOOR) {
+  if (frame_has_payload_byte(len, FAULT_BYTE_OUTDOOR)) {
     out->raw_outdoor = buf[FAULT_BYTE_OUTDOOR];
     out->out_eeprom = (out->raw_outdoor & 0x40) != 0;
     out->out_coil_temp = (out->raw_outdoor & 0x20) != 0;
     out->out_gas_temp = (out->raw_outdoor & 0x10) != 0;
     out->out_temp = (out->raw_outdoor & 0x08) != 0;
   }
-  if (len > FAULT_BYTE_PROTECT) {
+  if (frame_has_payload_byte(len, FAULT_BYTE_PROTECT)) {
     out->raw_protect = buf[FAULT_BYTE_PROTECT];
     out->over_temp = (out->raw_protect & 0x10) != 0;
   }
@@ -564,7 +565,7 @@ bool parse_faults(const uint8_t *buf, size_t len, AcFaults *out) {
 // The device type is the pair at frame 16/17, NOT the envelope 9/10 "session token": stamping that
 // one kills the link on hardware.
 bool devtype_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo) {
-  if (reply == nullptr || n <= 17 || reply[FRAME_CLASS_OFFSET] != CLASS_DEVTYPE)
+  if (reply == nullptr || !frame_has_payload_byte(n, 17) || reply[FRAME_CLASS_OFFSET] != CLASS_DEVTYPE)
     return false;
   if (hi != nullptr)
     *hi = reply[16];

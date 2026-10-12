@@ -741,9 +741,11 @@ static void test_parse_status() {
   std::swap(summed[156], summed[157]);
   CHECK(!H::parse_status(summed.data(), 160, &st), "the checksum is high byte first");
 
-  // The shortest status is 45 bytes: byte 44 (outdoor) is the last one always read. Then byte
-  // 45 (coil), 50 (voltage) and 55 (the power proxy) each appear with the byte that holds them.
-  for (size_t len : {(size_t) 44, (size_t) 45, (size_t) 46, (size_t) 50, (size_t) 51, (size_t) 55, (size_t) 56}) {
+  // The shortest status is 49 bytes: byte 44 (outdoor) is the last one always read, and it has to
+  // lie in front of the 4-byte trailer. Then byte 45 (coil), 50 (voltage) and 55 (the power proxy)
+  // each appear when the frame is long enough for them to be payload.
+  for (size_t len : {(size_t) 44, (size_t) 45, (size_t) 48, (size_t) 49, (size_t) 50, (size_t) 54, (size_t) 55,
+                     (size_t) 59, (size_t) 60}) {
     Bytes f(len, 0);
     f[0] = 0xF4;
     f[1] = 0xF5;
@@ -761,16 +763,17 @@ static void test_parse_status() {
     s.voltage_raw = 99;
     s.current_raw = 99;
     bool ok = H::parse_status(f.data(), len, &s);
-    if (len < 45) {
+    if (len < 49) {
+      // 45 to 48 bytes: byte 44 would be a checksum byte or the end tag.
       CHECK(!ok, "%zu bytes: refused", len);
       continue;
     }
     CHECK(ok, "%zu bytes: parsed", len);
-    // 45..48 bytes: byte 44 is in the trailer, 49+: it is the data byte (value 45).
-    CHECK(s.coil_temp_c == (len > 45 ? (int8_t) f[45] : 0), "%zu bytes: coil is %s", len, len > 45 ? "byte 45" : "0");
-    CHECK(s.voltage_raw == (len > 50 ? f[50] : 0), "%zu bytes: voltage is %s", len, len > 50 ? "byte 50" : "0");
-    CHECK(s.current_raw == (len > 55 ? f[55] : 0), "%zu bytes: power proxy is %s", len, len > 55 ? "byte 55" : "0");
-    CHECK(s.outdoor_temp_c == (int8_t) f[44] && s.compressor_freq == f[42], "%zu bytes: outdoor and compressor", len);
+    // A reading is taken only from a payload byte, never from the checksum or the end tag.
+    CHECK(s.coil_temp_c == (len >= 50 ? 46 : 0), "%zu bytes: coil is %s", len, len >= 50 ? "byte 45" : "0");
+    CHECK(s.voltage_raw == (len >= 55 ? 51 : 0), "%zu bytes: voltage is %s", len, len >= 55 ? "byte 50" : "0");
+    CHECK(s.current_raw == (len >= 60 ? 56 : 0), "%zu bytes: power proxy is %s", len, len >= 60 ? "byte 55" : "0");
+    CHECK(s.outdoor_temp_c == 45 && s.compressor_freq == 43, "%zu bytes: outdoor and compressor", len);
   }
 
   // Byte 18: direction in bits 0-1, run in bits 2-3, mode in bits 4-6 (RE docs/03, and the
@@ -867,12 +870,16 @@ static void test_parse_features_and_faults() {
   CHECK(!H::parse_features(nullptr, 60, &ft), "features: no frame");
   CHECK(!H::parse_features(pt.data(), 60, nullptr), "features: nowhere to put it");
   CHECK(H::parse_features(pt.data(), 60, &ft) && ft.valid && ft.ext_valid && ft.reply_len == 60, "features: 60 bytes");
-  // Byte 35 is the last byte of the basic tier: 36 bytes is the shortest reply.
+  // Byte 35 is the last byte of the basic tier and has to lie in front of the 4-byte trailer: 40
+  // bytes is the shortest reply. The extended tier ends at byte 39, so it needs 44. The units
+  // measured answer with 45 bytes (RE docs/11 section 5.1).
   CHECK(!H::parse_features(pt.data(), 35, &ft), "features: 35 bytes is too short");
-  CHECK(H::parse_features(pt.data(), 36, &ft) && !ft.ext_valid && ft.reply_len == 36,
-        "features: 36 bytes, no extended tier");
-  CHECK(H::parse_features(pt.data(), 39, &ft) && !ft.ext_valid, "features: 39 bytes, still none");
-  CHECK(H::parse_features(pt.data(), 40, &ft) && ft.ext_valid, "features: 40 bytes reaches byte 39");
+  CHECK(!H::parse_features(pt.data(), 39, &ft), "features: 39 bytes would read byte 35 out of the trailer");
+  CHECK(H::parse_features(pt.data(), 40, &ft) && !ft.ext_valid && ft.reply_len == 40,
+        "features: 40 bytes, no extended tier");
+  CHECK(H::parse_features(pt.data(), 43, &ft) && !ft.ext_valid, "features: 43 bytes, still none");
+  CHECK(H::parse_features(pt.data(), 44, &ft) && ft.ext_valid, "features: 44 bytes holds byte 39 as payload");
+  CHECK(H::parse_features(pt.data(), 45, &ft) && ft.ext_valid && ft.reply_len == 45, "features: the measured 45 bytes");
   // Class and subtype, one either side.
   for (size_t at : {(size_t) 13, (size_t) 14}) {
     for (int delta : {-1, 1}) {
@@ -888,8 +895,8 @@ static void test_parse_features_and_faults() {
   ext[39] = 0x44;
   CHECK(H::parse_features(ext.data(), 60, &ft) && ft.q_display && ft.enable_8heat && ft.trans_102_64,
         "extended bits read");
-  CHECK(H::parse_features(ext.data(), 39, &ft) && !ft.q_display && !ft.enable_8heat && !ft.trans_102_64,
-        "and not read from a 39-byte reply");
+  CHECK(H::parse_features(ext.data(), 43, &ft) && !ft.q_display && !ft.enable_8heat && !ft.trans_102_64,
+        "and not read from a 43-byte reply");
   // Line 515: reply_len is a byte, clamped. The assembler never hands over more than 200.
   Bytes big(300, 0);
   big[13] = 0x66;
@@ -909,9 +916,10 @@ static void test_parse_features_and_faults() {
   fl.any = true;
   fl.raw_indoor = 0xFF;
   fl.in_temp = true;
-  CHECK(!H::parse_faults(fb.data(), 39, &fl) && !fl.valid && !fl.any && fl.raw_indoor == 0 && !fl.in_temp,
-        "faults: a 39-byte frame is refused and the output cleared");
-  // Each byte group appears with the byte that holds it (39, 40, 64, 66: header).
+  CHECK(!H::parse_faults(fb.data(), 43, &fl) && !fl.valid && !fl.any && fl.raw_indoor == 0 && !fl.in_temp,
+        "faults: a 43-byte frame is refused and the output cleared");
+  // Each byte group appears when the byte that holds it (39, 40, 64, 66: header) is payload, 4
+  // bytes in front of the end of the frame.
   fb[39] = 0x01;
   fb[40] = 0x08;
   fb[64] = 0x08;
@@ -919,8 +927,8 @@ static void test_parse_features_and_faults() {
   struct {
     size_t len;
     bool module, outdoor, protect;
-  } gates[] = {{40, false, false, false}, {41, true, false, false}, {64, true, false, false},
-               {65, true, true, false},   {66, true, true, false},  {67, true, true, true}};
+  } gates[] = {{44, false, false, false}, {45, true, false, false}, {68, true, false, false},
+               {69, true, true, false},   {70, true, true, false},  {71, true, true, true}};
   for (const auto &g : gates) {
     // Stale values from a longer frame must not survive a shorter one.
     fl = H::AcFaults{};
@@ -959,31 +967,32 @@ static void test_parse_features_and_faults() {
         "outdoor fault under frost guard");
 
   // devtype_from_reply (lines 567-571): the pair at frame 16/17 of a class 0x0A reply.
-  Bytes dt(20, 0);
+  Bytes dt(24, 0);
   dt[13] = 0x0A;
   dt[16] = 0x12;
   dt[17] = 0x34;
   uint8_t hi = 0xEE, lo = 0xEE;
-  CHECK(!H::devtype_from_reply(nullptr, 20, &hi, &lo), "device type: no reply");
+  CHECK(!H::devtype_from_reply(nullptr, 24, &hi, &lo), "device type: no reply");
   CHECK(!H::devtype_from_reply(dt.data(), 17, &hi, &lo) && hi == 0xEE && lo == 0xEE,
         "device type: 17 bytes, outputs untouched");
-  for (size_t n = 14; n < 18; n++) {
+  // Bytes 16/17 are payload only from 22 bytes on: below that they are the checksum or the tag.
+  for (size_t n = 14; n < 22; n++) {
     Bytes exact(dt.begin(), dt.begin() + (long) n);
     hi = lo = 0xEE;
     CHECK(!H::devtype_from_reply(exact.data(), n, &hi, &lo) && hi == 0xEE && lo == 0xEE,
           "device type: %zu bytes is too short", n);
   }
-  CHECK(H::devtype_from_reply(dt.data(), 18, &hi, &lo) && hi == 0x12 && lo == 0x34,
-        "device type: 18 bytes reaches byte 17");
-  CHECK(H::devtype_from_reply(dt.data(), 18, nullptr, nullptr), "device type: both outputs optional");
+  CHECK(H::devtype_from_reply(dt.data(), 22, &hi, &lo) && hi == 0x12 && lo == 0x34,
+        "device type: 22 bytes holds bytes 16/17 as payload");
+  CHECK(H::devtype_from_reply(dt.data(), 22, nullptr, nullptr), "device type: both outputs optional");
   hi = lo = 0xEE;
-  CHECK(H::devtype_from_reply(dt.data(), 20, &hi, nullptr) && hi == 0x12, "device type: only the high byte asked");
-  CHECK(H::devtype_from_reply(dt.data(), 20, nullptr, &lo) && lo == 0x34, "device type: only the low byte asked");
+  CHECK(H::devtype_from_reply(dt.data(), 24, &hi, nullptr) && hi == 0x12, "device type: only the high byte asked");
+  CHECK(H::devtype_from_reply(dt.data(), 24, nullptr, &lo) && lo == 0x34, "device type: only the low byte asked");
   for (int delta : {-1, 1}) {
     Bytes f = dt;
     f[13] = (uint8_t) (0x0A + delta);
     hi = 0xEE;
-    CHECK(!H::devtype_from_reply(f.data(), 20, &hi, &lo) && hi == 0xEE, "device type: class 0x%02X is not the reply",
+    CHECK(!H::devtype_from_reply(f.data(), 24, &hi, &lo) && hi == 0xEE, "device type: class 0x%02X is not the reply",
           f[13]);
   }
 

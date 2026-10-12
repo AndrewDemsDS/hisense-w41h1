@@ -71,15 +71,15 @@ static void check_status(const uint8_t *f, size_t n) {
   // The harness follows the codec here; the disagreement is in the findings, not asserted.
   FUZZ_CHECK(st.purify_on == ((f[36] & 0x80) != 0), "purify bit");
   FUZZ_CHECK(st.compressor_freq == f[42] && st.outdoor_temp_c == static_cast<int8_t>(f[44]), "compressor, outdoor");
-  FUZZ_CHECK(st.coil_temp_c == (n > 45 ? static_cast<int8_t>(f[45]) : 0) && st.voltage_raw == (n > 50 ? f[50] : 0) &&
-                 st.current_raw == (n > 55 ? f[55] : 0),
+  // A byte counts only when it lies in front of the 4-byte trailer.
+  FUZZ_CHECK(st.coil_temp_c == (n >= 50 ? static_cast<int8_t>(f[45]) : 0) && st.voltage_raw == (n >= 55 ? f[50] : 0) &&
+                 st.current_raw == (n >= 60 ? f[55] : 0),
              "length-gated telemetry bytes");
   // Same frame, fault view. Wire byte = 15 + payload offset: 39 indoor, 40 module, 64 outdoor, 66.
   H::AcFaults fl;
   bool has = H::parse_faults(f, n, &fl);
-  FUZZ_CHECK(has == (n > 39), "parse_faults");
-  if (has)
-    FUZZ_CHECK(fl.valid && fl.raw_indoor == f[39] && fl.raw_outdoor == (n > 64 ? f[64] : 0), "fault bytes");
+  FUZZ_CHECK(has, "parse_faults");
+  FUZZ_CHECK(fl.valid && fl.raw_indoor == f[39] && fl.raw_outdoor == (n >= 69 ? f[64] : 0), "fault bytes");
 }
 
 static void check_features(const uint8_t *f, size_t n) {
@@ -93,8 +93,8 @@ static void check_features(const uint8_t *f, size_t n) {
                  ft.ai == ((f[28] & 0x40) != 0) && ft.swing_dir_8 == ((f[28] & 0x10) != 0) &&
                  ft.humidity == ((f[32] & 0x01) != 0) && ft.demand_resp == (f[35] & 3),
              "base feature flags");
-  FUZZ_CHECK(ft.ext_valid == (n > 39), "ext_valid");
-  if (n > 39)
+  FUZZ_CHECK(ft.ext_valid == (n >= 44), "ext_valid");
+  if (n >= 44)
     FUZZ_CHECK(ft.q_display == ((f[39] & 0x40) != 0) && ft.enable_8heat == ((f[39] & 0x04) != 0) &&
                    ft.trans_102_64 == ((f[38] & 0x08) != 0),
                "extended feature flags");
@@ -107,7 +107,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   uint8_t lead_pick = r.u8();
   int times = 1 + r.u8() % 3;
 
-  static const size_t min_len[4] = {45, 36, 22, 22};                          // status, features, link reply, DevType
+  static const size_t min_len[4] = {49, 40, 22, 22};                          // status, features, link reply, DevType
   size_t n = min_len[cls] + len_pick % (H::RX_FRAME_MAX - min_len[cls] + 1);  // up to RX_FRAME_MAX
   uint8_t f[200];
   for (size_t i = 0; i < n; i++)

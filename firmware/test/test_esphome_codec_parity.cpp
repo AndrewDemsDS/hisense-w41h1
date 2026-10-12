@@ -8,6 +8,15 @@
 // A protocol change in the original fails here until it is ported. The original's static helpers
 // (link heartbeat, frame reassembler) cannot be called from outside, so those two are checked
 // against the captured templates and hand-built streams instead.
+//
+// INTENDED DIFFERENCES. The original is frozen; where the port deliberately does something else the
+// expectation below is derived from the original's answer by a stated rule, never skipped:
+//  1. Trailer-aware lengths. The original tests `len > offset` before reading a payload byte, so in
+//     a short frame it reads the checksum or the F4 FB tag as data. The port requires the byte to
+//     lie in front of the 4-byte trailer (frame_has_payload_byte). For parse_faults, parse_features
+//     and devtype_from_reply that is exactly the original's answer for a frame 4 bytes shorter
+//     (ref_len below); for parse_status it is "refused below 49 bytes, and the three optional tail
+//     fields each need 4 more bytes". Real frames (160, 45 and at least 22 bytes) decode the same.
 
 #include <cmath>
 #include <cstdint>
@@ -353,6 +362,10 @@ static void test_stamp_beep() {
   }
 }
 
+// Intended difference 1: the length at which the original gives the port's answer for a `len`-byte
+// frame. The original gates a payload byte on `len > offset`, the port on `len > offset + 4`.
+static size_t ref_len(size_t len) { return len >= H::FRAME_TRAILER_LEN ? len - H::FRAME_TRAILER_LEN : 0; }
+
 static void test_parsers() {
   // Random well-formed status frames, lengths around the real 160, plus deliberately broken ones.
   for (int i = 0; i < 60000; i++) {
@@ -375,24 +388,32 @@ static void test_parsers() {
     memset(&os, 0xA5, sizeof(os));
     bool ro = hisense_parse_status(f, plen, &os);
     bool rn = H::parse_status(f, plen, &ns);
-    CHECK(ro == rn, "parse_status result, frame %d", i);
+    // Intended difference 1: byte 44 has to be payload, and so do 45, 50 and 55.
+    CHECK(rn == (ro && plen >= 49), "parse_status result, frame %d (len %zu)", i, plen);
     if (ro && rn) {
-      CHECK(same_state(os, ns), "parse_status fields, frame %d", i);
+      if (plen < 50)
+        os.coil_temp_c = 0;
+      if (plen < 55)
+        os.voltage_raw = 0;
+      if (plen < 60)
+        os.current_raw = 0;
+      CHECK(same_state(os, ns), "parse_status fields, frame %d (len %zu)", i, plen);
     }
 
     HisenseFeatures ofe;
     H::AcFeatures nfe;
     memset(&ofe, 0, sizeof(ofe));
-    bool fo = hisense_parse_features(f, plen, &ofe);
+    bool fo = hisense_parse_features(f, ref_len(plen), &ofe);
     bool fn = H::parse_features(f, plen, &nfe);
     CHECK(fo == fn, "parse_features result, frame %d", i);
     if (fo && fn) {
+      ofe.reply_len = (uint8_t) (plen > 255 ? 255 : plen);  // the diagnostic length is the real one
       CHECK(same_features(ofe, nfe), "parse_features fields, frame %d", i);
     }
 
     HisenseFaults ofa;
     H::AcFaults nfa;
-    bool ao = hisense_parse_faults(f, plen, &ofa);
+    bool ao = hisense_parse_faults(f, ref_len(plen), &ofa);
     bool an = H::parse_faults(f, plen, &nfa);
     CHECK(ao == an && same_faults(ofa, nfa), "parse_faults, frame %d", i);
 
@@ -400,20 +421,27 @@ static void test_parsers() {
 
     uint8_t oh = 0, ol = 0, nh = 0, nl = 0;
     f[13] = (i % 2) ? 0x0A : f[13];
-    bool dvo = hisense_devtype_from_reply(f, plen, &oh, &ol);
+    bool dvo = hisense_devtype_from_reply(f, ref_len(plen), &oh, &ol);
     bool dvn = H::devtype_from_reply(f, plen, &nh, &nl);
     CHECK(dvo == dvn && oh == nh && ol == nl, "devtype, frame %d", i);
   }
-  // Fault parsing gates each group on length separately, so walk every length.
+  // Fault parsing gates each group on length separately, so walk every length. The same walk for
+  // the device type, whose two bytes sit at 16/17.
   uint8_t f[80];
   for (auto &x : f)
     x = (uint8_t) rnd();
+  f[13] = 0x0A;
   for (size_t len = 0; len < sizeof(f); len++) {
     HisenseFaults o;
     H::AcFaults n;
-    bool ro = hisense_parse_faults(f, len, &o);
+    bool ro = hisense_parse_faults(f, ref_len(len), &o);
     bool rn = H::parse_faults(f, len, &n);
     CHECK(ro == rn && same_faults(o, n), "parse_faults len %zu", len);
+    CHECK(rn == (len >= 44), "parse_faults needs byte 39 in front of the trailer (len %zu)", len);
+    uint8_t oh = 0, ol = 0, nh = 0, nl = 0;
+    bool dvo = hisense_devtype_from_reply(f, ref_len(len), &oh, &ol);
+    bool dvn = H::devtype_from_reply(f, len, &nh, &nl);
+    CHECK(dvo == dvn && oh == nh && ol == nl && dvn == (len >= 22), "devtype len %zu", len);
   }
 }
 
