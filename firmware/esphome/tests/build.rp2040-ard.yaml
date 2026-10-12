@@ -3,7 +3,7 @@
 esphome:
   name: hisense-ac-test
 
-rp2040:
+rp2:
   board: rpipicow
 
 logger:
