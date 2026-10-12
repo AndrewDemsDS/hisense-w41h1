@@ -66,14 +66,14 @@ builds with those.
 
 Three board files, one per flash layout a module can have (`w41h1-amebaz2-*.yaml`). The image must
 be built for the layout the unit has, and the build fails when the image's slot addresses are not
-those of the layout the file names. What `dev.py` adds for the module:
+those of the layout the file names. What the scripts add for the module:
 
-- `build esphome --board amebaz2-<layout>` compiles it and makes sure the slot image exists.
-- `convert esphome --board amebaz2-<layout>` re-signs that image for a unit that still runs the
-  retired Matter firmware ([Converting a Stock Module](Converting-a-Stock-Module-to-ESPHome)).
-- `matter-slots` and `matter-backup` read such a unit's slot state.
+- `dev.py build esphome --board amebaz2-<layout>` compiles it and makes sure the slot image exists.
+- `matter-convert.py convert --board amebaz2-<layout>` re-signs that image for a unit that still
+  runs the retired Matter firmware ([Converting a Stock Module](Converting-a-Stock-Module-to-ESPHome)).
+- `matter-convert.py slots` and `matter-convert.py backup` read such a unit's slot state.
 
-`convert` and the two probes read their settings from `firmware/scripts/ota-release.env`
+`matter-convert.py` reads its settings from `firmware/scripts/ota-release.env`
 (gitignored, copy `ota-release.env.example`). `firmware/built-images/` is where their output goes,
 also gitignored.
 

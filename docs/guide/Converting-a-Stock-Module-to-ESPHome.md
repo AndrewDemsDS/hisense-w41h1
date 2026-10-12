@@ -5,8 +5,8 @@ firmware, over the air, with the module left in the A/C. The Matter firmware ins
 image itself, as if it were its own next version.
 
 > The Matter firmware is retired ([Matter Firmware (Retired)](Matter-Firmware-Retired)). This page
-> is for a unit that still runs it. The tools it uses (`dev.py convert`, `matter-slots`,
-> `matter-backup`) are kept on `main` for that purpose. Anything about building or releasing the
+> is for a unit that still runs it. The tool it uses (`firmware/scripts/matter-convert.py`, with
+> `convert`, `slots` and `backup`) is kept on `main` for that purpose. Anything about building or releasing the
 > Matter firmware itself is in the tree at the tag `matter-final`.
 
 **Status: done once.** One module with the factory flash layout was converted this way on
@@ -35,7 +35,7 @@ default key. Two things are missing for the Matter firmware to accept it:
 - **The wrapper.** A Matter `.ota` header and a provider manifest, at a software version one
   above what the unit runs.
 
-`dev.py convert` does both and checks the result the way the bootloader will.
+`matter-convert.py convert` does both and checks the result the way the bootloader will.
 
 | | After the conversion |
 |---|---|
@@ -98,12 +98,12 @@ power cut during an update, and the return to the Matter firmware.
    slots. The command only reads:
 
    ```
-   python3 firmware/scripts/dev.py matter-slots <unit-ip>
+   python3 firmware/scripts/matter-convert.py slots <unit-ip>
    ```
 
    The answer is `ok: fw1_sn=<n> fw2_sn=<n> cur=<slot>`. Note the running slot and both serials.
    The serial of the image you install has to be above both.
-2. Find the flash layout. `dev.py matter-backup <unit-ip>` prints `addr=`, the address of the slot the
+2. Find the flash layout. `matter-convert.py backup <unit-ip>` prints `addr=`, the address of the slot the
    unit is not running from: `0x10000` or `0x190000` is the factory layout, `0xC000` or `0x1B8000`
    is the sdk layout. It also reads only. The longer account is in
    `firmware/docs/15-esphome-path.md`, "Which flash layout a unit has".
@@ -128,7 +128,7 @@ The build fails if the image's slot addresses are not those of the layout named.
 **2. Re-sign and wrap it.**
 
 ```
-python3 firmware/scripts/dev.py convert esphome --board amebaz2-factory --name <hostname> --stage
+python3 firmware/scripts/matter-convert.py convert --board amebaz2-factory --name <hostname> --stage
 ```
 
 This reads the slot image from the build tree, re-signs it and writes three files to

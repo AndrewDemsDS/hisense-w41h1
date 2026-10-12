@@ -143,7 +143,7 @@ The other open risks, in short:
 - No long run yet, and the way back to the retired Matter firmware has not been tried.
 
 `dev.py test esphome --board amebaz2-factory` and `dev.py build esphome --board amebaz2-factory`
-(or `amebaz2-sdk`, `amebaz2-native`) validate and compile one. `dev.py convert esphome --board
+(or `amebaz2-sdk`, `amebaz2-native`) validate and compile one. `matter-convert.py convert --board
 amebaz2-factory` re-signs the built image and wraps it as a Matter `.ota` for the conversion.
 `dev.py` refuses a bare `--board amebaz2`, and refuses to flash any of them over a serial port.
 

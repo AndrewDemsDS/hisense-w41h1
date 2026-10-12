@@ -49,8 +49,8 @@ To move a unit to ESPHome without opening it:
 - an ESP32 board: [Migrating an ESP32 Node from Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome)
 - a stock module: [Converting a Stock Module from Matter to ESPHome](Converting-a-Stock-Module-to-ESPHome)
 
-Both procedures use tools that still live on `main` (`dev.py convert`, `dev.py matter-slots`,
-`dev.py matter-backup`). Take the image a unit needs for the way back (its delta base, its clip
+Both procedures use tools that still live on `main` (for the stock module,
+`firmware/scripts/matter-convert.py` with its `convert`, `slots` and `backup` commands). Take the image a unit needs for the way back (its delta base, its clip
 image) from the tag or from your own archive before you start.
 
 ## What was kept from the Matter work

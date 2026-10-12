@@ -251,7 +251,7 @@ place and then invalidates the running image, which leaves a unit only the clip 
 | `w41h1-amebaz2-native.yaml` | was written from scratch with LibreTiny's own partition table and bootloader |
 
 If you do not know the unit's history and it still runs the Matter firmware (1.3.9 or later), that
-firmware can tell you: `dev.py matter-backup <unit-ip>` prints the address of the inactive slot.
+firmware can tell you: `matter-convert.py backup <unit-ip>` prints the address of the inactive slot.
 `0x10000` or `0x190000` means factory, `0xC000` or `0x1B8000` means sdk. A clip dump shows it too
 (`firmware/docs/15-esphome-path.md`, "Which flash layout a unit has"). Once a unit runs ESPHome, its
 `Flash layout` diagnostic sensor reports whether the image matches the module, and an image that

@@ -124,7 +124,7 @@ if something goes wrong.
 | `monitor esphome --port P` | serial logs only |
 | `bench esphome --port P --sim-port S` | firmware against `virtual_ac.py`, no A/C |
 | `next esphome` | the staged bring-up and its warnings |
-| `convert esphome --board amebaz2-factory [--stage]` | for a stock module that still runs the retired Matter firmware: wrap the ESPHome image so that firmware installs it ([how](Converting-a-Stock-Module-to-ESPHome)) |
-| `matter-slots <ip>`, `matter-backup <ip>` | read the slot state of such a unit, and save its inactive slot |
 
-`python3 firmware/scripts/dev.py --help` prints the same list.
+`python3 firmware/scripts/dev.py --help` prints the same list. A stock module that still runs the
+retired Matter firmware is moved over with `firmware/scripts/matter-convert.py`
+([how](Converting-a-Stock-Module-to-ESPHome)).

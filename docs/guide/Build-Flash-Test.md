@@ -54,13 +54,17 @@ command:
 | `monitor esphome --port P` | serial logs only |
 | `bench esphome --port P --sim-port S` | firmware against `virtual_ac.py`, no A/C |
 | `next esphome` | the staged bring-up and its warnings |
-| `convert esphome --board amebaz2-factory [--stage]` | wrap the built ESPHome image as a Matter `.ota` that the retired Matter firmware on a stock module installs, see [Converting a Stock Module](Converting-a-Stock-Module-to-ESPHome) |
-| `matter-slots <ip>`, `matter-backup <ip> [out.bin]` | read-only probes of a unit that still runs that Matter firmware |
 
 `--board` defaults to `c3`. It picks the board and pin substitutions passed to `esphome -s`. With
-`--board amebaz2-factory`, `amebaz2-sdk` or `amebaz2-native` there is `test`, `build` and
-`convert`. There is no serial flash for the module through `dev.py`
+`--board amebaz2-factory`, `amebaz2-sdk` or `amebaz2-native` there is `test` and `build`. There is
+no serial flash for the module through `dev.py`
 ([ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board)).
+
+A stock module that still runs the retired Matter firmware is moved to ESPHome with a script of
+its own, `firmware/scripts/matter-convert.py`: `convert --board amebaz2-factory [--stage]` wraps
+the built ESPHome image as a Matter `.ota` that firmware installs, and `slots <ip>` and
+`backup <ip> [out.bin]` are read-only probes of such a unit
+([Converting a Stock Module](Converting-a-Stock-Module-to-ESPHome)).
 
 ESPHome builds go through a PlatformIO build cache (`PLATFORMIO_BUILD_CACHE_DIR`, default
 `~/.cache/w41h1-dev/pio-build-cache`). It speeds up the boards PlatformIO compiles (the stock

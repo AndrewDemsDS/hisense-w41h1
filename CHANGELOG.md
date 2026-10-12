@@ -99,6 +99,11 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   documents moved to `firmware/docs/10-stock-module-boot-and-recovery.md` and
   `firmware/docs/16-esp32-board-notes.md`.
 
+### Tooling: the scripts refuse more, and say why (2026-10-12)
+- **The Matter conversion left `dev.py`.** `dev.py convert esphome ...`, `dev.py matter-slots` and
+  `dev.py matter-backup` are now `firmware/scripts/matter-convert.py convert ...`, `slots` and
+  `backup`. The settings file is still `firmware/scripts/ota-release.env`.
+
 ## Matter and ESPHome side by side - 2026-10-10
 
 Everything from July to 2026-10-10. It was never one release: the Matter firmwares had their own
