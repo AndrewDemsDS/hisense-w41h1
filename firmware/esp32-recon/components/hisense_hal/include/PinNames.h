@@ -10,9 +10,7 @@
 // >>> EDIT THE THREE DEFINES IN YOUR BOARD'S BLOCK to match your wiring <<<
 //
 // Every define below is `#ifndef`-guarded, so a build may supply its own on the command line
-// (-DPA_14=...) and win. The ESPHome path does exactly that: its pins come from YAML, where a
-// board block in a header would be the wrong place to edit them. esp-matter defines nothing,
-// so it keeps the per-target defaults unchanged.
+// (-DPA_14=...) and win. esp32-recon defines nothing, so it uses the per-target defaults.
 typedef int PinName;
 
 #if defined(CONFIG_IDF_TARGET_ESP32C3)

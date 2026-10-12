@@ -1,5 +1,5 @@
 // Parity: the ESPHome-style codec port (firmware/esphome/components/hisense_ac/hisense_protocol.*,
-// hisense_map.h) against the original driver (firmware/src/rs485-driver/). The port exists because
+// hisense_map.h) against the original driver (firmware/test/reference-driver/). The port exists because
 // ESPHome's rules and the AmebaZ2 build cannot share one file; this test is what makes a second copy
 // safe. Every builder and parser runs on both sides over the same inputs: exhaustive sweeps where the
 // domain is small, the full HisenseCommand cartesian product, and seeded random frames for the

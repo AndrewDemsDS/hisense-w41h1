@@ -1,5 +1,5 @@
 // esp32-recon selftest: run the codec golden vectors on-target. Because the ESP32
-// links the SAME firmware/src/rs485-driver/hisense_rs485.cpp that the host tests
+// links the SAME firmware/test/reference-driver/hisense_rs485.cpp that the host tests
 // (firmware/test/test_codec.cpp) validate, matching outputs here prove the flashed
 // codec is byte-identical to the host-validated one. No hardware needed.
 #include <string.h>

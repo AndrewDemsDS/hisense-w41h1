@@ -3,7 +3,7 @@
  *
  * PURE active-power / energy estimation for the Hisense A/C, host-unit-testable
  * (plain stdint, no CHIP/SDK types) -- the "energy side" QA surface, mirroring
- * matter_aircon_map.h. matter_drivers.cpp feeds the results into the standard
+ * aircon_map_common.h. matter_drivers.cpp feeds the results into the standard
  * Matter ElectricalPowerMeasurement / ElectricalEnergyMeasurement clusters.
  *
  * CALIBRATION (2026-07-07, PD3-63VA panel meter on L3, 3 timestamp-synced points;

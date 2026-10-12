@@ -4,12 +4,12 @@
 > hardware).** There IS a software direction line: the stock firmware drives an RS-485 **DE GPIO on
 > PA_17** (HIGH=TX / LOW=RX) around every transmit. Missing it cost a multi-day debug (TX reached
 > the transceiver DI but never the A/B bus). See
-> [`reverse-engineering/docs/10-stock-fw-init-and-comms.md` §2.1](../../../reverse-engineering/docs/10-stock-fw-init-and-comms.md#21-ac-path-pins-proven)
+> [`reverse-engineering/docs/10-stock-fw-init-and-comms.md` §2.1](../../reverse-engineering/docs/10-stock-fw-init-and-comms.md#21-ac-path-pins-proven)
 > (DE = PA_17) and §1.3/§4.4 for the toggle timing. Everything below is preserved as the valid
 > record of the pre-hardware static-RE reasoning that reached the wrong conclusion.
 
-Reverse-engineered from the stock Hisense firmware dump
-`w41h1-matter-firmware/factory/STOCK-RECOVERY-w41h1_dump1.bin` (4 MB, plaintext).
+Reverse-engineered from the stock Hisense firmware dump (`dumps/w41h1_dump1.bin`, 4 MB,
+plaintext, local only).
 
 ## Summary (fill these into the driver)
 
@@ -92,7 +92,7 @@ link-state/reset bookkeeping, not GPIO). A scan of the whole A/C-UART code windo
 toggle around transmit, leading to the (wrong) conclusion of auto-direction, no software DE/RE
 control. The actual DE GPIO (PA_17) is set up and toggled elsewhere in the firmware, outside
 this evidence window; see the correction banner and
-[`reverse-engineering/docs/10`](../../../reverse-engineering/docs/10-stock-fw-init-and-comms.md).
+[`reverse-engineering/docs/10`](../../reverse-engineering/docs/10-stock-fw-init-and-comms.md).
 
 ## Which UART / not the log console
 

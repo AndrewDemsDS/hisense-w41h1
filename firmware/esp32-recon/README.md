@@ -1,27 +1,27 @@
 # esp32-recon: independent RS-485 A/C bus diagnostic tool
 
-A standalone ESP-IDF app (no Matter, no commissioning) that talks the Hisense A/C
+A standalone ESP-IDF app (no Home Assistant, no pairing) that talks the Hisense A/C
 RS-485 bus directly and lets you **verify everything**: wiring/UART/DE, link
 bring-up, framing + checksum, every decoded field, command→status round-trips,
 ProductType feature flags, and open protocol questions, from a shell you can reach
 **remotely over the network** (`nc esp32-recon.local 2323`) or over USB serial.
 
-It reuses the hardware-validated codec **unchanged**: the same
-`../src/rs485-driver/hisense_rs485.cpp` (via the `hisense_rs485` component) and the
-ESP32 `hisense_hal` shim that the `esp32-matter` firmware uses. So anything it
-reports is trustworthy, the on-device `selftest` proves the flashed codec is
-byte-identical to the host-validated one.
+It builds the hardware-validated reference driver **unchanged**: the same
+`../test/reference-driver/hisense_rs485.cpp` the host tests compile (via the
+`hisense_rs485` component in `components/`) on the ESP32 `hisense_hal` shim next to it.
+The on-device `selftest` proves the flashed codec is byte-identical to the
+host-validated one. The ESPHome firmware has its own port of this codec, held equal
+to it by `firmware/test/test_esphome_codec_parity.cpp`.
 
 ## Why it exists
 
-Every on-bus check used to require the full ESP32 esp-matter firmware: a ~6-minute
-build, a Matter commission, and a Home Assistant round-trip just to look at one
-decoded frame. This tool builds in seconds, flashes fast, and gives you a REPL right
-on the wire.
+Looking at one decoded frame through a full firmware means a build, a node adopted in
+Home Assistant and a round-trip through it. This tool builds in seconds, flashes fast,
+and gives you a REPL right on the wire.
 
 ## Wiring
 
-From `hisense_hal/include/PinNames.h` (shared with the Matter build):
+From `components/hisense_hal/include/PinNames.h`:
 
 | ESP32 | Transceiver | |
 |-------|-------------|-|
@@ -32,7 +32,7 @@ From `hisense_hal/include/PinNames.h` (shared with the Matter build):
 
 Transceiver A/B → the A/C RS-485 bus. 9600 8N1.
 
-## Build & flash (fast: no Matter)
+## Build & flash
 
 ```sh
 . ~/esp/esp-idf-v5.5.4/export.sh

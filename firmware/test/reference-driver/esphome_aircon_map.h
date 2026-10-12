@@ -2,12 +2,12 @@
  * esphome_aircon_map.h
  *
  * PURE ESPHome <-> Hisense translation for the ESPHome climate glue, the sibling
- * of matter_aircon_map.h. Kept free of any ESPHome types (plain uint8_t) so it is
+ * of aircon_map_common.h. Kept free of any ESPHome types (plain uint8_t) so it is
  * host-unit-testable without ESPHome installed -- see firmware/test/test_esphome_map.cpp.
  *
  * Only the ENUM mapping lives here. Everything else (the six-speed fan ladder, the
  * setpoint clamp, the running-state derivation) is protocol logic, not Matter logic,
- * so it is reused from matter_aircon_map.h rather than duplicated. Duplicating the
+ * so it is reused from aircon_map_common.h rather than duplicated. Duplicating the
  * fan ladder is exactly the drift this project already designed sync-files.sh to avoid.
  *
  * The ESPHOME_CLIMATE_* constants mirror esphome::climate::ClimateMode / ClimateAction /
@@ -18,7 +18,7 @@
 #pragma once
 #include <string.h>
 #include "hisense_rs485.h"
-#include "matter_aircon_map.h"
+#include "aircon_map_common.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -209,7 +209,7 @@ static inline uint8_t hisense_fan_raw_to_esphome_index(uint8_t raw) {
  * Clamp in Celsius, then convert, and tell the builder which unit it holds so it applies the
  * matching range check. Returns the clamped Celsius value for the entity to publish. */
 static inline int esphome_setpoint_to_cmd(int wanted_c, bool panel_f, HisenseCommand *cmd) {
-  int8_t c = (int8_t) matter_clamp_setpoint_c(wanted_c);
+  int8_t c = (int8_t) hisense_clamp_setpoint_c(wanted_c);
   cmd->fahrenheit = panel_f;
   cmd->setpoint = panel_f ? hisense_c_to_f(c) : c;
   return c;
