@@ -604,6 +604,9 @@ static void test_resend_and_reply() {
         "no command to compare with: other");
   // tx must reach frame 14 (15 bytes), the reply frame 15 (16 bytes).
   CHECK(H::command_reply_verdict(tx, 14, reply, 32) == H::COMMAND_REPLY_OTHER, "a 14-byte command: other");
+  CHECK(H::command_reply_verdict(tx, 13, reply, 32) == H::COMMAND_REPLY_OTHER &&
+            H::command_reply_verdict(tx, 0, reply, 32) == H::COMMAND_REPLY_OTHER,
+        "a shorter or empty command: other");
   CHECK(H::command_reply_verdict(tx, 15, reply, 32) == H::COMMAND_REPLY_ACK, "a 15-byte command is enough");
   CHECK(H::command_reply_verdict(tx, 32, reply, 15) == H::COMMAND_REPLY_OTHER,
         "a 15-byte reply has no ack byte: other");
@@ -751,6 +754,8 @@ static void test_intents() {
   c.hswing = (H::SwingMode) 2;
   i = H::intent_from_command(c, H::CONFIRM_SWING);
   CHECK(!i.want.vswing && !i.want.hswing, "swing values past the enum are not checked as swinging");
+  c.hswing = (H::SwingMode) 4;
+  CHECK(!H::intent_from_command(c, H::CONFIRM_SWING).want.hswing, "horizontal 4 neither");
   c.vswing = H::SWING_MODE_OFF;
   c.hswing = H::SWING_MODE_SWING;
   i = H::intent_from_command(c, H::CONFIRM_SWING);
