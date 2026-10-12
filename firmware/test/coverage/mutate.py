@@ -56,6 +56,7 @@ PRODUCT = {
     "hisense_protocol.cpp": COMP / "hisense_protocol.cpp",
     "hisense_protocol.h": COMP / "hisense_protocol.h",
     "hisense_map.h": COMP / "hisense_map.h",
+    "hisense_commands.h": COMP / "hisense_commands.h",
     "hisense_bus.cpp": COMP / "hisense_bus.cpp",
     "hisense_bus.h": COMP / "hisense_bus.h",
     "w41h1_uart_policy.h": MODULE / "w41h1_uart_policy.h",
@@ -64,11 +65,13 @@ TARGETS = {
     "protocol_cpp": "hisense_protocol.cpp",
     "protocol_h": "hisense_protocol.h",
     "map_h": "hisense_map.h",
+    "commands_h": "hisense_commands.h",
     "uart_h": "w41h1_uart_policy.h",
 }
 
 P_H = "hisense_protocol.h"
 M_H = "hisense_map.h"
+C_H = "hisense_commands.h"
 B_H = "hisense_bus.h"
 U_H = "w41h1_uart_policy.h"
 REF_INC = [f"-I{TEST_DIR / 'stubinc'}", f"-I{TEST_DIR}", f"-I{REF}"]
@@ -81,7 +84,7 @@ UNITS = {
     "t_parity.o": (TEST_DIR / "test_esphome_codec_parity.cpp", {P_H, M_H}, REF_INC),
     "t_bus.o": (TEST_DIR / "test_esphome_bus.cpp", {P_H, M_H, B_H}, []),
     "t_edge.o": (TEST_DIR / "test_esphome_edge_cases.cpp", {P_H, M_H}, []),
-    "t_confirm.o": (TEST_DIR / "test_esphome_confirm.cpp", {P_H, M_H}, []),
+    "t_confirm.o": (TEST_DIR / "test_esphome_confirm.cpp", {P_H, M_H, C_H}, []),
     "t_setup.o": (TEST_DIR / "test_esphome_setup_request.cpp", {P_H, B_H}, []),
     "t_uart.o": (TEST_DIR / "test_esphome_uart_policy.cpp", {U_H}, []),
     "t_codec_gaps.o": (TEST_DIR / "test_esphome_codec_gaps.cpp", {P_H}, []),
@@ -138,7 +141,8 @@ def fresh_work(work: Path):
     for name, src in PRODUCT.items():
         shutil.copyfile(src, work / name)
     (work / "probe.cpp").write_text(
-        '#include "hisense_map.h"\n#include "hisense_bus.h"\n#include "w41h1_uart_policy.h"\n'
+        '#include "hisense_map.h"\n#include "hisense_commands.h"\n#include "hisense_bus.h"\n'
+        '#include "w41h1_uart_policy.h"\n'
         "bool probe_reply_class_ok(unsigned char a, unsigned char b) "
         "{ return esphome::hisense_ac::reply_class_ok(a, b); }\n"
         "bool probe_uart(W41H1UartWatch *w, bool a, bool b, unsigned c) "

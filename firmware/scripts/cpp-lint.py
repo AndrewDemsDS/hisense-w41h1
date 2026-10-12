@@ -317,6 +317,7 @@ TIDY_UNITS = [
     ("firmware/esphome/components/hisense_ac/hisense_protocol.cpp", C17_PORT),
     ("firmware/esphome/components/hisense_ac/hisense_bus.cpp", C17_PORT),
     ("firmware/esphome/components/hisense_ac/hisense_map.h", HDR + C17_PORT),
+    ("firmware/esphome/components/hisense_ac/hisense_commands.h", HDR + C17_PORT),
     ("firmware/esphome/components/w41h1_module/w41h1_uart_policy.h", HDR + C17_MODULE),
 ]
 

@@ -89,7 +89,7 @@ fi
 # Product files only.
 filters=(
   --filter "$comp/hisense_protocol\.cpp" --filter "$comp/hisense_protocol\.h"
-  --filter "$comp/hisense_map\.h" --filter "$comp/hisense_bus\.cpp" --filter "$comp/hisense_bus\.h"
+  --filter "$comp/hisense_map\.h" --filter "$comp/hisense_commands\.h" --filter "$comp/hisense_bus\.cpp" --filter "$comp/hisense_bus\.h"
   --filter "$module/w41h1_uart_policy\.h"
 )
 # gcovr: $GCOVR when set (a command, with arguments if it needs any), otherwise through uvx at

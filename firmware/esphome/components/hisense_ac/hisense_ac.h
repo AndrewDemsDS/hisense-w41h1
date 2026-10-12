@@ -22,6 +22,7 @@
 #include "esphome/components/uart/uart.h"
 
 #include "hisense_bus.h"
+#include "hisense_commands.h"
 #include "hisense_map.h"
 #include "hisense_protocol.h"
 
@@ -35,7 +36,7 @@ class StatusListener {
   virtual void on_status(const AcState &state) = 0;
 };
 
-class HisenseAC : public Component, public uart::UARTDevice, public BusIO, public BusListener {
+class HisenseAC : public Component, public uart::UARTDevice, public BusIO, public BusListener, public CommandSink {
  public:
   void setup() override;
   void loop() override;
@@ -51,31 +52,25 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   /// A user write of `fields` (CONFIRM_* bits in hisense_map.h), already placed in the shadow.
   /// Sends the combined frame, with the power-on bits in it when `power_on`, and keeps the request
   /// until the unit's status agrees with it: a frame the unit did not take is sent again.
-  void send_user_command(uint16_t fields, bool power_on);
+  void send_user_command(uint16_t fields, bool power_on) {
+    this->commands_.send_user_command(fields, power_on, millis());
+  }
   /// Switch the unit off, checked and re-sent the same way.
-  void send_user_power_off();
+  void send_user_power_off() { this->commands_.send_user_power_off(millis()); }
   /// Build and send the combined command frame from the current shadow, unchecked. For frames
   /// that only carry something the status does not report (the display preference).
-  bool send_command();
-  /// The literal power frames. Off is always this frame; on is the fallback for a unit that did
-  /// not take power and mode in one frame.
-  bool send_power(bool on);
-  bool send_mute(bool on);
-  bool send_sleep(uint8_t profile);
+  bool send_command() { return this->commands_.send_combined(); }
 
-  /// Special modes (eco/turbo byte33, mute, sleep) go through a paced queue, never straight to
-  /// the bus: the A/C swallows a special-mode command that lands within ~8 s of the previous
-  /// one, so every op waits SPECIAL_SETTLE_MS after the last. Presets, switches and the
-  /// sleep select all share it, so they can never race each other on the wire.
-  void enqueue_special(const SpecialOp &op);
-  /// Replace whatever is still queued with the plan for preset `target` (a row index), computed
-  /// against what the unit is expected to be once already-sent ops land.
-  void request_preset(uint8_t target);
+  /// Special modes (eco/turbo byte33, mute, sleep) go through the tracker's paced queue, never
+  /// straight to the bus (see CommandTracker::enqueue_special).
+  void enqueue_special(const SpecialOp &op) { this->commands_.enqueue_special(op, millis()); }
+  /// Replace whatever is still queued with the plan for preset `target` (a row index).
+  void request_preset(uint8_t target) { this->commands_.request_preset(target, millis()); }
   /// Queue not yet drained, or the last write not yet confirmed: preset/switch readbacks would
   /// show intermediate states.
-  bool special_busy() const { return this->special_len_ > 0 || this->special_pending_.active; }
+  bool special_busy() const { return this->commands_.special_busy(); }
   /// The special-mode state the unit should report once everything sent so far lands.
-  const SpecialState &projected_special() const { return this->projected_; }
+  const SpecialState &projected_special() const { return this->commands_.projected_special(); }
 
   /// Panel display is STICKY, not one-shot. Byte 36 rides every frame, and 0x00 ("no change")
   /// turns the panel ON on real hardware, so a command that does not state a preference
@@ -88,27 +83,17 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   void set_beeper(bool on) { this->beeper_ = on; }
   bool beeper() const { return this->beeper_; }
 
-  /// The command shadow. Entities mutate this, then call send_command().
-  AcCommand &cmd() { return this->cmd_; }
+  /// The command shadow. Entities mutate this, then call send_user_command().
+  AcCommand &cmd() { return this->commands_.cmd(); }
 
-  /// A user command just went out, so ignore the A/C's echo of the PREVIOUS state for a
-  /// moment. Without this, a poll already in flight lands after the write and visibly
-  /// reverts the control in Home Assistant before the next poll corrects it.
-  /// Elapsed-time form, so it stays correct across the 49.7-day millis() wrap: a stored deadline
-  /// compared with a signed difference reads as "in holdoff" again ~24.8 days after the last command.
-  void note_user_command() {
-    this->holdoff_start_ = millis();
-    this->holdoff_armed_ = true;
-  }
-  bool in_command_holdoff() const {
-    if (this->holdoff_armed_ && millis() - this->holdoff_start_ >= COMMAND_HOLDOFF_MS)
-      this->holdoff_armed_ = false;  // or it re-arms for 4 s at every wrap
-    return this->holdoff_armed_;
-  }
+  /// A user command just went out, so ignore the A/C's echo of the PREVIOUS state for a moment
+  /// (see CommandTracker::note_user_command).
+  void note_user_command() { this->commands_.note_user_command(millis()); }
+  bool in_command_holdoff() const { return this->commands_.in_holdoff(millis()); }
 
   /// The unit's power once every power frame already sent has landed. Status alone lags a power
   /// frame by a poll or two.
-  bool power_expected() const { return hisense_ac::power_expected(this->power_intent_, this->last_.power_on); }
+  bool power_expected() const { return this->commands_.power_expected(); }
 
   /// Show "77" on the unit's panel, or take it off again. While on, the heartbeat tells the unit
   /// that the module is being set up, as the stock module does while it is pairing. It changes
@@ -126,8 +111,8 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   /// True while the transceiver is held in transmit (DE high around a frame). Board code that
   /// touches the serial port from outside the component must leave it alone during that time.
   bool bus_transmitting() const { return this->bus_.transmitting(); }
-  bool has_state() const { return this->last_.valid; }
-  const AcState &last_state() const { return this->last_; }
+  bool has_state() const { return this->commands_.has_state(); }
+  const AcState &last_state() const { return this->commands_.last_state(); }
 
   // BusListener. These arrive from poll() on the main loop.
   void on_bus_status(const AcState &state) override;
@@ -138,6 +123,13 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   void on_bus_timeout(uint8_t expect_class) override;
   void on_bus_command(bool answered, uint8_t reply_class) override;
   void on_bus_setup_request(uint8_t request) override;
+
+  // CommandSink: the tracker's frames, built and handed to the scheduler.
+  bool send_combined(const AcCommand &cmd) override;
+  bool send_power(bool on) override;
+  bool send_mute(bool on) override;
+  bool send_sleep(uint8_t profile) override;
+  void on_command_event(CommandEvent event, uint16_t fields, uint16_t count) override;
 
   // BusIO, over uart::UARTDevice and the DE pin.
   void bus_set_de(bool high) override;
@@ -185,14 +177,6 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
 #ifdef USE_SENSOR
   void publish_sensor_(sensor::Sensor *sensor, float value, bool refresh_due);
 #endif
-  void drain_special_queue_();
-  bool execute_special_(const SpecialOp &op);
-  void push_special_(const SpecialOp &op);
-  void track_command_(const CommandIntent &intent);
-  void confirm_commands_(const AcState &state);
-  void confirm_main_(const UnitView &view, const SpecialState &wanted, uint32_t now, bool panel_f);
-  void confirm_special_(const UnitView &view, const SpecialState &wanted, uint32_t now);
-  void drop_pending_commands_();
   void publish_diagnostics_();
 
   // A decoded frame is parked here by poll() and published by loop() once the queue has drained.
@@ -209,30 +193,11 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   GPIOPin *de_pin_{nullptr};
   HighFrequencyLoopRequester fast_loop_;
 
-  AcState last_{};
-  AcCommand cmd_{};
-  PowerIntent power_intent_{};
-  // The last user write to power, mode, setpoint, fan or swing, until the unit's status confirms
-  // it, and the same for the last special-mode write sent.
-  PendingCommand main_pending_{};
-  PendingCommand special_pending_{};
-  uint8_t special_resends_{0};
-  // Counters since boot: commands sent again after a status that did not match, and commands the
-  // unit never took.
-  uint32_t command_retries_{0};
-  uint32_t failed_commands_{0};
+  // The command shadow, what is waiting for the unit's status to confirm it, the special-mode
+  // queue, the hold-off and the command counters.
+  CommandTracker commands_;
   HisenseClimate *climate_{nullptr};
   std::vector<StatusListener *> listeners_;
-  uint32_t holdoff_start_{0};
-  mutable bool holdoff_armed_{false};
-  // Paced special-mode queue. Fixed size: a preset plan is at most PRESET_PLAN_MAX ops, and
-  // anything that would overflow is dropped with a warning rather than allocated.
-  static constexpr uint8_t SPECIAL_QUEUE_CAP = 8;
-  SpecialOp special_queue_[SPECIAL_QUEUE_CAP]{};
-  uint8_t special_len_{0};
-  uint32_t last_special_ms_{0};
-  bool special_sent_{false};
-  SpecialState projected_{};
   bool features_published_{false};
   // Last fault bitmap logged, so a fault is reported when it appears and when it clears, not on
   // every status frame that still carries it.
@@ -250,8 +215,6 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   std::vector<std::pair<uint8_t, binary_sensor::BinarySensor *>> fault_sensors_;
   std::vector<std::pair<uint8_t, binary_sensor::BinarySensor *>> capability_sensors_;
 #endif
-
-  static constexpr uint32_t COMMAND_HOLDOFF_MS = 4000;
 };
 
 template<typename... Ts> class SetSetupIndicatorAction final : public Action<Ts...>, public Parented<HisenseAC> {
@@ -260,8 +223,5 @@ template<typename... Ts> class SetSetupIndicatorAction final : public Action<Ts.
 
   void play(const Ts &...x) override { this->parent_->set_setup_indicator(this->state_.value(x...)); }
 };
-
-// The verdict on a command has to be in before the hold-off lets a status frame reach the entities.
-static_assert(CONFIRM_SETTLE_MS < 4000, "confirm settle must end inside the command hold-off");
 
 }  // namespace esphome::hisense_ac

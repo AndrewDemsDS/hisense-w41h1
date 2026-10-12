@@ -2,17 +2,17 @@
 // again, and is a difference between what was asked and what the unit reports just the unit being
 // itself. Plus power and mode in one frame.
 //
-// The first half checks each decision on its own. The second half runs the decisions as the hub
-// does (HisenseAC::confirm_main_, confirm_special_ and the special-mode queue) against a model of
-// the unit that can lose frames, swallow special-mode commands inside its debounce, pin its
-// setpoint and force turbo. The hub itself needs ESPHome and cannot be built here, so `Hub` below
-// repeats its few lines of glue. If the two drift, the scenarios stop describing the firmware.
+// The first half checks each decision on its own. The second half runs the hub's command tracker
+// (CommandTracker in hisense_commands.h, the class HisenseAC itself uses) against a model of the
+// unit that can lose frames, swallow special-mode commands inside its debounce, pin its setpoint
+// and force turbo. `Rig` below is only the clock, the frame sink and what an entity would show.
 
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <vector>
 
+#include "hisense_commands.h"
 #include "hisense_map.h"
 #include "hisense_protocol.h"
 
@@ -594,211 +594,79 @@ struct Unit {
   }
 };
 
-// HisenseAC's command paths, line for line where it matters. Frames reach the unit at once: the
+// A status frame as the tracker receives it, from what the model unit reports.
+static H::AcState status_of(const H::UnitView &v) {
+  H::AcState st;
+  st.valid = true;
+  st.power_on = v.power_on;
+  st.mode = v.mode;
+  st.setpoint_c = v.setpoint_c;
+  st.fan_raw = v.fan_raw;
+  st.vswing_on = v.vswing;
+  st.hswing_on = v.hswing;
+  st.eco_on = v.special.eco;
+  st.turbo_on = v.special.turbo;
+  st.mute_on = v.special.mute;
+  st.sleep_raw = (uint8_t) (v.special.sleep * 2);
+  st.sleep_on = v.special.sleep != 0;
+  return st;
+}
+
+// The hub's command tracker with the model unit behind it. Frames reach the unit at once: the
 // scheduler's part (the wait for the command slot, the re-send of an unanswered frame) is covered
-// by test_esphome_bus.cpp.
-struct Hub {
-  static constexpr uint32_t HOLDOFF_MS = 4000;
+// by test_esphome_bus.cpp and test_esphome_bus_stress.cpp.
+struct Rig : H::CommandSink {
   Unit *unit;
   uint32_t now = 100000;
-  H::AcCommand cmd;
-  H::UnitView last;
-  H::PendingCommand main_pending, special_pending;
-  H::SpecialOp queue[8];
-  size_t queue_len = 0;
-  uint32_t last_special_ms = 0;
-  bool special_sent = false;
-  uint8_t special_resends = 0;
-  H::SpecialState projected;
-  uint32_t holdoff_start = 0;
-  bool holdoff_armed = false;
+  H::CommandTracker t;
+  H::AcCommand &cmd;  // the shadow, as an entity reaches it
   bool link_up = true;
-  int retries = 0, failed = 0;
   H::UnitView shown;  // what the entities show
 
-  explicit Hub(Unit *u) : unit(u) {
-    last = shown = u->report();
-    sync_shadow();
+  explicit Rig(Unit *u) : unit(u), cmd(t.cmd()) {
+    t.set_sink(this);
+    shown = u->report();
+    t.on_status(status_of(shown), now);
   }
-  void note() {
-    holdoff_start = now;
-    holdoff_armed = true;
-  }
-  bool holdoff() {
-    if (holdoff_armed && now - holdoff_start >= HOLDOFF_MS)
-      holdoff_armed = false;
-    return holdoff_armed;
-  }
-  bool busy() const { return queue_len > 0 || special_pending.active; }
-  void tx(FrameKind kind, uint8_t value = 0) {
+  bool tx(FrameKind kind, const H::AcCommand &c, uint8_t value) {
     if (link_up)
-      unit->receive({now, kind, cmd, value});
+      unit->receive({now, kind, c, value});
+    return true;
   }
-  void sync_shadow() {
-    H::FanSpeed fan = H::shadow_fan_from_status(last.fan_raw);
-    if (fan != H::FAN_SPEED_NOCHANGE)
-      cmd.fan = fan;
-    if (last.mode_valid)
-      cmd.mode = last.mode;
-    cmd.setpoint = last.setpoint_c;
-    cmd.vswing = last.vswing ? H::SWING_MODE_SWING : H::SWING_MODE_OFF;
-    cmd.feature = H::feature_from_status(last.special.eco, last.special.turbo);
-  }
+  bool send_combined(const H::AcCommand &c) override { return tx(F_COMBINED, c, 0); }
+  bool send_power(bool on) override { return tx(on ? F_POWER_ON : F_POWER_OFF, cmd, 0); }
+  bool send_mute(bool on) override { return tx(F_MUTE, cmd, on ? 1 : 0); }
+  bool send_sleep(uint8_t profile) override { return tx(F_SLEEP, cmd, profile); }
 
-  // climate control() + send_user_command()
-  void user(uint16_t fields, bool power_on) {
-    cmd.power_on = power_on;
-    tx(F_COMBINED);
-    cmd.power_on = false;
-    if (power_on)
-      fields |= H::CONFIRM_POWER;
-    H::pending_begin(&main_pending, H::intent_from_command(cmd, fields), last, now);
-    note();
-  }
-  void user_off() {
-    tx(F_POWER_OFF);
-    H::pending_begin(&main_pending, H::intent_power_off(), last, now);
-    note();
-  }
-  void push(const H::SpecialOp &op) {
-    queue[queue_len++] = op;
-    note();
-  }
-  void user_special(const H::SpecialOp &op) {
-    special_resends = 0;
-    push(op);
-  }
-  void user_preset(uint8_t target) {
-    H::SpecialOp ops[H::PRESET_PLAN_MAX];
-    size_t n = H::preset_plan(projected, target, ops);
-    queue_len = 0;
-    special_resends = 0;
-    for (size_t i = 0; i < n; i++)
-      push(ops[i]);
-    note();
-  }
-  void drain() {
-    if (queue_len == 0 || special_pending.active)
-      return;
-    if (special_sent && now - last_special_ms < H::SPECIAL_SETTLE_MS)
-      return;
-    H::SpecialOp op = queue[0];
-    for (size_t i = 1; i < queue_len; i++)
-      queue[i - 1] = queue[i];
-    queue_len--;
-    switch (op.kind) {
-      case H::SPECIAL_OP_FEATURE:
-        cmd.feature = (H::Feature) op.value;
-        tx(F_COMBINED);
-        cmd.feature = H::feature_after_send(cmd.feature);
-        break;
-      case H::SPECIAL_OP_MUTE:
-        tx(F_MUTE, op.value);
-        break;
-      default:
-        tx(F_SLEEP, op.value);
-        break;
-    }
-    H::special_apply(&projected, op);
-    last_special_ms = now;
-    special_sent = true;
-    note();
-    H::pending_begin(&special_pending, H::intent_from_special(op), last, now);
-    special_pending.resends = special_resends;
-  }
-  void confirm(const H::UnitView &v) {
-    const H::SpecialState wanted = H::special_wanted(projected, queue, queue_len);
-    uint16_t unmet = 0;
-    if (main_pending.active) {
-      H::PendingCommand &p = main_pending;
-      switch (H::confirm_decision(p, v, wanted, now, H::COMMAND_RESEND_MAX, &unmet)) {
-        case H::CONFIRM_WAIT:
-          break;
-        case H::CONFIRM_GIVE_UP:
-          failed++;
-          p.active = false;
-          break;
-        case H::CONFIRM_DONE:
-        case H::CONFIRM_YIELD:
-          p.active = false;
-          break;
-        case H::CONFIRM_RESEND:
-          p.resends++;
-          retries++;
-          H::intent_to_command(p.intent, false, &cmd);
-          switch (H::resend_frames(p.intent, unmet)) {
-            case H::RESEND_POWER_OFF:
-              tx(F_POWER_OFF);
-              break;
-            case H::RESEND_POWER_ON_ALONE:
-              tx(F_POWER_ON);
-              break;
-            case H::RESEND_POWER_ON_PAIR:
-              tx(F_POWER_ON);
-              tx(F_COMBINED);
-              break;
-            case H::RESEND_COMBINED:
-              tx(F_COMBINED);
-              break;
-          }
-          p.sent_ms = now;
-          note();
-          break;
-      }
-    }
-    if (special_pending.active) {
-      H::PendingCommand &p = special_pending;
-      switch (H::confirm_decision(p, v, wanted, now, H::SPECIAL_RESEND_MAX, &unmet)) {
-        case H::CONFIRM_WAIT:
-          break;
-        case H::CONFIRM_GIVE_UP:
-          failed++;
-          p.active = false;
-          break;
-        case H::CONFIRM_DONE:
-        case H::CONFIRM_YIELD:
-          p.active = false;
-          break;
-        case H::CONFIRM_RESEND: {
-          p.active = false;
-          special_resends++;
-          retries++;
-          H::SpecialOp ops[H::PRESET_PLAN_MAX];
-          size_t n = H::special_plan(v.special, wanted, ops);
-          projected = v.special;
-          queue_len = 0;
-          for (size_t i = 0; i < n; i++)
-            push(ops[i]);
-          note();
-          break;
-        }
-      }
-    }
-  }
+  bool holdoff() const { return t.in_holdoff(now); }
+  bool busy() const { return t.special_busy(); }
+  int retries() const { return (int) t.command_retries(); }
+  int failed() const { return (int) t.failed_commands(); }
+
+  // climate control(), the switches and the select
+  void user(uint16_t fields, bool power_on) { t.send_user_command(fields, power_on, now); }
+  void user_off() { t.send_user_power_off(now); }
+  void user_special(const H::SpecialOp &op) { t.enqueue_special(op, now); }
+  void user_preset(uint8_t target) { t.request_preset(target, now); }
+
   // process_status_()
   void status() {
     if (!link_up)
       return;
-    last = unit->report();
-    confirm(last);
-    if (!holdoff()) {
-      sync_shadow();
-      if (!busy())
-        projected = last.special;
-      shown = last;
-    }
+    const H::UnitView reported = unit->report();
+    t.on_status(status_of(reported), now);
+    if (!holdoff())
+      shown = reported;
   }
   void link_lost() {
     link_up = false;
-    failed += (main_pending.active ? 1 : 0) + (special_pending.active ? 1 : 0) + (queue_len > 0 ? 1 : 0);
-    main_pending.active = special_pending.active = false;
-    queue_len = 0;
+    t.on_link_lost();
   }
   // One bus cycle per second: the special queue gets its turn every 100 ms, a status frame at the end.
   void run(uint32_t ms) {
-    for (uint32_t t = 0; t < ms; t += 100) {
+    for (uint32_t i = 0; i < ms; i += 100) {
       now += 100;
-      drain();
+      t.drain_special_queue(now);
       if (now % 1000 == 0)
         status();
     }
@@ -822,43 +690,43 @@ static void test_scenarios() {
   printf("-- scenarios: the hub's decisions against a unit that loses and overrides commands\n");
   {  // The plain case costs nothing: one frame, no re-send.
     Unit u = running();
-    Hub h(&u);
+    Rig h(&u);
     h.cmd.setpoint = 26;
     h.user(H::CONFIRM_SETPOINT, false);
     h.run(20000);
-    CHECK(u.heard.size() == 1 && h.retries == 0 && h.failed == 0 && u.v.setpoint_c == 26, "taken: one frame");
+    CHECK(u.heard.size() == 1 && h.retries() == 0 && h.failed() == 0 && u.v.setpoint_c == 26, "taken: one frame");
   }
   {  // The 1-in-52 case: the unit answers and does not apply.
     Unit u = running();
-    Hub h(&u);
+    Rig h(&u);
     u.lose = 1;
     h.cmd.setpoint = 26;
     h.user(H::CONFIRM_SETPOINT, false);
     h.run(3000);
     CHECK(h.shown.setpoint_c == 24 && h.holdoff(), "entity still holds the request");
     h.run(17000);
-    CHECK(u.heard.size() == 2 && h.retries == 1 && h.failed == 0, "lost once: sent again once (%zu frames)",
+    CHECK(u.heard.size() == 2 && h.retries() == 1 && h.failed() == 0, "lost once: sent again once (%zu frames)",
           u.heard.size());
-    CHECK(u.v.setpoint_c == 26 && h.shown.setpoint_c == 26 && !h.main_pending.active, "and it lands");
+    CHECK(u.v.setpoint_c == 26 && h.shown.setpoint_c == 26 && !h.t.main_pending().active, "and it lands");
     CHECK(u.heard[1].t - u.heard[0].t >= H::CONFIRM_SETTLE_MS && u.heard[1].t - u.heard[0].t <= 5000,
           "re-send follows the first by %u ms", (unsigned) (u.heard[1].t - u.heard[0].t));
   }
   {  // Never taken: bounded, loud, and the entity shows the truth.
     Unit u = running();
-    Hub h(&u);
+    Rig h(&u);
     u.takes_nothing = true;
     h.cmd.mode = H::MODE_HEAT;
     h.user(H::CONFIRM_MODE, false);
     h.run(60000);
-    CHECK(u.heard.size() == 3 && h.retries == 2 && h.failed == 1, "three frames, then it gives up (%zu, %d, %d)",
-          u.heard.size(), h.retries, h.failed);
+    CHECK(u.heard.size() == 3 && h.retries() == 2 && h.failed() == 1, "three frames, then it gives up (%zu, %d, %d)",
+          u.heard.size(), h.retries(), h.failed());
     CHECK(h.shown.mode == H::MODE_COOL && h.cmd.mode == H::MODE_COOL, "entity and shadow are back on the real mode");
     CHECK(u.heard.back().t - u.heard.front().t <= 10000, "all within %u ms",
           (unsigned) (u.heard.back().t - u.heard.front().t));
   }
   {  // A newer command supersedes the pending retry.
     Unit u = running();
-    Hub h(&u);
+    Rig h(&u);
     u.lose = 1;
     h.cmd.mode = H::MODE_HEAT;
     h.user(H::CONFIRM_MODE, false);
@@ -869,74 +737,74 @@ static void test_scenarios() {
     bool heat_after = false;
     for (size_t i = 1; i < u.heard.size(); i++)
       heat_after |= u.heard[i].cmd.mode == H::MODE_HEAT;
-    CHECK(!heat_after && u.v.mode == H::MODE_DRY && h.retries == 0, "heat (lost) then dry: heat is never sent again");
+    CHECK(!heat_after && u.v.mode == H::MODE_DRY && h.retries() == 0, "heat (lost) then dry: heat is never sent again");
   }
   {  // Rapid toggling inside the hold-off: the last word wins and is the only thing re-sent.
     Unit u = running();
-    Hub h(&u);
+    Rig h(&u);
     h.user_off();
     h.run(500);
     h.cmd.mode = H::MODE_AUTO;
     u.lose = 1;
     h.user(H::CONFIRM_MODE, true);
     h.run(30000);
-    CHECK(u.v.power_on && u.v.mode == H::MODE_AUTO && h.failed == 0, "off, then auto (lost): on, in auto");
+    CHECK(u.v.power_on && u.v.mode == H::MODE_AUTO && h.failed() == 0, "off, then auto (lost): on, in auto");
     CHECK(count(u, F_POWER_OFF) == 1, "the off is not sent again against the newer request");
   }
   {  // Power and mode in one frame.
     Unit u;
     u.v = view(false, H::MODE_COOL, 24, 0x01);
-    Hub h(&u);
+    Rig h(&u);
     h.cmd.mode = H::MODE_HEAT;
     h.user(H::CONFIRM_MODE, true);
     h.run(20000);
     CHECK(u.heard.size() == 1 && u.heard[0].kind == F_COMBINED && u.heard[0].cmd.power_on, "one frame carries both");
-    CHECK(u.v.power_on && u.v.mode == H::MODE_HEAT && h.retries == 0, "and the unit is on, in heat");
+    CHECK(u.v.power_on && u.v.mode == H::MODE_HEAT && h.retries() == 0, "and the unit is on, in heat");
   }
   {  // A unit that does not take the one-frame form gets the proven pair on the re-send.
     Unit u;
     u.v = view(false, H::MODE_COOL, 24, 0x01);
     u.one_frame_power = false;
-    Hub h(&u);
+    Rig h(&u);
     h.cmd.mode = H::MODE_AUTO;
     h.user(H::CONFIRM_MODE, true);
     h.run(20000);
     CHECK(u.heard.size() == 3 && u.heard[1].kind == F_POWER_ON && u.heard[2].kind == F_COMBINED &&
               !u.heard[2].cmd.power_on,
           "fallback: literal power-on, then the plain combined frame (%zu frames)", u.heard.size());
-    CHECK(u.v.power_on && u.v.mode == H::MODE_AUTO && h.retries == 1 && h.failed == 0, "on, in auto, one re-send");
+    CHECK(u.v.power_on && u.v.mode == H::MODE_AUTO && h.retries() == 1 && h.failed() == 0, "on, in auto, one re-send");
   }
   {  // Power off that the unit misses.
     Unit u = running();
-    Hub h(&u);
+    Rig h(&u);
     u.lose = 1;
     h.user_off();
     h.run(20000);
-    CHECK(count(u, F_POWER_OFF) == 2 && !u.v.power_on && h.retries == 1, "off lost once: sent again, unit off");
+    CHECK(count(u, F_POWER_OFF) == 2 && !u.v.power_on && h.retries() == 1, "off lost once: sent again, unit off");
   }
   {  // Auto pins its own setpoint: no re-send, no failure.
     Unit u = running(H::MODE_AUTO);
-    Hub h(&u);
+    Rig h(&u);
     h.cmd.setpoint = 19;
     h.user(H::CONFIRM_SETPOINT, false);
     h.run(20000);
-    CHECK(u.heard.size() == 1 && h.retries == 0 && h.failed == 0, "auto keeps 24: not a lost command");
+    CHECK(u.heard.size() == 1 && h.retries() == 0 && h.failed() == 0, "auto keeps 24: not a lost command");
     CHECK(h.shown.setpoint_c == 24, "and the entity shows the unit's setpoint");
   }
   {  // Someone uses the remote while a command waits.
     Unit u = running();
-    Hub h(&u);
+    Rig h(&u);
     u.lose = 1;
     h.cmd.mode = H::MODE_HEAT;
     h.user(H::CONFIRM_MODE, false);
     h.run(1500);
     u.v.mode = H::MODE_FAN;  // the remote
     h.run(30000);
-    CHECK(u.heard.size() == 1 && h.retries == 0 && u.v.mode == H::MODE_FAN, "the remote's choice is left alone");
+    CHECK(u.heard.size() == 1 && h.retries() == 0 && u.v.mode == H::MODE_FAN, "the remote's choice is left alone");
   }
   {  // Dead bus: nothing is re-sent, and nothing is sent when it comes back.
     Unit u = running();
-    Hub h(&u);
+    Rig h(&u);
     u.lose = 1;
     h.cmd.mode = H::MODE_HEAT;
     h.user(H::CONFIRM_MODE, false);
@@ -947,21 +815,22 @@ static void test_scenarios() {
     h.run(30000);
     h.link_up = true;
     h.run(30000);
-    CHECK(u.heard.size() == before && h.retries == 0, "no frame after the link dropped (%zu)", u.heard.size() - before);
-    CHECK(h.failed >= 1 && !h.main_pending.active && !h.special_pending.active && h.queue_len == 0,
+    CHECK(u.heard.size() == before && h.retries() == 0, "no frame after the link dropped (%zu)",
+          u.heard.size() - before);
+    CHECK(h.failed() >= 1 && !h.t.main_pending().active && !h.t.special_pending().active && h.t.special_queued() == 0,
           "the open commands are counted as failed and forgotten");
   }
   {  // The observed failure: "preset none, got quiet". The mute-off write is swallowed.
     Unit u = running();
     u.v.special.mute = true;
-    Hub h(&u);
-    h.projected = u.v.special;
+    Rig h(&u);
     u.lose = 1;
     h.user_preset(H::PRESET_NONE);
     h.run(8000);
     CHECK(u.v.special.mute && h.busy(), "lost, and the preset entity is still held");
     h.run(30000);
-    CHECK(!u.v.special.mute && count(u, F_MUTE) == 2 && h.retries == 1 && h.failed == 0, "sent again: quiet is off");
+    CHECK(!u.v.special.mute && count(u, F_MUTE) == 2 && h.retries() == 1 && h.failed() == 0,
+          "sent again: quiet is off");
     CHECK(u.heard[1].t - u.heard[0].t >= H::SPECIAL_SETTLE_MS, "the re-send respects the debounce (%u ms apart)",
           (unsigned) (u.heard[1].t - u.heard[0].t));
     CHECK(!h.busy() && !h.shown.special.mute, "and the entity reads none");
@@ -970,12 +839,11 @@ static void test_scenarios() {
     Unit u = running();
     u.v.special.mute = true;
     u.v.special.eco = true;
-    Hub h(&u);
-    h.projected = u.v.special;
+    Rig h(&u);
     u.lose = 1;
     h.user_preset(H::PRESET_FIRST_SLEEP + 2);  // eco_quiet -> sleep_old: eco off, mute off, sleep 2
     h.run(90000);
-    CHECK(!u.v.special.eco && !u.v.special.mute && u.v.special.sleep == 2 && h.failed == 0,
+    CHECK(!u.v.special.eco && !u.v.special.mute && u.v.special.sleep == 2 && h.failed() == 0,
           "eco_quiet to sleep_old with a lost write: lands (eco=%d mute=%d sleep=%u)", u.v.special.eco,
           u.v.special.mute, u.v.special.sleep);
     for (size_t i = 1; i < u.heard.size(); i++)
@@ -984,23 +852,24 @@ static void test_scenarios() {
   }
   {  // A special write the unit never takes: one re-send, then it gives up.
     Unit u = running();
-    Hub h(&u);
+    Rig h(&u);
     u.takes_nothing = true;
     h.user_special({H::SPECIAL_OP_FEATURE, H::FEATURE_ECO});
     h.run(120000);
-    CHECK(u.heard.size() == 2 && h.retries == 1 && h.failed == 1, "eco never taken: two frames, one failure (%zu)",
+    CHECK(u.heard.size() == 2 && h.retries() == 1 && h.failed() == 1, "eco never taken: two frames, one failure (%zu)",
           u.heard.size());
-    CHECK(!h.busy() && !h.shown.special.eco && !h.projected.eco, "entity and projection are back on the truth");
+    CHECK(!h.busy() && !h.shown.special.eco && !h.t.projected_special().eco,
+          "entity and projection are back on the truth");
   }
   {  // The user changes their mind while the first special write is unconfirmed.
     Unit u = running();
-    Hub h(&u);
+    Rig h(&u);
     u.lose = 1;
     h.user_preset(H::PRESET_QUIET);  // mute on, lost
     h.run(2000);
     h.user_preset(H::PRESET_ECO);  // planned from "quiet is on": eco on, mute off
     h.run(90000);
-    CHECK(u.v.special.eco && !u.v.special.mute && h.failed == 0, "quiet (lost) then eco: ends on eco");
+    CHECK(u.v.special.eco && !u.v.special.mute && h.failed() == 0, "quiet (lost) then eco: ends on eco");
     bool mute_on_again = false;
     for (size_t i = 1; i < u.heard.size(); i++)
       mute_on_again |= u.heard[i].kind == F_MUTE && u.heard[i].value == 1;
@@ -1008,28 +877,27 @@ static void test_scenarios() {
   }
   {  // Turbo forces cool, 16 C, high. A setpoint written just before it engages is not chased.
     Unit u = running(H::MODE_HEAT);
-    Hub h(&u);
+    Rig h(&u);
     h.cmd.setpoint = 28;
     h.user(H::CONFIRM_SETPOINT, false);
     h.user_special({H::SPECIAL_OP_FEATURE, H::FEATURE_TURBO});
     h.run(40000);
-    CHECK(u.v.special.turbo && h.retries == 0 && h.failed == 0, "turbo on: nothing re-sent, nothing failed");
+    CHECK(u.v.special.turbo && h.retries() == 0 && h.failed() == 0, "turbo on: nothing re-sent, nothing failed");
     size_t frames = u.heard.size();
     h.user_special({H::SPECIAL_OP_FEATURE, H::FEATURE_NONE});
     h.run(40000);
-    CHECK(!u.v.special.turbo && h.retries == 0 && h.failed == 0 && u.heard.size() == frames + 1,
+    CHECK(!u.v.special.turbo && h.retries() == 0 && h.failed() == 0 && u.heard.size() == frames + 1,
           "turbo off: one frame, the unit staying in cool is not a fault");
   }
   {  // Quiet pins the fan: a mode change under quiet does not chase the fan.
     Unit u = running();
     u.v.special.mute = true;
-    Hub h(&u);
-    h.projected = u.v.special;
+    Rig h(&u);
     h.cmd.mode = H::MODE_HEAT;
     h.cmd.fan = H::FAN_SPEED_HIGH;
     h.user(H::CONFIRM_MODE | H::CONFIRM_FAN, false);
     h.run(20000);
-    CHECK(u.heard.size() == 1 && h.retries == 0 && h.failed == 0, "fan under quiet reads 0x02: not a lost command");
+    CHECK(u.heard.size() == 1 && h.retries() == 0 && h.failed() == 0, "fan under quiet reads 0x02: not a lost command");
   }
 }
 
