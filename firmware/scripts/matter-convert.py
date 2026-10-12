@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -154,35 +155,57 @@ def pi_scp(cfg, files, dest):
 
 
 
+# A manifest name that may go into the root container's command line. The provider directory is
+# on another machine, so what it holds is input, not something this script wrote.
+SAFE_MANIFEST = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.json")
+
+
 def pi_stage(cfg, manifest, *others):
     """Install files into the root-owned provider dir through a throwaway root container (the user
     is in the docker group, sudo needs a password), archive every other manifest for the same
-    product, and restart matter-server (manifests are read once at init)."""
+    product, and restart matter-server (manifests are read once at init).
+
+    Every path that reaches the remote shell is quoted, and a failed step stops the run before the
+    next one: nothing is installed after a listing that failed."""
+    q = shlex.quote
     files = [manifest, *others]
     keep = os.path.basename(str(manifest))
     host, ota_dir = cfg["PI_HOST"], cfg["PI_OTA_DIR"]
-    tmp = f"/tmp/ota-stage.{os.getpid()}"
-    if pi_ssh(cfg, f"mkdir -p {tmp}")[0] != 0:
+    rc, tmp = pi_ssh(cfg, "mktemp -d /tmp/ota-stage.XXXXXX", capture=True)
+    tmp = tmp.strip()
+    if rc != 0 or not re.fullmatch(r"/tmp/ota-stage\.\w{6}", tmp):
         die(f"cannot reach {host}")
+
+    def give_up(message):
+        pi_ssh(cfg, f"rm -rf {q(tmp)}", quiet=True)
+        die(message)
+
     if pi_scp(cfg, files, f"{tmp}/") != 0:
-        die(f"scp to {host}:{tmp} failed")
-    names = "".join(f" /src/{os.path.basename(str(f))}" for f in files)
+        give_up(f"scp to {host}:{tmp} failed")
     plan = []
     if cfg.get("OTA_KEEP_MANIFESTS") != "1":
         # listing = name<TAB>json for every manifest on the Pi, plus the local one being shipped
-        _, listing = pi_ssh(cfg, f'cd {ota_dir} && for f in *.json; do [ -r "$f" ] || continue; '
-                                 "printf '%s\\t' \"$f\"; tr -d '\\n' < \"$f\"; echo; done", capture=True)
+        rc, listing = pi_ssh(cfg, f'cd {q(ota_dir)} && for f in *.json; do [ -r "$f" ] || continue; '
+                                  "printf '%s\\t' \"$f\"; tr -d '\\n' < \"$f\"; echo; done", capture=True)
+        if rc != 0:
+            give_up(f"could not list the manifests in {ota_dir} on {host}: nothing was staged "
+                    "(OTA_KEEP_MANIFESTS=1 stages without archiving the others)")
         listing += f"{keep}\t{Path(manifest).read_text().replace(chr(10), '')}\n"
         try:
             plan = archive_plan(keep, parse_listing(listing))
         except ValueError:
-            die("could not plan manifest archiving")
-    mv = "".join(f" && mv /ota/{f} /ota/{f}.archived" for f in plan)
-    rc, _ = pi_ssh(cfg, f"docker run --rm -v {ota_dir}:/ota -v {tmp}:/src alpine sh -c "
-                        f"'install -m 0644 -o root -g root{names} /ota/ && rm -f /ota/chip_kvs_ota_provider_* "
-                        f"/ota/ota_provider_*.log{mv}' && rm -rf {tmp} && docker restart matter-server >/dev/null")
+            give_up("could not plan manifest archiving")
+        odd = [n for n in plan if not SAFE_MANIFEST.fullmatch(n)]
+        if odd:
+            give_up(f"the provider directory holds a manifest for this product with an unusual name ({odd[0]!r}): "
+                    "nothing was staged. Move it away by hand, or set OTA_KEEP_MANIFESTS=1")
+    steps = ["install -m 0644 -o root -g root " + " ".join(q(f"/src/{os.path.basename(str(f))}") for f in files) + " /ota/",
+             "rm -f /ota/chip_kvs_ota_provider_* /ota/ota_provider_*.log"]
+    steps += [f"mv {q('/ota/' + f)} {q('/ota/' + f + '.archived')}" for f in plan]
+    rc, _ = pi_ssh(cfg, f"docker run --rm -v {q(ota_dir + ':/ota')} -v {q(tmp + ':/src')} alpine sh -c {q(' && '.join(steps))} "
+                        f"&& rm -rf {q(tmp)} && docker restart matter-server >/dev/null")
     if rc != 0:
-        die(f"root-container install on {host} failed")
+        give_up(f"root-container install on {host} failed")
     if plan:
         say(f"  archived {len(plan)} other manifest(s) for this product (renamed *.json.archived, reversible)")
     say("  staged via root container, provider junk pruned; waiting for matter-server to reload (~100 s)")

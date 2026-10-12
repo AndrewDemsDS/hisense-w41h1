@@ -13,6 +13,7 @@ import hmac as hmac_mod
 import json
 import os
 import pathlib
+import shlex
 import socket
 import subprocess
 import sys
@@ -325,14 +326,19 @@ LISTING = (f"rac-v10350.json\t{man(0x8001, 10350)}\nrac-stock-v10332.json\t{man(
            f"esp32-v10114.json\t{man(0x8000, 10114)}\n")
 
 
-def stage(cfg=None, listing=LISTING, fail_at=None, scp_rc=0, listing_rc=0):
+TMPDIR = "/tmp/ota-stage.Ab12Cd"          # what the host's mktemp answers in these tests
+
+
+def stage(cfg=None, listing=LISTING, fail_at=None, scp_rc=0, listing_rc=0, tmpdir=TMPDIR):
     """Run mc.pi_stage with ssh and scp recorded. Returns (died-with, ssh commands, scp calls)."""
     ssh, scp = [], []
 
-    def fake_ssh(cfg, command, capture=False, quiet=False):  # noqa: ARG001 - dev.pi_ssh's signature
+    def fake_ssh(cfg, command, capture=False, quiet=False):  # noqa: ARG001 - pi_ssh's signature
         ssh.append(command)
         if fail_at is not None and len(ssh) - 1 == fail_at:
             return 1, ""
+        if command.startswith("mktemp"):
+            return 0, tmpdir + "\n"
         if capture:
             return listing_rc, listing
         return 0, ""
@@ -346,17 +352,21 @@ def stage(cfg=None, listing=LISTING, fail_at=None, scp_rc=0, listing_rc=0):
     return msg, ssh, scp
 
 
+def installs(ssh):
+    return [c for c in ssh if c.startswith("docker run")]
+
+
 msg, ssh, scp = stage()
-tmpdir = f"/tmp/ota-stage.{os.getpid()}"
-check(msg is None and ssh[0] == f"mkdir -p {tmpdir}" and scp == [(["rac-v10351-esphome.json", "rac-v10351-esphome.ota"], f"{tmpdir}/")],
-      "staging copies the manifest and the .ota into a temporary directory on the host")
-docker = next(c for c in ssh if c.startswith("docker run"))
+check(msg is None and ssh[0] == "mktemp -d /tmp/ota-stage.XXXXXX"
+      and scp == [(["rac-v10351-esphome.json", "rac-v10351-esphome.ota"], f"{TMPDIR}/")],
+      "staging copies the manifest and the .ota into a temporary directory the host makes")
+docker = installs(ssh)[0]
 check("-v /data/ota:/ota" in docker and "install -m 0644 -o root -g root /src/rac-v10351-esphome.json /src/rac-v10351-esphome.ota /ota/" in docker,
       "a root container installs both into the provider directory")
 check("mv /ota/rac-v10350.json /ota/rac-v10350.json.archived" in docker, "the other manifest of the same product is archived")
 check("rac-stock-v10332.json" not in docker and "esp32-v10114.json" not in docker,
       "the stock-revert manifest and the other product's manifest are left alone")
-check(f"rm -rf {tmpdir}" in docker and "docker restart matter-server" in docker,
+check(f"rm -rf {TMPDIR}" in docker and "docker restart matter-server" in docker,
       "the temporary directory is removed and matter-server restarted in the same command")
 check("rm -f /ota/chip_kvs_ota_provider_* /ota/ota_provider_*.log" in docker,
       "the provider's own state files and logs are deleted on every staging")
@@ -367,30 +377,44 @@ check(msg is None and not any("for f in *.json" in c for c in ssh) and ".archive
       "OTA_KEEP_MANIFESTS=1 lists and archives nothing")
 msg, ssh, scp = stage(fail_at=0)
 check(msg == "cannot reach root@provider" and not scp, "a host that cannot be reached is an error before anything is copied")
+for answer in ("", "/etc", "/tmp/ota-stage.Ab12Cd; reboot", "/tmp/ota-stage.Ab12Cd/../x"):
+    msg, ssh, scp = stage(tmpdir=answer)
+    check(msg == "cannot reach root@provider" and not scp and len(ssh) == 1,
+          f"a host whose mktemp answers {answer!r} is not trusted with a path: nothing is copied")
 msg, ssh, scp = stage(scp_rc=1)
-check(msg and "scp to root@provider" in msg and not any(c.startswith("docker") for c in ssh), "a failed copy stops before the install")
+check(msg and "scp to root@provider" in msg and not installs(ssh), "a failed copy stops before the install")
+check(ssh[-1] == f"rm -rf {TMPDIR}", "and the temporary directory on the host is removed")
 msg, ssh, scp = stage(fail_at=2)
 check(msg == "root-container install on root@provider failed", "a failed install is an error")
 msg, ssh, scp = stage(fail_at=3)
 check(msg and "did not reopen :5580" in msg, "matter-server not coming back is an error")
 
-# The listing command's exit code is not looked at. When it fails (the directory cannot be read,
-# the connection drops) the plan is empty and the new manifest is installed BESIDE the old ones,
-# with no warning. Behaviour today.
+# A listing that fails (the directory cannot be read, the connection drops) used to count as an
+# empty directory: the new manifest went in BESIDE the old ones with no warning.
 msg, ssh, scp = stage(listing="", listing_rc=255)
-check(msg is None and ".archived" not in "".join(ssh),
-      "a failed manifest listing archives nothing and is not reported")
+check(msg and "could not list the manifests in /data/ota" in msg and not installs(ssh),
+      "a failed manifest listing stops the run: nothing is installed")
+msg, ssh, scp = stage(listing="")
+check(msg is None and installs(ssh) and ".archived" not in installs(ssh)[0], "an empty provider directory is fine: nothing to archive")
 
+# Everything that reaches the remote shell is quoted.
 msg, ssh, scp = stage(cfg={**stage_cfg, "PI_OTA_DIR": "/data/my ota"})
-docker = next(c for c in ssh if c.startswith("docker run"))
-known_failure("-v /data/my ota:/ota" not in docker,
-              "a provider directory with a space in it is quoted for the remote shell",
-              "matter-convert.py (was dev.py:504-522) pi_stage(): PI_OTA_DIR and the temporary path go into the remote command unquoted")
-msg, ssh, scp = stage(listing=LISTING + f"x;touch pwned.json\t{man(0x8001, 10001)}\n")
-docker = next(c for c in ssh if c.startswith("docker run"))
-known_failure("mv /ota/x;touch pwned.json" not in docker,
-              "a manifest file name from the host is quoted before it goes into the root container's shell",
-              "matter-convert.py (was dev.py:519) pi_stage(): names read from the provider directory are pasted into `sh -c` unquoted")
+docker = installs(ssh)[0]
+check("-v '/data/my ota:/ota'" in docker and "cd '/data/my ota' &&" in "".join(ssh),
+      "a provider directory with a space in it is quoted for the remote shell")
+check(shlex.split(docker)[:9] == ["docker", "run", "--rm", "-v", "/data/my ota:/ota", "-v", f"{TMPDIR}:/src", "alpine", "sh"],
+      "and the remote shell reads it back as one argument")
+inner = shlex.split(docker)[10]
+check(shlex.split(inner)[:9] == ["install", "-m", "0644", "-o", "root", "-g", "root", "/src/rac-v10351-esphome.json",
+                                 "/src/rac-v10351-esphome.ota"], "the container's own command line survives the quoting")
+# A manifest name is what the provider host says it is. One that is not a plain file name never
+# reaches the root container's shell: the run stops and says which.
+for name in ("x;touch pwned.json", "$(reboot).json", "a b.json", "-rf.json", "it's.json"):
+    msg, ssh, scp = stage(listing=LISTING + f"{name}\t{man(0x8001, 10001)}\n")
+    check(msg and "unusual name" in msg and name in msg and not installs(ssh),
+          f"a manifest named {name!r} on the host stops the run before the root container")
+msg, ssh, scp = stage(listing=LISTING + f"x;touch pwned.json\t{man(0x8000, 10001)}\n")
+check(msg is None and "pwned" not in installs(ssh)[0], "the same name on another product's manifest is not touched, so it does not matter")
 
 # ================================================================================================
 print("== matter-convert.py: the break-glass probes (slots, backup) ==")
