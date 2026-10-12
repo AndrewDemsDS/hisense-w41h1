@@ -35,6 +35,7 @@
 //       ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_bus_stress.bin
 // `--soak [seeds]` runs the random part for longer (2000 seeds of 10 min bus time by default, not
 // part of the default suite). `--seed N` runs one random seed and prints its configuration.
+// `--traces` prints a hash of every scenario's trace, to compare two builds of the scheduler.
 
 #include <algorithm>
 #include <cstdint>
@@ -903,12 +904,21 @@ typedef void (*Script)(Rig &r);
 // timestamps would flip.
 static const uint32_t STARTS[] = {1000u, 0u, 0xFFFFFFFFu - 2500u, 0xFFFFFFFFu - 9100u, 0x7FFFFFFFu - 4300u};
 
+// Set by --traces: print the hash of every scenario's trace, one line each. Two builds of the
+// scheduler that print the same lines put the same bytes on the wire at the same times and told the
+// listener the same things, in every scenario here. That is the check for a change that is meant to
+// leave the behaviour alone: run it before and after and compare the output.
+static bool g_print_traces = false;
+
 static uint64_t run_script(const char *name, Script s, uint32_t start, uint32_t *entries = nullptr) {
   g_ctx = name;
   Rig r(start);
   s(r);
   if (entries != nullptr)
     *entries = r.trace.entries;
+  if (g_print_traces)
+    printf("   trace %016llx %u entries, start %u: %s\n", (unsigned long long) r.trace.hash, (unsigned) r.trace.entries,
+           (unsigned) start, name);
   return r.trace.hash;
 }
 
@@ -2185,6 +2195,8 @@ static void test_random(uint32_t seeds, uint32_t run_ms) {
         break;
     }
     StressResult a = stress(seed, start, run_ms);
+    if (g_print_traces)
+      printf("   trace %016llx seed %u, start %u\n", (unsigned long long) a.hash, (unsigned) seed, (unsigned) start);
     steps += a.steps;
     writes += a.writes;
     timeouts += a.timeouts;
@@ -2213,8 +2225,10 @@ int main(int argc, char **argv) {
         seeds = static_cast<uint32_t>(strtoul(argv[++i], nullptr, 10));
     } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
       one_seed = strtol(argv[++i], nullptr, 10);
+    } else if (strcmp(argv[i], "--traces") == 0) {
+      g_print_traces = true;
     } else {
-      printf("usage: %s [--soak [seeds]] [--seed N]\n", argv[0]);
+      printf("usage: %s [--soak [seeds]] [--seed N] [--traces]\n", argv[0]);
       return 2;
     }
   }

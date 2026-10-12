@@ -163,23 +163,38 @@ class BusScheduler {
   uint8_t link_request() const { return this->link_request_; }
 
  protected:
+  // Where one transaction is: waiting to start, DE settling, bytes leaving, reply window, or the
+  // pause that fills a cycle.
   enum class Phase : uint8_t { IDLE, TX_SETTLE, TX_DRAIN, LISTEN, WAIT };
+  // What is sent next. Boot runs the first two once, then the rest repeat as one cycle.
   enum class Step : uint8_t {
-    BOOT_DEVTYPE,
-    BOOT_07,
-    CYCLE_BEGIN,
-    RECOVER,
-    HEARTBEAT,
-    DRAIN,
-    STATUS,
-    PRODUCT,
-    PACE,
+    BOOT_DEVTYPE,  // DevType probe, up to BUS_BOOT_TRIES
+    BOOT_07,       // 0x07, once
+    CYCLE_BEGIN,   // sends nothing: notes the time and picks RECOVER or HEARTBEAT
+    RECOVER,       // DevType probe, only while the link is lost
+    HEARTBEAT,     // 0x1E
+    COMMANDS,      // the queue, one frame per transaction
+    STATUS,        // 0x66 poll
+    PRODUCT,       // 0x66/40 poll, on the first heard cycle and every BUS_PRODUCTTYPE_CYCLES
+    PACE,          // sends nothing: waits out the rest of BUS_CYCLE_MS
   };
+  // Called when a step's reply window closes. `reply_len` is the length of the reply in rx_, 0
+  // when there was none.
+  using StepDone = void (BusScheduler::*)(size_t reply_len, uint32_t now);
 
+  bool advance_(uint32_t now);
+  bool listen_(uint32_t now);
+  bool frame_received_(size_t n, uint32_t now);
   void start_step_(uint32_t now);
-  void begin_transaction_(const uint8_t *frame, size_t len, uint8_t expect_class, uint32_t now);
+  void begin_transaction_(const uint8_t *frame, size_t len, uint8_t expect_class, StepDone done, uint32_t now);
   void finish_transaction_(size_t reply_len, uint32_t now);
-  void on_step_done_(size_t reply_len, uint32_t now);
+  void boot_devtype_done_(size_t reply_len, uint32_t now);
+  void boot_07_done_(size_t reply_len, uint32_t now);
+  void recover_done_(size_t reply_len, uint32_t now);
+  void heartbeat_done_(size_t reply_len, uint32_t now);
+  void command_done_(size_t reply_len, uint32_t now);
+  void status_done_(size_t reply_len, uint32_t now);
+  void product_done_(size_t reply_len, uint32_t now);
   bool consume_(size_t n);
   void check_link_reply_(const uint8_t *frame, size_t n, uint32_t now);
   void discard_rx_();
@@ -192,7 +207,8 @@ class BusScheduler {
   Step step_{Step::BOOT_DEVTYPE};
   uint32_t phase_until_{0};
   uint32_t cycle_start_{0};
-  uint8_t expect_class_{0};
+  uint8_t expect_class_{CLASS_ANY};
+  StepDone on_done_{nullptr};
   // The frame in rx_ passed its checksum. Set for every frame received, read by its consumers.
   bool reply_sound_{false};
 

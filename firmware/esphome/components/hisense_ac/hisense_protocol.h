@@ -42,6 +42,8 @@ static constexpr uint8_t CLASS_LINK = 0x1E;
 static constexpr uint8_t CLASS_COMMAND = 0x65;
 static constexpr uint8_t CLASS_STATUS = 0x66;
 static constexpr uint8_t SUBTYPE_PRODUCT_TYPE = 0x40;  // 0x66/40 feature-flag poll
+// Not a class on the wire: as the class a transaction expects it means "any".
+static constexpr uint8_t CLASS_ANY = 0x00;
 
 // Combined command (0x65) frame: 16-byte header, 30-byte body, 2-byte checksum, F4 FB.
 static constexpr size_t CMD_FRAME_LEN = 50;
@@ -297,9 +299,9 @@ bool shadow_setpoint_from_status(int8_t setpoint_c, bool temp_unit_f, int8_t *ou
 uint16_t checksum_range(const uint8_t *frame, size_t start, size_t end);
 // Verify a received, un-stuffed frame's checksum: sum over [2, n - 4) against bytes n-4, n-3.
 bool status_checksum_ok(const uint8_t *frame, size_t n);
-// A transaction accepts a reply only when its class matches; 0 accepts any class.
+// A transaction accepts a reply only when its class matches; CLASS_ANY accepts every class.
 inline bool reply_class_ok(uint8_t got_class, uint8_t expect_class) {
-  return expect_class == 0 || got_class == expect_class;
+  return expect_class == CLASS_ANY || got_class == expect_class;
 }
 
 // ---- Builders: each returns the on-the-wire length (stuffing included), or 0 on error ----------
