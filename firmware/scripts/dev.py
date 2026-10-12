@@ -24,8 +24,9 @@ Commands:
   matter-backup <unit-ip> [out.bin]      save that unit's inactive slot, and print its address
                                          (which tells the flash layout; read-only)
 
-Board: --board c3 (ESP32-C3 SuperMini, default) or --board classic (ESP32-D0WDQ6), the ESP32
-replacement board. --board amebaz2-factory, amebaz2-sdk or amebaz2-native is the stock module
+Board: --board c3 (ESP32-C3 SuperMini, default), --board c3-plus (ESP32-C3 SuperMini Plus, the
+one with an RGB pixel on GPIO8) or --board classic (ESP32-D0WDQ6), the ESP32 replacement board.
+--board amebaz2-factory, amebaz2-sdk or amebaz2-native is the stock module
 through LibreTiny, by the flash layout the unit has: test, build and convert (factory has run on a
 module, sdk and native have not). Node identity: --name <hostname> and --friendly-name <text>
 (default hisense-ac / "Air Conditioner"; give every node after the first its own). Env: ESPHOME
@@ -78,7 +79,7 @@ ESPHOME_AMEBAZ2_SLOTS = {"amebaz2-factory": (0x010000, 0x170000), "amebaz2-sdk":
 # Layouts a unit running the Matter firmware can have. native is absent: it has LibreTiny's
 # bootloader and no Matter firmware to convert from.
 ESPHOME_CONVERT_BOARDS = ("amebaz2-factory", "amebaz2-sdk")
-ESPHOME_PIN = "2026.7.4"   # CI's `esphome config` pin (.github/workflows/qa.yaml); keep in step
+ESPHOME_PIN = "2026.7.4"   # the release CI builds with; version-lint.py fails when the pins differ
 
 # Line-buffer stdout so our own lines stay in order with the stderr warnings and with the output
 # of the tools we run. Without it, piping or logging dev.py (tee, CI) shows "doctor found gaps
@@ -137,6 +138,9 @@ class Ctx:
         self.friendly_name = friendly_name
         if board == "c3":
             self.pins, self.esphome_board = (5, 6, 10), "esp32-c3-devkitm-1"
+        elif board == "c3-plus":
+            # Same chip and pins as c3. It has a board file of its own for the RGB pixel on GPIO8.
+            self.pins, self.esphome_board = (5, 6, 10), "esp32-c3-devkitm-1"
         elif board == "classic":
             self.pins, self.esphome_board = (19, 18, 4), "esp32dev"
         elif board in ESPHOME_AMEBAZ2_BOARDS:
@@ -148,7 +152,7 @@ class Ctx:
             die("--board amebaz2 needs the unit's flash layout: amebaz2-factory, amebaz2-sdk or "
                 "amebaz2-native (firmware/docs/15-esphome-path.md, 'Which flash layout a unit has')")
         else:
-            die("--board must be c3, classic, amebaz2-factory, amebaz2-sdk or amebaz2-native")
+            die("--board must be c3, c3-plus, classic, amebaz2-factory, amebaz2-sdk or amebaz2-native")
 
     def need_port(self, cmd):
         if not self.port:
@@ -186,6 +190,9 @@ class Ctx:
             if sub not in ("config", "compile"):
                 die(ESPHOME_AMEBAZ2_ONLY)
             config, subs = f"w41h1-{self.board}.yaml", []
+        elif self.board == "c3-plus":
+            # The board file holds the pins and the status pixel, so nothing is passed.
+            config, subs = "w41h1-esp32c3-plus.yaml", []
         # A second node needs its own hostname: two boards both called hisense-ac fight over the
         # same mDNS name and Home Assistant device.
         if self.name:
