@@ -374,6 +374,11 @@ def valid_cases() -> list[Case]:
             ),
             full_only=layout != "native",
         )
+    # node.yaml names the node (hisense-ac, Air Conditioner), so a file may leave the name out.
+    add(
+        "packages-default-name",
+        re.sub(r"^  (name|friendly_name): .*\n", "", packaged(c3, "unused", common, {}), flags=re.M),
+    )
     # One run per single entity: a platform holding just that one.
     for domain, keys in (("switch", SWITCHES), ("sensor", SENSORS), ("binary_sensor", BINARY_SENSORS)):
         for key in keys:

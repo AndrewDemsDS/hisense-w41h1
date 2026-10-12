@@ -19,8 +19,8 @@
 # with a stale Wi-Fi config is a known time sink (firmware/docs/16-esp32-board-notes.md).
 
 substitutions:
-  name: hisense-ac
-  friendly_name: Air Conditioner
+  # name and friendly_name default to hisense-ac / Air Conditioner (packages/node.yaml). Set
+  # both here for a second node on the same network.
   # Classic ESP32-D0WDQ6, the hardware-validated pin set. For an ESP32-C3 SuperMini use
   # w41h1-esp32c3.yaml, or override here: board esp32-c3-devkitm-1 with tx 5 / rx 6 / de 10
   # (`firmware/scripts/dev.py --board c3` passes exactly these as -s overrides).

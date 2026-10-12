@@ -14,6 +14,12 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 This becomes 2.0.0, the first release of the ESPHome firmware under a version number of its own.
 The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 
+### Board files, the stock-module component and CI (2026-10-12)
+- **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air
+  Conditioner`), and the board files no longer repeat the two lines. A file that sets them keeps
+  its names. A file that includes the package and sets no `name` now builds as `hisense-ac` where
+  it was refused before.
+
 ### The firmware has a version, releases are tags, and CI compiles the ESP32 boards (2026-10-12)
 - **The version is written once**, in `firmware/esphome/packages/version.yaml`: semver, starting
   at 2.0.0. `packages/node.yaml` includes that file, so every node built from the packages

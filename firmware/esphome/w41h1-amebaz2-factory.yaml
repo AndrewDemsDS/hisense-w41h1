@@ -13,8 +13,8 @@
 #   build:   esphome compile firmware/esphome/w41h1-amebaz2-factory.yaml
 
 substitutions:
-  name: hisense-ac
-  friendly_name: Air Conditioner
+  # name and friendly_name default to hisense-ac / Air Conditioner (packages/node.yaml). Set
+  # both here for a second node on the same network.
   layout: factory
   # The module's own wiring (reverse-engineering/docs/01-hardware.md): UART0 to the RS-485
   # transceiver, DE on PA17. These are not a choice. ESPHome's LibreTiny UART only takes a port's
