@@ -53,7 +53,7 @@ into Home Assistant. On the Matter path that transport costs, today:
 | `ElectricalPowerMeasurementDelegate.{h,cpp}` | CHIP delegate so EPM reads route correctly | three `sensor:` declarations |
 | `integrations/hisense-unified-ac` (separate repo, submodule) + `test_diag_contract.py` | Matter cannot render a manufacturer cluster in HA without two upstream PRs, see `14-diagnostics-ha-exposure.md` at the `matter-final` tag | native entities, no bitmap, no cross-repo contract |
 | Test attestation, VID `0xFFF1`/PID `0x8001`, the uncertified-device caveat | Matter requires credentials | none |
-| Commissioning, BLE, fabric management, the "77" recommission flow | Matter onboarding | Wi-Fi credentials in the YAML, or the AP fallback |
+| Commissioning, BLE, fabric management, the "77" recommission flow | Matter onboarding | Wi-Fi credentials in the YAML, the AP fallback, and "77" as a way to open that hotspot on demand |
 
 That is about 3700 lines of ESP32-specific firmware and tooling (`app_main.cpp`, `diag_console.cpp`,
 the EPM delegate, and the two scripts), plus a second repository, in service of transport. The
@@ -126,7 +126,7 @@ refer to `firmware/esp32-matter/main/app_main.cpp`.
 | `:2323` `bootreason` | diagnostic `text_sensor` | `esp_reset_reason()` |
 | `:2323` `poll`, `watch`, `raw` | `logger:` at DEBUG, entity history in HA | driver callbacks |
 | `:2323` `decode`, `tx`, `selftest` | optional `api:` user services, debug YAML only | `hisense_build_command_override()` |
-| Identify=77 recommission (#69) | `on_recommission:` automation trigger, plus `wifi:` AP fallback | `hisense_set_recommission_cb()` |
+| Identify=77 recommission (#69) | `on_setup_request:` automation trigger and `hisense_ac.set_setup_indicator`, bound in `packages/node.yaml` to Wi-Fi setup mode | `hisense_set_recommission_cb()`, ported into the component's codec |
 | Identify=88 HTTPS-OTA break-glass (#61, #104) | native `ota:` plus `safe_mode` | dropped |
 
 Two entries change character rather than disappearing, and both should be called out in the README
@@ -138,9 +138,10 @@ so nobody reads parity as identity:
   a user does not declare the entities their unit does not have, and the capability
   `text_sensor` tells them which those are. Same outcome, no firmware state machine. The component
   should still log a warning when a declared entity contradicts the reported capability.
-- **The "77" flow** loses its Matter meaning (there is no fabric to swap). It stays wired as an
-  automation trigger so a user can bind it to whatever they want, and the driver still clears the
-  request with `hisense_send_exit_77()` so the A/C does not sit in the mode (#69).
+- **The "77" flow** loses its Matter meaning (there is no fabric to swap). It is an automation
+  trigger, `on_setup_request`, that a user can bind to whatever they want, and the shipped
+  configuration binds it to Wi-Fi setup mode (below, "Setup mode and the 77 gesture"). The panel
+  shows "77" only while the configuration asks for it, so the A/C does not sit in the mode (#69).
 
 ## Architecture
 
@@ -270,6 +271,48 @@ once a minute, and commands that did not reach the unit. With `none`: 100 of 100
 command taken in 0.5 s (2026-10-10). The esp-matter build forces the radio on for the same reason
 (`firmware/esp32-matter/main/app_main.cpp`). The setting is a substitution, `wifi_power_save`, for
 a board whose supply cannot carry the extra current.
+
+**Setup mode and the 77 gesture. IMPLEMENTED, not yet on hardware.** The remote's gesture
+(horizontal airflow six times) opens the node's Wi-Fi hotspot and captive portal and puts "77" on
+the panel. Use, limits and the LED patterns are in
+[`../esphome/README.md`](../esphome/README.md#recovery-and-indication). The design notes:
+
+- *The codec.* The request is a bit in byte 17 of the unit's `0x1E` reply
+  ([`03-rs485-ac-protocol.md`](../../reverse-engineering/docs/03-rs485-ac-protocol.md), "Recommission
+  (77)"). The component's codec carries a port of the shared driver's debounce and lockout:
+  `0x20` alone is taken from one reply (the bench unit sends exactly one per gesture), anything
+  with `0x08` needs three in a row, and `0x20` is ignored for 10 s after a request and after the
+  indication goes off (#69). The port is stricter in four places, because here the request is a
+  toggle that takes the node off the network and not an idempotent "open a window". The reply's
+  checksum must be good. `0x08` is ignored while the node's own provisioning flag (the same bit,
+  outbound) is on the wire, and afterwards until one reply comes without it. `0x08` already set
+  at boot is ignored, or a unit that keeps asking would reopen setup after every restart. The
+  lockout also starts at boot and is kept as elapsed time, so it cannot come back to life when
+  the 32 bit millisecond clock wraps. Tests: `firmware/test/test_esphome_setup_request.cpp`,
+  which also runs the cases `test_codec.cpp` has for the original.
+- *The hub* parks a request during the bus poll and runs the automations from `loop()`.
+  `set_setup_indicator()` only changes what the next heartbeat carries.
+- *Opening the hotspot on demand.* ESPHome 2026.7 has no call for it: `setup_ap_config_()` is
+  protected, and `loop()` opens the hotspot only when no network has been connected for
+  `ap_timeout`. Setup mode gets there with public calls only: `disable()`, `set_ap_timeout(1)`,
+  `enable()`, then `set_sta()` with a network that does not exist, all in memory. That is the
+  state ESPHome's fallback is written for (configured network out of reach), so the portal, its
+  scan and the retry pacing are stock behaviour. `disable()`, `set_sta()`, `enable()` is also
+  the sequence ESPHome's own `wifi.configure` action uses. Two designs were turned down.
+  Persisting a flag and clearing the station list before Wi-Fi starts makes the portal save
+  under a preference key the next normal boot does not read (`start()` derives the key from
+  `has_sta()`). Reaching into the component for the protected call would break on an update.
+- *Leaving is a restart,* by timeout, by a second gesture, or once a network entered in the
+  portal has connected. The Wi-Fi component never clears its "hotspot was set up" flag, so
+  within one boot the hotspot opens once. A restart also restores the station list and the
+  timeout from the build and from flash, with nothing to undo by hand.
+- *What cannot strand a node.* Nothing is written on the way in. The portal writes what the
+  user enters. If that has not connected when the mode ends, the previous SSID and password are
+  written back first. If the hotspot does not open within 30 s the node restarts.
+
+Still to be seen on a unit: which bit each unit raises, that "77" lights and clears, that the
+hotspot opens on ESP-IDF and on LibreTiny after `disable()` and `enable()`, and that a restart on
+the stock module out of setup mode comes back (LibreTiny issue 396, see below).
 
 **Phase 6, special modes as climate presets. IMPLEMENTED, awaiting hardware validation.** A
 climate group syncs only `climate` attributes, so eco, quiet, turbo and sleep were invisible to it
@@ -422,14 +465,16 @@ platforms are not touched: their UART drivers do not use this buffer.
 **The recovery, now a fallback.** Closing and reopening the port (`Serial0.end()`,
 `Serial0.begin()`) makes a new buffer, which is why it brought the link back. With the receive
 interrupt switched off on purpose, the link was reported lost after 5 silent polls and was back
-0.6 s after the restart. `packages/amebaz2.yaml` still restarts the port when the hub reports the
-link lost and every 15 s while it stays down, as a net for a stall with some other cause. It logs
-a warning each time and counts the restarts in a `Serial port restarts` diagnostic sensor. It no
-longer fires while the hub holds the transceiver in transmit: closing the port takes the TX pin
-away from the UART, and with DE high that puts a break on the pair. The timing rule is a plain
-function with a host test (`amebaz2/w41h1_uart_policy.h`,
-`firmware/test/test_esphome_uart_policy.cpp`). It lives in the board package because `Serial0` is
-LibreTiny's: ESPHome's uart component can reload a port's settings only on ESP32 and ESP8266.
+0.6 s after the restart. The `w41h1_module` component still restarts the port when the hub
+reports the link lost and every 15 s while it stays down, as a net for a stall with some other
+cause. It logs a warning each time and counts the restarts in a `Serial port restarts` diagnostic
+sensor. It no longer fires while the hub holds the transceiver in transmit: closing the port
+takes the TX pin away from the UART, and with DE high that puts a break on the pair. The timing
+rule is a plain function with a host test (`components/w41h1_module/w41h1_uart_policy.h`,
+`firmware/test/test_esphome_uart_policy.cpp`). It lives in that component and not in the hub
+because the port is LibreTiny's: ESPHome's uart component can reload a port's settings only on
+ESP32 and ESP8266. The component closes and reopens the port object ESPHome's uart component
+holds, which is `Serial0` for these pins.
 If the counter stays at 0 through a soak on a unit that answers, the restart can go.
 
 **DE timing, measured.** With an API client and Home Assistant connected, over about 150 frames:
@@ -472,14 +517,37 @@ failed update, the return to the Matter firmware, and the image without the rebo
   `packages/amebaz2.yaml`. They include the same entity package as the ESP32 board files and add
   one diagnostic text sensor, `Flash layout`, the serial port recovery described above and its
   `Serial port restarts` sensor.
+- `firmware/esphome/components/w41h1_module/`: the component that carries everything the module
+  needs in code. `packages/amebaz2.yaml` is configuration only and hands it the layout:
+
+  ```yaml
+  w41h1_module:
+    layout: factory          # required, no default
+    hisense_ac_id: ac_bus
+    serial_port_restarts:
+      name: Serial port restarts
+    flash_layout:
+      name: Flash layout
+  ```
+
+  From `layout` its codegen copies the matching `layout-*.json` into the build directory and
+  names it as PlatformIO's `custom_board`, passes the flag the build-time check reads, and adds
+  the two linker flags of the reboot workaround. At run time it checks the layout against the
+  bootloader's partition table, watches the bus link and restarts the serial port, and publishes
+  the two sensors. It validates only on `rtl87xx` with an RTL8720C-family board, and a
+  configuration for any other chip that names it fails `esphome config` with a message that says
+  so. Nothing it uses lies outside its own directory, so it also works from a git source
+  (`external_components` with `path: firmware/esphome/components`, listing `hisense_ac` and
+  `w41h1_module`).
 - Board `cr3l` is a Tuya module with the same chip class. It is used because it is the LibreTiny
   board definition that names PA13 and PA14 as UART0. ESPHome's LibreTiny UART only accepts a
   port's fixed hardware pins, and `generic-rtl8720cm-4mb-1712k` does not define them. Its flash
-  layout is not used: each board file replaces it with a file from `firmware/esphome/amebaz2/`.
+  layout is not used: `w41h1_module` replaces it with one of the `layout-*.json` files in its own
+  directory.
 - The logger stays on LibreTiny's default port, UART2 (TX on PA16), which is the module's log
   console pad.
 - CI compiles all three on every push (`esphome-amebaz2` in `.github/workflows/qa.yaml`) and
-  fails if the component warns.
+  fails if `hisense_ac` or `w41h1_module` warns.
 
 ### Which flash layout a unit has
 
@@ -518,11 +586,12 @@ To tell which layout a unit has:
   `0x1BC000` (native).
 
 Two guards keep a wrong choice from going unnoticed. Both are in
-`firmware/esphome/amebaz2/w41h1_slots.h`:
+`firmware/esphome/components/w41h1_module/w41h1_slots.h`:
 
 - At build time, the header checks that the image's slot and settings addresses are exactly those
   of the layout the board file names. A layout file that is missing, misnamed or not applied
-  fails the build. So does a build of the package with no layout named.
+  fails the build. A configuration with no layout named, or with a name that is not one of the
+  three, already fails `esphome config`: `layout` is a required option of `w41h1_module`.
 - At run time, the image asks the Realtek SDK where the bootloader's partition table puts the next
   update (`sys_update_ota_prepare_addr()`) and compares that with its own two slots. The result is
   logged at boot and published as the `Flash layout` sensor, for example
@@ -537,12 +606,12 @@ has not run on the sdk or native layout, and a mismatch has not been provoked on
 
 | Check | Result |
 |---|---|
-| `esphome config` and `esphome compile`, ESPHome 2026.7.4, LibreTiny 1.13.0, all three layouts | pass. Flash 604,881 bytes: 40.1 % of the factory layout's 1,507,328 byte slot, 34.5 % of the 1,753,088 byte slot of the other two. Static RAM 13,369 of 262,144 bytes |
+| `esphome config` and `esphome compile`, ESPHome 2026.7.4, LibreTiny 1.13.0, all three layouts | pass. Flash 603,889 bytes: 40.1 % of the factory layout's 1,507,328 byte slot, 34.4 % of the 1,753,088 byte slot of the other two. Static RAM 13,401 of 262,144 bytes |
 | Layout applied | each build's slot and settings addresses are those of its layout (compile-time check), and the application image is built for the first slot's address (`0x010000`, `0x00C000`, `0x010000`) |
-| Warnings from `components/hisense_ac/` | none, also with every option of every platform declared (`tests/build.rtl87xx-ard.yaml`) |
+| Warnings from `components/hisense_ac/` and `components/w41h1_module/` | none, also with every option of every platform declared (`tests/build.rtl87xx-ard.yaml`) |
 | UART write blocks (LibreTiny waits on the TX FIFO, about 1 ms per byte) | host test: DE still falls 25 ms after the last byte, the cycle stays at 1 s, no reply is missed |
 | Receive buffer | LibreTiny's is 256 bytes and filled from an interrupt. A status frame, the longest the unit sends, is 160 bytes |
-| Reboot workaround links | `arch_restart()` in the built image branches to `sys_reset` (disassembly of the ELF) |
+| Reboot workaround links | `arch_restart()` in the built image branches to `sys_reset` (disassembly of the ELF). With the flags set by the component: `__wrap_lt_reboot` and `sys_reset` are the same address in the ELF (`nm`) |
 | DE pin bring-up order | the RE notes ([`10-stock-fw-init-and-comms.md`](../../reverse-engineering/docs/10-stock-fw-init-and-comms.md)) show `gpio_init(PA_17)` faulting before the scheduler runs. ESPHome calls `setup()` from the main task, after it |
 
 ### Open risks
@@ -555,7 +624,7 @@ has not run on the sdk or native layout, and a mismatch has not been provoked on
 2. **Reboot hang.** LibreTiny 1.13.0 restarts the chip with a CPU-only reset. On other RTL8720C
    modules that leaves it dark after a restart or an OTA until power has been off for about
    30 seconds (libretiny-eu/libretiny issue 396). The fix, a watchdog system reset, is proposed in
-   pull request 397 and is in no release. The board file applies the same change with two linker
+   pull request 397 and is in no release. `w41h1_module` applies the same change with two linker
    flags (`--wrap=lt_reboot`, `--defsym=__wrap_lt_reboot=sys_reset`), the workaround confirmed
    in that issue on two other modules (a Tuya WBR3 and a Xiaomi one). On this module, with the flags
    in the image, two updates and one mains power cycle came back without a hang. The image has not

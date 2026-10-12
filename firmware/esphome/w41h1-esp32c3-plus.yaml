@@ -1,0 +1,40 @@
+# Hisense A/C over RS-485, ESPHome variant: ESP32-C3 SuperMini Plus.
+#
+# The same node as w41h1-esp32c3.yaml, for the Plus board. The two differ in the LED on GPIO8: the
+# plain SuperMini has a small blue LED there, the Plus an addressable RGB pixel (WS2812, a square
+# white package, and the board usually has an external antenna connector). A pin toggled as for a
+# plain LED means nothing to the pixel, and a pixel nobody writes to can sit lit in a random
+# colour, so each board has its own file.
+#
+# STATUS: compiles. The pixel has not been checked on a board yet (colour order, that it is dark
+# after boot). The rest is the hardware-validated w41h1-esp32c3.yaml.
+#
+#   flash:   esphome run firmware/esphome/w41h1-esp32c3-plus.yaml
+#   logs:    esphome logs firmware/esphome/w41h1-esp32c3-plus.yaml
+
+substitutions:
+  name: hisense-ac
+  friendly_name: Air Conditioner
+  board: esp32-c3-devkitm-1
+  tx_pin: "5"
+  rx_pin: "6"
+  de_pin: "10"
+  # GPIO8 is a strapping pin, which is why the bus pins stay off it. The pixel's data input is
+  # the one thing it is safe for: the chip reads the pin only at reset, when the firmware is not
+  # driving it yet, and a WS2812 data input does not pull the line either way, so the board's own
+  # pull-up still sets the level the boot ROM needs. After boot the RMT peripheral drives it.
+  status_pixel_pin: GPIO8
+  status_pixel_strapping_ok: "true"
+
+packages:
+  node: !include packages/node.yaml
+  ota: !include packages/ota.yaml
+  hisense_ac: !include packages/hisense-ac.yaml
+  status_pixel: !include packages/status-pixel.yaml
+
+esp32:
+  board: ${board}
+  framework:
+    type: esp-idf
+
+# A weak 3.3 V supply: see the note at the end of w41h1-esp32c3.yaml.

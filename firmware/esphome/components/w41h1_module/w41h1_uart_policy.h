@@ -1,7 +1,7 @@
 // When to restart the A/C bus serial port on the stock AEH-W41H1 module under LibreTiny.
 //
 // Plain integers only, no Arduino and no ESPHome, so the host tests compile it as it is
-// (firmware/test/test_esphome_uart_policy.cpp). The restart itself is in w41h1_uart.h.
+// (firmware/test/test_esphome_uart_policy.cpp). The restart itself is in w41h1_module.cpp.
 #pragma once
 #include <stdint.h>
 

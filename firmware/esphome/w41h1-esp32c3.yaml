@@ -14,16 +14,29 @@ substitutions:
   tx_pin: "5"
   rx_pin: "6"
   de_pin: "10"
+  # The SuperMini's blue LED: between 3V3 and GPIO8, so it lights when the pin is low.
+  status_led_pin: GPIO8
+  status_led_inverted: "true"
 
 packages:
   node: !include packages/node.yaml
   ota: !include packages/ota.yaml
   hisense_ac: !include packages/hisense-ac.yaml
+  status_led: !include packages/status-led.yaml
 
 esp32:
   board: ${board}
   framework:
     type: esp-idf
+
+# GPIO8 is a strapping pin, which is why the bus pins stay off it. The LED is the one thing it is
+# safe for: the chip reads the pin only at reset, when the firmware is not driving it yet and the
+# LED and its resistor hold it high, which is what the boot ROM needs there to enter download
+# mode. Nothing else may be wired to it. The red LED on some of these boards is on the supply and
+# cannot be switched.
+status_led:
+  pin:
+    ignore_strapping_warning: true
 
 # A SuperMini whose 3.3 V rail dips when Wi-Fi starts at full power resets on the first boot of
 # a new image, and the bootloader rolls the update back. If that is your board and the supply

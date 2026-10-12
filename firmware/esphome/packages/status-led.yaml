@@ -1,0 +1,39 @@
+# Optional status LED: dark while the node is healthy, blinking when something needs attention.
+# No board file gets it unless it includes this package, so a board without a usable LED is
+# unaffected.
+#
+#   off                        Wi-Fi up, Home Assistant connected, the A/C answering
+#   slow blink (1 in 1.5 s)    a warning: no Wi-Fi yet, no Home Assistant connection, or the A/C
+#                              bus link down
+#   fast blink (4 a second)    the setup hotspot is open (setup mode, or the fallback when the
+#                              network is gone), or ESPHome's safe mode
+#
+# The patterns are those of ESPHome's status_led component: slow while any component has its
+# warning flag set, fast while one has its error flag set. The hub sets its warning flag while the
+# bus link is down. Nothing in a healthy node sets the error flag, so the block below uses it for
+# the hotspot, on the Wi-Fi component.
+#
+# Only a LED on a GPIO can be driven. A power LED wired straight to the supply and the LEDs on an
+# RS-485 transceiver board stay as they are.
+#
+# Substitutions the including file must define: status_led_pin.
+# Substitutions it may override: status_led_inverted (true for a LED that lights when the pin is low).
+
+substitutions:
+  status_led_inverted: "false"
+
+status_led:
+  pin:
+    number: ${status_led_pin}
+    inverted: ${status_led_inverted}
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          auto *net = wifi::global_wifi_component;
+          if (net->is_ap_active()) {
+            net->status_set_error(LOG_STR("setup hotspot open"));
+          } else {
+            net->status_clear_error();
+          }

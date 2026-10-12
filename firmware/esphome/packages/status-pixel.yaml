@@ -1,0 +1,79 @@
+# Optional status pixel: one addressable RGB LED (WS2812), dark while the node is healthy and
+# coloured by cause when it is not. For ESP32 boards only (it uses the RMT peripheral). No board
+# file gets it unless it includes this package. A board with a plain LED on a GPIO takes
+# status-led.yaml instead. Never both on one pin.
+#
+#   off      Wi-Fi up and the A/C answering
+#   blue     the setup hotspot is open: setup mode, or the fallback when the network is gone
+#   red      no Wi-Fi for 15 s or more, hotspot not open (yet)
+#   amber    Wi-Fi up, the A/C bus link down for 15 s or more
+#
+# Blue wins over red, red over amber. A missing Home Assistant connection is not shown: the node
+# sits in a bedroom and a restart of Home Assistant should not light it. The 15 s keep the pixel
+# dark through a normal boot. Brightness is fixed and low.
+#
+# A WS2812 is powered all the time and holds whatever it was last sent, and with a floating data
+# line it can latch a random colour at power-up. So the pixel is written to black at boot
+# (restore_mode: ALWAYS_OFF), and stays black from then on unless one of the states above holds.
+#
+# The light is internal: it is not an entity in Home Assistant.
+#
+# Substitutions the including file must define: status_pixel_pin.
+# Substitutions it may override: status_pixel_strapping_ok (true when the pin is a strapping pin
+# and the board file has said why that is safe), status_pixel_order (GRB for a WS2812B).
+# It expects node.yaml and hisense-ac.yaml beside it (wifi_setup_active, ac_bus).
+
+substitutions:
+  status_pixel_strapping_ok: "false"
+  status_pixel_order: GRB
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_pixel
+    internal: true
+    pin:
+      number: ${status_pixel_pin}
+      ignore_strapping_warning: ${status_pixel_strapping_ok}
+    num_leds: 1
+    chipset: WS2812
+    rgb_order: ${status_pixel_order}
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 0s
+    # Linear, so the low brightness below is a real, small duty and not rounded to nothing.
+    gamma_correct: 1.0
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          static uint8_t shown = 0;
+          static uint8_t wifi_down_s = 0;
+          static uint8_t bus_down_s = 0;
+          auto *net = wifi::global_wifi_component;
+          wifi_down_s = net->is_connected() ? 0 : (wifi_down_s < 255 ? wifi_down_s + 1 : 255);
+          bus_down_s = id(ac_bus).link_up() ? 0 : (bus_down_s < 255 ? bus_down_s + 1 : 255);
+          uint8_t want = 0;
+          if (net->is_ap_active() || id(wifi_setup_active)) {
+            want = 1;
+          } else if (wifi_down_s >= 15) {
+            want = 2;
+          } else if (bus_down_s >= 15) {
+            want = 3;
+          }
+          if (want == shown)
+            return;
+          shown = want;
+          if (want == 0) {
+            id(status_pixel).turn_off().perform();
+            return;
+          }
+          auto call = id(status_pixel).turn_on();
+          call.set_brightness(0.08f);
+          if (want == 1) {
+            call.set_rgb(0.0f, 0.0f, 1.0f);
+          } else if (want == 2) {
+            call.set_rgb(1.0f, 0.0f, 0.0f);
+          } else {
+            call.set_rgb(1.0f, 0.5f, 0.0f);
+          }
+          call.perform();
