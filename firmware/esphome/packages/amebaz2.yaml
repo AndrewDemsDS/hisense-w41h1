@@ -14,11 +14,9 @@
 # (components/w41h1_module/): the flash layout and its two checks, the reboot workaround for
 # LibreTiny issue 396, and the serial port recovery for the A/C bus.
 
+# The same source as hisense_ac: the substitution is defined in hisense-ac.yaml.
 external_components:
-  - source:
-      type: local
-      # Relative to the directory of the file given to `esphome`, as in hisense-ac.yaml.
-      path: components
+  - source: ${w41h1_components}
     components: [w41h1_module]
 
 rtl87xx:

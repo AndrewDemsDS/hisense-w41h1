@@ -1,16 +1,29 @@
 #!/usr/bin/env bash
 # Firmware safety gate: when the host tests, the reference driver, dev.py or the ESPHome
-# component's protocol sources are staged, run the host test suite (firmware/test/run_tests.sh),
-# so a codec or scheduler regression cannot be committed.
+# components are staged, run the host test suite (firmware/test/run_tests.sh), so a codec or
+# scheduler regression cannot be committed.
 set -euo pipefail
 REPO="$(git rev-parse --show-toplevel)"
 # The ESPHome component's codec port is covered too: its parity test (layer 1d) is what keeps it
 # equal to the reference driver, and an edit to the component alone must not skip it.
+ran_tests=0
 if git diff --cached --name-only \
-    | grep -qE '^firmware/test/|^firmware/scripts/(dev|amebaz2_image)\.py$|^firmware/esphome/(amebaz2|components)/'; then
+    | grep -qE '^firmware/test/|^firmware/scripts/(dev|amebaz2_image|version-lint)\.py$|^firmware/esphome/components/'; then
   echo "[pre-commit] firmware changed -> firmware/test/run_tests.sh"
   bash "$REPO/firmware/test/run_tests.sh" >/dev/null || {
     echo "[pre-commit] HOST TESTS FAILED (run firmware/test/run_tests.sh). Fix, or bypass with: git commit --no-verify"; exit 1; }
+  ran_tests=1
+fi
+
+# The firmware version, the changelog and the ESPHome pin, when one of the files that hold them
+# is staged. run_tests.sh ends with the same check, so it is skipped when that already ran. The
+# rule that a component or package change needs a changelog entry is per pull request, not per
+# commit, and CI checks it (the `version` job of qa.yaml).
+if [ "$ran_tests" = 0 ] && git diff --cached --name-only \
+    | grep -qE '^firmware/esphome/packages/|^CHANGELOG\.md$|^\.github/workflows/|^firmware/scripts/esphome-upstream-check\.sh$'; then
+  echo "[pre-commit] version, changelog or a pin changed -> firmware/scripts/version-lint.py"
+  python3 "$REPO/firmware/scripts/version-lint.py" || {
+    echo "[pre-commit] VERSION LINT FAILED (see above). Fix, or bypass with: git commit --no-verify"; exit 1; }
 fi
 
 # C/C++ lint on the staged sources (cpp-lint.py owns the scope, so the whole staged list can be
