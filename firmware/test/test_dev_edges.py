@@ -22,7 +22,6 @@ import os
 import pathlib
 import socket
 import stat
-import struct
 import subprocess
 import sys
 import tempfile
@@ -34,6 +33,7 @@ DEV = SCRIPTS / "dev.py"
 sys.path.insert(0, str(SCRIPTS))
 import amebaz2_image as az  # noqa: E402
 import dev  # noqa: E402
+from image_fixtures import fake_image  # noqa: E402
 
 ok = True
 known = 0
@@ -158,18 +158,6 @@ def main(*args, typed=None):
         except SystemExit as e:
             return "exit", e.code
         return "ran", out.getvalue()
-
-
-def fake_image(serial, body=0x400):
-    """Three chained sub-images signed the way the bootloader checks them, plus the byte-sum.
-    The layout (0xE0 manifest, 0x60 headers, 0x20 trailers) is amebaz2_image.py's own."""
-    buf = bytearray(az.HDR0)
-    for i in range(3):
-        hdr = bytearray(az.HDR_LEN)
-        struct.pack_into("<II", hdr, 0, body, az.LINK_END if i == 2 else az.HDR_LEN + body + az.MAC_LEN)
-        buf += hdr + bytes([0x10 + i]) * body + bytes(az.MAC_LEN)
-    signed = az.resign(bytes(buf), serial=serial)
-    return signed + az.bytesum(signed)
 
 
 tmp_holder = tempfile.TemporaryDirectory(prefix="dev-edges-")

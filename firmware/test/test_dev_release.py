@@ -75,20 +75,8 @@ check(dev.backup_file_tag("fe80::1ff:fe23:4567%wlan0") == "fe80-1ff-fe23-4567", 
 import hashlib  # noqa: E402
 import json  # noqa: E402
 import hmac as hmac_mod  # noqa: E402
-import struct  # noqa: E402
 import amebaz2_image as az  # noqa: E402
-
-
-def fake_image(serial, body=0x400):
-    """A three-sub-image payload signed the way the bootloader checks it, plus the byte-sum."""
-    buf = bytearray(az.HDR0)
-    for i in range(3):
-        hdr = bytearray(az.HDR_LEN)
-        last = i == 2
-        struct.pack_into("<II", hdr, 0, body, az.LINK_END if last else az.HDR_LEN + body + az.MAC_LEN)
-        buf += hdr + bytes([0x10 + i]) * body + bytes(az.MAC_LEN)
-    signed = az.resign(bytes(buf), serial=serial)
-    return signed + az.bytesum(signed)
+from image_fixtures import fake_image  # noqa: E402
 
 
 lt = fake_image(1)

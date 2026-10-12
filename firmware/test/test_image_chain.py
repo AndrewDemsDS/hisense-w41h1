@@ -31,6 +31,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "firmware/scripts"))
 
 import amebaz2_image as az  # noqa: E402
+from image_fixtures import signed_payload  # noqa: E402
 
 BUILT = ROOT / "firmware/built-images"
 DUMPS = ROOT / "dumps"
@@ -45,17 +46,6 @@ def check(cond, msg):
     print(("  ok   " if cond else "  FAIL ") + msg)
     if not cond:
         fails.append(msg)
-
-
-def synth_payload(sizes):
-    """Build a payload with len(sizes) chained sub-images, correctly signed."""
-    parts = []
-    for i, size in enumerate(sizes):
-        link = az.LINK_END if i == len(sizes) - 1 else az.HDR_LEN + size + az.MAC_LEN
-        body = bytes((i * 37 + j) & 0xFF for j in range(size))
-        parts.append(size.to_bytes(4, "little") + link.to_bytes(4, "little")
-                     + bytes(az.HDR_LEN - 8) + body + bytes(az.MAC_LEN))
-    return az.resign(bytes(az.HDR0) + b"".join(parts), serial=100)
 
 
 def containers(blob):
@@ -108,7 +98,7 @@ def grade(path, strict):
 
 
 print("== synthetic sub-image chain ==")
-p = synth_payload([0x200, 0x400, 0x100])
+p = signed_payload([0x200, 0x400, 0x100])
 subs = az.sub_images(p)
 check(len(subs) == 3, f"chain walk finds 3 sub-images: {[(hex(h), hex(s), hex(e)) for _, h, s, e in subs]}")
 check(subs[0][2] == 0, "sub0 covers from offset 0 (so it covers the manifest sig + the serial)")

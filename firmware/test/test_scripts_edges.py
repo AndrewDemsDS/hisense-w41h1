@@ -36,6 +36,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "firmware" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import amebaz2_image as az  # noqa: E402
+from image_fixtures import chain, step  # noqa: E402
 
 ok = True
 known = 0
@@ -128,21 +129,6 @@ def new_repo(path):
 
 # ================================================================================================
 print("== amebaz2_image.py: malformed, truncated and oversized images ==")
-
-
-def chain(*subs, tail=b""):
-    """An UNSIGNED payload from (size, link) pairs: the 0xE0 manifest, then per sub-image a 0x60
-    header (size and link in its first 8 bytes), `size` body bytes and a 0x20 trailer."""
-    out = bytearray(az.HDR0)
-    for size, link in subs:
-        hdr = bytearray(az.HDR_LEN)
-        struct.pack_into("<II", hdr, 0, size, link)
-        out += hdr + bytes(size) + bytes(az.MAC_LEN)
-    return bytes(out) + tail
-
-
-def step(size):
-    return az.HDR_LEN + size + az.MAC_LEN        # the link value that reaches the next header
 
 
 END = az.LINK_END
