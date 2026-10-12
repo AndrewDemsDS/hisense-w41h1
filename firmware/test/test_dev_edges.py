@@ -306,15 +306,25 @@ calls.clear()
 with patched(dev, run=record_run, input=lambda q: "ERASE"), environ(ESPHOME=str(venv / "esphome")):
     with quiet():
         dev.erase(dev.Ctx("c3", "/dev/ttyFAKE", None))
-check(calls and calls[-1]["args"] == [str(venv / "python"), "-m", "esptool", "--port", "/dev/ttyFAKE", "erase_flash"],
-      "erase confirmed: esptool erase_flash on the port given, with the python beside esphome")
+check(calls and calls[-1]["args"] == [str(venv / "python"), "-m", "esptool", "--chip", "esp32c3", "--port", "/dev/ttyFAKE", "erase_flash"],
+      "erase confirmed: esptool erase_flash on the port given, for the board's chip, with the python beside esphome")
 calls.clear()
 with patched(dev, run=record_run, input=lambda q: " ERASE "), environ(ESPHOME="/nonexistent/esphome"):
     with quiet():
         dev.erase(dev.Ctx("c3", "/dev/ttyFAKE", None))
 check(calls and calls[-1]["args"][0] == "python3", "erase: no python beside esphome falls back to python3 on PATH")
-check(calls and "--chip" not in calls[-1]["args"],
-      "erase: no --chip is passed, so esptool erases whichever ESP chip answers on that port")
+for board, chip in (("c3", "esp32c3"), ("c3-plus", "esp32c3"), ("classic", "esp32")):
+    calls.clear()
+    prompts = []
+    with patched(dev, run=record_run, input=lambda q: prompts.append(q) or "ERASE"), environ(ESPHOME="/nonexistent/esphome"), quiet():
+        dev.erase(dev.Ctx(board, "/dev/ttyFAKE"))
+    check(calls[-1]["args"][3:5] == ["--chip", chip] and f"the {chip} on /dev/ttyFAKE" in prompts[0],
+          f"erase --board {board}: esptool is told to expect an {chip}, and the prompt names the chip and the port")
+for board in dev.ESPHOME_AMEBAZ2_BOARDS:
+    calls.clear()
+    with patched(dev, run=record_run, input=lambda q: "ERASE"), quiet():
+        msg = died(dev.erase, dev.Ctx(board, "/dev/ttyFAKE"))
+    check(msg and "has test and build" in msg and not calls, f"erase called for {board} runs nothing, whatever is typed")
 calls.clear()
 with patched(dev, run=record_run, input=lambda q: "erase"), quiet():
     msg = died(dev.erase, dev.Ctx("c3", "/dev/ttyFAKE", None))

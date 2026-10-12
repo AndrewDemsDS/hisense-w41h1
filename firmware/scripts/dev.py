@@ -58,6 +58,8 @@ BOARDS = {
     "amebaz2-sdk": "w41h1-amebaz2-sdk.yaml",
     "amebaz2-native": "w41h1-amebaz2-native.yaml",
 }
+# The chip `erase` tells esptool to expect, so a port that leads to another kind of ESP is not erased.
+ESP_CHIP = {"c3": "esp32c3", "c3-plus": "esp32c3", "classic": "esp32"}
 ESPHOME_AMEBAZ2_BOARDS = ("amebaz2-factory", "amebaz2-sdk", "amebaz2-native")
 ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2-* has test and build. A first flash is matter-convert.py (over the "
                         "air from the retired Matter firmware), the clip or UART download mode, and later updates are "
@@ -305,10 +307,13 @@ def build(ctx):
 
 def erase(ctx):
     ctx.need_port("erase")
+    if ctx.board not in ESP_CHIP:
+        die(ESPHOME_AMEBAZ2_ONLY)
+    chip = ESP_CHIP[ctx.board]
     warn("erase-flash is for a BRAND-NEW board only: it wipes NVS, which on a working node holds the")
     warn("Wi-Fi config. A factory board needs it (the vendor's test firmware leaves a stale one behind).")
     try:
-        confirm = input(f"type ERASE to erase {ctx.port}: ").strip()
+        confirm = input(f"type ERASE to erase the whole flash of the {chip} on {ctx.port}: ").strip()
     except EOFError:
         confirm = ""
     if confirm != "ERASE":
@@ -317,7 +322,8 @@ def erase(ctx):
     cmd = esphome_argv()[0]
     py = Path(os.path.realpath(shutil.which(cmd) or cmd)).parent / "python"
     py = str(py) if py.is_file() and os.access(py, os.X_OK) else "python3"
-    run([py, "-m", "esptool", "--port", ctx.port, "erase_flash"])
+    # --chip: esptool stops when the chip that answers is another one (auto-detect erases whatever is there).
+    run([py, "-m", "esptool", "--chip", chip, "--port", ctx.port, "erase_flash"])
 
 
 def flash(ctx):
