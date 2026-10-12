@@ -7,12 +7,22 @@
 # not run on hardware. Read firmware/docs/15-esphome-path.md ("The stock module through
 # LibreTiny") before flashing a module.
 #
-# Substitutions the including file must define: layout (factory, sdk or native), plus the pins.
-# There is no default layout on purpose: the wrong one bricks the unit at its first update.
+# Substitutions the including file must define: layout (factory, sdk or native). There is no
+# default layout on purpose: the wrong one bricks the unit at its first update.
+# Substitutions it may override: tx_pin, rx_pin, de_pin (below), which no stock module needs to.
 #
 # This file is configuration only. What the module needs in code is the w41h1_module component
 # (components/w41h1_module/): the flash layout and its two checks, the reboot workaround for
 # LibreTiny issue 396, and the serial port recovery for the A/C bus.
+
+substitutions:
+  # The module's own wiring (reverse-engineering/docs/01-hardware.md): UART0 to the RS-485
+  # transceiver, DE on PA17. These are not a choice. ESPHome's LibreTiny UART only takes a port's
+  # fixed hardware pins, and PA14 / PA13 are UART0 on the board definition below.
+  # packages/hisense-ac.yaml reads them.
+  tx_pin: PA14
+  rx_pin: PA13
+  de_pin: PA17
 
 # The same source as hisense_ac: the substitution is defined in hisense-ac.yaml.
 external_components:

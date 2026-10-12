@@ -108,9 +108,9 @@ firmware/scripts/cpp-lint.sh fix   [PATH...]   # applies the fixable part, then 
   component and its tests into a checkout of `esphome/esphome` and runs the scripts their CI runs:
   `ci-custom.py`, `build_codeowners.py`, ruff, pylint and `test_build_components.py`. By default
   it checks against the ESPHome release this repo builds with, and CI requires that run to pass.
-  `ESPHOME_UPSTREAM_REF=dev` checks against their development branch instead. CI runs that too
-  but does not block on it, because their rules can ask for things the pinned release does not
-  have yet.
+  `ESPHOME_UPSTREAM_REF=dev` checks against their development branch instead. The nightly
+  workflow runs that and does not block on it, because their rules can ask for things the pinned
+  release does not have yet.
 - **`fix`** applies the whitespace rules, the clang-tidy fixes that cannot change behaviour
   (braces, `override`, redundant control flow and the like, only where the file's own
   `.clang-tidy` enables them), then clang-format.
@@ -124,7 +124,11 @@ clang-tidy) and only warns if the pinned tools are not installed yet.
   component tests, a real compile of all three stock-module layouts, which also fails when
   the image's slot addresses are not those of the layout the file names, and a real compile of
   the three ESP32 board files and of the hub with no entity platform. Both compile jobs fail on
-  a compiler warning from the components.
+  a compiler warning from the components, and both are skipped when a change touches nothing they
+  build from. The ESP8266 and RP2040 example files are compiled every night.
+- **Fuzzing in CI**: pull requests replay the corpus (`fuzz/run.sh --smoke`, inside
+  `run_tests.sh`). The nightly workflow fuzzes each harness for ten minutes, keeps what it finds
+  for the next night, and uploads the reproducer when a harness stops on a crash.
 - **Version and changelog**: `run_tests.sh` ends with `firmware/scripts/version-lint.py` and its
   own test (`test_version_lint.py`), which feeds the lint trees that have to fail. CI runs the
   same lint with the history, for the rule that a component or package change comes with a

@@ -1191,7 +1191,7 @@ static void test_telemetry() {
 static void test_uart_policy() {
   printf("-- serial port restart: a link lost inside the first retry period\n");
   CHECK(W41H1_UART_RETRY_MS == 15000, "retry every 15 s");
-  W41h1UartWatch w;
+  W41H1UartWatch w;
   CHECK(!w.started && !w.was_up && w.last_ms == 0 && w.restarts == 0, "a new watch is idle");
   CHECK(!w41h1_uart_restart_due(&w, true, false, 1000), "link up at 1 s: nothing");
   CHECK(w.started && w.was_up && w.restarts == 0, "the watch has seen the link");
@@ -1203,7 +1203,7 @@ static void test_uart_policy() {
   CHECK(w.restarts == 2 && w.last_ms == 17000, "counted, and the period restarts");
 
   // Never up: the first look only starts the clock, and does not count as a restart.
-  W41h1UartWatch n;
+  W41H1UartWatch n;
   CHECK(!w41h1_uart_restart_due(&n, false, false, 500), "first look, link down: nothing");
   CHECK(n.started && n.last_ms == 500 && n.restarts == 0 && !n.was_up, "the clock runs from the first look");
   CHECK(!w41h1_uart_restart_due(&n, false, false, 15499), "one millisecond short of a period: nothing");
@@ -1212,14 +1212,14 @@ static void test_uart_policy() {
 
   // Transmitting at the look that finds the loss: the watch stays "up", so the restart is still
   // the immediate kind at the next look, however soon.
-  W41h1UartWatch t;
+  W41H1UartWatch t;
   w41h1_uart_restart_due(&t, true, false, 1000);
   CHECK(!w41h1_uart_restart_due(&t, false, true, 2000) && t.was_up && t.restarts == 0 && t.last_ms == 0,
         "DE high: nothing changes in the watch");
   CHECK(w41h1_uart_restart_due(&t, false, false, 2001), "DE low a millisecond later: the restart that was due");
   CHECK(t.restarts == 1 && t.last_ms == 2001, "counted then");
   // A first look while transmitting does not start the clock either.
-  W41h1UartWatch u;
+  W41H1UartWatch u;
   CHECK(!w41h1_uart_restart_due(&u, false, true, 100) && !u.started && u.last_ms == 0,
         "boot, DE high: clock not started");
 }

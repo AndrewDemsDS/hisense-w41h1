@@ -11,10 +11,18 @@ name: ESPHome release
 #
 # The old `amebaz2-v*` and `esp32-v*` tags belong to the retired Matter firmwares and do not
 # start this workflow.
+#
+# Started by hand (workflow_dispatch, from any branch) it is a DRY RUN: every gate and every
+# compile runs, and the last job prints the release it would have made in place of making it.
+# Nothing is tagged and nothing is published. In a dry run the tag is taken to be `v<version>`,
+# and the two gates that depend on the release commit (the changelog has the version's own
+# section, the commit is on main) are reported and do not stop the compiles, so one run shows
+# everything a real tag would trip over. The run still ends red when one of them failed.
 on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
 
 # Nothing is granted here. Each job states what it needs, and only `release` may write.
 permissions: {}
@@ -38,27 +46,45 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
       notes: ${{ steps.notes.outputs.notes }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      tag-gate: ${{ steps.tag.outcome }}
+      main-gate: ${{ steps.main.outcome }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # main, to check the tag is on it, and the older tags
+          persist-credentials: false
 
-      - name: Tag, version and changelog agree
+      - name: The version and its tag
         id: version
         env:
-          TAG: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          python3 firmware/scripts/version-lint.py --tag "$TAG"
-          # The release text is this section. Cut it now, so an empty one fails here.
-          python3 firmware/scripts/version-lint.py --notes > /dev/null
-          echo "version=$(python3 firmware/scripts/version-lint.py --print)" >> "$GITHUB_OUTPUT"
+          version="$(python3 firmware/scripts/version-lint.py --print)"
+          # A dry run has no tag: it checks the one this tree would be released under.
+          if [ "$EVENT" = push ]; then tag="$REF_NAME"; else tag="v$version"; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version $version, tag $tag ($EVENT)"
+
+      # In a dry run these two gates report and the run goes on (see the top of this file).
+      - name: Tag, version and changelog agree
+        id: tag
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: python3 firmware/scripts/version-lint.py --tag "$TAG"
 
       - name: The tagged commit is on main
+        id: main
+        continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           git fetch --no-tags origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::the tagged commit is not on main: a release is cut from main"
+            echo "::error::the commit is not on main: a release is cut from main"
             exit 1
           fi
 
@@ -72,29 +98,31 @@ jobs:
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
           for b in w41h1*.yaml tests/build*.yaml; do esphome config "$b" > /dev/null; done
 
-      # Every board file has to be in the compile matrix below, which names them one by one.
-      - name: Every board file is compiled below
+      # The compile matrix, from the board files: every w41h1*.yaml is in exactly one group
+      # (.github/scripts/board-groups.sh), so no list of them is written here.
+      - name: Board files to compile
+        id: matrix
         run: |
-          cd firmware/esphome
-          all="w41h1.yaml w41h1-esp32c3.yaml w41h1-esp32c3-plus.yaml w41h1-amebaz2-factory.yaml"
-          all="$all w41h1-amebaz2-sdk.yaml w41h1-amebaz2-native.yaml w41h1-esp8266.yaml w41h1-rp2040.yaml"
-          for b in w41h1*.yaml; do
-            case " $all " in
-              *" $b "*) ;;
-              *) echo "::error::$b is not compiled by esphome-release.yaml: add it to the matrix"; exit 1 ;;
-            esac
-          done
+          matrix="$(bash .github/scripts/board-groups.sh matrix)"
+          echo "$matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
-      # The changelog section plus how to use the release. It is handed to the release job as an
+      # The changelog section plus how to use the release. It is handed to the last job as an
       # output, so the one job that can write runs nothing from the tree.
       - name: Release text
         id: notes
         env:
+          EVENT: ${{ github.event_name }}
           VERSION: ${{ steps.version.outputs.version }}
           REPO: ${{ github.repository }}
         run: |
+          section="$VERSION"
+          # A dry run before the changelog is dated shows what is under Unreleased.
+          if [ "$EVENT" != push ] && ! python3 firmware/scripts/version-lint.py --notes "$VERSION" > /dev/null 2>&1; then
+            section=Unreleased
+          fi
           {
-            python3 firmware/scripts/version-lint.py --notes "$VERSION"
+            python3 firmware/scripts/version-lint.py --notes "$section"
             echo
             echo "## Using this release"
             echo
@@ -116,11 +144,12 @@ jobs:
           delimiter="notes-$(openssl rand -hex 16)"
           { echo "notes<<$delimiter"; cat release-notes.md; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
 
-
   # Every board file compiles from the tagged tree, the components without a warning of their
   # own, and each image carries the version. One job per toolchain, so they run side by side.
-  # The trees the QA workflow saved from main are restored and nothing is saved here. The images
-  # are thrown away (see the top of this file).
+  # The trees the QA workflow saved from main are restored and nothing is saved here. The stock
+  # module's build cache is not restored: an object taken from it prints no compiler output, and
+  # a release has to see every warning. ccache replays the output, so the ESP32 group takes
+  # its cache. The images are thrown away (see the top of this file).
   compile:
     needs: verify
     runs-on: ubuntu-latest
@@ -129,53 +158,58 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - toolchain: esp32
-            cache-path: ~/.cache/esphome/idf
-            cache-key: idf-esphome-esp32-
-            configs: w41h1.yaml w41h1-esp32c3.yaml w41h1-esp32c3-plus.yaml
-          - toolchain: amebaz2
-            cache-path: ~/.platformio
-            cache-key: pio-esphome-amebaz2-
-            configs: w41h1-amebaz2-factory.yaml w41h1-amebaz2-sdk.yaml w41h1-amebaz2-native.yaml
-          - toolchain: examples
-            cache-path: ""
-            cache-key: ""
-            configs: w41h1-esp8266.yaml w41h1-rp2040.yaml
+      matrix: ${{ fromJSON(needs.verify.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Restore the toolchain
-        if: ${{ matrix.cache-path != '' }}
+      # The keys are the ones qa.yaml saves under.
+      - name: Restore the ESP-IDF tree
+        if: ${{ matrix.toolchain == 'esp32' }}
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          path: ${{ matrix.cache-path }}
-          # Never an exact hit: the newest entry with this prefix is the one wanted.
-          key: ${{ matrix.cache-key }}release-${{ github.run_id }}
-          restore-keys: |
-            ${{ matrix.cache-key }}
+          path: ~/.cache/esphome/idf
+          key: idf-esp32-tree-${{ env.ESPHOME_VERSION }}
 
-      # ESPHome uses ccache for ESP-IDF builds when the binary is there, and the restored tree
-      # holds the cache the QA workflow filled.
+      - name: Restore the ccache
+        if: ${{ matrix.toolchain == 'esp32' }}
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/w41h1/ccache
+          # Never an exact hit: the newest entry for this ESPHome release is the one wanted.
+          key: idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-release-${{ github.run_id }}
+          restore-keys: |
+            idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-
+
+      - name: Restore the PlatformIO tree
+        if: ${{ matrix.toolchain == 'amebaz2' }}
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.platformio
+          key: pio-amebaz2-tree-${{ env.ESPHOME_VERSION }}
+
+      # ESPHome uses ccache for ESP-IDF builds when the binary is there.
       - name: ccache for the ESP-IDF build
         if: ${{ matrix.toolchain == 'esp32' }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ccache
+          echo "CCACHE_DIR=$HOME/.cache/w41h1/ccache" >> "$GITHUB_ENV"
 
       - name: Compile
         env:
           CONFIGS: ${{ matrix.configs }}
         run: |
           pipx install "esphome==$ESPHOME_VERSION"
-          # Word splitting is wanted: CONFIGS is a list of file names from this file.
+          # Word splitting is wanted: CONFIGS is a list of file names from board-groups.sh.
           # shellcheck disable=SC2086
           bash firmware/scripts/esphome-compile-check.sh $CONFIGS
 
   # The only job that can write. It checks nothing out: it creates the GitHub release for the
-  # tag from the text the verify job made, with no files attached.
+  # tag from the text the verify job made, with no files attached. A dry run never gets here.
   release:
+    if: ${{ github.event_name == 'push' }}
     needs: [verify, compile]
     runs-on: ubuntu-latest
     permissions:
@@ -192,3 +226,46 @@ jobs:
           printf '%s\n' "$NOTES" > release-notes.md
           gh release create "$TAG" --verify-tag --title "ESPHome firmware $VERSION" \
             --notes-file release-notes.md
+
+  # The dry run's last job, in place of `release`: what would have been published, and whether a
+  # real tag would have got this far. It has no permission at all and checks nothing out.
+  dry-run:
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.server_url == 'https://github.com' }}
+    needs: [verify, compile]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: What a release from this commit would be
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          NOTES: ${{ needs.verify.outputs.notes }}
+          VERIFY: ${{ needs.verify.result }}
+          COMPILE: ${{ needs.compile.result }}
+          TAG_GATE: ${{ needs.verify.outputs.tag-gate }}
+          MAIN_GATE: ${{ needs.verify.outputs.main-gate }}
+          REF: ${{ github.ref }}
+        run: |
+          {
+            echo "## Release dry run: nothing was tagged or published"
+            echo
+            echo "From \`$REF\` at \`$GITHUB_SHA\`. A real run starts with \`git push origin $TAG\`."
+            echo
+            echo "| Gate | Result |"
+            echo "|---|---|"
+            echo "| tag \`$TAG\`, the version and the changelog agree | $TAG_GATE |"
+            echo "| the commit is on main | $MAIN_GATE |"
+            echo "| host tests, config validation, release text (job verify) | $VERIFY |"
+            echo "| every board file compiles (job compile) | $COMPILE |"
+            echo
+            echo "### The release text: \"ESPHome firmware $VERSION\""
+            echo
+            printf '%s\n' "$NOTES"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for gate in "$TAG_GATE" "$MAIN_GATE" "$VERIFY" "$COMPILE"; do
+            if [ "$gate" != success ]; then
+              echo "::error::a real release from this commit would stop at a gate (tag $TAG_GATE, on main $MAIN_GATE, verify $VERIFY, compile $COMPILE)"
+              exit 1
+            fi
+          done
+          echo "every gate passed: pushing the tag $TAG on this commit would publish the release"

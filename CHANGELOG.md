@@ -14,6 +14,27 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 This becomes 2.0.0, the first release of the ESPHome firmware under a version number of its own.
 The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 
+### Board files, the stock-module component and CI (2026-10-12)
+- **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air
+  Conditioner`), and the board files no longer repeat the two lines. A file that sets them keeps
+  its names. A file that includes the package and sets no `name` now builds as `hisense-ac` where
+  it was refused before.
+- **Board files hold the chip, the pins and the extras, nothing else.** The stock module's fixed
+  pins (PA14 / PA13 / PA17) are defaults in `packages/amebaz2.yaml`, and the `esp32:` block of the
+  three ESP32 files is `packages/esp32.yaml`. No entity, id or generated line of code changes.
+- **`w41h1_module` listed twice** is refused with a message that says so, where ESPHome's own
+  said "expected a dictionary".
+- **`w41h1_module` tidied, same behaviour:** the port is looked at from `loop()` once a second
+  where a scheduler lambda did it, the hub is the component's parent (`Parented`), a missing
+  update server is logged and no longer dereferenced, and `W41h1UartWatch` is `W41H1UartWatch`.
+- **CI:** a newer push cancels the run before it, a change that touches no firmware skips the
+  three compile jobs, and the caches are saved when their inputs change and not on every push.
+  New `lint-extra` job (actionlint, zizmor, the guide linter, cppcheck) and a coverage table on
+  `main`. A nightly workflow fuzzes each harness for ten minutes, compiles the ESP8266 and RP2040
+  files, builds `esp32-recon` and runs ESPHome's dev-branch gates, which left the pull requests.
+- **The release workflow has a dry run** (`gh workflow run esphome-release.yaml`): every gate and
+  compile, no tag and no release. Its board matrix comes from the board files.
+
 ### The firmware has a version, releases are tags, and CI compiles the ESP32 boards (2026-10-12)
 - **The version is written once**, in `firmware/esphome/packages/version.yaml`: semver, starting
   at 2.0.0. `packages/node.yaml` includes that file, so every node built from the packages

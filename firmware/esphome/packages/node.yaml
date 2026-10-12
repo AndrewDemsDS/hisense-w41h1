@@ -3,12 +3,17 @@
 # includes it as is. A board file adds its platform block and whatever that platform needs on top
 # (see w41h1-amebaz2-factory.yaml for an example).
 #
-# Substitutions the including file must define: name, friendly_name.
-# Substitutions it may override: wifi_power_save, wifi_setup_timeout (below).
+# Substitutions the including file may override: name, friendly_name, wifi_power_save,
+# wifi_setup_timeout (all below).
 # Secrets it reads: wifi_ssid, wifi_password, wifi_ap_password, hisense_ac__encryption_key.
 # It expects the hub from hisense-ac.yaml beside it: setup mode switches the panel's "77" through it.
 
 substitutions:
+  # The node's name on the network (and the prefix of its setup hotspot) and the device name Home
+  # Assistant shows. Two nodes on one network need two names: set both in the board file, or with
+  # `-s name bedroom-ac -s friendly_name "Bedroom A/C"` on the command line.
+  name: hisense-ac
+  friendly_name: Air Conditioner
   # Wi-Fi power saving. These nodes run from the mains and are spoken to at any moment, so the
   # radio stays on: `none`. ESPHome's own default is `light` on ESP32 and RP2040, where the radio
   # sleeps between beacons. On an ESP32-C3 with a weak signal (about -77 dBm) that default gave

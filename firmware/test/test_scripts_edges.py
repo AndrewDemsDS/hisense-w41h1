@@ -16,9 +16,11 @@ times.
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import stat
 import struct
@@ -666,9 +668,7 @@ check(r.returncode == 1 and "FAIL: 2 error(s)" in r.stdout, "and exits 1 when it
 workflows = "".join(p.read_text() for p in (ROOT / ".github/workflows").glob("*.yaml"))
 hooks = "".join(p.read_text() for p in (ROOT / "firmware/.githooks").iterdir())
 check("docs/guide/lint.py" in hooks, "the commit hook runs docs/guide/lint.py when a guide page is staged")
-known_failure("guide/lint.py" in workflows + run_tests, "docs/guide/lint.py is run by a workflow or run_tests.sh",
-              "no workflow calls docs/guide/lint.py: a pull request from a clone without the hook is not checked. "
-              "The step for qa.yaml's host-qa job is `python3 docs/guide/lint.py`")
+check("guide/lint.py" in workflows, "and a workflow runs it, for a pull request from a clone without the hook")
 
 # ================================================================================================
 print("== stop-slop.sh and the pre-commit hook ==")
@@ -909,16 +909,26 @@ print("== how the lists agree: workflows, run_tests.sh, the lint scope, .gitigno
 release = (ROOT / ".github/workflows/esphome-release.yaml").read_text()
 qa = (ROOT / ".github/workflows/qa.yaml").read_text()
 boards = sorted(p.name for p in (ROOT / "firmware/esphome").glob("w41h1*.yaml"))
-listed = sorted(set(re.findall(r"w41h1[\w-]*\.yaml", "".join(re.findall(r'^\s*all="(.*)"$', release, re.M)))))
-matrix = sorted(set(re.findall(r"w41h1[\w-]*\.yaml", "".join(re.findall(r"^\s*configs: (.*)$", release, re.M)))))
-check(listed == boards, "esphome-release.yaml: the hand-written list of board files is the set of board files")
-check(matrix == boards, "esphome-release.yaml: the compile matrix names every board file (three copies of one list)")
-qa_compiled = {b for b in boards if b in qa or (b.startswith("w41h1-amebaz2-") and f"{b[14:-5]}:0x" in qa)}
-not_in_qa = sorted(set(boards) - qa_compiled)
-known_failure(not not_in_qa, "every board file is compiled by qa.yaml",
-              f"qa.yaml compiles the ESP32 and stock-module files only: {', '.join(not_in_qa)} get `esphome config` "
-              "on a pull request and their first compile when a release tag is pushed, which is the worst moment "
-              "to find out they do not build")
+# No workflow holds a list of board files: .github/scripts/board-groups.sh puts each one in a group
+# by the package it includes, and the workflows ask it.
+nightly = (ROOT / ".github/workflows/nightly.yaml").read_text()
+GROUPS = ROOT / ".github/scripts/board-groups.sh"
+groups = {g: subprocess.run(["bash", str(GROUPS), g], capture_output=True, text=True, env=GIT_ENV).stdout.split()
+          for g in ("esp32", "amebaz2", "other")}
+grouped = sorted(b for files in groups.values() for b in files)
+check(grouped == boards, "board-groups.sh puts every board file in exactly one group")
+matrix = json.loads(subprocess.run(["bash", str(GROUPS), "matrix"], capture_output=True, text=True, env=GIT_ENV).stdout)
+check(sorted(b for entry in matrix["include"] for b in entry["configs"].split()) == boards,
+      "board-groups.sh matrix, which esphome-release.yaml compiles, names every board file")
+check("board-groups.sh matrix" in release and "fromJSON(needs.verify.outputs.matrix)" in release
+      and not re.findall(r"w41h1-[\w-]+\.yaml", re.sub(r"(?m)^\s*(#|echo ).*$", "", release)),
+      "esphome-release.yaml takes its compile matrix from board-groups.sh and lists no board file itself")
+check("board-groups.sh esp32" in qa, "qa.yaml compiles the esp32 group")
+check(all(f"{b[14:-5]}:0x" in qa for b in groups["amebaz2"]) and "board-groups.sh amebaz2" in qa,
+      "qa.yaml compiles every stock-module layout and refuses one it has no slot address for")
+check("board-groups.sh other" in nightly, "nightly.yaml compiles the board files qa.yaml does not")
+r = subprocess.run(["bash", str(GROUPS)], capture_output=True, text=True, env=GIT_ENV)
+check(r.returncode == 2 and "usage:" in r.stderr, "board-groups.sh with no group prints its usage and exits 2")
 
 pin_sh = (SCRIPTS / "cpp-lint.sh").read_text()
 fmt_pin = re.search(r"^CLANG_FORMAT_VERSION=(\S+)$", pin_sh, re.M).group(1)
@@ -929,10 +939,11 @@ for path in (".github/workflows/qa.yaml", "CONTRIBUTING.md"):
 
 tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, text=True, env=GIT_ENV).stdout.split("\0")
 shell = sorted(f for f in tracked if f.endswith(".sh") or f.startswith("firmware/.githooks/"))
-linted = [f for f in shell if re.match(r"firmware/(scripts|test)/[^/]+\.sh$", f) or f.startswith("firmware/.githooks/")]
-known_failure(linted == shell, "CI's shellcheck step covers every tracked shell script",
-              f"qa.yaml:40 names firmware/scripts/*.sh, firmware/test/*.sh and the hooks: "
-              f"{', '.join(sorted(set(shell) - set(linted)))} is never linted")
+listing = re.search(r"git ls-files -z (.*) \| xargs -0 shellcheck", qa)
+linted = [] if listing is None else sorted(
+    subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z", *shlex.split(listing.group(1))],
+                   capture_output=True, text=True, env=GIT_ENV).stdout.rstrip("\0").split("\0"))
+check(linted == shell, "CI's shellcheck step covers every tracked shell script")
 
 outputs = sorted(set(re.findall(r"-o\s+([\w.]+)", run_tests)))
 ignored = {o: subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q", f"firmware/test/{o}"], env=GIT_ENV).returncode == 0

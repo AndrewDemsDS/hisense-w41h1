@@ -104,38 +104,61 @@ staged, `version-lint.py` when a package, the changelog or a workflow is staged,
 
 `.github/workflows/` mirrors the local gate:
 
-- **`qa.yaml`** runs on every push and pull request, on GitHub-hosted runners:
-  - `host-qa`: shellcheck, ruff, `cpp-lint.sh check` (clang-format, custom rules and clang-tidy on
-    the C/C++ we own), `firmware/test/run_tests.sh`, and `esphome config` on every board file and
-    on the upstream-shaped component tests.
+- **`qa.yaml`** runs on every push and pull request, on GitHub-hosted runners. A newer push to
+  the same branch or pull request cancels the run in progress.
+  - `host-qa`, the one required check: shellcheck on every tracked shell script, ruff,
+    `cpp-lint.sh check` (clang-format, custom rules and clang-tidy on the C/C++ we own),
+    `firmware/test/run_tests.sh`, the sanitizer build of the host tests, and `esphome config` on
+    every board file and on the upstream-shaped component tests.
+  - `lint-extra`: actionlint and zizmor on the workflows, `docs/guide/lint.py` on the guide,
+    and cppcheck on the pure sources of the components. Its tools are pinned in
+    `.github/ci/lint/requirements.txt`.
+  - `changes` decides whether the three jobs below run: they are skipped when the push or pull
+    request touches nothing under `firmware/esphome/` (markdown aside) and none of the scripts
+    they call. A docs-only change is then done when `host-qa` is.
   - `version`: `version-lint.py` with the full history. The version is `MAJOR.MINOR.PATCH` and
     not below the newest release tag, `CHANGELOG.md` has a section for it or an Unreleased one,
     and every pin of the ESPHome release names the same one. In a pull request it also fails
     when a file under `firmware/esphome/components/` or `firmware/esphome/packages/` changed and
     `CHANGELOG.md` did not.
   - `esphome-amebaz2`: a real compile of all three stock-module layouts.
-  - `esphome-esp32`: a real compile of `w41h1.yaml`, `w41h1-esp32c3.yaml`,
-    `w41h1-esp32c3-plus.yaml` and the hub with no entity platform. It fails on a compiler warning
-    from the components and when a board image does not carry the version.
-  - `esphome-upstream`: ESPHome's own CI gates against the component, on the pinned release
-    (required) and on their development branch (informational).
+  - `esphome-esp32`: a real compile of every board file that includes `packages/esp32.yaml`
+    (`w41h1.yaml`, `w41h1-esp32c3.yaml`, `w41h1-esp32c3-plus.yaml`) and of the hub with no entity
+    platform. It fails on a compiler warning from the components and when a board image does not
+    carry the version.
+  - `esphome-upstream`: ESPHome's own CI gates against the component, on the pinned release.
+  - `coverage`, on pushes to `main` only and never blocking: line and branch coverage of the
+    pure code under the host tests, as a table in the run's summary.
+- **`nightly.yaml`** runs every night, and on a pull request that changes it or what it builds:
+  every fuzz harness for ten minutes with the corpus kept between nights (a crash uploads its
+  reproducer), a compile of the board files `qa.yaml` does not compile (`w41h1-esp8266.yaml`,
+  `w41h1-rp2040.yaml`), ESPHome's gates against their development branch (informational), and
+  the `firmware/esp32-recon/` build with ESP-IDF.
 - **`esphome-release.yaml`** runs when a tag `vX.Y.Z` is pushed. The tag has to equal the version
   and sit on `main`. It runs the host tests, validates and compiles every board file, and creates
   the GitHub release with that version's `CHANGELOG.md` section as its text. It attaches no
-  firmware image: one built in CI holds the placeholder secrets, which are public.
+  firmware image: one built in CI holds the placeholder secrets, which are public. Started by
+  hand (`gh workflow run esphome-release.yaml`) it is a dry run: every gate and compile runs and
+  the summary shows the release it would have made, and nothing is tagged or published.
 - **`pages.yaml`** builds and publishes the docs site when a doc changes.
+
+No workflow lists the board files. `.github/scripts/board-groups.sh` sorts them by the package
+they include (`esp32.yaml`, `amebaz2.yaml`, neither), and the workflows ask it, so a new board
+file is compiled without a workflow change.
 
 Every job runs on a GitHub-hosted runner and states its own permissions. Only the job that
 creates the release can write to the repository. Dependabot proposes updates for the GitHub
-Actions and the pinned Python requirements. The ESPHome release is pinned by hand, in four
-places that `version-lint.py` holds equal.
+Actions, the pinned Python requirements, the lint tools and the ESPHome release. The ESPHome
+release is written in four more places that `version-lint.py` holds equal, so its Dependabot pull
+request fails `lint-extra` until those are bumped in it. The clang-format and clang-tidy pins in
+`cpp-lint.sh` are ESPHome's own and move with the ESPHome release, by hand.
 
 ## Docs site
 
 `python3 .github/scripts/assemble_docs_site.py` assembles `_site_src` from `docs/guide/`,
 `firmware/docs/` and `reverse-engineering/docs/` at build time. Nothing is duplicated in git: edit
 the source docs, never a copy under `_site_src`. `python3 docs/guide/lint.py` checks the guide's
-links, headings, sidebar and a leak denylist.
+links, headings, sidebar and a leak denylist, and the `lint-extra` job runs it.
 
 ## The retired Matter builds
 
