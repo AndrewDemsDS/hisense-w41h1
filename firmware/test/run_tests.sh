@@ -48,7 +48,7 @@ g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_confirm.cpp
 ./test_esphome_confirm
 echo
 echo "== Layer 1h: stock module under ESPHome, when the A/C bus serial port is restarted =="
-g++ -std=c++17 -Wall -I../esphome/amebaz2 test_esphome_uart_policy.cpp -o test_esphome_uart_policy
+g++ -std=c++17 -Wall -I../esphome/components/w41h1_module test_esphome_uart_policy.cpp -o test_esphome_uart_policy
 ./test_esphome_uart_policy
 
 echo

@@ -1,0 +1,13 @@
+# Every option of w41h1_module. The hub, the uart bus and the update server it points at come
+# from the per-target test.*.yaml.
+w41h1_module:
+  id: stock_module
+  layout: ${layout}
+  hisense_ac_id: ac_bus
+  uart_id: uart_bus
+  ota_id: ota_server
+  update_interval: 60s
+  serial_port_restarts:
+    name: Serial port restarts
+  flash_layout:
+    name: Flash layout

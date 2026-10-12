@@ -1,6 +1,6 @@
 // When the stock module's ESPHome build restarts the A/C bus serial port
-// (firmware/esphome/amebaz2/w41h1_uart_policy.h). The restart is a fallback for a receiver that
-// stops while transmit keeps working. The one cause found for that (a lost count in LibreTiny's
+// (firmware/esphome/components/w41h1_module/w41h1_uart_policy.h). The restart is a fallback for
+// a receiver that stops while transmit keeps working. The one cause found for that (a lost count in LibreTiny's
 // receive buffer, 2026-10-10) is now prevented in the component, and a restart also clears it
 // because it makes a new buffer. These checks pin the timing of the decision, not the port.
 

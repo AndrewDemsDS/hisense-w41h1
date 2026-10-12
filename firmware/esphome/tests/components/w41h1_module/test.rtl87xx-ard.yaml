@@ -1,0 +1,29 @@
+# The one platform this component validates on. ESPHome ships no shared UART test package for it,
+# so the bus is given here with the stock module's own wiring: UART0 on PA14 / PA13, DE on PA17.
+# The layout is the one that has run on hardware. It is a required option and the test only
+# builds: never flash the result.
+substitutions:
+  layout: factory
+
+# The update server needs a network, and w41h1_module needs the update server: it switches it off
+# on a layout mismatch.
+wifi:
+  ssid: MySSID
+  password: password1
+
+ota:
+  - platform: esphome
+    id: ota_server
+
+uart:
+  - id: uart_bus
+    tx_pin: PA14
+    rx_pin: PA13
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: PA17
+
+<<: !include common.yaml

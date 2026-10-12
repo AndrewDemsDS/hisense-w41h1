@@ -326,7 +326,7 @@ check(refused(dev.esphome_matter_image, lt, 0, SLOT), "convert: serial 0 is refu
 check(refused(dev.esphome_matter_image, lt, 0xFFFFFFFF, SLOT), "convert: the erased-flash serial is refused")
 check(set(dev.ESPHOME_AMEBAZ2_SLOTS) == set(dev.ESPHOME_AMEBAZ2_BOARDS), "convert: one slot row per stock-module board")
 for board, slot in dev.ESPHOME_AMEBAZ2_SLOTS.items():
-    layout = json.loads((ROOT / "firmware/esphome/amebaz2" / f"layout-{board[8:]}.json").read_text())
+    layout = json.loads((ROOT / "firmware/esphome/components/w41h1_module" / f"layout-{board[8:]}.json").read_text())
     addr, length = (int(x, 16) for x in layout["flash"]["ota1"].split("+"))
     check(slot == (addr, length), f"convert: {board} slot {slot[0]:#x}+{slot[1]:#x} is the layout file's first slot")
 check("amebaz2-native" not in dev.ESPHOME_CONVERT_BOARDS, "convert: native has no Matter firmware to convert from")
