@@ -48,7 +48,7 @@ void HisenseAC::on_bus_frame(const uint8_t *frame, size_t len) {
 }
 
 void HisenseAC::on_bus_checksum_error(const uint8_t *frame, size_t len) {
-  ESP_LOGW(TAG, "Status frame with a bad checksum dropped (%" PRIu32 " since boot)", this->bus_.checksum_mismatches());
+  ESP_LOGW(TAG, "Frame with a bad checksum dropped (%" PRIu32 " since boot)", this->bus_.checksum_mismatches());
 }
 
 void HisenseAC::on_bus_timeout(uint8_t expect_class) {
@@ -348,10 +348,10 @@ void HisenseAC::publish_diagnostics_() {
 bool HisenseAC::send_frame_(const uint8_t *frame, size_t len) {
   // Builders write the buzzer bit set, as the stock module does by default.
   if (this->beeper_)
-    return this->bus_.enqueue(frame, len);
+    return this->bus_.enqueue(frame, len) != BUS_TICKET_NONE;
   uint8_t quiet[CMD_FRAME_MAX];
   size_t n = stamp_beep(frame, len, false, quiet, sizeof(quiet));
-  return n != 0 && this->bus_.enqueue(quiet, n);
+  return n != 0 && this->bus_.enqueue(quiet, n) != BUS_TICKET_NONE;
 }
 
 bool HisenseAC::send_command() {

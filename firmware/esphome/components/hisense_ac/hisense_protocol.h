@@ -29,6 +29,12 @@ static constexpr uint32_t BUS_BAUD_RATE = 9600;  // 8N1, firmware-confirmed A/C-
 // class: poll 0x0C -> 21, link 0x13 -> 28, command 0x29 -> 50, status 0x97 -> 160.
 static constexpr size_t FRAME_LEN_OVERHEAD = 9;
 static constexpr size_t FRAME_CLASS_OFFSET = 13;
+// Every frame ends with a 2-byte checksum and the F4 FB tag.
+static constexpr size_t FRAME_TRAILER_LEN = 4;
+// True when byte `offset` of a `len`-byte frame is payload: it exists and lies in front of the
+// trailer. In a frame shorter than that the same offset holds a checksum byte or the end tag, so a
+// parser that tested only `len > offset` would read those as data.
+constexpr bool frame_has_payload_byte(size_t len, size_t offset) { return len >= offset + 1 + FRAME_TRAILER_LEN; }
 
 // Message classes (frame[13]).
 static constexpr uint8_t CLASS_DEVTYPE = 0x0A;
@@ -36,23 +42,25 @@ static constexpr uint8_t CLASS_LINK = 0x1E;
 static constexpr uint8_t CLASS_COMMAND = 0x65;
 static constexpr uint8_t CLASS_STATUS = 0x66;
 static constexpr uint8_t SUBTYPE_PRODUCT_TYPE = 0x40;  // 0x66/40 feature-flag poll
+// Not a class on the wire: as the class a transaction expects it means "any".
+static constexpr uint8_t CLASS_ANY = 0x00;
 
 // Combined command (0x65) frame: 16-byte header, 30-byte body, 2-byte checksum, F4 FB.
 static constexpr size_t CMD_FRAME_LEN = 50;
 static constexpr size_t CMD_HEADER_LEN = 16;
 static constexpr size_t CMD_CHK_OFFSET = 46;
-static constexpr size_t CMD_END_OFFSET = 48;
 // A builder's output can grow by up to two bytes: each 0xF4 checksum byte is doubled on the wire.
 static constexpr size_t CMD_FRAME_MAX = CMD_FRAME_LEN + 2;
 
 // CTRL (frame[3]) = 0x40 selects a 2-byte big-endian checksum in the vendor module's parser;
 // frame[4] = 0x29 is the 8-bit LEN; frame[13] = 0x65.
-static constexpr uint8_t CMD_HEADER[CMD_HEADER_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01,
+// The frame templates are `inline constexpr`: one copy in the image, however many files use them.
+inline constexpr uint8_t CMD_HEADER[CMD_HEADER_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01,
                                                        0x01, 0xFE, 0x01, 0x00, 0x00, 0x65, 0x00, 0x00};
 
 // Status poll (0x66/00).
 static constexpr size_t STATUS_REQUEST_LEN = 21;
-static constexpr uint8_t STATUS_REQUEST[STATUS_REQUEST_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00, 0x00,
+inline constexpr uint8_t STATUS_REQUEST[STATUS_REQUEST_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00, 0x00,
                                                                0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x66,
                                                                0x00, 0x00, 0x00, 0x01, 0xB3, 0xF4, 0xFB};
 
@@ -60,13 +68,13 @@ static constexpr uint8_t STATUS_REQUEST[STATUS_REQUEST_LEN] = {0xF4, 0xF5, 0x00,
 // ignores the status poll until it has seen 0x0A and 0x07 once, then a 0x1E heartbeat at about
 // 1 Hz.
 static constexpr size_t LINK_INIT_0A_LEN = 20;
-static constexpr uint8_t LINK_INIT_0A[LINK_INIT_0A_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x00, 0x00, 0xFE,
+inline constexpr uint8_t LINK_INIT_0A[LINK_INIT_0A_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x00, 0x00, 0xFE,
                                                            0x01, 0x00, 0x00, 0x0A, 0x04, 0x00, 0x01, 0x58, 0xF4, 0xFB};
 static constexpr size_t LINK_INIT_07_LEN = 20;
-static constexpr uint8_t LINK_INIT_07[LINK_INIT_07_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x01, 0x01, 0xFE,
+inline constexpr uint8_t LINK_INIT_07[LINK_INIT_07_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x01, 0x01, 0xFE,
                                                            0x01, 0x00, 0x00, 0x07, 0x01, 0x00, 0x01, 0x54, 0xF4, 0xFB};
 static constexpr size_t LINK_HEARTBEAT_LEN = 28;
-static constexpr uint8_t LINK_HEARTBEAT[LINK_HEARTBEAT_LEN] = {
+inline constexpr uint8_t LINK_HEARTBEAT[LINK_HEARTBEAT_LEN] = {
     0xF4, 0xF5, 0x00, 0x40, 0x13, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x1E,
     0x00, 0x00, 0xB0, 0x80, 0x20, 0x00, 0x00, 0x00, 0x40, 0x00, 0x03, 0x02, 0xF4, 0xFB};
 
@@ -274,7 +282,6 @@ static constexpr uint8_t FAULT1_ANY = 30;
 static constexpr uint8_t FAULT1_VALID = 31;
 
 uint32_t features_to_bitmap32(const AcFeatures &f);
-AcFeatures features_from_bitmap32(uint32_t b);
 uint32_t faults_to_bitmap32(const AcFaults &f);
 
 // ---- Temperature helpers -----------------------------------------------------------------------
@@ -291,24 +298,32 @@ bool shadow_setpoint_from_status(int8_t setpoint_c, bool temp_unit_f, int8_t *ou
 uint16_t checksum_range(const uint8_t *frame, size_t start, size_t end);
 // Verify a received, un-stuffed frame's checksum: sum over [2, n - 4) against bytes n-4, n-3.
 bool status_checksum_ok(const uint8_t *frame, size_t n);
-// A transaction accepts a reply only when its class matches; 0 accepts any class.
+// A transaction accepts a reply only when its class matches; CLASS_ANY accepts every class.
 inline bool reply_class_ok(uint8_t got_class, uint8_t expect_class) {
-  return expect_class == 0 || got_class == expect_class;
+  return expect_class == CLASS_ANY || got_class == expect_class;
 }
 
 // ---- Builders: each returns the on-the-wire length (stuffing included), or 0 on error ----------
+// True when every enum field of `cmd` holds one of its named values. The enums are bytes, so a
+// cast can put anything into them, and the packing rules would turn such a value into a command
+// byte no capture backs (mode 8 packs as fan-only, fan index 2 to 4 as a speed no unit was seen to
+// take, a swing value of 2 as "horizontal active" with no direction). The setpoint is not judged
+// here, its range depends on the mode.
+bool command_enums_valid(const AcCommand &cmd);
+// 0 when command_enums_valid() is false, or the setpoint is out of range in a mode that carries one.
 size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap);
 // Literal on/off frames, sent byte for byte.
 size_t build_power_frame(bool power_on, uint8_t *out, size_t out_cap);
 // Minimal single-field 0x65 frame: header, 0x04 at byte 23, 0x01 at byte 31, one named byte.
+// `offset` has to be a body byte, CMD_HEADER_LEN up to CMD_CHK_OFFSET - 1: 0 otherwise, because a
+// lower one would overwrite the envelope and a higher one is overwritten by the checksum.
 size_t build_single_field(uint8_t offset, uint8_t value, uint8_t *out, size_t out_cap);
 size_t build_mute_frame(bool on, uint8_t *out, size_t out_cap);           // byte 35: 0x30 on, 0x10 off
 size_t build_sleep_frame(uint8_t profile, uint8_t *out, size_t out_cap);  // byte 17: profile*2+1
 size_t build_producttype_request(uint8_t *out, size_t out_cap);
 // 0x1E heartbeat. Byte 16 = 0xB0 once the A/C's own 0x1E has been heard, 0xF0 before.
-size_t build_link_heartbeat(bool heard_ac, uint8_t *out, size_t out_cap);
-// The same heartbeat with the module's provisioning flag (byte 17 bit 3) set or clear. While it is
-// set the panel shows "77".
+// `provisioning` sets the module's provisioning flag (byte 17 bit 3): while it is set the panel
+// shows "77".
 size_t build_link_heartbeat(bool heard_ac, bool provisioning, uint8_t *out, size_t out_cap);
 // Re-stamp a finished frame's envelope bytes 7/8 with the A/C's device type and fix the checksum.
 // 0 when the envelope is not recognised.
@@ -326,8 +341,19 @@ size_t stamp_beep(const uint8_t *in, size_t len, bool beep, uint8_t *out, size_t
 bool parse_status(const uint8_t *buf, size_t len, AcState *out);
 bool parse_features(const uint8_t *buf, size_t len, AcFeatures *out);
 bool parse_faults(const uint8_t *buf, size_t len, AcFaults *out);
-// Device type and sub-type from a 0x0A DevType reply: inner payload [3]/[4] = frame 16/17.
+// Device type and sub-type from a 0x0A DevType reply: inner payload [3]/[4] = frame 16/17. Reads
+// the two bytes and judges nothing else; see devtype_reply_usable() for what may be adopted.
 bool devtype_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo);
+// Whether a DevType reply may be adopted as the pair stamped into bytes 7/8 of every later frame.
+// `checksum_ok` is status_checksum_ok() of the same frame. The stock module runs every reply, this
+// one included, through one parser that rejects a checksum mismatch before any handler sees the
+// payload (RE docs/03 "Parser facts", docs/10 section 4.2 step 5), and a wrong pair in bytes 7/8
+// makes the unit reject every frame (docs/10 section 4.5). 00 00 means "not linked yet" to the
+// stock module and is never adopted. VERIFY: no capture of a real DevType reply is in the
+// repository. That it carries the 2-byte sum follows from the frame being LEN + 9 bytes long
+// (every deployed unit learns its type through an assembler that requires exactly that), which in
+// the stock parser's layout leaves two bytes between the payload and the end tag.
+bool devtype_reply_usable(bool checksum_ok, const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo);
 
 // ---- Setup request: the remote's "77" gesture --------------------------------------------------
 // Horizontal airflow pressed six times on the remote makes the mainboard set a request bit in
@@ -363,14 +389,28 @@ int setup_request_debounce(uint8_t req_bits, uint8_t *streak, bool *latched, uin
 
 // `req_bits` without bit 5 while the lockout runs: `armed`, and less than SETUP_REQUEST_LOCKOUT_MS
 // since `since_ms`. Bit 3 is never removed here. Elapsed time on a 32 bit clock, so it is right
-// through the 49.7 day wrap as long as the caller disarms an expired lockout (the tracker does).
+// through the 49.7 day wrap as long as the caller disarms an expired lockout (setup_request_expire).
 uint8_t smartcfg_lockout_mask(uint8_t req_bits, uint32_t now_ms, bool armed, uint32_t since_ms);
 
 // All of the above for a stream of replies. Zero-initialised is the boot state.
+//
+// The rules, each of which the exhaustive test in test_esphome_setup_edges.cpp checks over every
+// order of replies:
+//  - One unbroken run of replies that ask for something gives one request, whichever of the two
+//    bits come and go inside it. A reply that asks nothing ends the run.
+//  - Bit 3 counts after SETUP_REQUEST_HOLD_FRAMES replies in a row, and never while the module's
+//    own flag is on the wire or before a reply without it.
+//  - Bit 5 counts on the reply in which it appears, if no lockout is running then. Alone it is
+//    taken at once; with a bit 3 that counts it waits for that bit's hold.
 struct SetupRequestTracker {
+  // Bit 3: replies in a row that carried it as a request, and whether that run has counted.
   uint8_t streak{0};
   bool latched{false};
-  uint8_t last_req{0};
+  // Bit 5: it was in the previous reply, and it appeared outside the lockout (so it may count).
+  bool smartcfg_seen{false};
+  bool smartcfg_live{false};
+  // A request was reported and the unit has not stopped asking since.
+  bool taken{false};
   // Bit 3 only counts after a reply without it, seen while the module's own flag was off the
   // wire. That covers a unit that hands the flag back, and a request still standing at boot,
   // which would otherwise be taken again after every restart.
@@ -380,15 +420,47 @@ struct SetupRequestTracker {
 };
 // Start (or restart) the bit 5 lockout. Call at boot and whenever the indication is switched off.
 void setup_request_lockout(SetupRequestTracker *tracker, uint32_t now_ms);
+// Disarm a lockout that has run out. setup_request_step does it for every reply; call it also on
+// a schedule that does not depend on replies (the scheduler: every poll), or a lockout left armed
+// by a unit that then stays silent for a whole turn of the 32 bit clock reads as running again.
+void setup_request_expire(SetupRequestTracker *tracker, uint32_t now_ms);
+// The module's own flag went out in a heartbeat: from here on bit 3 may be that flag handed back,
+// also when the indication is switched off again before the reply to that heartbeat is read.
+void setup_request_flag_sent(SetupRequestTracker *tracker);
+// The unit stopped answering. "Replies in a row" does not reach across that: the hold of bit 3
+// starts again when the unit is back.
+void setup_request_link_lost(SetupRequestTracker *tracker);
 // Feed one reply's request bits (from link_request_bits). `indicating`: the module's provisioning
 // flag is on the wire. Returns the request bits once per accepted request, 0 otherwise. An
 // accepted request starts the lockout by itself.
 uint8_t setup_request_step(SetupRequestTracker *tracker, uint8_t req_bits, bool indicating, uint32_t now_ms);
 
 // ---- Receive-side frame assembler --------------------------------------------------------------
-// Feeds one byte at a time. Accepts only A/C -> module frames (frame[2] == 0x01, which also drops
-// any echo of our own frames), un-stuffs doubled 0xF4, sizes the frame from its LEN byte, and
-// checks the F4 FB end tag.
+// Direction byte (frame[2]) of a frame from the A/C. Our own frames carry 0x00 there, which is how
+// an echo of them is told apart (RX gate in the vendor module's parser, RE docs/10 section 3.2).
+static constexpr uint8_t FRAME_DIR_FROM_AC = 0x01;
+
+// What the newest byte made of a frame that is being received.
+enum FrameProgress : uint8_t {
+  FRAME_PROGRESS_MORE = 0,      // nothing wrong so far, not finished
+  FRAME_PROGRESS_COMPLETE = 1,  // LEN + 9 bytes, ending F4 FB
+  FRAME_PROGRESS_BROKEN = 2,    // not a frame from the A/C
+};
+// Judge the first `n` un-stuffed bytes of a possible frame (n >= 2) by its newest byte only: F5
+// at byte 1, the A/C's direction at byte 2, a LEN at byte 4 that fits RX_FRAME_MAX, the F4 FB tag
+// at the end. `*expected` is 0 until byte 4 has been judged, then LEN + 9. Call it for every
+// length in turn.
+FrameProgress frame_progress(const uint8_t *frame, size_t n, size_t *expected);
+
+// Feeds one byte at a time. Accepts only A/C -> module frames (which also drops any echo of our
+// own frames), un-stuffs doubled 0xF4, sizes the frame from its LEN byte, and checks the F4 FB end
+// tag. The checksum is NOT judged here: whoever takes the frame calls status_checksum_ok().
+//
+// Resynchronisation. A byte that breaks a frame is looked at again as a possible start byte. And
+// while a frame is being received, the newest F4 F5 inside it is followed as a second candidate:
+// if the frame in front turns out not to be one (cut short, or a start tag that noise produced),
+// the candidate carries on from the bytes already received instead of being lost with it. A frame
+// in front that completes always wins, so a stream of whole frames is read exactly as before.
 class FrameAssembler {
  public:
   // Returns the length of a complete frame, now readable through data(); 0 otherwise.
@@ -397,10 +469,15 @@ class FrameAssembler {
   void reset();
 
  protected:
+  void start_(uint8_t b);
+  size_t deliver_(size_t start);
+
   uint8_t buf_[RX_FRAME_MAX]{};
-  size_t len_{0};
-  size_t expected_{0};
-  bool in_message_{false};
+  size_t len_{0};       // un-stuffed bytes held; 0 = between frames
+  size_t expected_{0};  // LEN + 9 of the frame in front, 0 until its byte 4 is in
+  // Where in buf_ the second candidate starts (never 0, which means there is none), and its LEN + 9.
+  size_t later_{0};
+  size_t later_expected_{0};
   bool prev_was_f4_{false};
 };
 

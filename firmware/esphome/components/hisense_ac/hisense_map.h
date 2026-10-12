@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "hisense_bus.h"  // the scheduler's command rules, which used to live in this file
 #include "hisense_protocol.h"
 
 namespace esphome::hisense_ac {
@@ -550,43 +551,9 @@ inline bool fan_request_allowed(const SpecialState &s, uint8_t wanted_idx) {
 // the reply of every command (RE docs/10 section 4.6). Here the scheduler re-sends a frame that got
 // no reply, and the hub compares what the unit reports a few seconds later with what was asked.
 
-// A frame with no reply goes out again in the next cycle's command slot, in front of anything queued
-// behind it, so a newer command can never be overtaken by an older one. Three sends in all. Only
-// while the unit is answering its status poll: a unit that answers nothing is a dead bus, and frames
-// re-sent into it would pile up and all land when it comes back.
-static constexpr uint8_t COMMAND_SENDS_MAX = 3;
-
-inline bool command_resend_allowed(uint8_t sends, bool unit_answering) {
-  return unit_answering && sends < COMMAND_SENDS_MAX;
-}
-
-// What the reply to a command frame says. The stock transaction primitive accepts a reply as verified
-// when its payload repeats the first two payload bytes of the command and carries 1 in the third
-// (RE docs/10 section 4.2 step 6). Payload byte N is frame byte 13 + N, so that is frame bytes 13
-// and 14 echoed, and the value 1 at frame offset 15.
-// VERIFY: the layout is read from the stock image and has not been captured on this bus. Until a
-// capture backs it the verdict is logged and nothing is decided on it: the status check below is
-// what tells a command that took from one that did not.
-static constexpr size_t CMD_REPLY_ACK_OFFSET = 15;
-static constexpr uint8_t CMD_REPLY_ACK_VALUE = 0x01;
-
-enum CommandReply : uint8_t {
-  COMMAND_REPLY_NONE = 0,   // the window closed empty
-  COMMAND_REPLY_ACK = 1,    // echo of the command, ack byte 1
-  COMMAND_REPLY_NAK = 2,    // echo of the command, ack byte something else
-  COMMAND_REPLY_OTHER = 3,  // a frame of another class (a status or link frame) ended the window
-};
-
-inline CommandReply command_reply_verdict(const uint8_t *tx, size_t tx_len, const uint8_t *reply, size_t reply_len) {
-  if (reply == nullptr || reply_len == 0)
-    return COMMAND_REPLY_NONE;
-  if (tx == nullptr || tx_len <= FRAME_CLASS_OFFSET + 1 || reply_len <= CMD_REPLY_ACK_OFFSET)
-    return COMMAND_REPLY_OTHER;
-  if (reply[FRAME_CLASS_OFFSET] != tx[FRAME_CLASS_OFFSET] ||
-      reply[FRAME_CLASS_OFFSET + 1] != tx[FRAME_CLASS_OFFSET + 1])
-    return COMMAND_REPLY_OTHER;
-  return reply[CMD_REPLY_ACK_OFFSET] == CMD_REPLY_ACK_VALUE ? COMMAND_REPLY_ACK : COMMAND_REPLY_NAK;
-}
+// The scheduler's half, the re-send rule (COMMAND_SENDS_MAX, command_resend_allowed) and the verdict
+// on a command's reply (command_reply_verdict), is in hisense_bus.h with the scheduler that applies
+// it. The hub's half follows.
 
 // The things a command can ask for, one bit each.
 static constexpr uint16_t CONFIRM_POWER = 0x001;

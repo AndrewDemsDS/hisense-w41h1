@@ -8,13 +8,15 @@
 // bus.
 //
 // Boot: DevType (0x0A) handshake, up to 10 tries 500 ms apart, then 0x07.
-// Each ~1 s cycle: a DevType re-handshake if 5 status polls in a row went unanswered, the 0x1E
-// heartbeat, every queued command, the 0x66 status poll (the link-liveness signal), and the
-// 0x66/40 ProductType poll on the first heard cycle and every 60th after.
+// Each ~1 s cycle: a DevType re-handshake if 5 status polls in a row went unanswered (and one
+// more if the unit came back in a cycle whose probe it had not answered), the 0x1E
+// heartbeat, the queued commands that fit (command_slot_open below), the 0x66 status poll (the
+// link-liveness signal), and the 0x66/40 ProductType poll on the first heard cycle and every 60th
+// after.
 //
 // A command frame that gets no reply is sent again in the next cycle's command slot, ahead of
 // everything queued behind it, up to COMMAND_SENDS_MAX sends and only while the unit answers its
-// status poll (hisense_map.h holds the rule).
+// status poll (command_resend_allowed below).
 //
 // I/O goes through BusIO, so the scheduler can be driven against a simulated A/C in a host test.
 // No ESPHome includes.
@@ -44,25 +46,35 @@ class BusListener {
  public:
   virtual ~BusListener() = default;
   virtual void on_bus_status(const AcState &state) = 0;
-  virtual void on_bus_features(const AcFeatures &features) = 0;
   virtual void on_bus_link(bool up) = 0;
-  // Diagnostics, all optional. They exist so the owner of the bus can log at the level it likes;
+  // The rest is optional. Most of it exists so the owner of the bus can log at the level it likes;
   // the scheduler itself has no logger, which keeps it buildable without ESPHome.
+  // A 0x66/40 ProductType reply was parsed. BusScheduler::features() holds the same from then on,
+  // which is what the hub reads.
+  virtual void on_bus_features(const AcFeatures &features) {}
   // Every complete frame received, of any class, before its checksum is judged.
   virtual void on_bus_frame(const uint8_t *frame, size_t len) {}
-  // A status-class frame whose checksum did not match. It is counted and not parsed.
+  // A complete frame, of any class, whose checksum did not match. It is counted and nothing is
+  // read from it: no status, no device type, no setup request.
   virtual void on_bus_checksum_error(const uint8_t *frame, size_t len) {}
   // The reply window closed with no frame of the expected class (0 = any class was acceptable).
   virtual void on_bus_timeout(uint8_t expect_class) {}
   // A queued command frame finished one transaction. `answered` is false when the reply window
   // closed with nothing from the A/C; command_resend_pending() then says whether the scheduler
   // sends the frame again. `reply_class` is the class of the frame that ended the window, 0 when
-  // there was none, and command_reply() is what that frame says.
+  // there was none, and command_reply() is what that frame says. command_ticket() is the ticket
+  // enqueue() returned for the frame, so the owner can tell which of its frames this is about.
   virtual void on_bus_command(bool answered, uint8_t reply_class) {}
   // The remote's "77" gesture, debounced: once per accepted request. `request` is the request bits
   // of the A/C's 0x1E reply (LINK_REQ_* in hisense_protocol.h).
   virtual void on_bus_setup_request(uint8_t request) {}
 };
+
+// What enqueue() hands back for an accepted frame: never 0, different for every frame in the
+// queue at one time (it counts up and wraps past 0). on_bus_command() reports on one frame, and
+// command_ticket() says which.
+using BusTicket = uint16_t;
+static constexpr BusTicket BUS_TICKET_NONE = 0;
 
 // Timing, from the vendor module's byte-writer and transaction primitive.
 static constexpr uint32_t BUS_DE_SETTLE_MS = 5;  // DE high before the first byte
@@ -80,6 +92,70 @@ inline uint32_t bus_tx_time_ms(size_t len) {
   return static_cast<uint32_t>((len * 10 * 1000 + BUS_BAUD_RATE - 1) / BUS_BAUD_RATE);
 }
 
+// ---- Command rules ------------------------------------------------------------------------------
+// Pure, so they are tested without a scheduler (test_esphome_confirm.cpp, test_esphome_map_gaps.cpp).
+
+// A frame with no reply goes out again in the next cycle's command slot, in front of anything queued
+// behind it, so a newer command can never be overtaken by an older one. Three sends in all. Only
+// while the unit is answering its status poll: a unit that answers nothing is a dead bus, and frames
+// re-sent into it would pile up and all land when it comes back.
+//
+// There is a second retry above this one: the hub sends a command again when the status a few
+// seconds later does not show it (COMMAND_RESEND_MAX in hisense_map.h, two more sends). The two
+// answer different failures, a frame nobody heard and a frame that was heard and not applied, and
+// they are left separate on purpose. They multiply only when both fail every time, which is a unit
+// that answers its status poll and never a command: it gets 3 x 3 = 9 frames over about 20 s
+// before the hub gives up (pinned in test_esphome_bus_stress.cpp, "never acknowledged"). Commands
+// state absolute values, so the repeats cannot add up to anything, and folding the two layers
+// into one would take either the lost frame or the ignored one out of what is retried.
+static constexpr uint8_t COMMAND_SENDS_MAX = 3;
+
+inline bool command_resend_allowed(uint8_t sends, bool unit_answering) {
+  return unit_answering && sends < COMMAND_SENDS_MAX;
+}
+
+// How long into a cycle a queued command may still start. The command slot sits between the
+// heartbeat and the status poll, and it used to run until the queue was empty: a queue refilled as
+// fast as it drained (about seven frames a second) kept the unit without its 1 Hz heartbeat and
+// Home Assistant without status for as long as that lasted. Past this point what is still queued
+// waits for the next cycle. 600 ms leaves the status poll and its 160-byte reply (about 260 ms)
+// room inside the 1000 ms cycle after a command that started at the last moment, and lets the
+// three or four frames through that fit a cycle anyway. The first command of a cycle always
+// goes, however late the heartbeat ended, so the queue cannot stall.
+static constexpr uint32_t BUS_COMMAND_SLOT_MS = 600;
+
+inline bool command_slot_open(uint8_t sent_this_cycle, uint32_t cycle_elapsed_ms) {
+  return sent_this_cycle == 0 || cycle_elapsed_ms < BUS_COMMAND_SLOT_MS;
+}
+
+// What the reply to a command frame says. The stock transaction primitive accepts a reply as verified
+// when its payload repeats the first two payload bytes of the command and carries 1 in the third
+// (RE docs/10 section 4.2 step 6). Payload byte N is frame byte 13 + N, so that is frame bytes 13
+// and 14 echoed, and the value 1 at frame offset 15.
+// VERIFY: the layout is read from the stock image and has not been captured on this bus. Until a
+// capture backs it the verdict is logged and nothing is decided on it: the hub's status check
+// (confirm_decision in hisense_map.h) is what tells a command that took from one that did not.
+static constexpr size_t CMD_REPLY_ACK_OFFSET = 15;
+static constexpr uint8_t CMD_REPLY_ACK_VALUE = 0x01;
+
+enum CommandReply : uint8_t {
+  COMMAND_REPLY_NONE = 0,   // the window closed empty
+  COMMAND_REPLY_ACK = 1,    // echo of the command, ack byte 1
+  COMMAND_REPLY_NAK = 2,    // echo of the command, ack byte something else
+  COMMAND_REPLY_OTHER = 3,  // a frame of another class (a status or link frame) ended the window
+};
+
+inline CommandReply command_reply_verdict(const uint8_t *tx, size_t tx_len, const uint8_t *reply, size_t reply_len) {
+  if (reply == nullptr || reply_len == 0)
+    return COMMAND_REPLY_NONE;
+  if (tx == nullptr || tx_len <= FRAME_CLASS_OFFSET + 1 || reply_len <= CMD_REPLY_ACK_OFFSET)
+    return COMMAND_REPLY_OTHER;
+  if (reply[FRAME_CLASS_OFFSET] != tx[FRAME_CLASS_OFFSET] ||
+      reply[FRAME_CLASS_OFFSET + 1] != tx[FRAME_CLASS_OFFSET + 1])
+    return COMMAND_REPLY_OTHER;
+  return reply[CMD_REPLY_ACK_OFFSET] == CMD_REPLY_ACK_VALUE ? COMMAND_REPLY_ACK : COMMAND_REPLY_NAK;
+}
+
 class BusScheduler {
  public:
   // `has_de`: true when this component drives DE itself (the hardware-validated path). False when
@@ -87,13 +163,23 @@ class BusScheduler {
   void setup(BusIO *io, BusListener *listener, bool has_de);
   // Advance as far as `now_ms` allows. Call every loop.
   void poll(uint32_t now_ms);
-  // Queue a finished frame (from the builders) for the next cycle's command slot. False when the
-  // queue is full or the frame is empty or too long.
-  bool enqueue(const uint8_t *frame, size_t len);
-  // True while DE timing is running, so the hub can ask ESPHome for a tight loop.
+  // Queue a finished frame (from the builders) for the command slot. Returns the frame's ticket,
+  // or BUS_TICKET_NONE (0, so the result still reads as a bool) when the queue is full or the
+  // frame is empty or too long.
+  BusTicket enqueue(const uint8_t *frame, size_t len);
+  // True while DE timing is running, so the hub can ask ESPHome for a tight loop. Always false
+  // when the UART peripheral owns DE: there is no timing to keep then.
   bool wants_fast_loop() const { return this->phase_ == Phase::TX_SETTLE || this->phase_ == Phase::TX_DRAIN; }
+  // True while a frame is on its way out, as of the last poll(): from DE going high until it is
+  // released, or, without a DE pin, from the write until the last byte has had time to leave at
+  // 9600 baud. Code that touches the serial port from outside has to leave it alone meanwhile.
+  bool transmitting() const { return this->transmitting_; }
 
-  bool link_token(uint8_t *hi, uint8_t *lo) const;  // false until a DevType reply supplied it
+  // The pair stamped into bytes 7/8 of every frame: the A/C's device type and sub-type from its
+  // DevType reply ("link token" is the older name for the same two bytes). False while it is
+  // still the seeded 01 01, i.e. until a DevType reply supplied it.
+  bool link_token(uint8_t *hi, uint8_t *lo) const;
+  // Complete frames received with a bad checksum, of any class, since boot.
   uint32_t checksum_mismatches() const { return this->chk_mismatch_; }
   // Counters since boot, for diagnostics. A reply window that closed empty, of any kind; a queued
   // command among those (each send counts); a command frame sent again for that reason; a
@@ -103,7 +189,9 @@ class BusScheduler {
   uint32_t command_resends() const { return this->command_resends_; }
   // Valid inside on_bus_command(): the frame just reported is going out again.
   bool command_resend_pending() const { return this->head_resend_; }
-  // What the reply to the last command frame says (CommandReply in hisense_map.h).
+  // Valid inside on_bus_command(): the ticket enqueue() gave for the frame just reported.
+  BusTicket command_ticket() const { return this->command_ticket_; }
+  // What the reply to the last command frame says (a CommandReply).
   uint8_t command_reply() const { return this->command_reply_; }
   uint32_t link_losses() const { return this->link_losses_; }
   bool faults(AcFaults *out) const;
@@ -112,6 +200,7 @@ class BusScheduler {
 
   // While on, every heartbeat carries the module's provisioning flag and the panel shows "77".
   // Switching it off starts the lockout that keeps the closing press from opening it again.
+  // `now_ms` is the same clock poll() gets.
   void set_setup_indicator(bool on, uint32_t now_ms);
   bool setup_indicator() const { return this->setup_indicator_; }
   // Request bits of the last 0x1E reply with a good checksum, before any debounce. For diagnostics:
@@ -119,24 +208,41 @@ class BusScheduler {
   uint8_t link_request() const { return this->link_request_; }
 
  protected:
+  // Where one transaction is: waiting to start, DE settling, bytes leaving, reply window, or the
+  // pause that fills a cycle.
   enum class Phase : uint8_t { IDLE, TX_SETTLE, TX_DRAIN, LISTEN, WAIT };
+  // What is sent next. Boot runs the first two once, then the rest repeat as one cycle.
   enum class Step : uint8_t {
-    BOOT_DEVTYPE,
-    BOOT_07,
-    CYCLE_BEGIN,
-    RECOVER,
-    HEARTBEAT,
-    DRAIN,
-    STATUS,
-    PRODUCT,
-    PACE,
+    BOOT_DEVTYPE,  // DevType probe, up to BUS_BOOT_TRIES
+    BOOT_07,       // 0x07, once
+    CYCLE_BEGIN,   // sends nothing: notes the time and picks RECOVER or HEARTBEAT
+    RECOVER,       // DevType probe, while the link is lost and once more if the unit came back unprobed
+    HEARTBEAT,     // 0x1E
+    COMMANDS,      // the queue, one frame per transaction, while command_slot_open()
+    STATUS,        // 0x66 poll
+    PRODUCT,       // 0x66/40 poll, on the first heard cycle and every BUS_PRODUCTTYPE_CYCLES
+    PACE,          // sends nothing: waits out the rest of BUS_CYCLE_MS
   };
+  // Called when a step's reply window closes. `reply_len` is the length of the reply in rx_, 0
+  // when there was none.
+  using StepDone = void (BusScheduler::*)(size_t reply_len, uint32_t now);
 
+  bool advance_(uint32_t now);
+  bool listen_(uint32_t now);
+  bool frame_received_(size_t n, uint32_t now);
   void start_step_(uint32_t now);
-  void begin_transaction_(const uint8_t *frame, size_t len, uint8_t expect_class, uint32_t now);
+  void begin_transaction_(const uint8_t *frame, size_t len, uint8_t expect_class, StepDone done, uint32_t now);
   void finish_transaction_(size_t reply_len, uint32_t now);
-  void on_step_done_(size_t reply_len, uint32_t now);
+  void boot_devtype_done_(size_t reply_len, uint32_t now);
+  void boot_07_done_(size_t reply_len, uint32_t now);
+  void recover_done_(size_t reply_len, uint32_t now);
+  void heartbeat_done_(size_t reply_len, uint32_t now);
+  void command_done_(size_t reply_len, uint32_t now);
+  void status_done_(size_t reply_len, uint32_t now);
+  void product_done_(size_t reply_len, uint32_t now);
   bool consume_(size_t n);
+  // BUS_LINK_LOST_POLLS status polls in a row went unanswered.
+  bool link_silent_() const { return this->link_miss_ >= BUS_LINK_LOST_POLLS; }
   void check_link_reply_(const uint8_t *frame, size_t n, uint32_t now);
   void discard_rx_();
 
@@ -148,7 +254,14 @@ class BusScheduler {
   Step step_{Step::BOOT_DEVTYPE};
   uint32_t phase_until_{0};
   uint32_t cycle_start_{0};
-  uint8_t expect_class_{0};
+  uint8_t expect_class_{CLASS_ANY};
+  // For transmitting(). Without a DE pin nothing marks the end of a transmission, so the time the
+  // bytes need is kept.
+  bool transmitting_{false};
+  uint32_t tx_done_at_{0};
+  StepDone on_done_{nullptr};
+  // The frame in rx_ passed its checksum. Set for every frame received, read by its consumers.
+  bool reply_sound_{false};
 
   uint8_t tx_[TX_FRAME_MAX + 2]{};
   size_t tx_len_{0};
@@ -156,11 +269,16 @@ class BusScheduler {
 
   uint8_t queue_[BUS_TX_QUEUE_LEN][TX_FRAME_MAX]{};
   uint8_t queue_lens_[BUS_TX_QUEUE_LEN]{};
+  BusTicket queue_tickets_[BUS_TX_QUEUE_LEN]{};
+  BusTicket last_ticket_{BUS_TICKET_NONE};
+  BusTicket command_ticket_{BUS_TICKET_NONE};
   size_t queue_head_{0};
   size_t queue_len_{0};
   // Sends of the frame at the head of the queue so far, and whether it is waiting for another.
   uint8_t head_sends_{0};
   bool head_resend_{false};
+  // Command frames started in the current cycle, for command_slot_open().
+  uint8_t cycle_commands_{0};
   uint8_t command_reply_{0};
 
   // Outbound envelope bytes 7/8 = the A/C's device type from its DevType reply. Seeded to the
@@ -169,6 +287,9 @@ class BusScheduler {
   bool token_seen_{false};
 
   uint8_t boot_tries_{0};
+  // The last recovery probe got no usable answer. If the unit starts answering its status poll
+  // in that same cycle, one more probe is owed, so that the device type is asked for again.
+  bool handshake_owed_{false};
   bool heard_ac_{false};
   uint8_t link_miss_{0};
   bool link_down_{false};

@@ -123,6 +123,10 @@ a["noise_then_frame"] = b"\x00" + bytes([0x00, 0xFB, 0x12, 0xF4, 0xFB]) + stuff(
 a["oversize_len"] = b"\x00" + bytes([0xF4, 0xF5, 0x01, 0x40, 0xFF]) + stuff(link_reply(0x00))
 a["max_len_header"] = b"\x00" + bytes([0xF4, 0xF5, 0x01, 0x40, 0xBF])
 a["cut_status"] = b"\x01" + stuff(STATUS_COOL)[:70]
+a["false_start"] = b"\x00" + bytes([0xF4, 0xF5]) + stuff(link_reply(0x20))
+a["cut_then_short_frame"] = b"\x00" + stuff(STATUS_COOL)[:60] + stuff(link_reply(0x08))
+a["cut_inside_end_tag"] = b"\x01" + stuff(STATUS_COOL)[:159]
+a["greedy_header_twice"] = b"\x00" + bytes([0xF4, 0xF5, 0x01, 0x40, 0xBF]) * 2 + stuff(link_reply(0x00))[:11]
 a["tiny_frame"] = b"\x02" + bytes([0xF4, 0xF5, 0x01, 0x40, 0x00, 0x00, 0x41, 0xF4, 0xFB])
 
 # ---- parsers: the bytes are the frame ------------------------------------------------------------
@@ -182,17 +186,24 @@ b["stamp_beep_stuffed_passthrough"] = bytes([0x88, 0, 0]) + bytes([0, 0, 0, 0xB0
 
 # ---- roundtrip: [class, length pick, lead-in, repeats] + frame bytes -----------------------------
 r = seeds["roundtrip"]
-r["status_160"] = bytes([0, 160 - 45, 0, 0]) + STATUS_COOL
-r["status_fahrenheit_twice"] = bytes([0, 160 - 45, 3, 1]) + STATUS_HEAT_F
-r["status_all_f4"] = bytes([0, 200 - 45, 0, 2]) + b"\xF4" * 200
-r["features_160"] = bytes([1, 160 - 36, 0, 0]) + FEATURES
+r["status_160"] = bytes([0, 160 - 49, 0, 0]) + STATUS_COOL
+r["status_fahrenheit_twice"] = bytes([0, 160 - 49, 3, 1]) + STATUS_HEAT_F
+r["status_all_f4"] = bytes([0, 200 - 49, 0, 2]) + b"\xF4" * 200
+r["features_160"] = bytes([1, 160 - 40, 0, 0]) + FEATURES
 r["link_reply_28"] = bytes([2, 28 - 22, 5, 0]) + link_reply(0x28)
 r["devtype_24"] = bytes([3, 24 - 22, 0, 0]) + devtype_reply()
 
 # ---- differential: [group] + group input ---------------------------------------------------------
 d = seeds["differential"]
-d["stream_status"] = b"\x00" + stuff(STATUS_STUFFED) + stuff(link_reply(0x20))
-d["stream_echo"] = b"\x00" + STATUS_REQUEST + LINK_HEARTBEAT + bytes([0xF4, 0xF5, 0x01, 0x40, 0xFF])
+# Group 0, byte 1: 0 = arbitrary stream, 1 = whole frames ([pick, ...]: odd pick = pick >> 4 noise
+# bytes, even pick = [length - 9, frame bytes]).
+d["stream_status"] = b"\x00\x00" + stuff(STATUS_STUFFED) + stuff(link_reply(0x20))
+d["stream_echo"] = b"\x00\x00" + STATUS_REQUEST + LINK_HEARTBEAT + bytes([0xF4, 0xF5, 0x01, 0x40, 0xFF])
+d["stream_false_start"] = b"\x00\x00" + bytes([0xF4, 0xF5]) + stuff(link_reply(0x20))
+d["stream_cut_then_whole"] = b"\x00\x00" + stuff(STATUS_COOL)[:60] + stuff(link_reply(0x08)) + stuff(STATUS_COOL)
+d["stream_greedy_header"] = b"\x00\x00" + bytes([0xF4, 0xF5, 0x01, 0x40, 0xBF]) + stuff(link_reply(0x00)) * 3
+d["clean_frames"] = (b"\x00\x01" + bytes([0x00, 28 - 9]) + link_reply(0x28) + bytes([0x31, 0x00, 0xFB, 0x12])
+                     + bytes([0x00, 160 - 9]) + STATUS_STUFFED + bytes([0x00, 0]) + bytes(9))
 d["parse_status"] = b"\x01" + STATUS_AUTO
 d["parse_features"] = b"\x01" + FEATURES
 d["parse_devtype_20"] = b"\x01" + DEVTYPE_20
@@ -248,12 +259,15 @@ u["raw_enqueue"] = b"\x01" + boot + bytes([7, 5, 1, 2, 3, 4, 5]) + cycle
 bad = bytearray(link_reply(0x20))
 bad[24] ^= 0x40
 known["assembler/asm-no-checksum"] = b"\x00" + bytes(bad)
+# Fixed (devtype_from_reply needs 22 bytes). Kept as a plain regression input for the parsers.
 known["parsers/devtype-overlaps-trailer"] = DEVTYPE_20
+# Both fixed (the builders refuse the input). Kept as plain regression inputs for the builders.
 known["builders/builder-enum-range"] = cmd(8, 0, 0, 0, 0, 0, 24, fold=0)
 known["builders/single-field-offset"] = bytes([0x86, 0, 0, 0x00])
 known["builders/tx-f4-in-body"] = bytes([0x87, 0, 28 - 13]) + LINK_HEARTBEAT[2:28] + bytes([0, 0xF4, 0xF4, 0])
 # Boot with DE; the DevType reply 01 02 arrives with bit 0 of byte 17 flipped (damage 17) and a
-# checksum that no longer matches; the scheduler adopts 01 03 as the link token.
+# checksum that no longer matches. The scheduler used to adopt 01 03 as the link token. Fixed, kept
+# as a plain regression input for the bus harness.
 known["bus/bus-token-no-checksum"] = b"\x01" + EXCHANGE + reply(0x01, 0x02, 17) + tick(1)
 
 

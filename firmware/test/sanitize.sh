@@ -44,7 +44,6 @@ TESTS=(
 # Known reports, switched off one check at a time so everything else in that test still runs under
 # the full set. Format: test|extra compiler flag|what and where. Remove the entry with the fix.
 KNOWN=(
-  "test_esphome_codec_parity|-fno-sanitize=enum|test_esphome_codec_parity.cpp:492 test_map() casts 8..15 to the reference driver's HisenseMode (a C enum whose range is 0..7) and passes it to hisense_mode_to_esphome(): an out-of-range enum load, undefined behaviour in the TEST. Loop to 8 there, or go through a uint8_t."
 )
 
 # Every *.cpp test in this directory must be in the table, so a new test cannot be forgotten here.

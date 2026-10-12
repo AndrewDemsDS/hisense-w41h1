@@ -312,7 +312,17 @@ static void test_builder_arguments() {
   CHECK(
       H::build_single_field(50, 0x03, out, sizeof(out)) == 0 && H::build_single_field(255, 0x03, out, sizeof(out)) == 0,
       "single field: an offset at or past the end of the frame");
-  CHECK(H::build_single_field(49, 0x03, out, sizeof(out)) == 50, "single field: offset 49 is the last one accepted");
+  // Only a body byte may be named: 0 to 15 are the envelope (offset 0 would give a frame that
+  // does not start F4 F5, offset 4 a wrong LEN, offset 13 another class), 46 to 49 the checksum
+  // and the end tag, which are written over whatever was put there.
+  for (int offset = 0; offset < 256; offset++) {
+    const bool body = offset >= 16 && offset <= 45;
+    std::memset(out, 0xEE, sizeof(out));
+    size_t n = H::build_single_field((uint8_t) offset, 0x03, out, sizeof(out));
+    CHECK((n == 50) == body && (body || n == 0), "single field: offset %d is %s", offset, body ? "taken" : "refused");
+    if (!body)
+      CHECK(out[0] == 0xEE && out[49] == 0xEE, "single field: offset %d refused with nothing written", offset);
+  }
   // The baseline: the command header, 0x04 at byte 23, 0x01 at byte 31 (header).
   CHECK(H::build_single_field(20, 0x00, out, sizeof(out)) == 50, "single field: a zero value");
   for (size_t i = 0; i < 46; i++) {
@@ -324,15 +334,16 @@ static void test_builder_arguments() {
         "single field: checksum 01 D4, end tag");
 
   // build_link_heartbeat (line 347): 28 bytes plus room for two stuffed ones.
-  CHECK(H::build_link_heartbeat(true, nullptr, sizeof(out)) == 0, "heartbeat: no buffer");
-  CHECK(H::build_link_heartbeat(true, out, 29) == 0 && H::build_link_heartbeat(true, true, out, 29) == 0,
+  CHECK(H::build_link_heartbeat(true, false, nullptr, sizeof(out)) == 0, "heartbeat: no buffer");
+  CHECK(H::build_link_heartbeat(true, false, out, 29) == 0 && H::build_link_heartbeat(true, true, out, 29) == 0,
         "heartbeat: 29 bytes");
-  CHECK(H::build_link_heartbeat(true, out, 27) == 0 && H::build_link_heartbeat(true, out, 0) == 0, "heartbeat: less");
+  CHECK(H::build_link_heartbeat(true, false, out, 27) == 0 && H::build_link_heartbeat(true, false, out, 0) == 0,
+        "heartbeat: less");
   std::memset(out, 0xEE, sizeof(out));
-  CHECK(H::build_link_heartbeat(true, out, 30) == 28, "heartbeat: 30 bytes");
+  CHECK(H::build_link_heartbeat(true, false, out, 30) == 28, "heartbeat: 30 bytes");
   CHECK(std::memcmp(out, H::LINK_HEARTBEAT, 28) == 0 && out[28] == 0xEE, "heard, not provisioning: the captured frame");
   // Not heard: byte 16 is 0xF0 (header), checksum 0x0302 + 0x40. Provisioning: byte 17 bit 3.
-  CHECK(H::build_link_heartbeat(false, out, 30) == 28 && out[16] == 0xF0 && out[17] == 0x80 && out[24] == 0x03 &&
+  CHECK(H::build_link_heartbeat(false, false, out, 30) == 28 && out[16] == 0xF0 && out[17] == 0x80 && out[24] == 0x03 &&
             out[25] == 0x42 && out[26] == 0xF4 && out[27] == 0xFB,
         "not heard: F0, checksum 03 42");
   CHECK(H::build_link_heartbeat(true, true, out, 30) == 28 && out[16] == 0xB0 && out[17] == 0x88 && out[24] == 0x03 &&
@@ -414,11 +425,11 @@ static void test_command_bytes() {
   printf("-- command bytes for values at and past the ends of the enums\n");
   uint8_t out[H::CMD_FRAME_MAX];
   // Byte 33 (header, Feature): 0x04 neutral, 0x30 eco, 0x0C turbo, 0x10 eco clear. A value past
-  // the enum is sent as neutral (line 322, the default arm).
+  // the enum is refused: no frame.
   struct {
     int feature;
     uint8_t byte33;
-  } features[] = {{0, 0x04}, {1, 0x30}, {2, 0x0C}, {3, 0x10}, {4, 0x04}, {255, 0x04}};
+  } features[] = {{0, 0x04}, {1, 0x30}, {2, 0x0C}, {3, 0x10}};
   for (const auto &r : features) {
     H::AcCommand c;
     c.feature = (H::Feature) r.feature;
@@ -429,12 +440,58 @@ static void test_command_bytes() {
   struct {
     int display;
     uint8_t byte36;
-  } displays[] = {{0, 0x00}, {1, 0xC0}, {2, 0x40}, {3, 0x00}, {255, 0x00}};
+  } displays[] = {{0, 0x00}, {1, 0xC0}, {2, 0x40}};
   for (const auto &r : displays) {
     H::AcCommand c;
     c.display = (H::Display) r.display;
     CHECK(H::build_command(c, out, sizeof(out)) > 0 && out[36] == r.byte36, "display %d is byte 36 = 0x%02X", r.display,
           r.byte36);
+  }
+  // Every value of every enum field, one field at a time: a named value builds, any other is
+  // refused with nothing written. The packing rules would otherwise turn it into a byte no capture
+  // backs: mode 8 into 0x10 (fan-only), fan 2 to 4 into 0x05 to 0x09, hswing 2 into byte 37 = 0x14
+  // with no direction bits.
+  for (int field = 0; field < 6; field++) {
+    int built = 0;
+    for (int v = 0; v < 256; v++) {
+      H::AcCommand c;
+      bool named = false;
+      switch (field) {
+        case 0:
+          c.mode = (H::Mode) v;
+          named = v <= 4;
+          break;
+        case 1:
+          c.fan = (H::FanSpeed) v;
+          named = v == 0 || v == 1 || (v >= 5 && v <= 9) || v == 0xFF;
+          break;
+        case 2:
+          c.vswing = (H::SwingMode) v;
+          named = v == 0 || v == 1 || v == 3;
+          break;
+        case 3:
+          c.hswing = (H::SwingMode) v;
+          named = v == 0 || v == 1 || v == 3;
+          break;
+        case 4:
+          c.feature = (H::Feature) v;
+          named = v <= 3;
+          break;
+        default:
+          c.display = (H::Display) v;
+          named = v <= 2;
+          break;
+      }
+      std::memset(out, 0xEE, sizeof(out));
+      size_t n = H::build_command(c, out, sizeof(out));
+      CHECK(H::command_enums_valid(c) == named, "enum field %d = %d is %s", field, v, named ? "named" : "not named");
+      CHECK((n != 0) == named, "enum field %d = %d: %s", field, v, named ? "built" : "refused");
+      if (!named)
+        CHECK(out[0] == 0xEE && out[18] == 0xEE, "enum field %d = %d refused with nothing written", field, v);
+      built += n != 0 ? 1 : 0;
+    }
+    static const int NAMED[6] = {5, 8, 3, 3, 4, 3};
+    CHECK(built == NAMED[field], "enum field %d has %d named values (%d built)", field, NAMED[field], built);
   }
   // Byte 32: vertical in bits 6-7 (0x3 swing, 0x1 hold), horizontal in bits 4-5 (0x3 swing, 0x1
   // direction, 0 off). Byte 37 = 0x14 whenever horizontal is not off. SwingMode has no value 2:
@@ -442,8 +499,8 @@ static void test_command_bytes() {
   struct {
     int v, h;
     uint8_t byte32, byte37;
-  } swings[] = {{0, 0, 0x40, 0x00}, {3, 0, 0xC0, 0x00}, {1, 0, 0x40, 0x00}, {2, 0, 0x40, 0x00},
-                {0, 3, 0x70, 0x14}, {0, 1, 0x50, 0x14}, {3, 3, 0xF0, 0x14}, {3, 1, 0xD0, 0x14}};
+  } swings[] = {{0, 0, 0x40, 0x00}, {3, 0, 0xC0, 0x00}, {1, 0, 0x40, 0x00}, {0, 3, 0x70, 0x14},
+                {0, 1, 0x50, 0x14}, {3, 3, 0xF0, 0x14}, {3, 1, 0xD0, 0x14}};
   for (const auto &r : swings) {
     H::AcCommand c;
     c.vswing = (H::SwingMode) r.v;
@@ -453,15 +510,15 @@ static void test_command_bytes() {
           out[32], out[37]);
     CHECK(out[31] == 0x01, "byte 31 is the marker");
   }
-  // Values SwingMode does not have (2, and anything past 3) are never "swing" (lines 299-301).
+  // Values SwingMode does not have (2, and anything past 3) used to be packed: horizontal as
+  // "active" in byte 37 with no direction bits in byte 32. They are refused.
   for (int odd : {2, 4, 255}) {
     H::AcCommand c;
     c.hswing = (H::SwingMode) odd;
-    CHECK(H::build_command(c, out, sizeof(out)) > 0 && (out[32] & 0x30) == 0x00, "hswing %d (no such mode): no bits",
-          odd);
+    CHECK(H::build_command(c, out, sizeof(out)) == 0, "hswing %d (no such mode): no frame", odd);
     H::AcCommand v;
     v.vswing = (H::SwingMode) odd;
-    CHECK(H::build_command(v, out, sizeof(out)) > 0 && out[32] == 0x40, "vswing %d (no such mode): hold", odd);
+    CHECK(H::build_command(v, out, sizeof(out)) == 0, "vswing %d (no such mode): no frame", odd);
   }
   // The bytes a combined frame leaves at zero: 17 (sleep has its own frame), 35 (mute has its
   // own frame), and everything not named. Lines 280 and 328 write those zeros.
@@ -741,9 +798,11 @@ static void test_parse_status() {
   std::swap(summed[156], summed[157]);
   CHECK(!H::parse_status(summed.data(), 160, &st), "the checksum is high byte first");
 
-  // The shortest status is 45 bytes: byte 44 (outdoor) is the last one always read. Then byte
-  // 45 (coil), 50 (voltage) and 55 (the power proxy) each appear with the byte that holds them.
-  for (size_t len : {(size_t) 44, (size_t) 45, (size_t) 46, (size_t) 50, (size_t) 51, (size_t) 55, (size_t) 56}) {
+  // The shortest status is 49 bytes: byte 44 (outdoor) is the last one always read, and it has to
+  // lie in front of the 4-byte trailer. Then byte 45 (coil), 50 (voltage) and 55 (the power proxy)
+  // each appear when the frame is long enough for them to be payload.
+  for (size_t len : {(size_t) 44, (size_t) 45, (size_t) 48, (size_t) 49, (size_t) 50, (size_t) 54, (size_t) 55,
+                     (size_t) 59, (size_t) 60}) {
     Bytes f(len, 0);
     f[0] = 0xF4;
     f[1] = 0xF5;
@@ -761,16 +820,17 @@ static void test_parse_status() {
     s.voltage_raw = 99;
     s.current_raw = 99;
     bool ok = H::parse_status(f.data(), len, &s);
-    if (len < 45) {
+    if (len < 49) {
+      // 45 to 48 bytes: byte 44 would be a checksum byte or the end tag.
       CHECK(!ok, "%zu bytes: refused", len);
       continue;
     }
     CHECK(ok, "%zu bytes: parsed", len);
-    // 45..48 bytes: byte 44 is in the trailer, 49+: it is the data byte (value 45).
-    CHECK(s.coil_temp_c == (len > 45 ? (int8_t) f[45] : 0), "%zu bytes: coil is %s", len, len > 45 ? "byte 45" : "0");
-    CHECK(s.voltage_raw == (len > 50 ? f[50] : 0), "%zu bytes: voltage is %s", len, len > 50 ? "byte 50" : "0");
-    CHECK(s.current_raw == (len > 55 ? f[55] : 0), "%zu bytes: power proxy is %s", len, len > 55 ? "byte 55" : "0");
-    CHECK(s.outdoor_temp_c == (int8_t) f[44] && s.compressor_freq == f[42], "%zu bytes: outdoor and compressor", len);
+    // A reading is taken only from a payload byte, never from the checksum or the end tag.
+    CHECK(s.coil_temp_c == (len >= 50 ? 46 : 0), "%zu bytes: coil is %s", len, len >= 50 ? "byte 45" : "0");
+    CHECK(s.voltage_raw == (len >= 55 ? 51 : 0), "%zu bytes: voltage is %s", len, len >= 55 ? "byte 50" : "0");
+    CHECK(s.current_raw == (len >= 60 ? 56 : 0), "%zu bytes: power proxy is %s", len, len >= 60 ? "byte 55" : "0");
+    CHECK(s.outdoor_temp_c == 45 && s.compressor_freq == 43, "%zu bytes: outdoor and compressor", len);
   }
 
   // Byte 18: direction in bits 0-1, run in bits 2-3, mode in bits 4-6 (RE docs/03, and the
@@ -867,12 +927,16 @@ static void test_parse_features_and_faults() {
   CHECK(!H::parse_features(nullptr, 60, &ft), "features: no frame");
   CHECK(!H::parse_features(pt.data(), 60, nullptr), "features: nowhere to put it");
   CHECK(H::parse_features(pt.data(), 60, &ft) && ft.valid && ft.ext_valid && ft.reply_len == 60, "features: 60 bytes");
-  // Byte 35 is the last byte of the basic tier: 36 bytes is the shortest reply.
+  // Byte 35 is the last byte of the basic tier and has to lie in front of the 4-byte trailer: 40
+  // bytes is the shortest reply. The extended tier ends at byte 39, so it needs 44. The units
+  // measured answer with 45 bytes (RE docs/11 section 5.1).
   CHECK(!H::parse_features(pt.data(), 35, &ft), "features: 35 bytes is too short");
-  CHECK(H::parse_features(pt.data(), 36, &ft) && !ft.ext_valid && ft.reply_len == 36,
-        "features: 36 bytes, no extended tier");
-  CHECK(H::parse_features(pt.data(), 39, &ft) && !ft.ext_valid, "features: 39 bytes, still none");
-  CHECK(H::parse_features(pt.data(), 40, &ft) && ft.ext_valid, "features: 40 bytes reaches byte 39");
+  CHECK(!H::parse_features(pt.data(), 39, &ft), "features: 39 bytes would read byte 35 out of the trailer");
+  CHECK(H::parse_features(pt.data(), 40, &ft) && !ft.ext_valid && ft.reply_len == 40,
+        "features: 40 bytes, no extended tier");
+  CHECK(H::parse_features(pt.data(), 43, &ft) && !ft.ext_valid, "features: 43 bytes, still none");
+  CHECK(H::parse_features(pt.data(), 44, &ft) && ft.ext_valid, "features: 44 bytes holds byte 39 as payload");
+  CHECK(H::parse_features(pt.data(), 45, &ft) && ft.ext_valid && ft.reply_len == 45, "features: the measured 45 bytes");
   // Class and subtype, one either side.
   for (size_t at : {(size_t) 13, (size_t) 14}) {
     for (int delta : {-1, 1}) {
@@ -888,8 +952,8 @@ static void test_parse_features_and_faults() {
   ext[39] = 0x44;
   CHECK(H::parse_features(ext.data(), 60, &ft) && ft.q_display && ft.enable_8heat && ft.trans_102_64,
         "extended bits read");
-  CHECK(H::parse_features(ext.data(), 39, &ft) && !ft.q_display && !ft.enable_8heat && !ft.trans_102_64,
-        "and not read from a 39-byte reply");
+  CHECK(H::parse_features(ext.data(), 43, &ft) && !ft.q_display && !ft.enable_8heat && !ft.trans_102_64,
+        "and not read from a 43-byte reply");
   // Line 515: reply_len is a byte, clamped. The assembler never hands over more than 200.
   Bytes big(300, 0);
   big[13] = 0x66;
@@ -909,9 +973,10 @@ static void test_parse_features_and_faults() {
   fl.any = true;
   fl.raw_indoor = 0xFF;
   fl.in_temp = true;
-  CHECK(!H::parse_faults(fb.data(), 39, &fl) && !fl.valid && !fl.any && fl.raw_indoor == 0 && !fl.in_temp,
-        "faults: a 39-byte frame is refused and the output cleared");
-  // Each byte group appears with the byte that holds it (39, 40, 64, 66: header).
+  CHECK(!H::parse_faults(fb.data(), 43, &fl) && !fl.valid && !fl.any && fl.raw_indoor == 0 && !fl.in_temp,
+        "faults: a 43-byte frame is refused and the output cleared");
+  // Each byte group appears when the byte that holds it (39, 40, 64, 66: header) is payload, 4
+  // bytes in front of the end of the frame.
   fb[39] = 0x01;
   fb[40] = 0x08;
   fb[64] = 0x08;
@@ -919,8 +984,8 @@ static void test_parse_features_and_faults() {
   struct {
     size_t len;
     bool module, outdoor, protect;
-  } gates[] = {{40, false, false, false}, {41, true, false, false}, {64, true, false, false},
-               {65, true, true, false},   {66, true, true, false},  {67, true, true, true}};
+  } gates[] = {{44, false, false, false}, {45, true, false, false}, {68, true, false, false},
+               {69, true, true, false},   {70, true, true, false},  {71, true, true, true}};
   for (const auto &g : gates) {
     // Stale values from a longer frame must not survive a shorter one.
     fl = H::AcFaults{};
@@ -959,32 +1024,70 @@ static void test_parse_features_and_faults() {
         "outdoor fault under frost guard");
 
   // devtype_from_reply (lines 567-571): the pair at frame 16/17 of a class 0x0A reply.
-  Bytes dt(20, 0);
+  Bytes dt(24, 0);
   dt[13] = 0x0A;
   dt[16] = 0x12;
   dt[17] = 0x34;
   uint8_t hi = 0xEE, lo = 0xEE;
-  CHECK(!H::devtype_from_reply(nullptr, 20, &hi, &lo), "device type: no reply");
+  CHECK(!H::devtype_from_reply(nullptr, 24, &hi, &lo), "device type: no reply");
   CHECK(!H::devtype_from_reply(dt.data(), 17, &hi, &lo) && hi == 0xEE && lo == 0xEE,
         "device type: 17 bytes, outputs untouched");
-  for (size_t n = 14; n < 18; n++) {
+  // Bytes 16/17 are payload only from 22 bytes on: below that they are the checksum or the tag.
+  for (size_t n = 14; n < 22; n++) {
     Bytes exact(dt.begin(), dt.begin() + (long) n);
     hi = lo = 0xEE;
     CHECK(!H::devtype_from_reply(exact.data(), n, &hi, &lo) && hi == 0xEE && lo == 0xEE,
           "device type: %zu bytes is too short", n);
   }
-  CHECK(H::devtype_from_reply(dt.data(), 18, &hi, &lo) && hi == 0x12 && lo == 0x34,
-        "device type: 18 bytes reaches byte 17");
-  CHECK(H::devtype_from_reply(dt.data(), 18, nullptr, nullptr), "device type: both outputs optional");
+  CHECK(H::devtype_from_reply(dt.data(), 22, &hi, &lo) && hi == 0x12 && lo == 0x34,
+        "device type: 22 bytes holds bytes 16/17 as payload");
+  CHECK(H::devtype_from_reply(dt.data(), 22, nullptr, nullptr), "device type: both outputs optional");
   hi = lo = 0xEE;
-  CHECK(H::devtype_from_reply(dt.data(), 20, &hi, nullptr) && hi == 0x12, "device type: only the high byte asked");
-  CHECK(H::devtype_from_reply(dt.data(), 20, nullptr, &lo) && lo == 0x34, "device type: only the low byte asked");
+  CHECK(H::devtype_from_reply(dt.data(), 24, &hi, nullptr) && hi == 0x12, "device type: only the high byte asked");
+  CHECK(H::devtype_from_reply(dt.data(), 24, nullptr, &lo) && lo == 0x34, "device type: only the low byte asked");
   for (int delta : {-1, 1}) {
     Bytes f = dt;
     f[13] = (uint8_t) (0x0A + delta);
     hi = 0xEE;
-    CHECK(!H::devtype_from_reply(f.data(), 20, &hi, &lo) && hi == 0xEE, "device type: class 0x%02X is not the reply",
+    CHECK(!H::devtype_from_reply(f.data(), 24, &hi, &lo) && hi == 0xEE, "device type: class 0x%02X is not the reply",
           f[13]);
+  }
+
+  // devtype_reply_usable: what may be stamped into bytes 7/8 of every later frame. The checksum
+  // verdict comes from the caller, which has judged the frame once already.
+  Bytes du = frame(24, 0x0A);
+  du[16] = 0x36;
+  du[17] = 0x05;
+  seal(&du);
+  hi = lo = 0xEE;
+  CHECK(H::devtype_reply_usable(true, du.data(), du.size(), &hi, &lo) && hi == 0x36 && lo == 0x05,
+        "a whole DevType reply: usable");
+  CHECK(H::devtype_reply_usable(true, du.data(), du.size(), nullptr, nullptr), "usable: both outputs optional");
+  hi = lo = 0xEE;
+  CHECK(H::devtype_reply_usable(true, du.data(), du.size(), &hi, nullptr) && hi == 0x36 &&
+            H::devtype_reply_usable(true, du.data(), du.size(), nullptr, &lo) && lo == 0x05,
+        "usable: each output alone");
+  hi = lo = 0xEE;
+  CHECK(!H::devtype_reply_usable(false, du.data(), du.size(), &hi, &lo) && hi == 0xEE && lo == 0xEE,
+        "a failed checksum: not usable, outputs untouched");
+  CHECK(!H::devtype_reply_usable(true, du.data(), 21, &hi, &lo) && hi == 0xEE,
+        "too short for bytes 16/17 to be payload: not usable");
+  Bytes other = du;
+  other[13] = 0x66;
+  CHECK(!H::devtype_reply_usable(true, other.data(), other.size(), &hi, &lo) && hi == 0xEE,
+        "another class: not usable");
+  // 00 00 is "not linked yet" to the stock module. Either byte alone non-zero is a type.
+  struct {
+    uint8_t type, sub;
+    bool usable;
+  } pairs[] = {{0x00, 0x00, false}, {0x00, 0x01, true}, {0x01, 0x00, true}, {0x01, 0x01, true}, {0xFF, 0xFF, true}};
+  for (const auto &pr : pairs) {
+    du[16] = pr.type;
+    du[17] = pr.sub;
+    hi = lo = 0xEE;
+    bool ok = H::devtype_reply_usable(true, du.data(), du.size(), &hi, &lo);
+    CHECK(ok == pr.usable && hi == (ok ? pr.type : 0xEE) && lo == (ok ? pr.sub : 0xEE), "device type %02X %02X is %s",
+          pr.type, pr.sub, pr.usable ? "adopted" : "never adopted");
   }
 
   // Bitmaps: one fault at a time lands on its FAULT1_ bit (binary_sensor.py reads these).
@@ -1024,21 +1127,26 @@ static void test_parse_features_and_faults() {
   f = H::AcFeatures{};
   f.reply_len = 0xFF;
   CHECK(H::features_to_bitmap32(f) == 0, "reply_len is not in the bitmap");
-  H::AcFeatures back = H::features_from_bitmap32(0xFFFFFFFFu);
-  CHECK(back.valid && back.ext_valid && back.power_display == 3 && back.demand_resp == 3 && back.reply_len == 0 &&
-            back.cool_heat && back.purify && back.trans_102_64,
-        "all bits set decode to every feature, reply_len 0");
-  back = H::features_from_bitmap32(0);
-  CHECK(!back.valid && !back.ext_valid && back.power_display == 0 && back.demand_resp == 0 && !back.cool_heat,
-        "no bits set decode to none");
-  for (int bit = 0; bit < 32; bit++) {
-    uint32_t b = 1u << bit;
-    // Bits 10..12 need bit 30 to come back; 13..15 and 20..29 are not used.
-    const bool used = bit <= 9 || (bit >= 16 && bit <= 19) || bit >= 30;
-    if (used)
-      CHECK(H::features_to_bitmap32(H::features_from_bitmap32(b)) == b, "feature bit %d survives decode and encode",
-            bit);
+  // Every field alone lands on its own bit, and no bit outside the documented ones is ever set.
+  // (binary_sensor.py reads these indices.)
+  bool H::AcFeatures::*flag_fields[] = {
+      &H::AcFeatures::cool_heat, &H::AcFeatures::ai,          &H::AcFeatures::infinite_fan, &H::AcFeatures::power_save,
+      &H::AcFeatures::fan_mute,  &H::AcFeatures::swing_dir_8, &H::AcFeatures::swing_follow, &H::AcFeatures::humidity,
+      &H::AcFeatures::heat_8c,   &H::AcFeatures::purify};
+  for (int bit = 0; bit < 10; bit++) {
+    H::AcFeatures one;
+    one.*(flag_fields[bit]) = true;
+    CHECK(H::features_to_bitmap32(one) == (1u << bit), "feature field %d alone is bit %d", bit, bit);
   }
+  H::AcFeatures all;
+  for (auto field : flag_fields)
+    all.*field = true;
+  all.valid = all.ext_valid = all.q_display = all.enable_8heat = all.trans_102_64 = true;
+  all.power_display = 0xFF;
+  all.demand_resp = 0xFF;
+  all.reply_len = 0xFF;
+  CHECK(H::features_to_bitmap32(all) == 0xC00F1FFFu, "everything set: bits 0-12, 16-19, 30, 31 (got 0x%08X)",
+        (unsigned) H::features_to_bitmap32(all));
 }
 
 // ---- Setup request ("77") ----------------------------------------------------------------------
@@ -1129,7 +1237,7 @@ static void test_setup_request() {
   // setup_request_lockout sets both fields.
   H::SetupRequestTracker tr;
   CHECK(!tr.lockout_armed && tr.lockout_since == 0 && !tr.reconfig_quiet && tr.streak == 0 && !tr.latched &&
-            tr.last_req == 0,
+            !tr.smartcfg_seen && !tr.smartcfg_live && !tr.taken,
         "a new tracker is the boot state");
   H::setup_request_lockout(&tr, 1000);
   CHECK(tr.lockout_armed && tr.lockout_since == 1000, "the lockout is armed from the time given");
@@ -1169,28 +1277,104 @@ static void test_setup_request() {
   CHECK(H::setup_request_step(&q, 0x08, false, 11000) == 0x08, "third reply: taken");
   CHECK(H::setup_request_step(&q, 0x08, true, 12000) == 0 && !q.reconfig_quiet, "indicating again: the gate shuts");
 
-  // Line 419: a request that changes kind starts its count again. Two replies of bit 3, then
-  // bits 3 and 5 together: three more are needed, not one.
+  // The count of bit 3 is its own: bit 5 arriving on top does not start it again. Two replies of
+  // bit 3, then bits 3 and 5 together: that is the third reply with bit 3, and both are reported.
   H::SetupRequestTracker k;
   H::setup_request_step(&k, 0, false, 1000);
   CHECK(H::setup_request_step(&k, 0x08, false, 2000) == 0 && H::setup_request_step(&k, 0x08, false, 3000) == 0,
         "two replies of bit 3");
-  CHECK(H::setup_request_step(&k, 0x28, false, 4000) == 0 && k.streak == 1, "then bits 3 and 5: the count starts over");
-  CHECK(H::setup_request_step(&k, 0x28, false, 5000) == 0, "second");
-  CHECK(H::setup_request_step(&k, 0x28, false, 6000) == 0x28, "third: taken, both bits");
-  // Line 418: a change to a numerically smaller request restarts too. Bit 5 taken, then bit 3
-  // alone: the latch of the first must not swallow the second.
+  CHECK(H::setup_request_step(&k, 0x28, false, 4000) == 0x28 && k.streak == 3 && k.latched && k.taken,
+        "then bits 3 and 5: the third reply with bit 3, taken with both bits");
+  CHECK(H::setup_request_step(&k, 0x28, false, 5000) == 0 && H::setup_request_step(&k, 0x08, false, 6000) == 0 &&
+            H::setup_request_step(&k, 0x20, false, 7000) == 0,
+        "and nothing more while the unit keeps asking, in whatever form");
+  CHECK(H::setup_request_step(&k, 0, false, 8000) == 0 && !k.taken && k.streak == 0 && !k.latched && !k.smartcfg_seen,
+        "a reply that asks nothing ends the run");
+  // Bit 5 with a bit 3 that counts waits for bit 3's hold, and is reported with it only when it
+  // is still there then.
+  H::SetupRequestTracker w;
+  H::setup_request_step(&w, 0, false, 1000);
+  CHECK(H::setup_request_step(&w, 0x28, false, 2000) == 0 && w.smartcfg_live && !w.taken, "both bits: bit 5 waits");
+  CHECK(H::setup_request_step(&w, 0x28, false, 3000) == 0, "second");
+  CHECK(H::setup_request_step(&w, 0x28, false, 4000) == 0x28, "third: both");
+  H::SetupRequestTracker w2;
+  H::setup_request_step(&w2, 0, false, 1000);
+  H::setup_request_step(&w2, 0x28, false, 2000);
+  CHECK(H::setup_request_step(&w2, 0x20, false, 3000) == 0x20,
+        "bit 3 gone again after one reply: bit 5 is taken alone");
+  // Bit 5 taken, then bit 3 held with no quiet reply between: the same run, no second request.
   H::SetupRequestTracker d;
   H::setup_request_step(&d, 0, false, 1000);
-  CHECK(H::setup_request_step(&d, 0x20, false, 2000) == 0x20, "bit 5 taken");
+  CHECK(H::setup_request_step(&d, 0x20, false, 2000) == 0x20 && d.taken, "bit 5 taken");
   CHECK(H::setup_request_step(&d, 0x08, false, 3000) == 0 && d.streak == 1 && !d.latched,
         "bit 3 next: counted from one");
   CHECK(H::setup_request_step(&d, 0x08, false, 4000) == 0, "second");
-  CHECK(H::setup_request_step(&d, 0x08, false, 5000) == 0x08, "third: taken");
+  CHECK(H::setup_request_step(&d, 0x08, false, 5000) == 0 && d.streak == 3 && d.latched,
+        "third: its hold is complete, but the run has had its request");
+  // Bit 5 that appears inside the lockout is spent, also when it outlives the lockout.
+  H::SetupRequestTracker s;
+  H::setup_request_lockout(&s, 1000);
+  CHECK(H::setup_request_step(&s, 0x20, false, 10999) == 0 && s.smartcfg_seen && !s.smartcfg_live,
+        "bit 5 at 9.999 s: seen, not live");
+  CHECK(H::setup_request_step(&s, 0x20, false, 11000) == 0 && H::setup_request_step(&s, 0x20, false, 60000) == 0,
+        "still up when the lockout is over: not taken");
+  CHECK(H::setup_request_step(&s, 0, false, 61000) == 0 && !s.smartcfg_seen, "gone");
+  CHECK(H::setup_request_step(&s, 0x20, false, 62000) == 0x20, "a new pulse is taken");
+  // Bit 5 that appeared outside the lockout, with the lockout restarted (the indication switched
+  // off) before bit 3's hold is complete: bit 3 is reported alone.
+  H::SetupRequestTracker x;
+  H::setup_request_step(&x, 0, false, 1000);
+  H::setup_request_step(&x, 0x28, false, 2000);
+  H::setup_request_step(&x, 0x28, false, 3000);
+  H::setup_request_lockout(&x, 3500);
+  CHECK(H::setup_request_step(&x, 0x28, false, 4000) == 0x08, "bit 5 is held back by the lockout that began meanwhile");
   // Bits outside the mask never reach the tracker's state.
   H::SetupRequestTracker m;
-  CHECK(H::setup_request_step(&m, 0xD7, false, 1000) == 0 && m.last_req == 0 && m.streak == 0,
+  CHECK(H::setup_request_step(&m, 0xD7, false, 1000) == 0 && !m.smartcfg_seen && !m.taken && m.streak == 0,
         "other bits are no request");
+
+  // setup_request_expire: disarms at exactly 10 s, leaves the rest alone, and is safe to repeat.
+  H::SetupRequestTracker e;
+  H::setup_request_expire(&e, 5);
+  CHECK(!e.lockout_armed && e.lockout_since == 0, "expire on a tracker with no lockout does nothing");
+  H::setup_request_lockout(&e, 0xFFFFFF00u);
+  H::setup_request_expire(&e, 0xFFFFFF00u + 9999);
+  CHECK(e.lockout_armed, "9.999 s, across the wrap: armed");
+  H::setup_request_expire(&e, 0xFFFFFF00u + 10000);
+  CHECK(!e.lockout_armed && e.lockout_since == 0xFFFFFF00u, "10 s: disarmed");
+  H::setup_request_expire(&e, 0xFFFFFF00u + 5);
+  CHECK(!e.lockout_armed, "and it stays disarmed whatever the clock says later");
+
+  // setup_request_flag_sent: the gate for bit 3 shuts without a reply having been read.
+  H::SetupRequestTracker fs;
+  H::setup_request_step(&fs, 0, false, 1000);
+  CHECK(fs.reconfig_quiet, "(gate open)");
+  H::setup_request_flag_sent(&fs);
+  CHECK(!fs.reconfig_quiet, "the flag went out: the gate is shut");
+  int fires = 0;
+  for (int i = 0; i < 5; i++)
+    fires += H::setup_request_step(&fs, 0x08, false, 2000 + i * 1000) != 0;
+  CHECK(fires == 0, "the flag handed back for five replies with the indication already off: no request");
+  CHECK(H::setup_request_step(&fs, 0, false, 8000) == 0 && fs.reconfig_quiet,
+        "a reply without it opens the gate again");
+
+  // setup_request_link_lost: the hold of bit 3 starts again, nothing else changes.
+  H::SetupRequestTracker ll;
+  H::setup_request_step(&ll, 0, false, 1000);
+  H::setup_request_step(&ll, 0x08, false, 2000);
+  H::setup_request_step(&ll, 0x08, false, 3000);
+  H::setup_request_lockout(&ll, 3000);
+  H::setup_request_link_lost(&ll);
+  CHECK(ll.streak == 0 && !ll.latched && ll.reconfig_quiet && ll.lockout_armed && ll.lockout_since == 3000,
+        "link lost: the count is gone, the gate and the lockout are as they were");
+  CHECK(H::setup_request_step(&ll, 0x08, false, 70000) == 0 && H::setup_request_step(&ll, 0x08, false, 71000) == 0,
+        "back: first and second reply");
+  CHECK(H::setup_request_step(&ll, 0x08, false, 72000) == 0x08, "third: taken");
+  H::setup_request_link_lost(&ll);
+  CHECK(ll.taken, "a request already taken stays taken across a lost link");
+  CHECK(H::setup_request_step(&ll, 0x08, false, 73000) == 0 && H::setup_request_step(&ll, 0x08, false, 74000) == 0 &&
+            H::setup_request_step(&ll, 0x08, false, 75000) == 0,
+        "and the bit still standing afterwards is not reported again");
 }
 
 // ---- Frame assembler ---------------------------------------------------------------------------
@@ -1350,6 +1534,184 @@ static void test_assembler() {
   }
 }
 
+// frame_progress(): the one rule set the assembler applies to the frame in front and to the
+// candidate behind it.
+static void test_frame_progress() {
+  printf("-- frame_progress: each header byte, the LEN limit, the end tag\n");
+  size_t expected = 0;
+  uint8_t f[200] = {0xF4, 0xF5, 0x01, 0x40, 0x00};
+  for (int second = 0; second < 256; second++) {
+    f[1] = (uint8_t) second;
+    CHECK(H::frame_progress(f, 2, &expected) == (second == 0xF5 ? H::FRAME_PROGRESS_MORE : H::FRAME_PROGRESS_BROKEN),
+          "byte 1 = 0x%02X", second);
+  }
+  f[1] = 0xF5;
+  for (int dir = 0; dir < 256; dir++) {
+    f[2] = (uint8_t) dir;
+    CHECK(H::frame_progress(f, 3, &expected) == (dir == 0x01 ? H::FRAME_PROGRESS_MORE : H::FRAME_PROGRESS_BROKEN),
+          "direction 0x%02X (0x00 is our own echo)", dir);
+  }
+  f[2] = 0x01;
+  CHECK(H::FRAME_DIR_FROM_AC == 0x01 && expected == 0, "nothing sets the length before byte 4");
+  for (int ctrl = 0; ctrl < 256; ctrl++) {
+    f[3] = (uint8_t) ctrl;
+    CHECK(H::frame_progress(f, 4, &expected) == H::FRAME_PROGRESS_MORE && expected == 0, "CTRL 0x%02X is not judged",
+          ctrl);
+  }
+  for (int len = 0; len < 256; len++) {
+    f[4] = (uint8_t) len;
+    expected = 0;
+    H::FrameProgress p = H::frame_progress(f, 5, &expected);
+    CHECK(expected == (size_t) len + 9, "LEN %d sets %zu", len, expected);
+    CHECK(p == (len <= 191 ? H::FRAME_PROGRESS_MORE : H::FRAME_PROGRESS_BROKEN), "LEN %d: 200 bytes is the most", len);
+  }
+  // Walk a whole frame of every length: MORE up to the last byte, COMPLETE on it.
+  for (size_t n = 9; n <= 200; n++) {
+    Bytes g = frame(n, 0x66);
+    expected = 0;
+    bool ok = true;
+    for (size_t k = 2; k < n; k++)
+      ok = ok && H::frame_progress(g.data(), k, &expected) == H::FRAME_PROGRESS_MORE;
+    CHECK(ok && H::frame_progress(g.data(), n, &expected) == H::FRAME_PROGRESS_COMPLETE && expected == n,
+          "a whole %zu-byte frame", n);
+    for (size_t at : {n - 2, n - 1}) {
+      for (int delta : {-1, 1}) {
+        Bytes bad = g;
+        bad[at] = (uint8_t) (bad[at] + delta);
+        size_t e = n;
+        CHECK(H::frame_progress(bad.data(), n, &e) == H::FRAME_PROGRESS_BROKEN, "%zu bytes, end tag byte %zu off by %d",
+              n, at, delta);
+      }
+    }
+  }
+}
+
+// What the assembler makes of a stream in which a frame is damaged, cut short or preceded by a
+// start tag that noise produced. Every case used to cost the frame behind the damage.
+static void test_assembler_resync() {
+  printf("-- frame assembler: a false start or a cut frame does not cost the frame behind it\n");
+  Bytes got;
+  const Bytes link = frame(28, 0x1E);
+  const Bytes status = frame(160, 0x66);
+  const Bytes ok20 = frame(20, 0x66);
+  // Stubs of a header, 2 to 4 bytes, directly ahead of a frame. The byte that breaks the stub is
+  // the frame's own F4 (as byte 2, or as a LEN that claims 253 bytes).
+  for (size_t stub = 2; stub <= 4; stub++) {
+    H::FrameAssembler fa;
+    Bytes head(status.begin(), status.begin() + (long) stub);
+    CHECK(feed_all(&fa, cat({head, link}), &got) == 1 && got == link, "a %zu-byte stub, then a frame", stub);
+    CHECK(feed_all(&fa, status, &got) == 1 && got == status, "and the frame after it");
+  }
+  // Longer stubs have a LEN: the assembler is inside a frame when the next one starts.
+  for (size_t cut = 5; cut < 159; cut++) {
+    H::FrameAssembler fa;
+    Bytes head(status.begin(), status.begin() + (long) cut);
+    if (cut == 160 - 28) {
+      // The one length at which the cut frame's own count ends on the reply's end tag: the frame
+      // in front completes, and it is the one delivered (132 bytes of status and the reply,
+      // which no checksum will pass). The frame after it is read as usual.
+      CHECK(feed_all(&fa, cat({head, link}), &got) == 1 && got.size() == 160 &&
+                !H::status_checksum_ok(got.data(), got.size()),
+            "status cut at %zu: the reply's end tag completes the cut frame", cut);
+      CHECK(feed_all(&fa, status, &got) == 1 && got == status, "status cut at %zu: clean afterwards", cut);
+      continue;
+    }
+    // A short frame behind a long cut one: it is delivered on its own last byte, long before
+    // the cut frame's 160 bytes are in.
+    Bytes s = cat({head, link});
+    int frames = 0;
+    for (size_t i = 0; i < s.size(); i++) {
+      size_t n = fa.feed(s[i]);
+      if (n != 0) {
+        frames++;
+        CHECK(i + 1 == s.size() && n == 28 && std::memcmp(fa.data(), link.data(), 28) == 0,
+              "status cut at %zu: the 0x1E reply behind it is delivered on its last byte (byte %zu)", cut, i);
+      }
+    }
+    CHECK(frames == 1, "status cut at %zu, then a 0x1E reply: %d frame(s)", cut, frames);
+    CHECK(feed_all(&fa, status, &got) == 1 && got == status, "status cut at %zu: clean afterwards", cut);
+  }
+  {
+    // Cut frame, then a whole one of the same length: the cut frame's count runs out inside the
+    // second, which then takes its place with the bytes already received.
+    H::FrameAssembler fa;
+    Bytes head(status.begin(), status.begin() + 60);
+    CHECK(feed_all(&fa, cat({head, status}), &got) == 1 && got == status, "cut status, then a whole status");
+  }
+  {
+    // A header that claims 200 bytes, then seven 28-byte frames: all seven.
+    H::FrameAssembler fa;
+    Bytes greedy = {0xF4, 0xF5, 0x01, 0x40, 0xBF};
+    Bytes s = greedy;
+    for (int i = 0; i < 7; i++)
+      s.insert(s.end(), link.begin(), link.end());
+    CHECK(feed_all(&fa, s, &got) == 7 && got == link, "seven frames behind a header that claims 200 bytes");
+  }
+  {
+    // Two cut frames, then a whole one: the newest start is the one followed.
+    H::FrameAssembler fa;
+    Bytes a(status.begin(), status.begin() + 60);
+    Bytes b(status.begin(), status.begin() + 30);
+    CHECK(feed_all(&fa, cat({a, b, link}), &got) == 1 && got == link, "two cut frames, then a whole one");
+  }
+  {
+    // A candidate that turns out not to be a frame from the unit is dropped again, and the frame
+    // in front completes as if nothing had been there. The frame in front is sent by a sender
+    // that doubles only its checksum (as this project's builders do), so the F4 inside is bare.
+    for (int third : {0x00, 0x02}) {
+      H::FrameAssembler fa;
+      Bytes f = frame(40, 0x66);
+      f[20] = 0xF4;
+      f[21] = 0xF5;
+      f[22] = (uint8_t) third;
+      seal(&f);
+      CHECK(feed_all(&fa, f, &got) == 1 && got == f, "F4 F5 %02X as data inside a frame: the frame is whole", third);
+    }
+    // The same with a candidate that looks right for longer: it is still the frame in front that
+    // completes first, and it wins.
+    H::FrameAssembler fa;
+    Bytes f = frame(40, 0x66);
+    f[20] = 0xF4;
+    f[21] = 0xF5;
+    f[22] = 0x01;
+    f[24] = 0x40;  // the candidate's LEN: 73 bytes, more than the frame in front has left
+    seal(&f);
+    CHECK(feed_all(&fa, f, &got) == 1 && got == f, "F4 F5 01 as data inside a frame: the frame is whole");
+    CHECK(feed_all(&fa, link, &got) == 1 && got == link, "and nothing of the candidate is left behind");
+  }
+  {
+    // Both end on the same byte: the frame in front is the one delivered.
+    H::FrameAssembler fa;
+    Bytes f = frame(40, 0x66);
+    const uint8_t inner[] = {0xF4, 0xF5, 0x01, 0x40, 0x00, 0x00, 0x41};  // 9 bytes with the tag of the outer frame
+    std::memcpy(&f[31], inner, sizeof(inner));
+    f[38] = 0xF4;
+    f[39] = 0xFB;
+    CHECK(feed_all(&fa, f, &got) == 1 && got.size() == 40 && got == f, "two candidates ending together: the outer one");
+  }
+  {
+    // The limit of the scheme, stated: a whole frame inside a longer one that is sent with bare
+    // 0xF4 bytes is delivered first, and the outer one is lost. A unit that doubles its data
+    // bytes cannot produce this, and the checksum of the outer frame would be judged otherwise.
+    H::FrameAssembler fa;
+    Bytes f = frame(40, 0x66);
+    const uint8_t inner[] = {0xF4, 0xF5, 0x01, 0x40, 0x00, 0x00, 0x41, 0xF4, 0xFB};
+    std::memcpy(&f[16], inner, sizeof(inner));
+    seal(&f);
+    Bytes want(inner, inner + sizeof(inner));
+    CHECK(feed_all(&fa, f, &got) == 1 && got == want, "a whole 9-byte frame inside an un-doubled one is taken first");
+    CHECK(feed_all(&fa, link, &got) == 1 && got == link, "and the stream is read on from there");
+  }
+  {
+    // The one cut point that still costs the next frame: between the F4 and the FB of the end
+    // tag. The next frame's F4 is the second of a pair, which is one escaped data byte.
+    H::FrameAssembler fa;
+    Bytes head(ok20.begin(), ok20.begin() + 19);
+    CHECK(feed_all(&fa, cat({head, link}), &got) == 0, "cut inside the end tag: the next frame's start is not seen");
+    CHECK(feed_all(&fa, link, &got) == 1 && got == link, "the one after it is");
+  }
+}
+
 int main() {
   printf("== ESPHome codec: coverage and mutation gaps ==\n");
   test_defaults();
@@ -1363,6 +1725,8 @@ int main() {
   test_parse_features_and_faults();
   test_setup_request();
   test_assembler();
+  test_frame_progress();
+  test_assembler_resync();
   printf("  %d checks, %d failed\n", g_checks, g_fail);
   printf(g_fail ? "== CODEC GAPS FAILED ==\n" : "== CODEC GAPS OK ==\n");
   return g_fail ? 1 : 0;

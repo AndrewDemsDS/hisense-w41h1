@@ -35,6 +35,7 @@
 //       ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_bus_stress.bin
 // `--soak [seeds]` runs the random part for longer (2000 seeds of 10 min bus time by default, not
 // part of the default suite). `--seed N` runs one random seed and prints its configuration.
+// `--traces` prints a hash of every scenario's trace, to compare two builds of the scheduler.
 
 #include <algorithm>
 #include <cstdint>
@@ -830,6 +831,7 @@ void Rig::check_(uint32_t dt) {
   // nothing written without it, flushed before every release.
   if (has_de) {
     CHECK(ac.de_high == bus.wants_fast_loop(), "DE %d, wants_fast_loop %d", ac.de_high, bus.wants_fast_loop());
+    CHECK(ac.de_high == bus.transmitting(), "DE %d, transmitting %d", ac.de_high, bus.transmitting());
     CHECK(!(ac.de_high && bus.listening()), "listening with DE high");
     CHECK(!ac.de.empty() && ac.flushes == (ac.de.size() - 1) / 2, "one flush per DE release (%u flushes, %zu edges)",
           (unsigned) ac.flushes, ac.de.size());
@@ -903,12 +905,21 @@ typedef void (*Script)(Rig &r);
 // timestamps would flip.
 static const uint32_t STARTS[] = {1000u, 0u, 0xFFFFFFFFu - 2500u, 0xFFFFFFFFu - 9100u, 0x7FFFFFFFu - 4300u};
 
+// Set by --traces: print the hash of every scenario's trace, one line each. Two builds of the
+// scheduler that print the same lines put the same bytes on the wire at the same times and told the
+// listener the same things, in every scenario here. That is the check for a change that is meant to
+// leave the behaviour alone: run it before and after and compare the output.
+static bool g_print_traces = false;
+
 static uint64_t run_script(const char *name, Script s, uint32_t start, uint32_t *entries = nullptr) {
   g_ctx = name;
   Rig r(start);
   s(r);
   if (entries != nullptr)
     *entries = r.trace.entries;
+  if (g_print_traces)
+    printf("   trace %016llx %u entries, start %u: %s\n", (unsigned long long) r.trace.hash, (unsigned) r.trace.entries,
+           (unsigned) start, name);
   return r.trace.hash;
 }
 
@@ -1159,18 +1170,31 @@ static void script_gap(Rig &r) {
         (unsigned) g_gap);
   CHECK(r.bus.link_miss() <= 255, "miss counter saturates");
   size_t writes = r.ac.writes.size();
+  // A silent unit gets one command per cycle (the slot closes behind the heartbeat's empty reply
+  // window), so the second one may still be waiting when the unit returns after a short silence.
+  const int during_sent = r.tags[during].sends;
   r.ac.silent = false;
   r.run(4000);
   CHECK(r.rec.links.size() == (lost ? 2u : 0u) && r.bus.link_losses() == (lost ? 1u : 0u), "restored once (%zu edges)",
         r.rec.links.size());
   CHECK(r.rec.statuses >= statuses + 2, "status flows again");
-  // Neither command is sent once the unit is back: each went out into the silence, once, and was
-  // reported unanswered. The hub's "commands unconfirmed when the link dropped" path counts on it.
-  CHECK(r.count(0x65, writes) == 0, "no command sent after the unit came back");
-  CHECK(r.tags[before].sends >= 1 && r.tags[during].sends == 1, "both went out while it was silent");
+  // A command that went out into the silence is not sent again once the unit is back: it went out
+  // once and was reported unanswered. The hub's "commands unconfirmed when the link dropped" path
+  // counts on it. One that was still queued when the unit returned goes out then, once, and is
+  // answered.
+  CHECK(r.tags[before].sends >= 1 && r.tags[during].sends == 1, "each accepted command was sent");
+  CHECK(during_sent == 1 || g_gap < 6000, "a silence long enough to lose the link carries both commands (%u ms)",
+        (unsigned) g_gap);
+  CHECK(r.count(0x65, writes) == (during_sent == 1 ? 0u : 1u), "after the unit came back: only what was still queued");
+  size_t unanswered = 0;
   for (auto &c : r.rec.commands)
-    CHECK(!c.answered, "reported unanswered");
-  CHECK(r.ac.heard_commands == 0 && r.ac.setpoint == 22, "the unit heard neither");
+    unanswered += c.answered ? 0 : 1;
+  CHECK(r.rec.commands.size() - unanswered == (during_sent == 1 ? 0u : 1u), "what went into the silence is unanswered");
+  if (during_sent == 1) {
+    CHECK(r.ac.heard_commands == 0 && r.ac.setpoint == 22, "the unit heard neither");
+  } else {
+    CHECK(r.ac.heard_commands == 1 && r.ac.setpoint == 29, "the unit heard the one that waited");
+  }
   r.audit_commands();
 }
 
@@ -1278,7 +1302,8 @@ static void test_reply_faults() {
           CHECK(timeouts == 0 && chk == 0, "a repeated reply costs nothing (%u timeouts)", (unsigned) timeouts);
           break;
         case FAULT_BAD_SUM:
-          CHECK(chk == (cls == 0x66 ? 1u : 0u), "checksum errors counted: %u", (unsigned) chk);
+          // Every damaged frame is counted once, whichever class it is.
+          CHECK(chk == 1u, "checksum errors counted: %u", (unsigned) chk);
           break;
         case FAULT_DROP:
         case FAULT_TRUNCATE:
@@ -1430,12 +1455,12 @@ static void script_token_change(Rig &r) {
   CHECK(r.rec.links.size() == 4, "two losses, two recoveries (%zu edges)", r.rec.links.size());
 }
 
-// DEFECT (reported, not fixed in this wave): the device type is taken from a DevType reply without
-// looking at its checksum (hisense_bus.cpp, the latch in the LISTEN case; devtype_from_reply() in
-// hisense_protocol.cpp checks length and class only). One damaged reply during the handshake stamps
-// a wrong pair into bytes 7/8 of every frame that follows, until the link has been lost and the
-// recovery probe is answered cleanly. hisense_protocol.cpp says of the wrong pair in that place
-// that it "kills the link on hardware".
+// Was a defect: the device type was taken from a DevType reply without looking at its checksum, so
+// one damaged reply during the handshake stamped a wrong pair into bytes 7/8 of every frame that
+// followed, until the link had been lost and the recovery probe was answered cleanly.
+// hisense_protocol.cpp says of the wrong pair in that place that it "kills the link on hardware".
+// Now the damaged reply is a failed try: it is counted, nothing is adopted from it, and the probe
+// goes out again 500 ms later.
 static void script_devtype_bad_checksum(Rig &r) {
   int left = 1;
   r.ac.fault = [&left](uint8_t cls, uint8_t) {
@@ -1450,17 +1475,21 @@ static void script_devtype_bad_checksum(Rig &r) {
   r.run(3000);
   uint8_t hi = 0, lo = 0;
   bool seen = r.bus.link_token(&hi, &lo);
-  XFAIL(!(seen && lo == 0x42), "a DevType reply with a bad checksum is not adopted (got %02X %02X)", hi, lo);
+  CHECK(!(seen && lo == 0x42), "a DevType reply with a bad checksum is not adopted (got %02X %02X)", hi, lo);
   bool stamped_wrong = false;
   for (auto &w : r.ac.writes)
     if (cls_of(w) != 0x0A && w.bytes[8] == 0x42)
       stamped_wrong = true;
-  XFAIL(!stamped_wrong, "no frame carries the damaged device type");
+  CHECK(!stamped_wrong, "no frame carries the damaged device type");
+  CHECK(seen && hi == 0x01 && lo == 0x02, "the second, whole reply supplies the device type (got %02X %02X)", hi, lo);
+  CHECK(r.count(0x0A) == 2 && cls_of(r.ac.writes[0]) == 0x0A && cls_of(r.ac.writes[1]) == 0x0A,
+        "the damaged reply is a failed try: the probe is sent a second time (%zu probes)", r.count(0x0A));
+  CHECK(r.bus.checksum_mismatches() == 1, "the damaged reply is counted (%u)", (unsigned) r.bus.checksum_mismatches());
 }
 
-// A frame start that goes nowhere (F4 F5) directly ahead of a reply takes the reply with it: the
-// assembler drops the false start on its third byte and does not look at that byte again as a
-// possible start. One poll is lost. Pinned as it is today, see the report.
+// A frame start that goes nowhere (F4 F5) directly ahead of a reply used to take the reply with it:
+// the assembler dropped the false start on its third byte and did not look at that byte again as a
+// possible start, and one poll was lost. The byte is looked at again now.
 static void script_stx_pair(Rig &r) {
   r.run(2600);
   int left = 1;
@@ -1472,9 +1501,9 @@ static void script_stx_pair(Rig &r) {
     return FaultSpec{FAULT_NONE, 0};
   };
   r.run(4000);
-  XFAIL(r.rec.timeouts == 0, "a false start ahead of a reply does not cost the reply (%u timeouts)",
+  CHECK(r.rec.timeouts == 0, "a false start ahead of a reply does not cost the reply (%u timeouts)",
         (unsigned) r.rec.timeouts);
-  CHECK(r.rec.timeouts <= 1 && r.rec.links.empty(), "and costs no more than that one poll");
+  CHECK(r.rec.links.empty(), "and no link edge");
 }
 
 // Frames the unit sends unasked, in the wait between two cycles, are flushed and change nothing.
@@ -1518,11 +1547,10 @@ static void script_burst(Rig &r) {
   r.audit_commands();
 }
 
-// WEAKNESS (reported): the command slot empties the whole queue before the status poll, and a queue
-// that is refilled as fast as it drains never empties. While that lasts no heartbeat and no status
-// poll is sent: the scheduler keeps working through commands, while the unit goes without its 1 Hz
-// keepalive and Home Assistant without status. Nothing in the hub sustains that rate today (user commands arrive
-// one at a time, special modes are paced 10 s apart), so this pins the behaviour and does not fail.
+// Was a weakness: the command slot emptied the whole queue before the status poll, and a queue
+// that is refilled as fast as it drains never empties. While that lasted no heartbeat and no status
+// poll was sent. The slot now closes BUS_COMMAND_SLOT_MS into the cycle and what is still queued
+// waits for the next one.
 static void script_starvation(Rig &r) {
   r.run(2600);
   size_t from = r.ac.writes.size();
@@ -1533,11 +1561,13 @@ static void script_starvation(Rig &r) {
     r.step();
   }
   size_t heartbeats = r.count(0x1E, from), polls = r.count(0x66, from);
-  XFAIL(heartbeats >= 8 && polls >= 8,
+  CHECK(heartbeats >= 9 && polls >= 9,
         "heartbeat and status poll keep their cycle under a steady stream of commands "
         "(%zu heartbeats, %zu polls in 10 s)",
         heartbeats, polls);
-  CHECK(r.count(0x65, from) > 50, "commands flowed the whole time (%zu)", r.count(0x65, from));
+  CHECK(r.rec.statuses - statuses >= 9, "and status is delivered every cycle (%u)",
+        (unsigned) (r.rec.statuses - statuses));
+  CHECK(r.count(0x65, from) >= 30, "commands flowed the whole time, three or more a cycle (%zu)", r.count(0x65, from));
   CHECK(r.rec.links.empty(), "no link edge either: nothing counts the polls that were never sent");
   r.run(3000);
   CHECK(r.rec.statuses > statuses, "status resumes when the stream stops");
@@ -1576,7 +1606,7 @@ static void script_power_and_mode(Rig &r) {
 static void script_queue_ring(Rig &r) {
   r.run(2600);
   Rng rng(3);
-  for (int round = 0; round < 12; round++) {
+  for (int round = 0; round < 24; round++) {
     size_t room = H::BUS_TX_QUEUE_LEN - r.bus.queued();
     for (size_t i = 0; i < room; i++)
       CHECK(r.send_setpoint(static_cast<int8_t>(16 + rng.below(17))), "round %d: slot %zu taken", round, i);
@@ -1588,7 +1618,7 @@ static void script_queue_ring(Rig &r) {
     r.run(300 + rng.below(1500));
   }
   r.run(12000);
-  CHECK(r.next_tag > 30, "%u frames went through", (unsigned) (r.next_tag - 1));
+  CHECK(r.next_tag > 30 && r.bus.queued() == 0, "%u frames went through", (unsigned) (r.next_tag - 1));
   r.audit_commands();
   uint8_t f[H::TX_FRAME_MAX + 1] = {0xF4, 0xF5};
   CHECK(!r.bus.enqueue(f, 0) && !r.bus.enqueue(f, H::TX_FRAME_MAX + 1) && !r.bus.enqueue(nullptr, 20),
@@ -1745,20 +1775,32 @@ static void script_de_blocking(Rig &r) {
   r.audit_commands();
 }
 
-// WEAKNESS (reported): HisenseAC::bus_transmitting() is wants_fast_loop(), which is DE timing and
-// nothing else. Without a DE pin it is false for the whole of every transmission, so board code that
-// asks "is the port busy sending" (w41h1_module's serial restart) is told no while up to 52 ms of
-// frame are still leaving the UART. Every shipped board file sets a DE pin, so nothing is hit today.
+// Was a weakness: HisenseAC::bus_transmitting() was wants_fast_loop(), which is DE timing and
+// nothing else. Without a DE pin it was false for the whole of every transmission, so board code
+// that asks "is the port busy sending" (w41h1_module's serial restart) was told no while up to
+// 52 ms of frame were still leaving the UART. transmitting() keeps the time the bytes need.
 static void script_no_de_transmitting(Rig &r) {
   r.has_de = false;
-  bool ever = false;
+  bool fast = false;
+  size_t seen = 0;
   uint32_t end = g_now + 4000;
   while (static_cast<int32_t>(end - g_now) > 0) {
-    r.step();
-    ever = ever || r.bus.wants_fast_loop();
+    r.step();  // polls at g_now, then advances the clock
+    fast = fast || r.bus.wants_fast_loop();
+    // As of that poll: transmitting exactly while the newest frame's bytes are still leaving.
+    bool leaving = false;
+    if (!r.ac.writes.empty()) {
+      const Write &w = r.ac.writes.back();
+      const uint32_t polled = g_now - 1;
+      leaving = static_cast<int32_t>(polled - (w.t + H::bus_tx_time_ms(w.bytes.size()))) < 0;
+      seen += leaving ? 1 : 0;
+    }
+    CHECK(r.bus.transmitting() == leaving, "transmitting() is %d with the last byte %s", r.bus.transmitting(),
+          leaving ? "still to go" : "gone");
   }
   CHECK(r.count(0x66) >= 3, "frames were sent");
-  XFAIL(ever, "the scheduler says it is transmitting at some point while it sends without a DE pin");
+  CHECK(seen > 100, "the scheduler said it was transmitting while it sent without a DE pin (%zu ms)", seen);
+  CHECK(!fast, "and still asks for no fast loop: there is no DE timing to keep");
 }
 
 // ---- The hub's decisions on top of the real scheduler --------------------------------------------
@@ -2180,6 +2222,8 @@ static void test_random(uint32_t seeds, uint32_t run_ms) {
         break;
     }
     StressResult a = stress(seed, start, run_ms);
+    if (g_print_traces)
+      printf("   trace %016llx seed %u, start %u\n", (unsigned long long) a.hash, (unsigned) seed, (unsigned) start);
     steps += a.steps;
     writes += a.writes;
     timeouts += a.timeouts;
@@ -2208,8 +2252,10 @@ int main(int argc, char **argv) {
         seeds = static_cast<uint32_t>(strtoul(argv[++i], nullptr, 10));
     } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
       one_seed = strtol(argv[++i], nullptr, 10);
+    } else if (strcmp(argv[i], "--traces") == 0) {
+      g_print_traces = true;
     } else {
-      printf("usage: %s [--soak [seeds]] [--seed N]\n", argv[0]);
+      printf("usage: %s [--soak [seeds]] [--seed N] [--traces]\n", argv[0]);
       return 2;
     }
   }
@@ -2281,13 +2327,13 @@ int main(int argc, char **argv) {
   everywhere("status reply cut at every length", script_truncate_sweep);
   everywhere("our own frames echoed", script_echo);
   everywhere("device type changes while the link is down", script_token_change);
-  everywhere("DEFECT: DevType reply with a bad checksum", script_devtype_bad_checksum);
+  everywhere("DevType reply with a bad checksum", script_devtype_bad_checksum);
   everywhere("false frame start ahead of a reply", script_stx_pair);
   everywhere("unsolicited frames between cycles", script_unsolicited);
 
   // Commands.
   everywhere("command burst, one every 20 ms", script_burst);
-  everywhere("WEAKNESS: command stream starves heartbeat and status", script_starvation);
+  everywhere("a steady command stream does not starve heartbeat and status", script_starvation);
   everywhere("power and mode in one frame", script_power_and_mode);
   everywhere("queue ring: fill, overflow, drain, re-send", script_queue_ring);
   everywhere("0xF4 in a stamped checksum", script_stuffed_checksum);
@@ -2324,7 +2370,7 @@ int main(int argc, char **argv) {
 
   // DE.
   everywhere("DE release with a blocking UART write", script_de_blocking, 2300, 31);
-  everywhere("WEAKNESS: bus_transmitting() without a DE pin", script_no_de_transmitting);
+  everywhere("transmitting() without a DE pin", script_no_de_transmitting);
 
   test_random(seeds, run_ms);
 

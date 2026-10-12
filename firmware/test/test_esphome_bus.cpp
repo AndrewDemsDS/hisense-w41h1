@@ -94,6 +94,9 @@ class SimAC : public H::BusIO {
   bool stale_1e_before_ack = false;  // a late 0x1E lands in the command's window, ahead of its ack
   uint32_t ack_starts = 0, ack_ends = 0;
   bool truncate_next_status = false;  // one status reply cut off after 60 bytes
+  bool deaf_to_devtype = false;       // hears everything except the 0x0A probe
+  int corrupt_devtype_left = 0;       // this many DevType replies arrive with one flipped bit in byte 17
+  bool corrupt_link_reply = false;    // every 0x1E reply arrives with one flipped bit in its checksum
   // Time of the last byte of the newest reply queued, to tell whether a write overlaps a reply.
   uint32_t reply_ends = 0;
   uint32_t reply_delay = 40;
@@ -144,18 +147,27 @@ class SimAC : public H::BusIO {
   void respond_(const std::vector<uint8_t> &req) {
     uint32_t at = g_now + H::bus_tx_time_ms(req.size()) + reply_delay;
     uint8_t cls = req[13];
-    if (cls == 0x0A) {
+    if (cls == 0x0A && deaf_to_devtype) {
+      return;
+    } else if (cls == 0x0A) {
       auto f = ac_frame(24, 0x0A, 0x04);  // type at 16/17 needs a body past the checksum
       f[16] = devtype_hi;
       f[17] = devtype_lo;
       uint16_t s = H::checksum_range(f.data(), 2, f.size() - 4);
       f[f.size() - 4] = (uint8_t) (s >> 8);
       f[f.size() - 3] = (uint8_t) s;
+      if (corrupt_devtype_left > 0) {
+        corrupt_devtype_left--;
+        f[17] ^= 0x40;  // 01 02 arrives as 01 42, under the checksum of 01 02
+      }
       queue_(f, at);
     } else if (cls == 0x07) {
       queue_(ac_frame(20, 0x07, 0x00), at);
     } else if (cls == 0x1E) {
-      queue_(ac_frame(28, 0x1E, 0x00), at);
+      auto f = ac_frame(28, 0x1E, 0x00);
+      if (corrupt_link_reply)
+        f[25] ^= 0x01;
+      queue_(f, at);
     } else if (cls == 0x66 && req[14] == 0x40) {
       auto f = ac_frame(64, 0x66, 0x40);
       f[18] = 0x80;  // cool_heat
@@ -214,9 +226,11 @@ class Recorder : public H::BusListener {
   // Set to read, per report, whether the scheduler said it would send the frame again.
   H::BusScheduler *bus = nullptr;
   std::vector<bool> resends;
+  std::vector<H::BusTicket> tickets;
   void on_bus_command(bool answered, uint8_t reply_class) override {
     commands.push_back({answered, reply_class});
     resends.push_back(bus != nullptr && bus->command_resend_pending());
+    tickets.push_back(bus != nullptr ? bus->command_ticket() : H::BUS_TICKET_NONE);
   }
 };
 
@@ -305,19 +319,54 @@ static void test_queue() {
   CHECK(!bus.enqueue(cmd, 0) && !bus.enqueue(cmd, 65), "empty and oversize frames refused");
   size_t before = ac.writes.size();
   run(bus, 3000);
-  // Find the first cycle after the enqueue: heartbeat, 8 commands, status.
+  // The queue goes out in the command slot, between the heartbeat and the status poll, as many
+  // frames per cycle as start within BUS_COMMAND_SLOT_MS of the cycle's start. Eight do not fit
+  // one cycle: the rest follow in the next, and the heartbeat and the status poll keep their pace.
   size_t hb = before;
   while (hb < ac.writes.size() && cls(ac.writes[hb]) != 0x1E)
     hb++;
-  CHECK(hb + 9 < ac.writes.size(), "cycle present");
-  for (int i = 1; i <= 8; i++) {
-    const auto &w = ac.writes[hb + i];
-    CHECK(cls(w) == 0x65 && w.bytes[7] == 0x01 && w.bytes[8] == 0x02 &&
-              H::status_checksum_ok(w.bytes.data(), w.bytes.size()),
-          "queued command %d sent in the command slot, stamped", i);
+  int sent = 0, cycles_used = 0;
+  bool order_ok = true, slot_ok = true;
+  uint32_t cycle_at = 0;
+  for (size_t i = hb; i < ac.writes.size() && sent < 8; i++) {
+    const auto &w = ac.writes[i];
+    if (cls(w) == 0x1E) {
+      // Every cycle that carries commands: heartbeat, commands, status poll.
+      if (cycle_at != 0)
+        CHECK(w.t - cycle_at == 1000, "the next heartbeat is 1000 ms after the last (%u)", (unsigned) (w.t - cycle_at));
+      cycle_at = w.t;
+      cycles_used++;
+      continue;
+    }
+    if (cls(w) != 0x65) {
+      order_ok = order_ok && cls(w) == 0x66 && cls(ac.writes[i - 1]) != 0x1E;
+      continue;
+    }
+    sent++;
+    CHECK(w.bytes[7] == 0x01 && w.bytes[8] == 0x02 && H::status_checksum_ok(w.bytes.data(), w.bytes.size()),
+          "queued command %d stamped", sent);
+    slot_ok = slot_ok && (cls(ac.writes[i - 1]) == 0x1E || w.t - cycle_at < H::BUS_COMMAND_SLOT_MS + 5);
+    order_ok = order_ok && (cls(ac.writes[i - 1]) == 0x1E || cls(ac.writes[i - 1]) == 0x65);
   }
-  CHECK(cls(ac.writes[hb + 9]) == 0x66, "status poll after the drained queue");
-  CHECK(bus.queued() == 0, "queue empty");
+  CHECK(sent == 8 && bus.queued() == 0, "all eight sent, queue empty (%d)", sent);
+  CHECK(order_ok, "commands only between the heartbeat and the status poll");
+  CHECK(slot_ok, "no command starts later than BUS_COMMAND_SLOT_MS into its cycle");
+  CHECK(cycles_used == 2, "eight frames take two cycles (%d)", cycles_used);
+  CHECK(rec.timeouts == 0 && rec.links.empty(), "and nothing else is disturbed");
+
+  // The rule itself. The first command of a cycle always goes; after that the slot closes at
+  // BUS_COMMAND_SLOT_MS.
+  CHECK(H::BUS_COMMAND_SLOT_MS == 600, "the slot is 600 ms");
+  CHECK(H::command_slot_open(0, 0) && H::command_slot_open(0, 599) && H::command_slot_open(0, 600) &&
+            H::command_slot_open(0, 5000) && H::command_slot_open(0, 0xFFFFFFFFu),
+        "first command of a cycle: always");
+  for (int n : {1, 2, 7, 255}) {
+    CHECK(H::command_slot_open((uint8_t) n, 0) && H::command_slot_open((uint8_t) n, 599), "command %d before 600 ms",
+          n + 1);
+    CHECK(!H::command_slot_open((uint8_t) n, 600) && !H::command_slot_open((uint8_t) n, 601) &&
+              !H::command_slot_open((uint8_t) n, 0xFFFFFFFFu),
+          "command %d at or after 600 ms waits for the next cycle", n + 1);
+  }
 }
 
 static void test_link_loss_and_recovery() {
@@ -403,6 +452,260 @@ static void test_correlation_and_checksum() {
     CHECK(rec.checksum_errors == (int) bus.checksum_mismatches(), "each mismatch reaches the listener (%d)",
           rec.checksum_errors);
     CHECK(rec.links.size() == 1 && !rec.links[0].second, "and count as link misses");
+  }
+}
+
+// Nothing is taken from a frame that fails its checksum: not the device type (it would be stamped
+// into bytes 7/8 of every later frame, and a wrong pair there makes the unit reject them all, RE
+// docs/10 section 4.5), not the handshake answer, and not "I have heard the unit".
+static void test_damaged_frames_are_not_believed() {
+  printf("-- a frame with a bad checksum: no device type, no handshake answer, no 'heard'\n");
+  {
+    SimAC ac;
+    ac.corrupt_devtype_left = 3;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 6000);
+    size_t probes = 0;
+    while (probes < ac.writes.size() && cls(ac.writes[probes]) == 0x0A)
+      probes++;
+    CHECK(probes == 4, "three damaged replies are three failed tries, the fourth is answered (%zu probes)", probes);
+    for (size_t k = 1; k < probes; k++) {
+      // A damaged reply ends its window when it arrives, then the usual 500 ms before the next try.
+      uint32_t gap = ac.writes[k].t - ac.writes[k - 1].t;
+      CHECK(gap > 500 && gap < 5 + H::bus_tx_time_ms(20) + 25 + 500 + 500, "try %zu follows after %u ms", k,
+            (unsigned) gap);
+    }
+    uint8_t hi = 0, lo = 0;
+    CHECK(bus.link_token(&hi, &lo) && hi == 0x01 && lo == 0x02, "device type from the whole reply (%02X %02X)", hi, lo);
+    bool wrong = false;
+    for (auto &w : ac.writes)
+      if (cls(w) != 0x0A && (w.bytes[7] != 0x01 || w.bytes[8] != 0x02))
+        wrong = true;
+    CHECK(!wrong, "no frame carries the damaged pair 01 42");
+    CHECK(bus.checksum_mismatches() == 3 && rec.checksum_errors == 3,
+          "each damaged reply counted and reported (%u, %d)", (unsigned) bus.checksum_mismatches(),
+          rec.checksum_errors);
+    CHECK(rec.statuses >= 2 && rec.links.empty(), "the link comes up as usual afterwards");
+  }
+  {
+    // Every DevType reply damaged: ten tries, then on with the seeded 01 01, as for a silent unit.
+    SimAC ac;
+    ac.corrupt_devtype_left = 1000;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 12000);
+    size_t probes = 0;
+    while (probes < ac.writes.size() && cls(ac.writes[probes]) == 0x0A)
+      probes++;
+    uint8_t hi = 0xEE, lo = 0xEE;
+    CHECK(probes == 10 && cls(ac.writes[probes]) == 0x07, "ten tries, then 0x07 (%zu)", probes);
+    CHECK(!bus.link_token(&hi, &lo) && hi == 0x01 && lo == 0x01, "no device type learned, the seed stays (%02X %02X)",
+          hi, lo);
+    CHECK(ac.writes[probes].bytes[7] == 0x01 && ac.writes[probes].bytes[8] == 0x01, "0x07 carries the seed 01 01");
+  }
+  {
+    // The heartbeat's byte 16 turns from 0xF0 to 0xB0 once the unit's reply was heard. A reply
+    // that fails its checksum is not that.
+    SimAC ac;
+    ac.corrupt_link_reply = true;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 4500);
+    int beats = 0, heard = 0;
+    for (auto &w : ac.writes) {
+      if (cls(w) != 0x1E)
+        continue;
+      beats++;
+      heard += w.bytes[16] == 0xB0 ? 1 : 0;
+    }
+    CHECK(beats >= 4 && heard == 0, "damaged 0x1E replies: the heartbeat keeps saying not-heard (%d of %d)", heard,
+          beats);
+    CHECK(rec.statuses >= 3, "status still flows (%d)", rec.statuses);
+    ac.corrupt_link_reply = false;
+    size_t mark = ac.writes.size();
+    run(bus, 2500);
+    bool now_heard = false;
+    for (size_t i = mark; i < ac.writes.size(); i++)
+      if (cls(ac.writes[i]) == 0x1E && ac.writes[i].bytes[16] == 0xB0)
+        now_heard = true;
+    CHECK(now_heard, "a whole reply turns it to heard");
+  }
+}
+
+// The recovery probe opens the cycle and the status poll comes later in it. A unit that returns
+// between the two answers the poll, the link is up again, and no probe would follow: it was taken
+// back without being asked for its device type. One more probe goes out in the next cycle.
+static void test_return_between_probe_and_poll() {
+  printf("-- the unit comes back between the recovery probe and the status poll\n");
+  for (int deaf = 0; deaf < 2; deaf++) {
+    SimAC ac;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 2500);
+    ac.responsive = false;
+    run(bus, 9000);
+    CHECK(rec.links.size() == 1 && !rec.links[0].second, "silent: link lost");
+    // Run to the next recovery probe, let it go unanswered, then bring the unit back as another
+    // model (or one that does not answer the probe at all).
+    size_t n = ac.writes.size();
+    while (ac.writes.size() == n || cls(ac.writes.back()) != 0x0A)
+      run(bus, 1);
+    ac.devtype_hi = 0x03;
+    ac.devtype_lo = 0x07;
+    ac.deaf_to_devtype = deaf != 0;
+    ac.responsive = true;
+    size_t back = ac.writes.size();
+    run(bus, 6000);
+    CHECK(rec.links.size() == 2 && rec.links[1].second, "back: link up");
+    size_t probes = 0, first_probe = 0;
+    for (size_t i = back; i < ac.writes.size(); i++) {
+      if (cls(ac.writes[i]) != 0x0A)
+        continue;
+      probes++;
+      if (first_probe == 0)
+        first_probe = i;
+    }
+    CHECK(probes == 1, "%s: exactly one more probe after the unit is back (%zu)",
+          deaf ? "deaf to the probe" : "answering", probes);
+    CHECK(first_probe > back && cls(ac.writes[first_probe + 1]) == 0x1E,
+          "it opens the next cycle, ahead of the heartbeat");
+    uint8_t hi = 0, lo = 0;
+    bus.link_token(&hi, &lo);
+    if (deaf) {
+      CHECK(hi == 0x01 && lo == 0x02, "unanswered: the device type known before stays (%02X %02X)", hi, lo);
+    } else {
+      CHECK(hi == 0x03 && lo == 0x07, "answered: the device type is learned again (%02X %02X)", hi, lo);
+      CHECK(ac.writes.back().bytes[7] == 0x03 && ac.writes.back().bytes[8] == 0x07, "and stamped from then on");
+    }
+    bool heard = false;
+    for (size_t i = first_probe; i < ac.writes.size(); i++)
+      heard = heard || (cls(ac.writes[i]) == 0x1E && ac.writes[i].bytes[16] == 0xB0);
+    CHECK(heard, "the extra probe does not put the heartbeat back to not-heard");
+  }
+}
+
+// enqueue() gives every accepted frame a ticket, and on_bus_command() says which frame it is about.
+struct TicketProbe : H::BusScheduler {
+  void set_last_ticket(H::BusTicket t) { this->last_ticket_ = t; }
+};
+
+static void test_command_tickets() {
+  printf("-- tickets: which frame a command report is about\n");
+  SimAC ac;
+  Recorder rec;
+  TicketProbe bus;
+  rec.bus = &bus;
+  bus.setup(&ac, &rec, true);
+  run(bus, 2500);
+  uint8_t cmd[64];
+  size_t n = H::build_command(H::AcCommand{}, cmd, sizeof(cmd));
+  CHECK(bus.command_ticket() == H::BUS_TICKET_NONE, "no report yet: no ticket");
+  H::BusTicket a = bus.enqueue(cmd, n), b = bus.enqueue(cmd, n), c = bus.enqueue(cmd, n);
+  CHECK(a != H::BUS_TICKET_NONE && b == a + 1 && c == b + 1, "three frames, three tickets in a row (%u %u %u)", a, b,
+        c);
+  CHECK(bus.enqueue(cmd, 0) == H::BUS_TICKET_NONE && bus.enqueue(nullptr, n) == H::BUS_TICKET_NONE &&
+            bus.enqueue(cmd, H::TX_FRAME_MAX + 1) == H::BUS_TICKET_NONE,
+        "a refused frame gets none");
+  H::BusTicket d = bus.enqueue(cmd, n);
+  CHECK(d == c + 1, "and uses none up (%u)", d);
+  // The second frame is missed once by the unit: its report comes twice, with the same ticket.
+  ac.deaf_commands_left = 0;
+  run(bus, 1);
+  size_t sent_before = rec.tickets.size();
+  while (rec.tickets.size() == sent_before)
+    run(bus, 1);
+  ac.deaf_commands_left = 1;
+  run(bus, 4000);
+  std::vector<H::BusTicket> want = {a, b, b, c, d};
+  CHECK(rec.tickets == want, "reports carry the tickets in queue order, the re-sent frame twice (%zu reports)",
+        rec.tickets.size());
+  CHECK(rec.commands.size() == 5 && rec.commands[0].first && !rec.commands[1].first && rec.resends[1] &&
+            rec.commands[2].first,
+        "the repeated ticket is the unanswered send and its re-send");
+  // Full queue: the ninth frame gets no ticket.
+  for (int i = 0; i < 8; i++)
+    CHECK(bus.enqueue(cmd, n) == (H::BusTicket)(d + 1 + i), "frame %d of a full queue", i);
+  CHECK(bus.enqueue(cmd, n) == H::BUS_TICKET_NONE && !bus.enqueue(cmd, n), "the ninth is refused, and reads as false");
+  run(bus, 4000);
+  // The counter wraps past 0, which stays "refused".
+  bus.set_last_ticket(0xFFFE);
+  H::BusTicket x = bus.enqueue(cmd, n), y = bus.enqueue(cmd, n), z = bus.enqueue(cmd, n);
+  CHECK(x == 0xFFFF && y == 1 && z == 2, "after 0xFFFF comes 1 (%u %u %u)", x, y, z);
+  size_t mark = rec.tickets.size();
+  run(bus, 3000);
+  CHECK(rec.tickets.size() == mark + 3 && rec.tickets[mark] == 0xFFFF && rec.tickets[mark + 1] == 1 &&
+            rec.tickets[mark + 2] == 2,
+        "and the reports follow");
+}
+
+// The small things around the cycle: the accessors the hub reads, a poll before setup, the
+// ProductType poll coming round again, and a unit whose DevType reply says 00 00.
+static void test_accessors_and_corners() {
+  printf("-- accessors, a poll before setup, ProductType every 60 cycles, device type 00 00\n");
+  {
+    H::BusScheduler idle;
+    for (uint32_t t = 0; t < 3000; t += 7)
+      idle.poll(t);  // no I/O set: nothing to do, and nothing to crash on
+    H::AcFaults fl;
+    H::AcFeatures ft;
+    uint8_t hi = 0, lo = 0;
+    CHECK(!idle.faults(&fl) && !idle.features(&ft) && !idle.link_token(&hi, &lo) && hi == 0x01 && lo == 0x01 &&
+              idle.queued() == 0 && !idle.transmitting() && !idle.wants_fast_loop(),
+          "a scheduler that was never set up does nothing and knows nothing");
+  }
+  SimAC ac;
+  Recorder rec;
+  H::BusScheduler bus;
+  bus.setup(&ac, &rec, true);
+  H::AcFaults fl;
+  H::AcFeatures ft;
+  CHECK(!bus.faults(&fl) && !bus.features(&ft), "before the first replies: no faults, no capabilities");
+  run(bus, 5000);
+  CHECK(bus.faults(&fl) && fl.valid && !fl.any, "faults() after a status frame: valid, none");
+  CHECK(bus.features(&ft) && ft.valid && ft.cool_heat && rec.features == 1, "features() after the ProductType reply");
+  // Switching the indication to what it already is changes nothing, the lockout included.
+  bus.set_setup_indicator(false, g_now);
+  CHECK(!bus.setup_indicator(), "off stays off");
+  bus.set_setup_indicator(true, g_now);
+  bus.set_setup_indicator(true, g_now + 5);
+  CHECK(bus.setup_indicator(), "on stays on");
+  bus.set_setup_indicator(false, g_now);
+  // The ProductType poll: once on the first heard cycle, then every BUS_PRODUCTTYPE_CYCLES.
+  size_t polls = 0;
+  for (auto &w : ac.writes)
+    polls += cls(w) == 0x66 && w.bytes[14] == 0x40 ? 1 : 0;
+  CHECK(polls == 1, "one ProductType poll in the first 5 s (%zu)", polls);
+  run(bus, 125000);
+  std::vector<uint32_t> at;
+  for (auto &w : ac.writes)
+    if (cls(w) == 0x66 && w.bytes[14] == 0x40)
+      at.push_back(w.t);
+  CHECK(at.size() == 3, "three ProductType polls in 130 s (%zu)", at.size());
+  if (at.size() == 3)
+    CHECK(at[1] - at[0] == 60000 && at[2] - at[1] == 60000, "60 cycles apart (%u, %u ms)", (unsigned) (at[1] - at[0]),
+          (unsigned) (at[2] - at[1]));
+  CHECK(rec.features == 3 && rec.timeouts == 0, "each answered");
+  {
+    // 00 00 in a whole DevType reply is "not linked yet" to the stock module: the handshake is
+    // answered, the pair is not adopted, the seeded 01 01 stays.
+    SimAC zero;
+    zero.devtype_hi = 0x00;
+    zero.devtype_lo = 0x00;
+    Recorder r2;
+    H::BusScheduler b2;
+    b2.setup(&zero, &r2, true);
+    run(b2, 3000);
+    uint8_t hi = 0xEE, lo = 0xEE;
+    CHECK(!b2.link_token(&hi, &lo) && hi == 0x01 && lo == 0x01, "00 00 is not adopted (%02X %02X)", hi, lo);
+    CHECK(cls(zero.writes[0]) == 0x0A && cls(zero.writes[1]) == 0x07 && zero.writes[1].bytes[7] == 0x01 &&
+              zero.writes[1].bytes[8] == 0x01,
+          "one probe, then 0x07 with the seed");
+    CHECK(r2.statuses >= 1 && bus.checksum_mismatches() == 0, "and the link comes up");
   }
 }
 
@@ -835,6 +1138,10 @@ int main() {
   test_link_loss_and_recovery();
   test_correlation_and_checksum();
   test_boot_retries();
+  test_damaged_frames_are_not_believed();
+  test_return_between_probe_and_poll();
+  test_command_tickets();
+  test_accessors_and_corners();
   test_peripheral_de();
   test_command_fate();
   test_stale_frame_in_command_window();

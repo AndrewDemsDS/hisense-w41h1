@@ -10,11 +10,28 @@
 //
 // Input: byte 0 picks the group, the rest feeds it.
 //
-// Intended differences, NOT compared (see test_esphome_codec_parity.cpp and the two headers):
+// Intended differences (see test_esphome_codec_parity.cpp and the two headers). Each is compared
+// through a stated rule where one exists, and left out only where the two have no common ground:
+//  - Trailer-aware lengths: the port reads a payload byte only when it lies in front of the 4-byte
+//    trailer, the reference when `len > offset`. parse_faults, parse_features and
+//    devtype_from_reply are compared with the reference's answer for a frame 4 bytes shorter;
+//    parse_status with "refused below 49 bytes, the three optional tail fields need 4 more".
+//  - Resynchronisation of the frame assembler. The port looks again at the byte that broke a
+//    frame and follows a later F4 F5 as a second candidate; the reference drops both. So on a
+//    damaged stream the port delivers frames the reference loses, and group 0 no longer compares
+//    byte for byte. It checks two things instead: on an arbitrary stream, every frame the port
+//    delivers is one the reference takes as the same frame when it is sent alone (the port accepts
+//    nothing the reference would reject); on a stream of whole frames with noise between them
+//    (no stray 0xF4), both deliver every frame, the same bytes, on the same byte of the stream.
+//  - The port has no features_from_bitmap32 and no three-argument heartbeat builder: nothing in
+//    the firmware used either. The encoder is compared on inputs the reference's decoder makes.
 //  - AcCommand.power_on has no counterpart: the reference never ORs the run field into byte 18.
 //    Checked here as a relation instead: same frame, byte 18 | 0x0C, checksum redone.
-//  - build_single_field refuses offset >= 50; the reference's static helper has no guard (its
-//    only callers pass 17 and 35). Compared for offsets below 50 only.
+//  - build_single_field refuses an offset outside the body (16 to 45); the reference's static
+//    helper has no guard (its only callers pass 17 and 35). Compared inside the body, and the
+//    port has to return 0 outside it.
+//  - build_command refuses an enum field that holds no named value (command_enums_valid); the
+//    reference packs it. Compared for named values, and the port has to return 0 for the rest.
 //  - The bit 5 lockout: the port keeps (armed, since) and compares elapsed time, the reference
 //    keeps an end tick with 0 meaning "none" and a signed comparison. Compared where both are
 //    defined: armed, end tick not 0, elapsed below 2^31.
@@ -62,22 +79,111 @@ static bool same_faults(const HisenseFaults &o, const H::AcFaults &n) {
          o.out_gas_temp == n.out_gas_temp && o.out_temp == n.out_temp && o.over_temp == n.over_temp;
 }
 
+// The original's feature struct as the port's, field by field. The port has no decoder for the
+// packed bitmap (nothing in the firmware reads one back), so the original's is used to make inputs.
+static H::AcFeatures to_port(const HisenseFeatures &o) {
+  H::AcFeatures n;
+  n.valid = o.valid;
+  n.cool_heat = o.cool_heat;
+  n.ai = o.ai;
+  n.infinite_fan = o.infinite_fan;
+  n.power_save = o.power_save;
+  n.fan_mute = o.fan_mute;
+  n.swing_dir_8 = o.swing_dir_8;
+  n.swing_follow = o.swing_follow;
+  n.power_display = o.power_display;
+  n.demand_resp = o.demand_resp;
+  n.humidity = o.humidity;
+  n.heat_8c = o.heat_8c;
+  n.purify = o.purify;
+  n.ext_valid = o.ext_valid;
+  n.q_display = o.q_display;
+  n.enable_8heat = o.enable_8heat;
+  n.trans_102_64 = o.trans_102_64;
+  n.reply_len = o.reply_len;
+  return n;
+}
+
 // ---- group 0: the two reassemblers on one stream -------------------------------------------------
-static void diff_assembler(Reader &r) {
+// The reference, from idle, takes `frame` (un-stuffed, as the port delivered it) as that frame.
+static void reference_accepts(const uint8_t *frame, size_t n, size_t pos) {
+  uint8_t copy[H::RX_FRAME_MAX];
+  uint8_t wire[2 * H::RX_FRAME_MAX];
+  FUZZ_CHECK(n >= 9 && n <= H::RX_FRAME_MAX, "stream byte %zu: port delivered %zu bytes", pos, n);
+  memcpy(copy, frame, n);
+  size_t w = model_stuff(copy, n, 2, wire);
   hisense_reset_rx();
+  size_t got = 0;
+  for (size_t i = 0; i < w; i++) {
+    got = hisense_rx_feed(wire[i]);
+    FUZZ_CHECK(got == 0 || i + 1 == w, "stream byte %zu: the reference ends the port's frame early", pos);
+  }
+  FUZZ_CHECK(got == n && memcmp(s_msg_buf, copy, n) == 0,
+             "stream byte %zu: the port delivered %zu bytes the reference does not take as a frame", pos, n);
+}
+
+// Arbitrary bytes. The port may deliver more than the reference, never something it would reject.
+static void diff_assembler_damaged(Reader &r) {
   H::FrameAssembler *fa = new H::FrameAssembler();
   size_t pos = 0;
   while (!r.empty()) {
-    uint8_t b = r.u8();
-    size_t no = hisense_rx_feed(b);
-    size_t nn = fa->feed(b);
-    FUZZ_CHECK(no == nn, "stream byte %zu (%02X): reference returned %zu, port %zu", pos, b, no, nn);
-    if (no != 0)
-      FUZZ_CHECK(memcmp(s_msg_buf, fa->data(), no) == 0, "stream byte %zu: the two delivered frames differ", pos);
+    size_t n = fa->feed(r.u8());
+    if (n != 0)
+      reference_accepts(fa->data(), n, pos);
     pos++;
   }
   delete fa;
 }
+
+// Whole frames as a sender that doubles every 0xF4 puts them on the wire, with noise that holds no
+// 0xF4 between them. Here the two must agree on every byte.
+static void diff_assembler_clean(Reader &r) {
+  hisense_reset_rx();
+  H::FrameAssembler *fa = new H::FrameAssembler();
+  size_t pos = 0;
+  while (!r.empty()) {
+    uint8_t pick = r.u8();
+    uint8_t frame[H::RX_FRAME_MAX];
+    uint8_t wire[2 * H::RX_FRAME_MAX];
+    size_t n = 0, w = 0;
+    if ((pick & 1) != 0) {
+      w = r.take(wire, pick >> 4);
+      for (size_t i = 0; i < w; i++)
+        if (wire[i] == 0xF4)
+          wire[i] = 0x4F;
+    } else {
+      n = 9 + r.u8() % (H::RX_FRAME_MAX - 8);
+      for (size_t i = 0; i < n; i++)
+        frame[i] = r.u8();
+      frame[2] = 0x01;  // A/C -> module
+      model_seal(frame, n);
+      w = model_stuff(frame, n, 2, wire);
+    }
+    for (size_t i = 0; i < w; i++) {
+      size_t no = hisense_rx_feed(wire[i]);
+      size_t nn = fa->feed(wire[i]);
+      FUZZ_CHECK(no == nn, "stream byte %zu (%02X): reference returned %zu, port %zu", pos, wire[i], no, nn);
+      FUZZ_CHECK(nn == (n != 0 && i + 1 == w ? n : 0), "stream byte %zu: %zu returned inside a %zu byte frame", pos, nn,
+                 n);
+      if (nn != 0)
+        FUZZ_CHECK(memcmp(s_msg_buf, fa->data(), nn) == 0 && memcmp(frame, fa->data(), nn) == 0,
+                   "stream byte %zu: the delivered frames differ", pos);
+      pos++;
+    }
+  }
+  delete fa;
+}
+
+static void diff_assembler(Reader &r) {
+  if ((r.u8() & 1) != 0) {
+    diff_assembler_clean(r);
+  } else {
+    diff_assembler_damaged(r);
+  }
+}
+
+// The length at which the reference gives the port's answer (trailer-aware lengths, above).
+static size_t ref_len(size_t len) { return len >= H::FRAME_TRAILER_LEN ? len - H::FRAME_TRAILER_LEN : 0; }
 
 // ---- group 1: parsers on one buffer --------------------------------------------------------------
 static void diff_parsers(Reader &r) {
@@ -91,24 +197,32 @@ static void diff_parsers(Reader &r) {
   memset(&os, 0, sizeof(os));
   bool ro = hisense_parse_status(f, len, &os);
   bool rn = H::parse_status(f, len, &ns);
-  FUZZ_CHECK(ro == rn, "parse_status: reference %d, port %d (len %zu)", ro, rn, len);
-  if (ro)
+  FUZZ_CHECK(rn == (ro && len >= 49), "parse_status: reference %d, port %d (len %zu)", ro, rn, len);
+  if (rn) {
+    if (len < 50)
+      os.coil_temp_c = 0;
+    if (len < 55)
+      os.voltage_raw = 0;
+    if (len < 60)
+      os.current_raw = 0;
     FUZZ_CHECK(same_state(os, ns), "parse_status fields differ (len %zu)", len);
+  }
 
   HisenseFeatures ofe;
   H::AcFeatures nfe;
   memset(&ofe, 0, sizeof(ofe));
-  bool fo = hisense_parse_features(f, len, &ofe);
+  bool fo = hisense_parse_features(f, ref_len(len), &ofe);
   bool fn = H::parse_features(f, len, &nfe);
   FUZZ_CHECK(fo == fn, "parse_features: reference %d, port %d (len %zu)", fo, fn, len);
   if (fo) {
+    ofe.reply_len = static_cast<uint8_t>(len > 255 ? 255 : len);  // the diagnostic length is the real one
     FUZZ_CHECK(same_features(ofe, nfe), "parse_features fields differ (len %zu)", len);
     FUZZ_CHECK(hisense_features_to_bitmap32(&ofe) == H::features_to_bitmap32(nfe), "feature bitmaps differ");
   }
 
   HisenseFaults ofa;
   H::AcFaults nfa;
-  bool ao = hisense_parse_faults(f, len, &ofa);
+  bool ao = hisense_parse_faults(f, ref_len(len), &ofa);
   bool an = H::parse_faults(f, len, &nfa);
   FUZZ_CHECK(ao == an && same_faults(ofa, nfa), "parse_faults differs (len %zu)", len);
   FUZZ_CHECK(hisense_faults_to_bitmap32(&ofa) == H::faults_to_bitmap32(nfa), "fault bitmaps differ");
@@ -116,7 +230,7 @@ static void diff_parsers(Reader &r) {
   FUZZ_CHECK(hisense_status_checksum_ok(f, len) == H::status_checksum_ok(f, len), "checksum_ok differs (len %zu)", len);
 
   uint8_t oh = 0, ol = 0, nh = 0, nl = 0;
-  bool dvo = hisense_devtype_from_reply(f, len, &oh, &ol);
+  bool dvo = hisense_devtype_from_reply(f, ref_len(len), &oh, &ol);
   bool dvn = H::devtype_from_reply(f, len, &nh, &nl);
   FUZZ_CHECK(dvo == dvn && oh == nh && ol == nl, "devtype_from_reply differs (len %zu)", len);
 }
@@ -177,10 +291,15 @@ static void diff_builders(Reader &r) {
   o.display = static_cast<HisenseDisplay>(n.display);
   size_t na = hisense_build_command(&o, a.data(), cap);
   size_t nb = H::build_command(n, b.data(), cap);
-  FUZZ_CHECK(same_bytes(a.data(), na, b.data(), nb), "build_command: reference %zu bytes, port %zu", na, nb);
+  const bool named = H::command_enums_valid(n);
+  if (named) {
+    FUZZ_CHECK(same_bytes(a.data(), na, b.data(), nb), "build_command: reference %zu bytes, port %zu", na, nb);
+  } else {
+    FUZZ_CHECK(nb == 0, "build_command packed an enum value that has no name (%zu bytes)", nb);
+  }
 
   // power_on is the port's own: the reference frame with the run field set and the checksum redone.
-  if (na != 0) {
+  if (na != 0 && named) {
     n.power_on = true;
     uint8_t with_power[H::CMD_FRAME_MAX];
     size_t np = H::build_command(n, with_power, sizeof(with_power));
@@ -215,7 +334,11 @@ static void diff_builders(Reader &r) {
   uint8_t val = r.u8();
   na = hisense_build_single_field(off, val, a.data(), cap);
   nb = H::build_single_field(off, val, b.data(), cap);
-  FUZZ_CHECK(same_bytes(a.data(), na, b.data(), nb), "build_single_field(%u, %02X) differs", off, val);
+  if (off >= H::CMD_HEADER_LEN && off < H::CMD_CHK_OFFSET) {
+    FUZZ_CHECK(same_bytes(a.data(), na, b.data(), nb), "build_single_field(%u, %02X) differs", off, val);
+  } else {
+    FUZZ_CHECK(nb == 0, "build_single_field(%u) wrote outside the body", off);
+  }
 
   bool heard = r.flag();
   s_prov_active = r.flag();
@@ -268,9 +391,8 @@ static void diff_helpers(Reader &r) {
   HisenseFeatures of;
   memset(&of, 0, sizeof(of));
   hisense_features_from_bitmap32(w, &of);
-  H::AcFeatures nf = H::features_from_bitmap32(w);
-  FUZZ_CHECK(same_features(of, nf), "features_from_bitmap32(%08X)", w);
-  FUZZ_CHECK(hisense_features_to_bitmap32(&of) == H::features_to_bitmap32(nf), "features_to_bitmap32");
+  H::AcFeatures nf = to_port(of);
+  FUZZ_CHECK(hisense_features_to_bitmap32(&of) == H::features_to_bitmap32(nf), "features_to_bitmap32(%08X)", w);
 }
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {

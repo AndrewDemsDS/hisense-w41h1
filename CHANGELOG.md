@@ -104,6 +104,34 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   upstream-shaped test under `tests/components/w41h1_module/`. It uses nothing outside its
   directory, so it also works from a git source.
 
+### Codec and bus scheduler: defects found by the edge-case tests (2026-10-12)
+- **A short frame is no longer read into its own trailer.** The parsers took a payload byte when
+  the frame was merely long enough to hold that offset, so in a short frame a checksum byte or the
+  `F4 FB` tag was read as data. A status frame now needs 49 bytes, a ProductType reply 40 (44 for
+  the extended tier) and a DevType reply 22. The frames real units send (160, 45 and at least 22
+  bytes) decode as before.
+
+- **A damaged DevType reply is no longer believed.** The device type the unit reports in its
+  `0x0A` reply is stamped into bytes 7/8 of every later frame, and it was taken from that reply
+  without a look at its checksum: one flipped bit and the unit rejected every frame until the
+  link had been lost and found again. A reply that fails its checksum is now a failed try (the
+  probe goes out again 500 ms later), and it no longer counts as "heard the unit" in the
+  heartbeat. The "Checksum errors" sensor counts every damaged frame, of any class, where it
+  counted status frames only.
+- **Noise ahead of a reply no longer costs the reply.** A stray `F4 F5` in front of a frame, or a
+  frame cut short, made the receiver miss the frame that followed (one "Reply timeouts" count and
+  a missed status poll each time). It now looks again at the byte that broke a frame and follows
+  a later start tag as a second candidate.
+- **One "77" gesture is one setup request.** `on_setup_request` could fire twice for one gesture
+  when the unit's two request bits changed while the request stood, every 10 s for a request bit
+  that stayed up, and once more after a lost link. It now fires once per unbroken run of replies
+  that ask. A unit that sends one pulse per gesture, as the one on the bench does, behaves as
+  before.
+- **Commands no longer hold up the heartbeat and the status poll.** Queued command frames went
+  out back to back until the queue was empty, however long that took. A cycle now carries the
+  frames that start within its first 600 ms (about four) and the rest follow in the next cycle,
+  in order.
+
 ### The Matter firmwares are retired, ESPHome is the only firmware (2026-10-12, #182)
 - **Removed** the AmebaZ2 Matter build (the SDK setup scripts, `patches/`, `versions.env`, the
   `.zap` and `firmware/src/sdk-edits/`, `firmware/src/version.txt` and its CI rule), the ESP32

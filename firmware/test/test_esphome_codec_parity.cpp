@@ -8,6 +8,24 @@
 // A protocol change in the original fails here until it is ported. The original's static helpers
 // (link heartbeat, frame reassembler) cannot be called from outside, so those two are checked
 // against the captured templates and hand-built streams instead.
+//
+// INTENDED DIFFERENCES. The original is frozen; where the port deliberately does something else the
+// expectation below is derived from the original's answer by a stated rule, never skipped:
+//  1. Trailer-aware lengths. The original tests `len > offset` before reading a payload byte, so in
+//     a short frame it reads the checksum or the F4 FB tag as data. The port requires the byte to
+//     lie in front of the 4-byte trailer (frame_has_payload_byte). For parse_faults, parse_features
+//     and devtype_from_reply that is exactly the original's answer for a frame 4 bytes shorter
+//     (ref_len below); for parse_status it is "refused below 49 bytes, and the three optional tail
+//     fields each need 4 more bytes". Real frames (160, 45 and at least 22 bytes) decode the same.
+//  2. Assembler resynchronisation. The port looks again at a byte that broke a frame and follows a
+//     later F4 F5 as a second candidate, so on a damaged stream it delivers frames the original
+//     loses. Whole frames are read the same, which test_frame_assembler checks on hand-built
+//     streams; fuzz/fuzz_differential.cpp (group 0) runs the original's static reassembler beside
+//     the port and checks that the port never delivers a frame the original would not take.
+//  3. Builder input ranges. The port's build_command refuses an enum field that holds no named
+//     value (H::command_enums_valid), where the original packs whatever it is given, and the
+//     port's build_single_field refuses an offset outside the body (16 to 45), where the
+//     original's static helper has no guard. Inside those ranges the bytes are the same.
 
 #include <cmath>
 #include <cstdint>
@@ -116,7 +134,7 @@ static void random_frame(uint8_t *f, size_t len, uint8_t cls, uint8_t sub) {
 
 static void test_constants() {
   CHECK(H::CMD_FRAME_LEN == HISENSE_CMD_FRAME_LEN && H::CMD_HEADER_LEN == HISENSE_CMD_HEADER_LEN &&
-            H::CMD_CHK_OFFSET == HISENSE_CMD_CHK_OFFSET && H::CMD_END_OFFSET == HISENSE_CMD_END_OFFSET,
+            H::CMD_CHK_OFFSET == HISENSE_CMD_CHK_OFFSET && H::CMD_CHK_OFFSET + 2 == (size_t) HISENSE_CMD_END_OFFSET,
         "command frame geometry");
   CHECK(same_bytes(H::CMD_HEADER, H::CMD_HEADER_LEN, HISENSE_CMD_HEADER, HISENSE_CMD_HEADER_LEN), "command header");
   CHECK(same_bytes(H::STATUS_REQUEST, H::STATUS_REQUEST_LEN, HISENSE_STATUS_REQUEST, HISENSE_STATUS_REQUEST_LEN),
@@ -167,7 +185,7 @@ static void test_build_command() {
   static const uint8_t modes[] = {0, 1, 2, 3, 4};
   static const uint8_t fans[] = {0, 1, 2, 5, 6, 7, 8, 9, 0xFF};
   static const uint8_t swings[] = {0, 1, 3};
-  long built = 0;
+  long built = 0, refused = 0;
   for (uint8_t mode : modes)
     for (int unit = 0; unit < 2; unit++)
       for (int sp = unit ? 55 : 10; sp <= (unit ? 95 : 36); sp++)
@@ -190,6 +208,12 @@ static void test_build_command() {
                   uint8_t a[64], b[64];
                   size_t na = hisense_build_command(&o, a, sizeof(a));
                   size_t nb = H::build_command(n, b, sizeof(b));
+                  // Intended difference 3: fan index 2 is in the sweep and is not a named speed.
+                  if (!H::command_enums_valid(n)) {
+                    CHECK(nb == 0 && fan == 2, "build_command refuses fan=%u (mode=%u sp=%d)", fan, mode, sp);
+                    refused++;
+                    continue;
+                  }
                   CHECK(same_bytes(a, na, b, nb), "build_command mode=%u sp=%d f=%d fan=%u vs=%u hs=%u feat=%u disp=%u",
                         mode, sp, unit, fan, vs, hs, feat, disp);
                   built++;
@@ -202,7 +226,8 @@ static void test_build_command() {
   for (size_t cap = 0; cap < 56; cap++) {
     CHECK(hisense_build_command(&o, a, cap) == H::build_command(n, b, cap), "build_command cap %zu", cap);
   }
-  printf("  build_command: %ld commands compared\n", built);
+  CHECK(refused * 8 == built, "one fan value in nine is refused (%ld of %ld)", refused, built + refused);
+  printf("  build_command: %ld commands compared, %ld refused by the port alone\n", built, refused);
 }
 
 static void test_fixed_builders() {
@@ -234,12 +259,13 @@ static void test_link_heartbeat() {
   // The original builder is static; its "heard" output is exactly the captured template, which
   // carries B0 at byte 16 and a valid checksum.
   uint8_t b[64];
-  size_t nb = H::build_link_heartbeat(true, b, sizeof(b));
+  size_t nb = H::build_link_heartbeat(true, false, b, sizeof(b));
   CHECK(same_bytes(b, nb, HISENSE_LINK_HEARTBEAT, HISENSE_LINK_HEARTBEAT_LEN), "heartbeat (heard) == capture");
-  nb = H::build_link_heartbeat(false, b, sizeof(b));
+  nb = H::build_link_heartbeat(false, false, b, sizeof(b));
   CHECK(nb == HISENSE_LINK_HEARTBEAT_LEN && b[16] == 0xF0 && hisense_status_checksum_ok(b, nb),
         "heartbeat (not heard): byte16 0xF0, checksum valid");
-  CHECK(H::build_link_heartbeat(true, b, HISENSE_LINK_HEARTBEAT_LEN + 1) == 0, "heartbeat refuses a short buffer");
+  CHECK(H::build_link_heartbeat(true, false, b, HISENSE_LINK_HEARTBEAT_LEN + 1) == 0,
+        "heartbeat refuses a short buffer");
 }
 
 static void test_stamp_link_token() {
@@ -353,6 +379,10 @@ static void test_stamp_beep() {
   }
 }
 
+// Intended difference 1: the length at which the original gives the port's answer for a `len`-byte
+// frame. The original gates a payload byte on `len > offset`, the port on `len > offset + 4`.
+static size_t ref_len(size_t len) { return len >= H::FRAME_TRAILER_LEN ? len - H::FRAME_TRAILER_LEN : 0; }
+
 static void test_parsers() {
   // Random well-formed status frames, lengths around the real 160, plus deliberately broken ones.
   for (int i = 0; i < 60000; i++) {
@@ -375,24 +405,32 @@ static void test_parsers() {
     memset(&os, 0xA5, sizeof(os));
     bool ro = hisense_parse_status(f, plen, &os);
     bool rn = H::parse_status(f, plen, &ns);
-    CHECK(ro == rn, "parse_status result, frame %d", i);
+    // Intended difference 1: byte 44 has to be payload, and so do 45, 50 and 55.
+    CHECK(rn == (ro && plen >= 49), "parse_status result, frame %d (len %zu)", i, plen);
     if (ro && rn) {
-      CHECK(same_state(os, ns), "parse_status fields, frame %d", i);
+      if (plen < 50)
+        os.coil_temp_c = 0;
+      if (plen < 55)
+        os.voltage_raw = 0;
+      if (plen < 60)
+        os.current_raw = 0;
+      CHECK(same_state(os, ns), "parse_status fields, frame %d (len %zu)", i, plen);
     }
 
     HisenseFeatures ofe;
     H::AcFeatures nfe;
     memset(&ofe, 0, sizeof(ofe));
-    bool fo = hisense_parse_features(f, plen, &ofe);
+    bool fo = hisense_parse_features(f, ref_len(plen), &ofe);
     bool fn = H::parse_features(f, plen, &nfe);
     CHECK(fo == fn, "parse_features result, frame %d", i);
     if (fo && fn) {
+      ofe.reply_len = (uint8_t) (plen > 255 ? 255 : plen);  // the diagnostic length is the real one
       CHECK(same_features(ofe, nfe), "parse_features fields, frame %d", i);
     }
 
     HisenseFaults ofa;
     H::AcFaults nfa;
-    bool ao = hisense_parse_faults(f, plen, &ofa);
+    bool ao = hisense_parse_faults(f, ref_len(plen), &ofa);
     bool an = H::parse_faults(f, plen, &nfa);
     CHECK(ao == an && same_faults(ofa, nfa), "parse_faults, frame %d", i);
 
@@ -400,21 +438,53 @@ static void test_parsers() {
 
     uint8_t oh = 0, ol = 0, nh = 0, nl = 0;
     f[13] = (i % 2) ? 0x0A : f[13];
-    bool dvo = hisense_devtype_from_reply(f, plen, &oh, &ol);
+    bool dvo = hisense_devtype_from_reply(f, ref_len(plen), &oh, &ol);
     bool dvn = H::devtype_from_reply(f, plen, &nh, &nl);
     CHECK(dvo == dvn && oh == nh && ol == nl, "devtype, frame %d", i);
   }
-  // Fault parsing gates each group on length separately, so walk every length.
+  // Fault parsing gates each group on length separately, so walk every length. The same walk for
+  // the device type, whose two bytes sit at 16/17.
   uint8_t f[80];
   for (auto &x : f)
     x = (uint8_t) rnd();
+  f[13] = 0x0A;
   for (size_t len = 0; len < sizeof(f); len++) {
     HisenseFaults o;
     H::AcFaults n;
-    bool ro = hisense_parse_faults(f, len, &o);
+    bool ro = hisense_parse_faults(f, ref_len(len), &o);
     bool rn = H::parse_faults(f, len, &n);
     CHECK(ro == rn && same_faults(o, n), "parse_faults len %zu", len);
+    CHECK(rn == (len >= 44), "parse_faults needs byte 39 in front of the trailer (len %zu)", len);
+    uint8_t oh = 0, ol = 0, nh = 0, nl = 0;
+    bool dvo = hisense_devtype_from_reply(f, ref_len(len), &oh, &ol);
+    bool dvn = H::devtype_from_reply(f, len, &nh, &nl);
+    CHECK(dvo == dvn && oh == nh && ol == nl && dvn == (len >= 22), "devtype len %zu", len);
   }
+}
+
+// The original's feature struct as the port's, field by field. The port has no decoder for the
+// packed bitmap (nothing in the firmware reads one back), so the original's is used to make inputs.
+static H::AcFeatures to_port(const HisenseFeatures &o) {
+  H::AcFeatures n;
+  n.valid = o.valid;
+  n.cool_heat = o.cool_heat;
+  n.ai = o.ai;
+  n.infinite_fan = o.infinite_fan;
+  n.power_save = o.power_save;
+  n.fan_mute = o.fan_mute;
+  n.swing_dir_8 = o.swing_dir_8;
+  n.swing_follow = o.swing_follow;
+  n.power_display = o.power_display;
+  n.demand_resp = o.demand_resp;
+  n.humidity = o.humidity;
+  n.heat_8c = o.heat_8c;
+  n.purify = o.purify;
+  n.ext_valid = o.ext_valid;
+  n.q_display = o.q_display;
+  n.enable_8heat = o.enable_8heat;
+  n.trans_102_64 = o.trans_102_64;
+  n.reply_len = o.reply_len;
+  return n;
 }
 
 static void test_bitmaps() {
@@ -423,9 +493,13 @@ static void test_bitmaps() {
     HisenseFeatures o;
     memset(&o, 0, sizeof(o));
     hisense_features_from_bitmap32(w, &o);
-    H::AcFeatures n = H::features_from_bitmap32(w);
-    CHECK(same_features(o, n), "features_from_bitmap32 0x%08X", (unsigned) w);
+    H::AcFeatures n = to_port(o);
     CHECK(hisense_features_to_bitmap32(&o) == H::features_to_bitmap32(n), "features_to_bitmap32 0x%08X", (unsigned) w);
+    // And without the ext tier, where the original's encoder and the port's both drop three bits.
+    o.ext_valid = false;
+    n.ext_valid = false;
+    CHECK(hisense_features_to_bitmap32(&o) == H::features_to_bitmap32(n), "features_to_bitmap32, no ext tier, 0x%08X",
+          (unsigned) w);
 
     HisenseFaults fo;
     memset(&fo, 0, sizeof(fo));
@@ -484,12 +558,19 @@ static void test_temperatures() {
 
 static void test_map() {
   for (int m = 0; m < 16; m++) {
-    HisenseMode om = (HisenseMode) 99;
-    H::Mode nm = (H::Mode) 99;
+    // Never read unless the call succeeds, and 0 is a value of both enums. (99 is not one of the
+    // original's C enum, whose range is 0..7: storing it there is undefined behaviour.)
+    HisenseMode om = HISENSE_MODE_FAN;
+    H::Mode nm = H::MODE_FAN;
     bool ro = esphome_mode_to_hisense((uint8_t) m, &om);
     bool rn = H::climate_mode_to_hisense((uint8_t) m, &nm);
     CHECK(ro == rn && (!ro || (int) om == (int) nm), "climate mode %d", m);
-    CHECK(hisense_mode_to_esphome((HisenseMode) m) == H::hisense_mode_to_climate((H::Mode) m), "hisense mode %d", m);
+    // The original's HisenseMode is a C enum with the range 0..7. Loading 8..15 into it is
+    // undefined behaviour in this test (clang's UBSan reports it), so the two are compared over
+    // the values the original can hold. The port's enum is a byte: its answer for 8..255 is pinned
+    // in test_esphome_map_gaps.cpp.
+    if (m < 8)
+      CHECK(hisense_mode_to_esphome((HisenseMode) m) == H::hisense_mode_to_climate((H::Mode) m), "hisense mode %d", m);
   }
   for (int p = 0; p < 2; p++)
     for (int m = 0; m < 8; m++)
@@ -523,7 +604,9 @@ static void test_map() {
     for (int t = 0; t < 2; t++)
       CHECK((int) hisense_feature_from_status(e != 0, t != 0) == (int) H::feature_from_status(e != 0, t != 0),
             "feature_from_status %d %d", e, t);
-  for (int f = 0; f < 6; f++)
+  // The original's HisenseFeature is a C enum with the values 0..3: 4 and 5 cannot be loaded into
+  // it without undefined behaviour (the same report the mode loop above had, hidden behind it).
+  for (int f = 0; f < 4; f++)
     CHECK((int) esphome_feature_after_send((HisenseFeature) f) == (int) H::feature_after_send((H::Feature) f),
           "feature_after_send %d", f);
 }

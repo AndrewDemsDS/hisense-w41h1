@@ -139,6 +139,9 @@ static void test_exhaustive() {
       long v = s;
       int run_fires = 0;
       int reconfig_run = 0;  // replies in a row with bit 3 and the flag off the wire
+      // Bit 3 is a request only once a reply without it was seen with the flag off the wire
+      // (hisense_protocol.h, SetupRequestTracker). Kept here independently of the tracker.
+      bool reconfig_armed = false;
       bool had_smartcfg = false;
       uint32_t last_smartcfg = 0;
       for (int i = 0; i < SEQ_LEN; i++) {
@@ -172,8 +175,15 @@ static void test_exhaustive() {
           last_smartcfg = now;
         }
         // What the unit is asking as far as the module can tell: bit 3 does not count while the
-        // module's own flag is on the wire.
-        const uint8_t asking = indicating ? (uint8_t) (bits & SMARTCFG) : bits;
+        // module's own flag is on the wire, nor before a reply without it (a bit 3 standing since
+        // the start, or handed back after the flag went off, is not a request, and two gestures
+        // made over it are two requests).
+        if (indicating) {
+          reconfig_armed = false;
+        } else if ((bits & RECONFIG) == 0) {
+          reconfig_armed = true;
+        }
+        const uint8_t asking = reconfig_armed ? bits : (uint8_t) (bits & SMARTCFG);
         if (asking == 0) {
           run_fires = 0;
         } else if (r != 0 && ++run_fires > 1) {
@@ -206,15 +216,13 @@ static void test_exhaustive() {
         lost_smartcfg.count);
   CHECK(lost_reconfig.count == 0, "no order of replies leaves the tracker deaf to a later held 0x08 (%ld)",
         lost_reconfig.count);
-  // DEFECT (setup_request_step, "A request that changes kind ... starts over"): the restart is
-  // meant for a second kind of request following the first. It also runs when bit 5 comes or goes
-  // on top of a bit 3 that stays held, and then the same held bit 3 is reported a second time.
-  // Shortest forms: 28 28 28 08 08 08 and 08 08 08 28 28 28 (two requests of 0x08), and
-  // 20 08 08 08 (0x20, then 0x08 three replies later). With a toggle on the request that is setup
-  // mode opened and closed again by one gesture. packages/node.yaml is covered as long as it
-  // switches the indication on before the next reply (bit 3 is then dropped). A listener that does
-  // not show the indication is not.
-  KNOWN(twice_per_run.count == 0, "one unbroken run of request replies gives two requests (%ld sequences)",
+  // Was a defect: a request that changed kind restarted the count, which also ran when bit 5 came
+  // or went on top of a bit 3 that stayed held, and the same held bit 3 was reported a second
+  // time. Shortest forms: 28 28 28 08 08 08 and 08 08 08 28 28 28 (two requests of 0x08), and
+  // 20 08 08 08 (0x20, then 0x08 three replies later). With a toggle on the request that was setup
+  // mode opened and closed again by one gesture. Now one unbroken run of replies that ask is one
+  // request.
+  CHECK(twice_per_run.count == 0, "one unbroken run of request replies gives two requests (%ld sequences)",
         twice_per_run.count);
   if (twice_per_run.first >= 0)
     print_sequence("first such sequence", twice_per_run.first, twice_per_run.step_ms);
@@ -237,14 +245,16 @@ static void test_kind_changes() {
     CHECK(feed(&t, SMARTCFG, false, &now, 1, &reason) == 1 && reason == SMARTCFG, "0x20 after the 10 s: taken");
   }
   {
-    // 0x20 taken, then 0x08 held: bit 3 is never locked out, so it is a second request 3 s later.
-    // On a unit that raised both for one gesture this would open setup mode and close it again,
-    // unless the listener has put the module's flag on the wire in between (node.yaml does).
+    // 0x20 taken, then 0x08 held with no quiet reply between: the same run, so no second request.
+    // On a unit that raised both for one gesture two requests would open setup mode and close it
+    // again.
     H::SetupRequestTracker t = booted(now);
     feed(&t, 0, false, &now, 12);
     CHECK(feed(&t, SMARTCFG, false, &now, 1) == 1, "0x20: taken");
-    KNOWN(feed(&t, RECONFIG, false, &now, 3) == 0,
-          "0x08 held straight after a taken 0x20, no quiet reply between: a second request");
+    CHECK(feed(&t, RECONFIG, false, &now, 30) == 0,
+          "0x08 held straight after a taken 0x20, no quiet reply between: no second request");
+    CHECK(feed(&t, 0, false, &now, 1) == 0, "quiet");
+    CHECK(feed(&t, RECONFIG, false, &now, 3) == 1, "0x08 held after a quiet reply: its own request");
   }
   {
     // The same with the listener doing what node.yaml does: indication on from the next reply.
@@ -263,15 +273,17 @@ static void test_kind_changes() {
     CHECK(feed(&t, RECONFIG, false, &now, 12) == 0, "still held: nothing");
     int fires = feed(&t, BOTH, false, &now, 1);
     fires += feed(&t, RECONFIG, false, &now, 5);
-    KNOWN(fires == 0, "a held, already taken 0x08 is reported again after one 0x28 reply (%d)", fires);
+    CHECK(fires == 0, "a held, already taken 0x08 is reported again after one 0x28 reply (%d)", fires);
   }
   {
     // Both bits from the start, bit 5 dropping after one reply (a pulse on top of a held request).
     H::SetupRequestTracker t = booted(now);
     feed(&t, 0, false, &now, 12);
+    // Bit 3 has been there for three replies in a row on the third one, whatever bit 5 did
+    // meanwhile. (The count used to start over when bit 5 dropped, which made it four.)
     CHECK(feed(&t, BOTH, false, &now, 1) == 0, "0x28 once: held, not taken yet");
-    CHECK(feed(&t, RECONFIG, false, &now, 2) == 0, "0x08 twice more: the hold started over, so not yet");
-    CHECK(feed(&t, RECONFIG, false, &now, 1, &reason) == 1 && reason == RECONFIG, "one more: taken once, as 0x08");
+    CHECK(feed(&t, RECONFIG, false, &now, 1) == 0, "0x08: bit 3 for the second reply in a row");
+    CHECK(feed(&t, RECONFIG, false, &now, 1, &reason) == 1 && reason == RECONFIG, "third: taken once, as 0x08");
     CHECK(feed(&t, RECONFIG, false, &now, 20) == 0, "and not again");
   }
   {
@@ -304,20 +316,23 @@ static void test_sustained_smartcfg() {
     CHECK(feed(&t, 0, false, &now, 12) == 0, "quiet after it");
   }
   {
-    // WEAKNESS: the lockout drops bit 5, the debounce sees the request as gone and lets its latch
-    // go, and when the lockout ends the same held bit counts as new. A unit that held 0x20 would
-    // toggle setup mode every 10 s.
+    // Was a weakness: the lockout dropped bit 5, the debounce saw the request as gone and let its
+    // latch go, and when the lockout ended the same held bit counted as new. A unit that held
+    // 0x20 would have toggled setup mode every 10 s.
     H::SetupRequestTracker t = booted(now);
     feed(&t, 0, false, &now, 12);
     const int fires = feed(&t, SMARTCFG, false, &now, 60);
-    KNOWN(fires == 1, "0x20 held for a minute is reported %d times, once every 10 s", fires);
+    CHECK(fires == 1, "0x20 held for a minute is reported %d times", fires);
+    CHECK(feed(&t, 0, false, &now, 1) == 0 && feed(&t, SMARTCFG, false, &now, 1) == 1,
+          "released and pressed again: taken");
   }
   {
-    // The same at a start: bit 3 standing at boot is never taken, bit 5 standing at boot is taken
-    // as soon as the boot lockout ends.
+    // The same at a start: neither bit standing at boot is taken, however long it stays.
     H::SetupRequestTracker t = booted(now);
-    const int fires = feed(&t, SMARTCFG, false, &now, 15);
-    KNOWN(fires == 0, "0x20 standing at boot is taken when the boot lockout ends (%d)", fires);
+    const int fires = feed(&t, SMARTCFG, false, &now, 600);
+    CHECK(fires == 0, "0x20 standing at boot is taken when the boot lockout ends (%d)", fires);
+    CHECK(feed(&t, 0, false, &now, 1) == 0 && feed(&t, SMARTCFG, false, &now, 1) == 1,
+          "after a reply without it, a pulse is taken");
   }
 }
 
@@ -513,14 +528,24 @@ static void test_lockout_boundary() {
     CHECK(feed(&t, RECONFIG, false, &now, 3) == 1, "asked again: taken");
   }
   {
-    // WEAKNESS, as the header says ("as long as the caller disarms an expired lockout"): the
-    // disarm happens in setup_request_step only. With no 0x1E reply at all between the end of a
-    // lockout and one clock revolution later (the unit silent for 49.7 days), the old lockout
-    // reads as running again for 10 s. Cost: one gesture ignored.
+    // Was a weakness: an expired lockout was disarmed in setup_request_step only. With no 0x1E
+    // reply at all between the end of a lockout and one clock revolution later (the unit silent
+    // for 49.7 days), the old lockout read as running again for 10 s and one gesture was ignored.
+    // The scheduler now calls setup_request_expire on every poll, reply or not. On a 32 bit clock
+    // "5 s after the lockout began" and "one revolution and 5 s after" are the same number, so
+    // without a call in between nothing can tell them apart, which the second half pins.
     H::SetupRequestTracker t;
     H::setup_request_lockout(&t, 20000);
-    KNOWN(H::setup_request_step(&t, SMARTCFG, false, 20000 + 5000) == SMARTCFG,
-          "no reply for one whole clock revolution: a pulse 5 s into the stale lockout is ignored");
+    H::setup_request_expire(&t, 20000 + LOCKOUT - 1);
+    CHECK(t.lockout_armed, "9.999 s: the lockout is still armed");
+    H::setup_request_expire(&t, 20000 + 0x80000000u);  // some poll during the 49.7 days of silence
+    CHECK(!t.lockout_armed, "a poll after the 10 s disarms it without any reply");
+    CHECK(H::setup_request_step(&t, SMARTCFG, false, 20000 + 5000) == SMARTCFG,
+          "one whole clock revolution later: a pulse \"5 s into\" the old lockout is taken");
+    H::SetupRequestTracker never_polled;
+    H::setup_request_lockout(&never_polled, 20000);
+    CHECK(H::setup_request_step(&never_polled, SMARTCFG, false, 20000 + 5000) == 0,
+          "with no call at all in between, 5 s into the lockout is what it is");
   }
 }
 
@@ -859,10 +884,10 @@ static void test_scheduler_own_flag() {
     CHECK(r.rec.requests.size() == 2, "tail %d: a later gesture is taken", tail);
   }
   {
-    // WEAKNESS: bit 3 is quieted by a reply seen while the flag is on. Switched on and off again
-    // within one cycle, the flag went out in one heartbeat and no reply was read with it on. A
-    // unit that keeps handing it back for three replies is then read as asking. node.yaml never
-    // does this (leaving setup mode ends in a restart), a custom on_setup_request automation could.
+    // Was a weakness: bit 3 was quieted only by a reply read while the flag was on. Switched on
+    // and off again within one cycle, the flag went out in one heartbeat and no reply was read
+    // with it on, so a unit that kept handing it back for three replies was read as asking. The
+    // scheduler now notes the flag when the heartbeat that carries it is built.
     Rig r;
     r.ac.mirror = true;
     r.ac.mirror_tail = 3;
@@ -875,17 +900,21 @@ static void test_scheduler_own_flag() {
     }
     r.bus.set_setup_indicator(false, g_now);  // the heartbeat is out, its reply not yet in
     r.cycles(8);
-    KNOWN(r.rec.requests.empty(), "flag on for one heartbeat only, handed back for 3 more replies: a request (%u)",
+    CHECK(r.rec.requests.empty(), "flag on for one heartbeat only, handed back for 3 more replies: a request (%u)",
           (unsigned) r.rec.requests.size());
+    r.cycles(4);  // past the 10 s that switching the indication off started
+    r.pulse(0x20);
+    CHECK(r.rec.requests.size() == 1, "and a gesture after it is taken");
   }
 }
 
 static void test_scheduler_link_loss() {
   printf("-- scheduler: the unit goes silent in the middle of a request\n");
   {
-    // WEAKNESS: "replies in a row" is counted in replies, not in time, and a lost link does not
-    // clear the count. Two 0x08 replies, a minute of silence, one more: a request. The hold exists
-    // to reject what a disturbed bus produces, and a link that drops is a disturbed bus.
+    // Was a weakness: "replies in a row" is counted in replies, not in time, and a lost link did
+    // not clear the count. Two 0x08 replies, a minute of silence, one more: a request. The hold
+    // exists to reject what a disturbed bus produces, and a link that drops is a disturbed bus.
+    // The link-lost edge now starts the hold again.
     Rig r;
     r.cycles(12);
     r.ac.flags = 0x08;
@@ -896,8 +925,10 @@ static void test_scheduler_link_loss() {
     CHECK(r.rec.link_down, "a minute of silence: the link is reported down");
     r.ac.silent = false;
     r.cycles(1);
-    KNOWN(r.rec.requests.empty(), "the first 0x08 reply after a minute of silence completes the hold (%u)",
+    CHECK(r.rec.requests.empty(), "the first 0x08 reply after a minute of silence completes the hold (%u)",
           (unsigned) r.rec.requests.size());
+    r.cycles(1);
+    CHECK(r.rec.requests.empty(), "nor the second");
     r.cycles(5);
     CHECK(r.rec.requests.size() == 1 && !r.rec.link_down, "the link is back and the held request counted once");
   }

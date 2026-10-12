@@ -20,10 +20,11 @@
 //  - until arbitrary bytes were queued, every frame written is one well-formed frame with a good
 //    checksum, and carries the current link token in bytes 7/8 (the DevType probe excepted);
 //  - on_bus_status and on_bus_features only follow a frame that passes the model's checks;
-//    on_bus_checksum_error only a frame that fails them; on_bus_setup_request only a
-//    checksum-good 0x1E reply, with bits that reply carried;
-//  - the link token changes only to bytes 16/17 of a DevType reply just received, never to 00 00.
-//  STRICT only (KNOWN_FAILURES: bus-token-no-checksum): that DevType reply passes its checksum.
+//    on_bus_checksum_error follows every frame that fails its checksum, exactly once, and no
+//    other; the counter agrees; on_bus_setup_request only a checksum-good 0x1E reply, with bits
+//    that reply carried;
+//  - the link token changes only to bytes 16/17 of a DevType reply just received that passes its
+//    checksum and is long enough for those bytes to be payload, never to 00 00.
 #include "fuzz_common.h"
 #include "hisense_bus.h"
 
@@ -69,12 +70,18 @@ struct Sim : public H::BusListener {
   bool wrote{false};
   bool raw_queued{false};
   uint8_t tok_hi{0x01}, tok_lo{0x01};
+  // A frame with a bad checksum was reported and its checksum error has not followed yet.
+  bool chk_error_due{false};
+  uint32_t bad_frames{0};
 
   void on_bus_frame(const uint8_t *frame, size_t len) override {
     FUZZ_CHECK(len >= 9 && len <= H::RX_FRAME_MAX && len == static_cast<size_t>(frame[4]) + 9, "frame length %zu", len);
     FUZZ_CHECK(
         frame[0] == 0xF4 && frame[1] == 0xF5 && frame[2] == 0x01 && frame[len - 2] == 0xF4 && frame[len - 1] == 0xFB,
         "reported frame breaks the framing rules");
+    FUZZ_CHECK(!chk_error_due, "a frame with a bad checksum was not reported as a checksum error");
+    chk_error_due = !H::status_checksum_ok(frame, len);
+    bad_frames += chk_error_due ? 1 : 0;
     memcpy(last, frame, len);
     last_len = len;
     last_ok = model_frame_ok(frame, len);
@@ -90,7 +97,9 @@ struct Sim : public H::BusListener {
   }
   void on_bus_link(bool up) override { (void) up; }
   void on_bus_checksum_error(const uint8_t *frame, size_t len) override {
-    FUZZ_CHECK(!H::status_checksum_ok(frame, len) && frame[13] == 0x66, "checksum error reported for a good frame");
+    FUZZ_CHECK(chk_error_due && !H::status_checksum_ok(frame, len) && len == last_len && memcmp(frame, last, len) == 0,
+               "checksum error reported for a good frame, or twice, or for another frame");
+    chk_error_due = false;
   }
   void on_bus_setup_request(uint8_t request) override {
     FUZZ_CHECK(last_ok && last[13] == 0x1E && last_len >= 22, "setup request from a frame that is not a good 0x1E");
@@ -101,6 +110,9 @@ struct Sim : public H::BusListener {
   void poll() {
     frame_since_poll = false;
     bus.poll(now);
+    FUZZ_CHECK(!chk_error_due, "a frame with a bad checksum was not reported as a checksum error");
+    FUZZ_CHECK(bus.checksum_mismatches() == bad_frames, "checksum counter %u, %u bad frames seen",
+               static_cast<unsigned>(bus.checksum_mismatches()), static_cast<unsigned>(bad_frames));
     // The stored copies are only ever a parsed, valid result.
     H::AcFaults fl;
     H::AcFeatures ft;
@@ -112,11 +124,10 @@ struct Sim : public H::BusListener {
       FUZZ_CHECK(seen && frame_since_poll, "link token changed with no frame received");
       // The frame that ends a transaction is the last one reported in that poll, because the next
       // transaction starts by flushing the receive side.
-      FUZZ_CHECK(last[13] == 0x0A && last_len > 17 && last[16] == hi && last[17] == lo,
+      FUZZ_CHECK(last[13] == 0x0A && last_len >= 22 && last[16] == hi && last[17] == lo,
                  "link token %02X %02X is not bytes 16/17 of the DevType reply", hi, lo);
       FUZZ_CHECK(hi != 0 || lo != 0, "link token 00 00 adopted");
-      if (STRICT)
-        FUZZ_CHECK(last_ok, "link token %02X %02X adopted from a DevType reply with a bad checksum", hi, lo);
+      FUZZ_CHECK(last_ok, "link token %02X %02X adopted from a DevType reply with a bad checksum", hi, lo);
       tok_hi = hi;
       tok_lo = lo;
     }

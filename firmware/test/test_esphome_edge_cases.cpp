@@ -69,14 +69,14 @@ static void test_status_mode() {
   CHECK(H::mode_from_status((H::Mode) 13, &out) && out == H::MODE_AUTO, "auto as 5 with bit 7 set");
   CHECK(H::mode_from_status((H::Mode) 14, &out) && out == H::MODE_AUTO, "auto as 6 with bit 7 set");
 
-  // The hazard itself, on the raw path the hub used to take: status nibble 13 lands in the frame
-  // as 0xB0, which is no mode command.
+  // The hazard itself, on the raw path the hub used to take: status nibble 13 landed in the frame
+  // as 0xB0, which is no mode command. The builder refuses a mode that has no name now, so even
+  // that path sends nothing.
   {
     H::AcCommand c;
     c.mode = (H::Mode) 13;
     uint8_t f[H::CMD_FRAME_MAX];
-    size_t n = H::build_command(c, f, sizeof(f));
-    CHECK(n > 0 && !known_mode_byte(f[18]), "raw copy of nibble 13 builds byte 18 = 0x%02X", f[18]);
+    CHECK(H::build_command(c, f, sizeof(f)) == 0, "a raw copy of nibble 13 builds no frame");
   }
 
   // End to end for every byte 18 nibble: parse, validate, sync, build. Whatever the status said,
@@ -345,18 +345,18 @@ static void test_frame_stream() {
           "bad checksum is framed but not parsed");
   }
   {
-    // A frame cut short takes the frame after it down too: the assembler is still counting bytes
-    // for the first. The scheduler resets the assembler at every transaction, which bounds the
-    // loss to that one reply window (test_esphome_bus.cpp covers the recovery).
+    // A frame cut short used to take the frame after it down too, because the assembler went on
+    // counting bytes for the first. Now the start tag of the second is followed as a candidate,
+    // and it takes over when the first turns out not to end in F4 FB.
     H::FrameAssembler fa;
     std::vector<uint8_t> s(good.begin(), good.begin() + 60);
     s.insert(s.end(), good.begin(), good.end());
     int frames = 0;
-    feed_all(fa, s, &frames);
-    CHECK(frames == 0, "truncated frame swallows its successor (%d)", frames);
-    fa.reset();
+    size_t n = feed_all(fa, s, &frames);
+    CHECK(frames == 1 && n == 160 && std::memcmp(fa.data(), good.data(), 160) == 0,
+          "the frame behind a truncated one is delivered whole (%d)", frames);
     frames = 0;
-    CHECK(feed_all(fa, good, &frames) == 160 && frames == 1, "and a reset recovers");
+    CHECK(feed_all(fa, good, &frames) == 160 && frames == 1, "and the one after it, with no reset");
   }
   {  // Lengths at and past the buffer.
     H::FrameAssembler fa;

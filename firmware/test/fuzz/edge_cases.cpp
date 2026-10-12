@@ -174,6 +174,7 @@ static void test_split_everywhere() {
       size_t last = 0;
       CHECK(feed(fa, fr.f, cut, &last) == 0, "%s cut at %zu produced a frame", fr.name, cut);
       int lost = lost_after(fa, fr.f, fr.n);
+      CHECK(lost == 0 || cut == fr.n - 1, "%s cut at %zu costs %d good frame(s)", fr.name, cut, lost);
       if (lost > worst) {
         worst = lost;
         worst_at = static_cast<int>(cut);
@@ -188,11 +189,13 @@ static void test_split_everywhere() {
     }
     printf("  %s: worst case %d good frame(s) lost (cut at %d); %d of %zu cut points lose none\n", fr.name, worst,
            worst_at, clean, fr.n);
-    // Today: a frame cut anywhere past its first byte costs the next good frame too, because the
-    // assembler keeps counting towards the cut frame's LEN instead of restarting on the next
-    // un-doubled F4 F5. Only "nothing" and "just the F4" lose none.
+    // Before the assembler followed a later F4 F5 as a second candidate, a frame cut anywhere past
+    // its first byte cost the next good frame too (2 of n cut points lost none). One cut point is
+    // left: a frame cut between the F4 and the FB of its end tag. The next frame's F4 is then the
+    // second of a pair, which on this wire means one escaped data byte, so the start tag is not
+    // seen. The frame after that is taken.
     PIN(worst, 1, "good frames lost after a cut frame");
-    PIN(clean, 2, "cut points that lose no frame");
+    PIN(clean, static_cast<int>(fr.n) - 1, "cut points that lose no frame");
   }
 
   // The same split, but delivered: every way of cutting one good frame into two UART chunks.
@@ -231,17 +234,20 @@ static void test_noise_before_a_frame() {
   struct {
     uint8_t bytes[4];
     size_t n;
-    int lost;  // good frames lost today
+    int lost;  // good frames lost
     const char *what;
   } cases[] = {
       {{0x00, 0xFB, 0x12, 0x55}, 4, 0, "noise without 0xF4"},
       {{0xF4, 0xFB}, 2, 0, "the end tag of a frame whose start was missed"},
       {{0xF4}, 1, 0, "one stray 0xF4 (taken as a doubled start byte)"},
       {{0xF4, 0xF4, 0xF4, 0xFB}, 4, 0, "the tail of a frame with a doubled checksum byte"},
-      // The two below cost the frame that follows: the stray bytes open a frame, and the real
-      // start tag is then read as its contents.
-      {{0xF4, 0xF4}, 2, 1, "two stray 0xF4"},
-      {{0xF4, 0xF5}, 2, 1, "a start tag with nothing behind it"},
+      // The two below used to cost the frame that follows: the stray bytes open a frame, and the
+      // real start tag was then read as its contents. The byte that breaks the false start is now
+      // looked at again as a start byte.
+      {{0xF4, 0xF4}, 2, 0, "two stray 0xF4"},
+      {{0xF4, 0xF5}, 2, 0, "a start tag with nothing behind it"},
+      {{0xF4, 0xF5, 0x01}, 3, 0, "a start tag and the direction byte"},
+      {{0xF4, 0xF5, 0x01, 0x40}, 4, 0, "a header cut in front of its LEN byte"},
   };
   for (auto &c : cases) {
     H::FrameAssembler fa;
@@ -249,13 +255,21 @@ static void test_noise_before_a_frame() {
     int lost = lost_after(fa, good, sizeof(good));
     PIN(lost, c.lost, c.what);
   }
-  // Worst case: a header that claims the maximum length swallows whatever follows until it is full.
+  // Was the worst case: a header that claims the maximum length swallowed whatever followed until
+  // it was full, seven 28 byte frames. The first frame behind it is now followed as a candidate
+  // and delivered when it completes.
   const uint8_t greedy[] = {0xF4, 0xF5, 0x01, 0x40, 0xBF};  // LEN 0xBF = 191 -> 200 bytes
   H::FrameAssembler fa;
   feed(fa, greedy, sizeof(greedy));
   int lost = lost_after(fa, good, sizeof(good));
   printf("  a header claiming 200 bytes: %d good 28 byte frames lost before the next one is delivered\n", lost);
-  PIN(lost, 7, "28 byte frames lost after a header claiming 200 bytes");
+  PIN(lost, 0, "28 byte frames lost after a header claiming 200 bytes");
+  // Two such headers in a row, then a frame cut short, then good frames: still none lost.
+  H::FrameAssembler fb;
+  feed(fb, greedy, sizeof(greedy));
+  feed(fb, greedy, sizeof(greedy));
+  feed(fb, good, 11);
+  PIN(lost_after(fb, good, sizeof(good)), 0, "28 byte frames lost after two greedy headers and a cut frame");
 }
 
 static void test_tx_maximum() {

@@ -7,6 +7,9 @@
 //   control bit 0: the module's provisioning flag is on the wire (`indicating`)
 //   control bit 1: the indication was switched off just before this reply (setup_request_lockout)
 //   control bit 2: dt is in units of 64 ms instead of 1 ms (reaches past the 10 s lockout)
+//   control bit 3: the module's flag went out in a heartbeat before this reply (setup_request_flag_sent)
+//   control bit 4: the link was lost before this reply (setup_request_link_lost)
+//   control bit 5: a poll without a reply came first (setup_request_expire)
 //
 // The harness keeps its own 64 bit clock and a few counters, and checks what the tracker returns
 // against the rules written in hisense_protocol.h:
@@ -15,7 +18,10 @@
 //  - bit 3 (reconfigure) is never taken while the module's own flag is on the wire, never before
 //    a reply without it was seen with the flag off, and only on the third reply in a row;
 //  - an accepted request arms the lockout at the current time;
-//  - liveness: a lone bit 5 after a quiet reply, with no lockout running, is taken at once.
+//  - one unbroken run of replies that ask (bit 3 only where it counts) gives at most one request;
+//  - bit 5 is taken only when it appeared, after a reply without it, outside the lockout;
+//  - liveness: a lone bit 5 after a quiet reply, with no lockout running, is taken at once, and
+//    a bit 3 that counts, in a run that has had no request, is taken on its third reply in a row.
 // The two pure helpers under the tracker get the same treatment with arbitrary arguments.
 #include "fuzz_common.h"
 
@@ -78,7 +84,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   }
   bool quiet = false;  // a reply without bit 3 was seen while the flag was off the wire
   unsigned run3 = 0;   // replies in a row carrying bit 3 with the flag off
+  unsigned eff3 = 0;   // replies in a row carrying bit 3 where it counts (since the link was last lost)
   uint8_t prev_eff = 0;
+  bool run_fired = false;  // the current run of replies that ask has had its request
+  bool live5 = false;      // bit 5 appeared, after a reply without it, outside the lockout
 
   if ((start & 8) != 0)
     fuzz_helpers(r);
@@ -98,6 +107,20 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       locked = true;
       lock_at = t;
     }
+    if ((ctl & 8) != 0) {
+      H::setup_request_flag_sent(&tr);
+      quiet = false;
+    }
+    if ((ctl & 16) != 0) {
+      H::setup_request_link_lost(&tr);
+      run3 = 0;
+      eff3 = 0;
+    }
+    if ((ctl & 32) != 0) {
+      const bool was_armed = tr.lockout_armed;
+      H::setup_request_expire(&tr, now);
+      FUZZ_CHECK(!tr.lockout_armed || was_armed, "expire armed a lockout");
+    }
 
     // The model's view of this reply, before the tracker sees it.
     if (indicating) {
@@ -110,6 +133,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (!quiet)
       eff &= static_cast<uint8_t>(~0x08);
     const bool lock_running = locked && (t - lock_at) < H::SETUP_REQUEST_LOCKOUT_MS;
+    eff3 = (eff & 0x08) != 0 ? eff3 + 1 : 0;
+    if ((eff & 0x20) == 0) {
+      live5 = false;
+    } else if ((prev_eff & 0x20) == 0) {
+      live5 = !lock_running;
+    }
+    if (eff == 0)
+      run_fired = false;
 
     const uint8_t got = H::setup_request_step(&tr, raw, indicating, now);
 
@@ -122,14 +153,23 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       FUZZ_CHECK(quiet, "reconfigure taken before any reply without it");
       FUZZ_CHECK(run3 >= H::SETUP_REQUEST_HOLD_FRAMES, "reconfigure taken after %u replies in a row", run3);
     }
+    if ((got & 0x20) != 0)
+      FUZZ_CHECK(live5, "smart-config taken from a bit that did not appear outside the lockout");
+    if ((got & 0x08) != 0)
+      FUZZ_CHECK(eff3 >= H::SETUP_REQUEST_HOLD_FRAMES, "reconfigure taken %u replies after the link was lost", eff3);
     if (got != 0) {
+      FUZZ_CHECK(!run_fired, "a second request (%02X) out of one unbroken run of replies that ask", got);
+      FUZZ_CHECK((got & ~eff) == 0, "request %02X carries a bit that does not count in this reply (%02X)", got, eff);
       FUZZ_CHECK(tr.lockout_armed && tr.lockout_since == now, "an accepted request did not arm the lockout");
+      run_fired = true;
       locked = true;
       lock_at = t;
-    } else if (eff == 0x20 && prev_eff == 0 && !lock_running) {
-      FUZZ_CHECK(false, "a lone smart-config pulse after a quiet reply, no lockout running, was not taken");
+    } else if (!run_fired) {
+      FUZZ_CHECK(!(eff == 0x20 && live5 && !lock_running),
+                 "a lone smart-config pulse after a quiet reply, no lockout running, was not taken");
+      FUZZ_CHECK(!((eff & 0x08) != 0 && eff3 >= H::SETUP_REQUEST_HOLD_FRAMES),
+                 "a reconfigure request held for %u replies, in a run with no request yet, was not taken", eff3);
     }
-    FUZZ_CHECK(tr.last_req == eff, "tracker's last request %02X, model %02X", tr.last_req, eff);
     prev_eff = eff;
   }
   return 0;
