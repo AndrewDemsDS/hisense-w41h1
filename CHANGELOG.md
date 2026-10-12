@@ -110,6 +110,10 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   `0x0..0x140000` (the range of the retired Matter clip image): it writes one firmware slot,
   `--layout <layout> --slot <1|2>`, after verifying the image the way the bootloader does.
   `ch341dump.py` reads twice and compares. A chip that stays busy is no longer written to.
+- **The pre-commit hook** no longer skips the host tests on a commit with more than about 64 KB of
+  file names, runs them for any file under `firmware/scripts/`, `firmware/flasher/` and the hook
+  itself, and runs `docs/guide/lint.py` when a guide page is staged. `stop-slop.sh` also reads
+  renamed files, files with non-ASCII names and `.mdx`.
 
 ## Matter and ESPHome side by side - 2026-10-10
 

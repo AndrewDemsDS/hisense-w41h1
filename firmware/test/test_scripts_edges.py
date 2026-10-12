@@ -634,10 +634,10 @@ r = subprocess.run([sys.executable, str(WIKI / "lint.py")], capture_output=True,
 check(r.returncode == 1 and "FAIL: 2 error(s)" in r.stdout, "and exits 1 when it found an error")
 workflows = "".join(p.read_text() for p in (ROOT / ".github/workflows").glob("*.yaml"))
 hooks = "".join(p.read_text() for p in (ROOT / "firmware/.githooks").iterdir())
-known_failure("guide/lint.py" in workflows + hooks + run_tests,
-              "docs/guide/lint.py is run by a workflow, the commit hook or run_tests.sh",
-              "no workflow, hook or runner calls docs/guide/lint.py: the guide's links and its leak denylist are "
-              "only checked when someone remembers to run it")
+check("docs/guide/lint.py" in hooks, "the commit hook runs docs/guide/lint.py when a guide page is staged")
+known_failure("guide/lint.py" in workflows + run_tests, "docs/guide/lint.py is run by a workflow or run_tests.sh",
+              "no workflow calls docs/guide/lint.py: a pull request from a clone without the hook is not checked. "
+              "The step for qa.yaml's host-qa job is `python3 docs/guide/lint.py`")
 
 # ================================================================================================
 print("== stop-slop.sh and the pre-commit hook ==")
@@ -671,7 +671,9 @@ for name, text, wanted, why in (
         ("new.md", f"Pages 3{EN}5.\n", 0, "an en dash"),
         ("new.txt", f"x {EM} y\n", 0, "an em dash in a text file: only markdown is scanned"),
         ("new.py", f"# x {EM} y\n", 0, "an em dash in a code comment: only markdown is scanned"),
-        ("new.mdx", f"x {EM} y\n", 0, "an em dash in an .mdx file (the upstream docs page is one): not scanned"),
+        ("new.mdx", f"x {EM} y\n", 1, "the same in an .mdx file (the upstream docs page is one)"),
+        ("docs/NEW.Mdx", f"x {EM} y\n", 1, "the same in a file named .Mdx"),
+        ("new.mdx.txt", f"x {EM} y\n", 0, "a file that only has .mdx inside its name"),
         ("old.md", f"# Old\n\nA line with an em dash {EM} from before the rule.\n" + "filler line\n" * 30 + "A clean new line.\n", 0,
          "a clean line added to a file that already has an em dash"),
 ):
@@ -681,13 +683,15 @@ code, out = slop({"new.md": "clean\n"})
 check(code == 0 and out == "", "clean markdown passes without a word")
 
 code, out = slop({"renamed.md": (S / "old.md").read_text() + f"An added line {EM} with an em dash.\n"}, moves=[("old.md", "renamed.md")])
-known_failure(code == 1, "an em dash added to a markdown file renamed in the same commit is blocked",
-              "stop-slop.sh:9 lists staged files with --diff-filter=ACM, which leaves out renames (R), so a renamed "
-              "and edited file is not scanned. The hook's own C/C++ list uses ACMR")
-code, out = slop({"caf\u00e9.md": f"x {EM} y\n"})
-known_failure(code == 1, "an em dash in a markdown file with a non-ASCII name is blocked",
-              "stop-slop.sh:9 reads names from `git diff --name-only`, which quotes and escapes such a name, and the "
-              "quoted form matches no file in the second git diff. `-z` gives the plain names")
+check(code == 1 and "renamed.md" in out and "An added line" in out and "from before the rule" not in out,
+      "an em dash added to a markdown file renamed in the same commit is blocked, and only the added line is shown")
+code, out = slop({}, moves=[("old.md", "moved.md")])
+check(code == 0 and out == "", "a file that is only renamed passes: the em dash it already had is not new prose")
+code, out = slop({"notes.txt": (S / "old.md").read_text()}, moves=[("old.md", "notes.txt")])
+check(code == 0, "a markdown file renamed to something that is not markdown is not scanned")
+for name in ("caf\u00e9.md", "\u03b1\u03b2.md", 'a "quoted" name.md', "tab\there.md"):
+    code, out = slop({name: f"x {EM} y\n"})
+    check(code == 1 and name in out, f"an em dash in a markdown file named {name!r} is blocked")
 
 # The hook, run in a small repository that has stand-ins where it calls the real tools: each
 # stand-in leaves a file behind, which shows whether the hook called it.
@@ -699,6 +703,8 @@ script(H / "firmware/test/run_tests.sh", '#!/usr/bin/env bash\ntouch "$MARKS/tes
 script(H / "firmware/scripts/version-lint.py", "import os, pathlib, sys\n"
        "pathlib.Path(os.environ['MARKS'], 'version').touch()\nsys.exit(int(os.environ.get('VERSION_RC', '0')))\n")
 script(H / "firmware/scripts/cpp-lint.sh", '#!/usr/bin/env bash\necho "$@" > "$MARKS/cpp"\nexit "${CPP_RC:-0}"\n')
+script(H / "docs/guide/lint.py", "import os, pathlib, sys\n"
+       "pathlib.Path(os.environ['MARKS'], 'guide').touch()\nsys.exit(int(os.environ.get('GUIDE_RC', '0')))\n")
 shutil.copy(SLOP, H / "firmware/scripts/stop-slop.sh")
 write(H / "README.md", "# readme\n")
 git(H, "add", "-A")
@@ -724,21 +730,27 @@ for name, ran, why in (
         ("firmware/test/new_test.cpp", ["cpp", "tests"], "a host test: the tests and the C/C++ lint"),
         ("firmware/esphome/components/hisense_ac/x.py", ["tests"], "a component file: the tests"),
         ("firmware/scripts/dev.py", ["tests"], "dev.py: the tests"),
+        ("firmware/scripts/matter-convert.py", ["tests"], "matter-convert.py: the tests"),
+        ("firmware/scripts/cpp-lint.py", ["tests"], "the lint tool: the tests (test_scripts_edges.py covers it)"),
+        ("firmware/scripts/esphome-compile-check.sh", ["tests"], "CI's compile gate script: the tests"),
+        ("firmware/flasher/ch341common.py", ["tests"], "the clip flasher: the tests"),
+        ("firmware/.githooks/pre-commit", ["tests"], "the hook itself: the tests"),
+        ("reverse-engineering/tools/decode_ac_frames.py", ["tests"], "decode_ac_frames.py, which layer 2 and virtual_ac.py import: the tests"),
+        ("reverse-engineering/tools/sniff.py", [], "another reverse-engineering tool: nothing"),
         ("firmware/esphome/packages/node.yaml", ["version"], "a package: the version lint, not the tests"),
         ("CHANGELOG.md", ["version"], "the changelog: the version lint"),
         (".github/workflows/qa.yaml", ["version"], "a workflow: the version lint (it holds a pin)"),
         ("README.md", [], "a document: nothing but the prose gate"),
-        ("firmware/scripts/cpp-lint.py", [], "the lint tool itself: nothing"),
-        ("firmware/scripts/esphome-compile-check.sh", [], "CI's compile gate script: nothing"),
-        ("docs/guide/Home.md", [], "a guide page: nothing (docs/guide/lint.py is not called)"),
+        ("docs/guide/Home.md", ["guide"], "a guide page: the guide linter"),
+        ("docs/guide/images/x.md", [], "a file below the guide's own directory: nothing, the linter does not read it"),
         ("firmware/esp32-recon/main/x.c", ["cpp"], "the diagnostic tool: the C/C++ lint only"),
 ):
     code, out, marks = hook({name: "x\n"})
     check(code == 0 and marks == ran, f"staged {why}")
-code, out, marks = hook({"reverse-engineering/tools/decode_ac_frames.py": "x\n"})
-known_failure("tests" in marks, "staging decode_ac_frames.py runs the host tests",
-              "pre-commit:11 the trigger pattern does not name reverse-engineering/tools/decode_ac_frames.py, which "
-              "run_tests.sh (layer 2) and virtual_ac.py import")
+code, out, marks = hook({"docs/guide/lint.py": (H / "docs/guide/lint.py").read_text() + "# changed\n"})
+check(code == 0 and marks == ["guide", "tests"], "staged the guide linter: itself and the tests")
+code, out, marks = hook({"docs/guide/Home.md": "x\n"}, GUIDE_RC="1")
+check(code == 1 and "GUIDE LINT FAILED" in out, "a failing guide lint stops the commit")
 code, out, marks = hook({"firmware/test/x.cpp": "x\n"}, TESTS_RC="1")
 check(code == 1 and "HOST TESTS FAILED" in out and "cpp" not in marks, "failing host tests stop the commit before anything else runs")
 code, out, marks = hook({"CHANGELOG.md": "x\n"}, VERSION_RC="1")
@@ -761,17 +773,23 @@ code, out, marks = hook({"README.md": "x\n"}, GLOBAL_RC="1")
 check(code == 1, "and its failure stops the commit")
 chained.unlink()
 
-# A large commit. The hook decides with `git diff --cached --name-only | grep -qE ...` under
-# `set -o pipefail`. grep -q exits at the first match; when the list is longer than the pipe
-# holds, git is killed by SIGPIPE, pipefail turns that into a failed pipeline and the `if` is
-# false: the host tests are skipped, silently.
+# A large commit. The hook used to decide with `git diff --cached --name-only | grep -qE ...` under
+# `set -o pipefail`: grep -q exits at the first match, git is killed by SIGPIPE when the list is
+# longer than the pipe holds, pipefail turns that into a failed pipeline and the host tests were
+# skipped, silently. The list is read once now.
 bulk = {"firmware/test/a.cpp": "x\n"}
 bulk.update({f"zz/{'d' * 180}/{i:05d}.txt": "" for i in range(1500)})
 code, out, marks = hook(bulk)
-known_failure("tests" in marks, "a commit of 1500 files that includes a host test runs the host tests",
-              "pre-commit:10 and :22 `git diff ... | grep -qE` under `set -o pipefail`: with more than about 64 KB of "
-              "staged names git dies of SIGPIPE after grep's first match, the pipeline counts as failed and the gate "
-              "is skipped. `grep -E ... >/dev/null`, or reading the list into a variable first, has no early exit")
+check(code == 0 and marks == ["cpp", "tests"], "a commit of 1500 files that includes a host test runs the host tests")
+bulk = {f"aa/{'d' * 180}/{i:05d}.txt": "" for i in range(1500)}
+bulk["zz/last.cpp"] = "x\n"
+bulk["CHANGELOG.md"] = "x\n"
+code, out, marks = hook(bulk)
+check(code == 0 and marks == ["cpp", "version"] and (MARKS / "cpp").read_text().split() == ["check", "--no-tidy", "zz/last.cpp"],
+      "and one whose only C++ file and changelog come after 1500 others still gets the lints")
+code, out, marks = hook({"firmware/esphome/components/hisense_ac/caf\u00e9.cpp": "x\n"})
+check(code == 0 and marks == ["cpp", "tests"] and "caf\u00e9.cpp" in (MARKS / "cpp").read_text(),
+      "a staged source with a non-ASCII name reaches the lint under its real name")
 
 # ================================================================================================
 print("== esphome-compile-check.sh, with a stand-in for esphome ==")
