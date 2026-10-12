@@ -23,6 +23,10 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   (transmit queue full, special-mode queue full), where they showed it for 4 s and then went
   back. The refused values no longer stay in the command shadow, and a special-mode write that
   could not be queued is counted in `failed_commands` and no longer starts the 10 s pacing.
+- **A command made while the unit is not answering is refused.** It used to go out once into the
+  silence and was then carried out if the unit came back within 20 s. Now the entity keeps its
+  state and the log says `Command refused: the unit is not answering`. A special-mode write
+  whose turn came in the loop pass that reported the link lost is no longer sent either.
 
 ### Board files, the stock-module component and CI (2026-10-12)
 - **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air

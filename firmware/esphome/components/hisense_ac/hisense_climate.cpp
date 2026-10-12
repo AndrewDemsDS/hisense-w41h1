@@ -227,8 +227,7 @@ void HisenseClimate::control(const climate::ClimateCall &call) {
   }
 
   int preset = this->preset_request_index_(call);
-  if (preset >= 0) {
-    this->parent_->request_preset((uint8_t) preset);
+  if (preset >= 0 && this->parent_->request_preset((uint8_t) preset)) {
     this->publish_preset_index((uint8_t) preset);
     this->publish_state();
   }

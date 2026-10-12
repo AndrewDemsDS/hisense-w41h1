@@ -629,13 +629,14 @@ struct Rig : H::CommandSink {
     return next;
   }
   int refuse = 0;  // sends the bus will not queue from now on
+  int sends = 0;   // frames handed to the bus, heard by the unit or not
+  bool lost_edge = false;
   bool link_up = true;
   H::UnitView shown;  // what the entities show
 
   explicit Rig(Unit *u) : unit(u) {
     t.set_sink(this);
-    shown = u->report();
-    t.on_status(status_of(shown), now);
+    pass(true);
   }
   // The scheduler's part, as far as the tracker sees it: a ticket per frame, and with `wire_ms`
   // set, the report that the frame's transaction ended that much later.
@@ -647,6 +648,7 @@ struct Rig : H::CommandSink {
       refuse--;
       return H::BUS_TICKET_NONE;
     }
+    sends++;
     if (link_up)
       unit->receive({now, kind, c, value});
     if (wire_ms != 0)
@@ -671,20 +673,26 @@ struct Rig : H::CommandSink {
   }
   bool user_off() { return t.send_user_power_off(now); }
   bool user_special(const H::SpecialOp &op) { return t.enqueue_special(op, now); }
-  void user_preset(uint8_t target) { t.request_preset(target, now); }
+  bool user_preset(uint8_t target) { return t.request_preset(target, now); }
 
-  // process_status_()
-  void status() {
-    if (!link_up)
+  // HisenseAC::loop(): the link edge, the queue and a status frame, when there is one.
+  void pass(bool with_status) {
+    const bool edge = lost_edge;
+    lost_edge = false;
+    if (!with_status || !link_up) {
+      t.loop_pass(edge, nullptr, now);
       return;
+    }
     const H::UnitView reported = unit->report();
-    t.on_status(status_of(reported), now);
+    const H::AcState st = status_of(reported);
+    t.loop_pass(edge, &st, now);
     if (!holdoff())
       shown = reported;
   }
+  // The scheduler reports the link lost. The hub hears of it on its next loop pass.
   void link_lost() {
     link_up = false;
-    t.on_link_lost();
+    lost_edge = true;
   }
   // One bus cycle per second: the special queue gets its turn every 100 ms, a status frame at the end.
   void run(uint32_t ms) {
@@ -698,9 +706,7 @@ struct Rig : H::CommandSink {
           f++;
         }
       }
-      t.drain_special_queue(now);
-      if (now % 1000 == 0)
-        status();
+      pass(now % 1000 == 0);
     }
   }
 };
@@ -844,11 +850,12 @@ static void test_scenarios() {
     h.user_special({H::SPECIAL_OP_MUTE, 1});
     h.run(1000);
     size_t before = u.heard.size();
+    int sends = h.sends;
     h.link_lost();
     h.run(30000);
     h.link_up = true;
     h.run(30000);
-    CHECK(u.heard.size() == before && h.retries() == 0, "no frame after the link dropped (%zu)",
+    CHECK(u.heard.size() == before && h.sends == sends && h.retries() == 0, "no frame after the link dropped (%zu)",
           u.heard.size() - before);
     CHECK(h.failed() >= 1 && !h.t.main_pending().active && !h.t.special_pending().active && h.t.special_queued() == 0,
           "the open commands are counted as failed and forgotten");
@@ -946,6 +953,45 @@ static void test_scenarios() {
     CHECK(u.heard.size() == 3 && u.heard[2].t - u.heard[0].t <= 5000,
           "an unrelated frame does not restart the wait: the re-send is %u ms after the first",
           u.heard.size() == 3 ? (unsigned) (u.heard[2].t - u.heard[0].t) : 0);
+  }
+  {  // A special-mode write whose turn comes in the pass that reports the link lost is not sent.
+    Unit u = running();
+    Rig h(&u);
+    h.user_special({H::SPECIAL_OP_MUTE, 1});  // due at once: nothing was sent before it
+    h.link_lost();
+    h.run(100);
+    CHECK(h.sends == 0, "nothing goes out into the silence (%d frame(s))", h.sends);
+    CHECK(h.failed() == 1 && !h.busy(), "the write is dropped and counted, once");
+  }
+  {  // A request made while the unit is not answering is refused, not carried out when it returns.
+    Unit u = running();
+    Rig h(&u);
+    h.link_lost();
+    h.run(8000);
+    h.want().setpoint = 30;
+    CHECK(!h.user(H::CONFIRM_SETPOINT, false), "a setpoint is refused");
+    CHECK(!h.user_off(), "power off is refused");
+    CHECK(!h.user_special({H::SPECIAL_OP_FEATURE, H::FEATURE_ECO}), "a special mode is refused");
+    CHECK(!h.user_preset(H::PRESET_QUIET), "a preset is refused");
+    CHECK(!h.t.send_combined(), "and so is the display preference frame");
+    CHECK(h.sends == 0 && !h.t.main_pending().active && !h.busy() && !h.holdoff(), "nothing is sent, tracked or held");
+    h.link_up = true;  // the unit is back 4 s later, well inside the 20 s a command stays fresh
+    h.run(30000);
+    CHECK(h.sends == 0 && u.v.setpoint_c == 24 && u.v.power_on && h.failed() == 0 && h.retries() == 0,
+          "nothing is carried out when the unit returns (%d frame(s))", h.sends);
+    h.want().setpoint = 30;
+    CHECK(h.user(H::CONFIRM_SETPOINT, false), "and requests are taken again");
+    h.run(10000);
+    CHECK(u.v.setpoint_c == 30, "the unit goes to 30");
+  }
+  {  // Before the first link verdict after boot, power off still goes out without a status.
+    Unit u = running();
+    H::CommandTracker t;
+    Rig sink(&u);
+    t.set_sink(&sink);
+    CHECK(t.send_user_power_off(1000) && sink.sends == 1, "off is sent before the first status frame");
+    H::AcCommand wanted = t.cmd();
+    CHECK(!t.send_user_command(wanted, H::CONFIRM_MODE, false, 1000), "a combined frame is not");
   }
   {  // A user command the bus does not queue changes nothing.
     Unit u = running();

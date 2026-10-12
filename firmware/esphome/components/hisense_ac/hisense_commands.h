@@ -24,6 +24,7 @@ namespace esphome::hisense_ac {
 // what the comment on each value says and are 0 otherwise.
 enum class CommandEvent : uint8_t {
   COMBINED_REFUSED_NO_STATUS,  // a combined frame was asked for before the first status
+  REFUSED_LINK_DOWN,           // a request made while the unit is not answering
   MAIN_CONFIRMED,              // count = re-sends it took
   MAIN_YIELDED,                // fields = what the unit shows differently, changed from elsewhere
   MAIN_GIVEN_UP,               // fields = unmet, count = re-sends
@@ -100,7 +101,7 @@ class CommandTracker {
   // ---- Sending ----------------------------------------------------------------------------------
   /// The combined frame from the current shadow, unchecked. For frames that only carry something
   /// the status does not report (the display preference).
-  bool send_combined() { return this->send_combined_() != BUS_TICKET_NONE; }
+  bool send_combined() { return !this->refused_link_down_() && this->send_combined_() != BUS_TICKET_NONE; }
 
   /// A user write of `fields` (CONFIRM_* bits): `wanted` is the shadow with those fields changed.
   /// Sends the combined frame, with the power-on bits in it when `power_on`, and keeps the request
@@ -109,6 +110,8 @@ class CommandTracker {
   /// the refused values cannot ride out on a later frame, nothing is tracked, and the caller must
   /// not show the request.
   bool send_user_command(const AcCommand &wanted, uint16_t fields, bool power_on, uint32_t now) {
+    if (this->refused_link_down_())
+      return false;
     const AcCommand before = this->cmd_;
     this->cmd_ = wanted;
     // Power and mode in one frame, as the stock module sends them: the unit takes both or neither.
@@ -130,6 +133,8 @@ class CommandTracker {
 
   /// Switch the unit off, checked and re-sent the same way. False when the frame was not queued.
   bool send_user_power_off(uint32_t now) {
+    if (this->refused_link_down_())
+      return false;
     const BusTicket ticket = this->send_power_(false);
     if (ticket == BUS_TICKET_NONE)
       return false;
@@ -145,13 +150,18 @@ class CommandTracker {
   /// share it, so they can never race each other on the wire.
   /// False when the op was not taken (the queue is full): the caller must not show the request.
   bool enqueue_special(const SpecialOp &op, uint32_t now) {
+    if (this->refused_link_down_())
+      return false;
     this->special_resends_ = 0;  // a new request from the user: a fresh allowance of re-sends
     return this->push_special_(op, now);
   }
 
   /// Replace whatever is still queued with the plan for preset `target` (a row index), computed
-  /// against what the unit is expected to be once already-sent ops land.
-  void request_preset(uint8_t target, uint32_t now) {
+  /// against what the unit is expected to be once already-sent ops land. False when it was not
+  /// taken.
+  bool request_preset(uint8_t target, uint32_t now) {
+    if (this->refused_link_down_())
+      return false;
     // Plan from where the unit will be once everything already SENT lands. Queued-but-unsent ops
     // are discarded: the new preset fully determines all four modes, so they would only add
     // settle waits (or undo each other). A write already sent and not yet confirmed stays under
@@ -164,11 +174,71 @@ class CommandTracker {
     for (size_t i = 0; i < n; i++)
       this->push_special_(ops[i], now);
     this->note_user_command(now);
+    return true;
   }
 
-  /// Send the next queued special-mode write when its turn has come. Call on every loop pass.
-  void drain_special_queue(uint32_t now) {
-    if (this->special_len_ == 0)
+  // ---- From the bus -----------------------------------------------------------------------------
+  /// One pass of the owner's loop, in the one order that is right. The link-lost edge comes first:
+  /// what was waiting is dropped before the queue gets its turn, so no special-mode write is sent
+  /// into the silence in the very pass that reports it. Then the queue, then the status frame.
+  /// `status` is null when no frame was decoded since the last pass.
+  void loop_pass(bool link_lost_edge, const AcState *status, uint32_t now) {
+    if (link_lost_edge)
+      this->on_link_lost_();
+    this->drain_special_queue_(now);
+    if (status != nullptr)
+      this->on_status_(*status, now);
+  }
+
+  /// The command frame with this ticket finished its transaction, answered or not. The frame left
+  /// the wire now, whichever way it ended: the unit's settle time and the hold-off count from here
+  /// and not from the moment it was queued, and so does the special-mode pacing for a frame that
+  /// got no answer. Only the command the frame belongs to is touched: a frame of another command,
+  /// or one nobody tracks (the display preference), says nothing about the ones still waiting.
+  void on_command_done(BusTicket ticket, bool answered, uint32_t now) {
+    if (ticket == BUS_TICKET_NONE)
+      return;
+    if (this->main_pending_.active && ticket == this->main_ticket_) {
+      pending_on_wire(&this->main_pending_, now);
+      this->note_user_command(now);
+    }
+    if (this->special_pending_.active && ticket == this->special_ticket_) {
+      pending_on_wire(&this->special_pending_, now);
+      this->note_user_command(now);
+      if (!answered)
+        this->last_special_ms_ = now;
+    }
+  }
+
+  // For tests and logs.
+  const PendingCommand &main_pending() const { return this->main_pending_; }
+  const PendingCommand &special_pending() const { return this->special_pending_; }
+  size_t special_queued() const { return this->special_len_; }
+
+  static constexpr uint32_t COMMAND_HOLDOFF_MS = 4000;
+  // Paced special-mode queue. Fixed size: a preset plan is at most PRESET_PLAN_MAX ops, and
+  // anything that would overflow is dropped with a warning rather than allocated.
+  static constexpr uint8_t SPECIAL_QUEUE_CAP = 8;
+
+ protected:
+  void event_(CommandEvent event, uint16_t fields = 0, uint16_t count = 0) {
+    this->sink_->on_command_event(event, fields, count);
+  }
+
+  // The unit has stopped answering and has not been heard since. A request made now would go out
+  // once into the silence and then be carried out if the unit came back within CONFIRM_STALE_MS,
+  // long after the user saw nothing happen. It is refused, and the caller shows nothing of it.
+  // Before the first link verdict after boot nothing is refused: that is the unit's first second.
+  bool refused_link_down_() {
+    if (!this->link_lost_)
+      return false;
+    this->event_(CommandEvent::REFUSED_LINK_DOWN);
+    return true;
+  }
+
+  /// Send the next queued special-mode write when its turn has come.
+  void drain_special_queue_(uint32_t now) {
+    if (this->special_len_ == 0 || this->link_lost_)
       return;
     // One write at a time: the next waits until the unit's status has answered for the last.
     if (this->special_pending_.active)
@@ -196,30 +266,10 @@ class CommandTracker {
     this->special_pending_.resends = this->special_resends_;
   }
 
-  // ---- From the bus -----------------------------------------------------------------------------
-  /// The command frame with this ticket finished its transaction, answered or not. The frame left
-  /// the wire now, whichever way it ended: the unit's settle time and the hold-off count from here
-  /// and not from the moment it was queued, and so does the special-mode pacing for a frame that
-  /// got no answer. Only the command the frame belongs to is touched: a frame of another command,
-  /// or one nobody tracks (the display preference), says nothing about the ones still waiting.
-  void on_command_done(BusTicket ticket, bool answered, uint32_t now) {
-    if (ticket == BUS_TICKET_NONE)
-      return;
-    if (this->main_pending_.active && ticket == this->main_ticket_) {
-      pending_on_wire(&this->main_pending_, now);
-      this->note_user_command(now);
-    }
-    if (this->special_pending_.active && ticket == this->special_ticket_) {
-      pending_on_wire(&this->special_pending_, now);
-      this->note_user_command(now);
-      if (!answered)
-        this->last_special_ms_ = now;
-    }
-  }
-
   /// The link dropped. Nothing is re-sent into a dead bus, and nothing still waiting is sent when
   /// it comes back.
-  void on_link_lost() {
+  void on_link_lost_() {
+    this->link_lost_ = true;
     unsigned dropped = (this->main_pending_.active ? 1 : 0) + (this->special_pending_.active ? 1 : 0);
     if (this->special_len_ > 0)
       dropped++;
@@ -234,8 +284,9 @@ class CommandTracker {
 
   /// A decoded status frame: judge what is waiting, then let the shadow and the projection follow
   /// the unit where no command of ours is in the way.
-  void on_status(const AcState &state, uint32_t now) {
+  void on_status_(const AcState &state, uint32_t now) {
     this->last_ = state;
+    this->link_lost_ = false;  // a decoded frame is the unit answering
 
     // First, so that a command sent again re-arms the hold-off before anything below reads it.
     const UnitView view = unit_view_from_status(state);
@@ -268,21 +319,6 @@ class CommandTracker {
     // a frame from before our last op would make the next plan re-send what is already on its way.
     if (!this->special_busy() && !this->in_holdoff(now))
       this->projected_ = special_from_status(state.eco_on, state.turbo_on, state.mute_on, state.sleep_raw);
-  }
-
-  // For tests and logs.
-  const PendingCommand &main_pending() const { return this->main_pending_; }
-  const PendingCommand &special_pending() const { return this->special_pending_; }
-  size_t special_queued() const { return this->special_len_; }
-
-  static constexpr uint32_t COMMAND_HOLDOFF_MS = 4000;
-  // Paced special-mode queue. Fixed size: a preset plan is at most PRESET_PLAN_MAX ops, and
-  // anything that would overflow is dropped with a warning rather than allocated.
-  static constexpr uint8_t SPECIAL_QUEUE_CAP = 8;
-
- protected:
-  void event_(CommandEvent event, uint16_t fields = 0, uint16_t count = 0) {
-    this->sink_->on_command_event(event, fields, count);
   }
 
   BusTicket send_combined_() {
@@ -452,6 +488,7 @@ class CommandTracker {
   uint32_t last_special_ms_{0};
   bool special_sent_{false};
   SpecialState projected_{};
+  bool link_lost_{false};
 };
 
 // The verdict on a command has to be in before the hold-off lets a status frame reach the entities.

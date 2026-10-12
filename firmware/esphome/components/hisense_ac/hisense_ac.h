@@ -67,7 +67,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   /// False when the op was not taken: show nothing of the request then.
   bool enqueue_special(const SpecialOp &op) { return this->commands_.enqueue_special(op, millis()); }
   /// Replace whatever is still queued with the plan for preset `target` (a row index).
-  void request_preset(uint8_t target) { this->commands_.request_preset(target, millis()); }
+  bool request_preset(uint8_t target) { return this->commands_.request_preset(target, millis()); }
   /// Queue not yet drained, or the last write not yet confirmed: preset/switch readbacks would
   /// show intermediate states.
   bool special_busy() const { return this->commands_.special_busy(); }
@@ -173,6 +173,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
  protected:
   BusTicket send_frame_(const uint8_t *frame, size_t len);
 
+  void log_status_(const AcState &state);
   void process_status_(const AcState &state);
   void publish_telemetry_(const AcState &state);
   void publish_bus_counters_(bool refresh_due);

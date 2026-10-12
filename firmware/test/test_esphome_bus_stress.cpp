@@ -1878,16 +1878,11 @@ struct MiniHub : H::CommandSink {
     bool have = parked_valid;
     H::AcState st = parked;
     parked_valid = false;
-    t.drain_special_queue(g_now);
-    if (link_dirty) {
-      link_dirty = false;
-      if (!link_up)
-        t.on_link_lost();
-    }
-    if (have) {
+    const bool edge = link_dirty;
+    link_dirty = false;
+    t.loop_pass(edge && !link_up, have ? &st : nullptr, g_now);
+    if (have)
       link_up = true;
-      t.on_status(st, g_now);
-    }
     counters();
   }
   void run(uint32_t ms) {
@@ -1982,7 +1977,7 @@ static void script_pending_at_link_loss(Rig &r) {
   r.audit_commands();
 }
 
-// WEAKNESS (reported): a command issued while the link is ALREADY down. The hub drops what is
+// Was a WEAKNESS, fixed: a command issued while the link is ALREADY down is refused. Before: The hub drops what is
 // pending at the link-lost edge and at no other time, so this one stays tracked. The scheduler
 // sends it once into the silence. If the unit is back within CONFIRM_STALE_MS (20 s) the first
 // status frame disagrees and the hub sends it again: a request made to a dead unit is carried out
@@ -1996,21 +1991,16 @@ static void script_command_while_down(Rig &r) {
   hub.run(8000);
   CHECK(!hub.link_up && r.rec.links.size() == 1, "link down");
   hub.user(30);
-  CHECK(hub.pending.active, "the command is accepted and tracked while the link is down");
+  CHECK(!hub.pending.active, "the command is refused while the link is down");
   hub.run(g_gap);
   size_t from = r.ac.writes.size();
   r.ac.silent = false;
   hub.run(15000);
   size_t after = r.count(0x65, from);
-  if (g_gap < 15000) {
-    XFAIL(after == 0 && r.ac.setpoint == 22,
-          "a command issued into a dead link is not carried out when the unit "
-          "returns %u ms later (%zu frames, setpoint %u)",
-          (unsigned) g_gap, after, r.ac.setpoint);
-  } else {
-    CHECK(after == 0 && r.ac.setpoint == 22 && hub.failed == 1, "after %u ms it is given up, not sent (%zu frames)",
-          (unsigned) g_gap, after);
-  }
+  CHECK(after == 0 && r.ac.setpoint == 22 && hub.failed == 0,
+        "a command issued into a dead link is not carried out when the unit returns %u ms later (%zu frames, "
+        "setpoint %u)",
+        (unsigned) g_gap, after, r.ac.setpoint);
   r.audit_commands();
 }
 
@@ -2294,7 +2284,7 @@ int main(int argc, char **argv) {
   g_gap = 5 * 60000u;
   everywhere("command unconfirmed when the link drops, back after 5 min", script_pending_at_link_loss);
   g_gap = 4000;
-  everywhere("WEAKNESS: command issued while the link is down, back after 4 s", script_command_while_down);
+  everywhere("command issued while the link is down, back after 4 s", script_command_while_down);
   g_gap = 40000;
   everywhere("command issued while the link is down, back after 40 s", script_command_while_down);
 

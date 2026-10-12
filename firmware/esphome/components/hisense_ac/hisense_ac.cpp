@@ -130,9 +130,8 @@ void HisenseAC::loop() {
     have_state = true;
   }
 
-  this->commands_.drain_special_queue(millis());
-
-  if (this->link_dirty_) {
+  const bool link_edge = this->link_dirty_;
+  if (link_edge) {
     this->link_dirty_ = false;
     // The warning flag is what a status LED blinks on.
     if (this->link_up_) {
@@ -148,13 +147,17 @@ void HisenseAC::loop() {
     if (this->bus_link_binary_sensor_ != nullptr)
       this->bus_link_binary_sensor_->publish_state(this->link_up_);
 #endif
-    // Nothing is re-sent into a dead bus, and nothing still waiting is sent when it comes back.
-    if (!this->link_up_)
-      this->commands_.on_link_lost();
-    // No status frame arrives while the link is down, so the edge is the one moment the counters
-    // can still go out.
-    this->publish_bus_counters_(false);
   }
+  if (have_state)
+    this->log_status_(state);
+  // The command tracker takes the link-lost edge, the special-mode queue and the status frame in
+  // the one order that is right (CommandTracker::loop_pass). Nothing is re-sent into a dead bus,
+  // and nothing still waiting is sent when it comes back.
+  this->commands_.loop_pass(link_edge && !this->link_up_, have_state ? &state : nullptr, millis());
+  // No status frame arrives while the link is down, so the edge is the one moment the counters
+  // can still go out.
+  if (link_edge)
+    this->publish_bus_counters_(false);
 
   if (have_state)
     this->process_status_(state);
@@ -174,12 +177,7 @@ void HisenseAC::loop() {
   }
 }
 
-void HisenseAC::process_status_(const AcState &state) {
-  // A decoded frame IS the link being up. The link callback only fires on EDGES, so a link that
-  // is healthy from boot never produces a "restored" edge and link_up_ would sit at its initial
-  // false forever, reporting a working bus as down.
-  this->link_up_ = true;
-  this->status_clear_warning();
+void HisenseAC::log_status_(const AcState &state) {
   ESP_LOGV(TAG, "Status: power=%d mode=%d setpoint=%d indoor=%d fan_raw=0x%02X holdoff=%d", state.power_on,
            (int) state.mode, state.setpoint_c, state.indoor_temp_c, state.fan_raw, this->in_command_holdoff());
   // A frame arrives about once a second, so DEBUG gets it only when something a user would
@@ -196,9 +194,14 @@ void HisenseAC::process_status_(const AcState &state) {
         state.power_on, (int) state.mode, state.setpoint_c, state.indoor_temp_c, state.fan_raw, state.eco_on,
         state.turbo_on, state.mute_on, state.sleep_raw);
   }
-  // Judges the commands still waiting, then lets the shadow and the projection follow the unit.
-  this->commands_.on_status(state, millis());
+}
 
+void HisenseAC::process_status_(const AcState &state) {
+  // A decoded frame IS the link being up. The link callback only fires on EDGES, so a link that
+  // is healthy from boot never produces a "restored" edge and link_up_ would sit at its initial
+  // false forever, reporting a working bus as down.
+  this->link_up_ = true;
+  this->status_clear_warning();
 #ifdef USE_CLIMATE
   if (this->climate_ != nullptr)
     this->climate_->update_from_bus(state, this->in_command_holdoff());
@@ -387,6 +390,9 @@ void HisenseAC::on_command_event(CommandEvent event, uint16_t fields, uint16_t c
   switch (event) {
     case CommandEvent::COMBINED_REFUSED_NO_STATUS:
       ESP_LOGW(TAG, "Command not sent: no status from the unit yet, so the frame would carry defaults");
+      break;
+    case CommandEvent::REFUSED_LINK_DOWN:
+      ESP_LOGW(TAG, "Command refused: the unit is not answering");
       break;
     case CommandEvent::MAIN_CONFIRMED:
       if (count > 0) {
