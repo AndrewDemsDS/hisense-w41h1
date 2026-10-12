@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The tooling around dev.py at its edges: the image format library, version-lint.py, cpp-lint,
 the docs linter, the shell scripts, the commit hook, and how the workflows, the test runner and
-the lint lists agree with each other.
+the lint lists agree with each other. The clip flasher has a test of its own, test_flasher.py.
 
 Each check documents what the tool does today. Where that is wrong the check is a KNOWN FAILURE:
 `known_failure()` passes while the defect is there and fails the day it is fixed, so the marker
@@ -840,110 +840,6 @@ check(code == 1 and "was built without firmware version" in out,
       "the same file given as ./tests/... is asked for a version: the exemption is a prefix match on the argument")
 
 # ================================================================================================
-print("== firmware/flasher: what the clip writer checks before it erases ==")
-
-# ch341common.py with a stand-in for pyusb and for the programmer, so flash_region() runs against
-# a chip that is a bytearray. No USB device is opened.
-usb = types.ModuleType("usb")
-usb.core = types.ModuleType("usb.core")
-usb.util = types.ModuleType("usb.util")
-usb.core.USBError = type("USBError", (Exception,), {})
-usb.util.release_interface = lambda dev, n: None
-sys.modules.update({"usb": usb, "usb.core": usb.core, "usb.util": usb.util})
-ch341 = load("ch341common", ROOT / "firmware/flasher/ch341common.py")
-SEC = 0x1000
-
-
-class FakeChip:
-    """A GD25Q32 as the writer sees it: read, sector erase, page program (bits only clear), QE."""
-    jedec_id = "c84016"       # GD25Q32, the id ch341common.py expects
-    size = 0x8000
-    dead = ()                 # sector addresses where programming does nothing
-    last = None
-
-    def __init__(self):
-        self.mem = bytearray(b"\x5a" * self.size)     # what was on the chip before
-        self.erased, self.qe, self.d = [], 0, None
-        FakeChip.last = self
-
-    def jedec(self):
-        return bytes.fromhex(self.jedec_id)
-
-    def read(self, addr, n):
-        return bytes(self.mem[addr:addr + n])
-
-    def sector_erase(self, addr):
-        self.erased.append(addr)
-        self.mem[addr:addr + SEC] = b"\xff" * SEC
-
-    def page_prog(self, addr, data):
-        if addr & ~(SEC - 1) not in self.dead:
-            self.mem[addr:addr + len(data)] = bytes(a & b for a, b in zip(self.mem[addr:addr + len(data)], data))
-
-    def set_qe(self):
-        self.qe = 1
-        return 1
-
-
-def flash(image, start, length, **chip):
-    """flash_region() of `image` on a fresh fake chip. Returns (how it ended, the chip)."""
-    path = TMP / "clip-image.bin"
-    path.write_bytes(image)
-    fake = type("Chip", (FakeChip,), chip)
-    ch341.CH341 = fake
-    how = None
-    with contextlib.redirect_stdout(io.StringIO()):
-        try:
-            ch341.flash_region(str(path), start, length)
-        except SystemExit as e:
-            how = str(e)
-    return how, FakeChip.last
-
-
-image = bytes((i * 7 + 3) & 0xFF for i in range(3 * SEC))
-how, chip = flash(image, 0, 3 * SEC)
-check(how is None and chip.mem[:3 * SEC] == image and chip.mem[3 * SEC:] == b"\x5a" * (chip.size - 3 * SEC) and chip.qe == 1,
-      "a region write puts the image there, leaves the rest of the chip alone and sets QE at the end")
-how, chip = flash(image, 0, 3 * SEC, jedec_id="c22016")
-check(how == "wrong chip id" and not chip.erased, "another chip id stops it before anything is erased")
-how, chip = flash(b"\x5a" * (3 * SEC), 0, 3 * SEC)
-check(how is None and not chip.erased, "a sector that already holds the image is not erased again")
-how, chip = flash(image, 0, 3 * SEC, dead=(SEC,))
-check(how == "SECTOR 0x1000 failed after retries" and chip.erased.count(SEC) == 4,
-      "a sector that will not verify is tried four times, then the run stops")
-check(chip.mem[:SEC] == image[:SEC] and chip.mem[2 * SEC:3 * SEC] == b"\x5a" * SEC and chip.qe == 0,
-      "and it stops with the chip half written and QE not set: the unit does not boot until the write is repeated")
-how, chip = flash(image + b"tail" * 100, 0, 3 * SEC)
-check(how is None and chip.mem[3 * SEC:4 * SEC] == b"\x5a" * SEC, "a file longer than the region is cut at the region's end, without a word")
-
-# The image is never looked at: any file of any size is written. A file shorter than the region
-# is padded with 0xFF, so the rest of the region is erased. For ch341flash-full.py the region is
-# the whole chip: its second firmware slot and the unit's own settings included.
-how, chip = flash(b"not a flash image", 0, chip.size)
-check(how is None and chip.mem[17:] == b"\xff" * (chip.size - 17) and len(chip.erased) == chip.size // SEC and chip.qe == 1,
-      "a 17-byte file is written over the whole region: everything after it is erased, and it reports success")
-known_failure(how is not None, "a whole-chip write refuses a file that is not the size of the chip",
-              "flasher/ch341common.py:60 flash_region(): no check of the file's size or content, and no question "
-              "before the first erase. ch341flash-full.py with the wrong file (a slot image, an .ota, a typo) wipes "
-              "the chip, per-unit data included; the only way back is the unit's own full dump")
-del sys.modules["usb"], sys.modules["usb.core"], sys.modules["usb.util"]
-
-# The two writers take their one argument unchecked.
-stubs = TMP / "usb-stub"
-write(stubs / "usb/__init__.py", "")
-write(stubs / "usb/core.py", "class USBError(Exception):\n    pass\n\n\ndef find(**kw):\n    return None\n")
-write(stubs / "usb/util.py", "")
-for tool in ("ch341flash.py", "ch341flash-full.py"):
-    r = subprocess.run([sys.executable, str(ROOT / "firmware/flasher" / tool)], capture_output=True, text=True,
-                       env={**os.environ, "PYTHONPATH": str(stubs), "PYTHONDONTWRITEBYTECODE": "1"})
-    known_failure(r.returncode != 0 and "Traceback" not in r.stderr, f"{tool} with no file name prints how to call it",
-                  f"flasher/{tool}: sys.argv[1] is read with no check, so a missing argument is an IndexError traceback "
-                  "(ch341dump.py does check)")
-r = subprocess.run([sys.executable, str(ROOT / "firmware/flasher/ch341dump.py")], capture_output=True, text=True,
-                   env={**os.environ, "PYTHONPATH": str(stubs), "PYTHONDONTWRITEBYTECODE": "1"})
-check(r.returncode == 1 and "usage: ch341dump.py <out.bin>" in r.stderr, "ch341dump.py with no file name prints its usage")
-
-# ================================================================================================
 print("== how the lists agree: workflows, run_tests.sh, the lint scope, .gitignore ==")
 
 release = (ROOT / ".github/workflows/esphome-release.yaml").read_text()
@@ -984,7 +880,7 @@ known_failure(all(ignored[o] for o in objects), "the object files run_tests.sh b
               f"run_tests.sh:26-31 builds {', '.join(objects)} in firmware/test/ and removes them after the link. "
               "When the link fails `set -e` stops before the rm and they stay as untracked files that nothing ignores")
 
-for layer in ("test_image_chain.py", "test_dev_release.py", "test_version_lint.py"):
+for layer in ("test_image_chain.py", "test_dev_release.py", "test_matter_convert.py", "test_flasher.py", "test_version_lint.py"):
     check(layer in run_tests, f"run_tests.sh runs {layer}")
 
 tmp_holder.cleanup()

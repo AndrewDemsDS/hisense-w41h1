@@ -131,9 +131,10 @@ python3 ../scripts/version-lint.py
 python3 ./test_version_lint.py
 
 echo
-echo "== Layer 6: tooling edge cases (dev.py, the scripts, the hook, the lint lists) =="
+echo "== Layer 6: tooling edge cases (dev.py, the scripts, the hook, the lint lists, the clip flasher) =="
 python3 ./test_dev_edges.py
 python3 ./test_scripts_edges.py
+python3 ./test_flasher.py
 
 echo
 echo "ALL QA LAYERS PASSED"

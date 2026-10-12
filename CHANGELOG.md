@@ -103,6 +103,13 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 - **The Matter conversion left `dev.py`.** `dev.py convert esphome ...`, `dev.py matter-slots` and
   `dev.py matter-backup` are now `firmware/scripts/matter-convert.py convert ...`, `slots` and
   `backup`. The settings file is still `firmware/scripts/ota-release.env`.
+- **The clip writers check what they write** (`firmware/flasher/`). `ch341flash-full.py` took any
+  file of any size and wrote it over the whole chip. It now wants exactly 4 MB that hold a
+  verifying firmware image and the module's system data, a `--backup <dump>`, and a typed
+  confirmation that names the target and the size. `ch341flash.py` no longer writes
+  `0x0..0x140000` (the range of the retired Matter clip image): it writes one firmware slot,
+  `--layout <layout> --slot <1|2>`, after verifying the image the way the bootloader does.
+  `ch341dump.py` reads twice and compares. A chip that stays busy is no longer written to.
 
 ## Matter and ESPHome side by side - 2026-10-10
 
