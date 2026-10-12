@@ -83,8 +83,8 @@ Firmware versions use the unified semver → softwareVersion-int scheme (see
   hardware; the section above has the first run.** There is one
   file per flash layout a module can have and no default, because an image built for the wrong
   layout bricks the unit at its first update. The layouts are tracked in
-  `firmware/esphome/amebaz2/`. The build fails if the image's addresses are not those of the
-  layout it names, and at run time a `Flash layout` diagnostic sensor compares them with the
+  `firmware/esphome/components/w41h1_module/`. The build fails if the image's addresses are not
+  those of the layout it names, and at run time a `Flash layout` diagnostic sensor compares them with the
   bootloader's partition table and switches the update server off on a mismatch. The files also
   carry the linker workaround for the LibreTiny reboot hang (issue 396). The open risks are listed
   in `firmware/docs/15-esphome-path.md`. `dev.py test|build esphome --board amebaz2-<layout>`
