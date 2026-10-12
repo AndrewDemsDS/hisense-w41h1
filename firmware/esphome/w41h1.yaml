@@ -1,23 +1,22 @@
-# Hisense A/C over RS-485, ESPHome variant. See firmware/docs/15-esphome-path.md for why this
-# exists and what it does and does not cover versus the Matter builds.
+# Hisense A/C over RS-485, ESPHome firmware. See firmware/docs/15-esphome-path.md for the design
+# and what has been measured on hardware.
 #
 # This is the classic ESP32 board file, and the original entry point: it still takes the board and
 # the pins as -s overrides, so anything that built it before builds the same node now. The other
-# boards have a file of their own beside it (w41h1-*.yaml). All of them include the same two
+# boards have a file of their own beside it (w41h1-*.yaml). All of them include the same
 # packages, so the entities are defined once:
 #
-#   packages/node.yaml        identity, logger, API, Wi-Fi
+#   packages/node.yaml        identity, logger, API, Wi-Fi and setup mode, the firmware version
 #   packages/ota.yaml         the update server
 #   packages/hisense-ac.yaml  the bus, the hub and every entity
 #
-# Wiring is identical to the esp-matter ESP32 path; the pin tables and the C3 GPIO warnings in
-# firmware/esp32-matter/README.md apply unchanged.
+# Wiring, the pin tables and the ESP32-C3 GPIO warnings: docs/guide/ESP32-Replacement-Build.md.
 #
 #   flash:   esphome run firmware/esphome/w41h1.yaml
 #   logs:    esphome logs firmware/esphome/w41h1.yaml
 #
 # A brand-new board should get `esphome run ... --device <port>` after an erase; a factory NVS
-# with a stale Wi-Fi config is a known time sink (see the esp32-matter README).
+# with a stale Wi-Fi config is a known time sink (firmware/docs/16-esp32-board-notes.md).
 
 substitutions:
   name: hisense-ac
