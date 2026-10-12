@@ -8,13 +8,12 @@
 //  - it returns 0 or the length of exactly one frame on the wire that fits the capacity and passes
 //    its own length and checksum rules (check_tx_wire in fuzz_common.h);
 //  - it returns 0 exactly when the header says so (capacity below the documented minimum, a
-//    setpoint outside the range in a mode that carries one);
+//    setpoint outside the range in a mode that carries one, an enum field that holds no named
+//    value, a single-field offset that is not a body byte);
 //  - round trip: the frame is decoded again by a decoder written here from the byte tables in
 //    reverse-engineering/docs/03-rs485-ac-protocol.md and the header comments, and every field
 //    must come back, with every byte the builder does not own left at zero.
 //  STRICT only (KNOWN_FAILURES):
-//    builder-enum-range: an enum field holding no named value must be refused, not packed.
-//    single-field-offset: build_single_field must refuse an offset that is not a body byte.
 //    tx-f4-in-body: a builder never puts an un-doubled 0xF4 into the body of a frame.
 #include "fuzz_common.h"
 
@@ -61,11 +60,11 @@ static void op_command(Reader &r, size_t cap) {
   const bool sp_ok = c.fahrenheit ? (c.setpoint >= 61 && c.setpoint <= 90) : (c.setpoint >= 16 && c.setpoint <= 32);
   const bool named = mode <= 4 && fan_named(fan) && swing_named(vs) && swing_named(hs) && feat <= 3 && disp <= 2;
   const bool expect_zero = cap < H::CMD_FRAME_MAX || (carries_setpoint && !sp_ok);
+  FUZZ_CHECK(H::command_enums_valid(c) == named, "command_enums_valid disagrees for mode %u fan %u swing %u/%u", mode,
+             fan, vs, hs);
   if (!named) {
-    if (STRICT)
-      FUZZ_CHECK(n == 0, "build_command packed mode %u fan %u vswing %u hswing %u feature %u display %u", mode, fan, vs,
-                 hs, feat, disp);
-    FUZZ_CHECK(n <= cap, "build_command wrote %zu bytes into %zu", n, cap);
+    FUZZ_CHECK(n == 0, "build_command packed mode %u fan %u vswing %u hswing %u feature %u display %u", mode, fan, vs,
+               hs, feat, disp);
     return;
   }
   FUZZ_CHECK((n == 0) == expect_zero, "build_command returned %zu, cap %zu mode %u setpoint %d %s", n, cap, mode,
@@ -180,8 +179,8 @@ static void op_single_field(Reader &r, size_t cap) {
   size_t n = H::build_single_field(offset, value, out.data(), cap);
   FUZZ_CHECK(n <= cap, "build_single_field wrote %zu bytes into %zu", n, cap);
   const bool body_offset = offset >= 16 && offset < H::CMD_CHK_OFFSET;
-  if (!STRICT && n != 0 && (!body_offset || value == 0xF4))
-    return;  // known: header, checksum and tag offsets are accepted, and 0xF4 is packed as is
+  if (!STRICT && n != 0 && body_offset && value == 0xF4)
+    return;  // known: 0xF4 is packed as is
   if (!body_offset) {
     FUZZ_CHECK(n == 0, "build_single_field accepted offset %u, which is not a body byte", offset);
     return;

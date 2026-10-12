@@ -303,10 +303,19 @@ inline bool reply_class_ok(uint8_t got_class, uint8_t expect_class) {
 }
 
 // ---- Builders: each returns the on-the-wire length (stuffing included), or 0 on error ----------
+// True when every enum field of `cmd` holds one of its named values. The enums are bytes, so a
+// cast can put anything into them, and the packing rules would turn such a value into a command
+// byte no capture backs (mode 8 packs as fan-only, fan index 2 to 4 as a speed no unit was seen to
+// take, a swing value of 2 as "horizontal active" with no direction). The setpoint is not judged
+// here, its range depends on the mode.
+bool command_enums_valid(const AcCommand &cmd);
+// 0 when command_enums_valid() is false, or the setpoint is out of range in a mode that carries one.
 size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap);
 // Literal on/off frames, sent byte for byte.
 size_t build_power_frame(bool power_on, uint8_t *out, size_t out_cap);
 // Minimal single-field 0x65 frame: header, 0x04 at byte 23, 0x01 at byte 31, one named byte.
+// `offset` has to be a body byte, CMD_HEADER_LEN up to CMD_CHK_OFFSET - 1: 0 otherwise, because a
+// lower one would overwrite the envelope and a higher one is overwritten by the checksum.
 size_t build_single_field(uint8_t offset, uint8_t value, uint8_t *out, size_t out_cap);
 size_t build_mute_frame(bool on, uint8_t *out, size_t out_cap);           // byte 35: 0x30 on, 0x10 off
 size_t build_sleep_frame(uint8_t profile, uint8_t *out, size_t out_cap);  // byte 17: profile*2+1

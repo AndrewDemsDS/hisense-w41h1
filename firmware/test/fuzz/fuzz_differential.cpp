@@ -25,8 +25,11 @@
 //    (no stray 0xF4), both deliver every frame, the same bytes, on the same byte of the stream.
 //  - AcCommand.power_on has no counterpart: the reference never ORs the run field into byte 18.
 //    Checked here as a relation instead: same frame, byte 18 | 0x0C, checksum redone.
-//  - build_single_field refuses offset >= 50; the reference's static helper has no guard (its
-//    only callers pass 17 and 35). Compared for offsets below 50 only.
+//  - build_single_field refuses an offset outside the body (16 to 45); the reference's static
+//    helper has no guard (its only callers pass 17 and 35). Compared inside the body, and the
+//    port has to return 0 outside it.
+//  - build_command refuses an enum field that holds no named value (command_enums_valid); the
+//    reference packs it. Compared for named values, and the port has to return 0 for the rest.
 //  - The bit 5 lockout: the port keeps (armed, since) and compares elapsed time, the reference
 //    keeps an end tick with 0 meaning "none" and a signed comparison. Compared where both are
 //    defined: armed, end tick not 0, elapsed below 2^31.
@@ -261,10 +264,15 @@ static void diff_builders(Reader &r) {
   o.display = static_cast<HisenseDisplay>(n.display);
   size_t na = hisense_build_command(&o, a.data(), cap);
   size_t nb = H::build_command(n, b.data(), cap);
-  FUZZ_CHECK(same_bytes(a.data(), na, b.data(), nb), "build_command: reference %zu bytes, port %zu", na, nb);
+  const bool named = H::command_enums_valid(n);
+  if (named) {
+    FUZZ_CHECK(same_bytes(a.data(), na, b.data(), nb), "build_command: reference %zu bytes, port %zu", na, nb);
+  } else {
+    FUZZ_CHECK(nb == 0, "build_command packed an enum value that has no name (%zu bytes)", nb);
+  }
 
   // power_on is the port's own: the reference frame with the run field set and the checksum redone.
-  if (na != 0) {
+  if (na != 0 && named) {
     n.power_on = true;
     uint8_t with_power[H::CMD_FRAME_MAX];
     size_t np = H::build_command(n, with_power, sizeof(with_power));
@@ -299,7 +307,11 @@ static void diff_builders(Reader &r) {
   uint8_t val = r.u8();
   na = hisense_build_single_field(off, val, a.data(), cap);
   nb = H::build_single_field(off, val, b.data(), cap);
-  FUZZ_CHECK(same_bytes(a.data(), na, b.data(), nb), "build_single_field(%u, %02X) differs", off, val);
+  if (off >= H::CMD_HEADER_LEN && off < H::CMD_CHK_OFFSET) {
+    FUZZ_CHECK(same_bytes(a.data(), na, b.data(), nb), "build_single_field(%u, %02X) differs", off, val);
+  } else {
+    FUZZ_CHECK(nb == 0, "build_single_field(%u) wrote outside the body", off);
+  }
 
   bool heard = r.flag();
   s_prov_active = r.flag();

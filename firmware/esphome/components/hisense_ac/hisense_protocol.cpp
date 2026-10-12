@@ -249,7 +249,7 @@ size_t build_power_frame(bool power_on, uint8_t *out, size_t out_cap) {
 // the rest is the minimal baseline. Byte 31 = 0x01 is the marker every combined frame writes; without
 // it a real A/C accepts both single-field frames and ignores them.
 size_t build_single_field(uint8_t offset, uint8_t value, uint8_t *out, size_t out_cap) {
-  if (out == nullptr || out_cap < CMD_FRAME_MAX || offset >= CMD_FRAME_LEN)
+  if (out == nullptr || out_cap < CMD_FRAME_MAX || offset < CMD_HEADER_LEN || offset >= CMD_CHK_OFFSET)
     return 0;
   uint8_t f[CMD_FRAME_LEN] = {};
   std::memcpy(f, CMD_HEADER, CMD_HEADER_LEN);
@@ -273,8 +273,22 @@ size_t build_sleep_frame(uint8_t profile, uint8_t *out, size_t out_cap) {
   return build_single_field(17, v, out, out_cap);
 }
 
+static bool fan_speed_named(FanSpeed fan) {
+  return fan == FAN_SPEED_AUTO || fan == FAN_SPEED_QUIET || (fan >= FAN_SPEED_LOW && fan <= FAN_SPEED_HIGH) ||
+         fan == FAN_SPEED_NOCHANGE;
+}
+
+static bool swing_mode_named(SwingMode swing) {
+  return swing == SWING_MODE_OFF || swing == SWING_MODE_DIRECTION || swing == SWING_MODE_SWING;
+}
+
+bool command_enums_valid(const AcCommand &cmd) {
+  return cmd.mode <= MODE_AUTO && fan_speed_named(cmd.fan) && swing_mode_named(cmd.vswing) &&
+         swing_mode_named(cmd.hswing) && cmd.feature <= FEATURE_ECO_OFF && cmd.display <= DISPLAY_OFF;
+}
+
 size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap) {
-  if (out == nullptr || out_cap < CMD_FRAME_MAX)
+  if (out == nullptr || out_cap < CMD_FRAME_MAX || !command_enums_valid(cmd))
     return 0;
 
   // Dry and Fan-only strip the setpoint from the wire, so a stale or out-of-range one must not
@@ -440,8 +454,8 @@ uint8_t setup_request_step(SetupRequestTracker *tracker, uint8_t req_bits, bool 
   const bool locked_out =
       smartcfg_lockout_mask(LINK_REQ_SMARTCFG, now_ms, tracker->lockout_armed, tracker->lockout_since) == 0;
 
-  // Bit 5 counts when it appears outside the lockout. One that appears inside it, or simply stays
-  // up, is spent: it does not count later because the lockout has run out in the meantime.
+  // Bit 5 counts when it appears outside the lockout. One that appears inside it, or stays up, is
+  // spent: it does not count later because the lockout has run out in the meantime.
   const bool smartcfg = (asking & LINK_REQ_SMARTCFG) != 0;
   if (!smartcfg) {
     tracker->smartcfg_live = false;

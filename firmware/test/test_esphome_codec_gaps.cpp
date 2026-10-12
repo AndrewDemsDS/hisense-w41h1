@@ -312,7 +312,17 @@ static void test_builder_arguments() {
   CHECK(
       H::build_single_field(50, 0x03, out, sizeof(out)) == 0 && H::build_single_field(255, 0x03, out, sizeof(out)) == 0,
       "single field: an offset at or past the end of the frame");
-  CHECK(H::build_single_field(49, 0x03, out, sizeof(out)) == 50, "single field: offset 49 is the last one accepted");
+  // Only a body byte may be named: 0 to 15 are the envelope (offset 0 would give a frame that
+  // does not start F4 F5, offset 4 a wrong LEN, offset 13 another class), 46 to 49 the checksum
+  // and the end tag, which are written over whatever was put there.
+  for (int offset = 0; offset < 256; offset++) {
+    const bool body = offset >= 16 && offset <= 45;
+    std::memset(out, 0xEE, sizeof(out));
+    size_t n = H::build_single_field((uint8_t) offset, 0x03, out, sizeof(out));
+    CHECK((n == 50) == body && (body || n == 0), "single field: offset %d is %s", offset, body ? "taken" : "refused");
+    if (!body)
+      CHECK(out[0] == 0xEE && out[49] == 0xEE, "single field: offset %d refused with nothing written", offset);
+  }
   // The baseline: the command header, 0x04 at byte 23, 0x01 at byte 31 (header).
   CHECK(H::build_single_field(20, 0x00, out, sizeof(out)) == 50, "single field: a zero value");
   for (size_t i = 0; i < 46; i++) {
@@ -414,11 +424,11 @@ static void test_command_bytes() {
   printf("-- command bytes for values at and past the ends of the enums\n");
   uint8_t out[H::CMD_FRAME_MAX];
   // Byte 33 (header, Feature): 0x04 neutral, 0x30 eco, 0x0C turbo, 0x10 eco clear. A value past
-  // the enum is sent as neutral (line 322, the default arm).
+  // the enum is refused: no frame.
   struct {
     int feature;
     uint8_t byte33;
-  } features[] = {{0, 0x04}, {1, 0x30}, {2, 0x0C}, {3, 0x10}, {4, 0x04}, {255, 0x04}};
+  } features[] = {{0, 0x04}, {1, 0x30}, {2, 0x0C}, {3, 0x10}};
   for (const auto &r : features) {
     H::AcCommand c;
     c.feature = (H::Feature) r.feature;
@@ -429,12 +439,58 @@ static void test_command_bytes() {
   struct {
     int display;
     uint8_t byte36;
-  } displays[] = {{0, 0x00}, {1, 0xC0}, {2, 0x40}, {3, 0x00}, {255, 0x00}};
+  } displays[] = {{0, 0x00}, {1, 0xC0}, {2, 0x40}};
   for (const auto &r : displays) {
     H::AcCommand c;
     c.display = (H::Display) r.display;
     CHECK(H::build_command(c, out, sizeof(out)) > 0 && out[36] == r.byte36, "display %d is byte 36 = 0x%02X", r.display,
           r.byte36);
+  }
+  // Every value of every enum field, one field at a time: a named value builds, any other is
+  // refused with nothing written. The packing rules would otherwise turn it into a byte no capture
+  // backs: mode 8 into 0x10 (fan-only), fan 2 to 4 into 0x05 to 0x09, hswing 2 into byte 37 = 0x14
+  // with no direction bits.
+  for (int field = 0; field < 6; field++) {
+    int built = 0;
+    for (int v = 0; v < 256; v++) {
+      H::AcCommand c;
+      bool named = false;
+      switch (field) {
+        case 0:
+          c.mode = (H::Mode) v;
+          named = v <= 4;
+          break;
+        case 1:
+          c.fan = (H::FanSpeed) v;
+          named = v == 0 || v == 1 || (v >= 5 && v <= 9) || v == 0xFF;
+          break;
+        case 2:
+          c.vswing = (H::SwingMode) v;
+          named = v == 0 || v == 1 || v == 3;
+          break;
+        case 3:
+          c.hswing = (H::SwingMode) v;
+          named = v == 0 || v == 1 || v == 3;
+          break;
+        case 4:
+          c.feature = (H::Feature) v;
+          named = v <= 3;
+          break;
+        default:
+          c.display = (H::Display) v;
+          named = v <= 2;
+          break;
+      }
+      std::memset(out, 0xEE, sizeof(out));
+      size_t n = H::build_command(c, out, sizeof(out));
+      CHECK(H::command_enums_valid(c) == named, "enum field %d = %d is %s", field, v, named ? "named" : "not named");
+      CHECK((n != 0) == named, "enum field %d = %d: %s", field, v, named ? "built" : "refused");
+      if (!named)
+        CHECK(out[0] == 0xEE && out[18] == 0xEE, "enum field %d = %d refused with nothing written", field, v);
+      built += n != 0 ? 1 : 0;
+    }
+    static const int NAMED[6] = {5, 8, 3, 3, 4, 3};
+    CHECK(built == NAMED[field], "enum field %d has %d named values (%d built)", field, NAMED[field], built);
   }
   // Byte 32: vertical in bits 6-7 (0x3 swing, 0x1 hold), horizontal in bits 4-5 (0x3 swing, 0x1
   // direction, 0 off). Byte 37 = 0x14 whenever horizontal is not off. SwingMode has no value 2:
@@ -442,8 +498,8 @@ static void test_command_bytes() {
   struct {
     int v, h;
     uint8_t byte32, byte37;
-  } swings[] = {{0, 0, 0x40, 0x00}, {3, 0, 0xC0, 0x00}, {1, 0, 0x40, 0x00}, {2, 0, 0x40, 0x00},
-                {0, 3, 0x70, 0x14}, {0, 1, 0x50, 0x14}, {3, 3, 0xF0, 0x14}, {3, 1, 0xD0, 0x14}};
+  } swings[] = {{0, 0, 0x40, 0x00}, {3, 0, 0xC0, 0x00}, {1, 0, 0x40, 0x00}, {0, 3, 0x70, 0x14},
+                {0, 1, 0x50, 0x14}, {3, 3, 0xF0, 0x14}, {3, 1, 0xD0, 0x14}};
   for (const auto &r : swings) {
     H::AcCommand c;
     c.vswing = (H::SwingMode) r.v;
@@ -453,15 +509,15 @@ static void test_command_bytes() {
           out[32], out[37]);
     CHECK(out[31] == 0x01, "byte 31 is the marker");
   }
-  // Values SwingMode does not have (2, and anything past 3) are never "swing" (lines 299-301).
+  // Values SwingMode does not have (2, and anything past 3) used to be packed: horizontal as
+  // "active" in byte 37 with no direction bits in byte 32. They are refused.
   for (int odd : {2, 4, 255}) {
     H::AcCommand c;
     c.hswing = (H::SwingMode) odd;
-    CHECK(H::build_command(c, out, sizeof(out)) > 0 && (out[32] & 0x30) == 0x00, "hswing %d (no such mode): no bits",
-          odd);
+    CHECK(H::build_command(c, out, sizeof(out)) == 0, "hswing %d (no such mode): no frame", odd);
     H::AcCommand v;
     v.vswing = (H::SwingMode) odd;
-    CHECK(H::build_command(v, out, sizeof(out)) > 0 && out[32] == 0x40, "vswing %d (no such mode): hold", odd);
+    CHECK(H::build_command(v, out, sizeof(out)) == 0, "vswing %d (no such mode): no frame", odd);
   }
   // The bytes a combined frame leaves at zero: 17 (sleep has its own frame), 35 (mute has its
   // own frame), and everything not named. Lines 280 and 328 write those zeros.

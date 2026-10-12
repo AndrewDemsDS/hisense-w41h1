@@ -261,6 +261,7 @@ bad[24] ^= 0x40
 known["assembler/asm-no-checksum"] = b"\x00" + bytes(bad)
 # Fixed (devtype_from_reply needs 22 bytes). Kept as a plain regression input for the parsers.
 known["parsers/devtype-overlaps-trailer"] = DEVTYPE_20
+# Both fixed (the builders refuse the input). Kept as plain regression inputs for the builders.
 known["builders/builder-enum-range"] = cmd(8, 0, 0, 0, 0, 0, 24, fold=0)
 known["builders/single-field-offset"] = bytes([0x86, 0, 0, 0x00])
 known["builders/tx-f4-in-body"] = bytes([0x87, 0, 28 - 13]) + LINK_HEARTBEAT[2:28] + bytes([0, 0xF4, 0xF4, 0])

@@ -69,14 +69,14 @@ static void test_status_mode() {
   CHECK(H::mode_from_status((H::Mode) 13, &out) && out == H::MODE_AUTO, "auto as 5 with bit 7 set");
   CHECK(H::mode_from_status((H::Mode) 14, &out) && out == H::MODE_AUTO, "auto as 6 with bit 7 set");
 
-  // The hazard itself, on the raw path the hub used to take: status nibble 13 lands in the frame
-  // as 0xB0, which is no mode command.
+  // The hazard itself, on the raw path the hub used to take: status nibble 13 landed in the frame
+  // as 0xB0, which is no mode command. The builder refuses a mode that has no name now, so even
+  // that path sends nothing.
   {
     H::AcCommand c;
     c.mode = (H::Mode) 13;
     uint8_t f[H::CMD_FRAME_MAX];
-    size_t n = H::build_command(c, f, sizeof(f));
-    CHECK(n > 0 && !known_mode_byte(f[18]), "raw copy of nibble 13 builds byte 18 = 0x%02X", f[18]);
+    CHECK(H::build_command(c, f, sizeof(f)) == 0, "a raw copy of nibble 13 builds no frame");
   }
 
   // End to end for every byte 18 nibble: parse, validate, sync, build. Whatever the status said,

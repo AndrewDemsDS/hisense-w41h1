@@ -22,6 +22,10 @@
 //     loses. Whole frames are read the same, which test_frame_assembler checks on hand-built
 //     streams; fuzz/fuzz_differential.cpp (group 0) runs the original's static reassembler beside
 //     the port and checks that the port never delivers a frame the original would not take.
+//  3. Builder input ranges. The port's build_command refuses an enum field that holds no named
+//     value (H::command_enums_valid), where the original packs whatever it is given, and the
+//     port's build_single_field refuses an offset outside the body (16 to 45), where the
+//     original's static helper has no guard. Inside those ranges the bytes are the same.
 
 #include <cmath>
 #include <cstdint>
@@ -181,7 +185,7 @@ static void test_build_command() {
   static const uint8_t modes[] = {0, 1, 2, 3, 4};
   static const uint8_t fans[] = {0, 1, 2, 5, 6, 7, 8, 9, 0xFF};
   static const uint8_t swings[] = {0, 1, 3};
-  long built = 0;
+  long built = 0, refused = 0;
   for (uint8_t mode : modes)
     for (int unit = 0; unit < 2; unit++)
       for (int sp = unit ? 55 : 10; sp <= (unit ? 95 : 36); sp++)
@@ -204,6 +208,12 @@ static void test_build_command() {
                   uint8_t a[64], b[64];
                   size_t na = hisense_build_command(&o, a, sizeof(a));
                   size_t nb = H::build_command(n, b, sizeof(b));
+                  // Intended difference 3: fan index 2 is in the sweep and is not a named speed.
+                  if (!H::command_enums_valid(n)) {
+                    CHECK(nb == 0 && fan == 2, "build_command refuses fan=%u (mode=%u sp=%d)", fan, mode, sp);
+                    refused++;
+                    continue;
+                  }
                   CHECK(same_bytes(a, na, b, nb), "build_command mode=%u sp=%d f=%d fan=%u vs=%u hs=%u feat=%u disp=%u",
                         mode, sp, unit, fan, vs, hs, feat, disp);
                   built++;
@@ -216,7 +226,8 @@ static void test_build_command() {
   for (size_t cap = 0; cap < 56; cap++) {
     CHECK(hisense_build_command(&o, a, cap) == H::build_command(n, b, cap), "build_command cap %zu", cap);
   }
-  printf("  build_command: %ld commands compared\n", built);
+  CHECK(refused * 8 == built, "one fan value in nine is refused (%ld of %ld)", refused, built + refused);
+  printf("  build_command: %ld commands compared, %ld refused by the port alone\n", built, refused);
 }
 
 static void test_fixed_builders() {
