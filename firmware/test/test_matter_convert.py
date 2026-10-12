@@ -52,7 +52,7 @@ check(mc.int_to_semver(mc.MATTER_FINAL_VERSION) == "1.3.50", "the last Matter re
 
 
 # --- provider manifest ---
-m = mc.ota_manifest(b"abc", 10344, "1.3.44", "file:///rac-v10344.ota")["modelVersion"]
+m = mc.ota_manifest(b"abc", 10344, "1.3.44", "file:///rac-v10344.ota", 0xFFF1, 0x8001)["modelVersion"]
 check(m["otaFileSize"] == 3 and m["otaChecksum"] == "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=",
       "manifest carries the .ota size and base64 sha256")
 check(m["softwareVersion"] == 10344 and m["maxApplicableSoftwareVersion"] == 10343
@@ -112,7 +112,7 @@ check(not refused(mc.esphome_matter_image, lt, 11451, len(lt)), "convert: an ima
 check(refused(mc.esphome_matter_image, lt, 0, SLOT), "convert: serial 0 is refused")
 check(refused(mc.esphome_matter_image, lt, 0xFFFFFFFF, SLOT), "convert: the erased-flash serial is refused")
 check("amebaz2-native" not in mc.CONVERT_BOARDS, "convert: native has no Matter firmware to convert from")
-m = mc.ota_manifest(b"x" * 10, 10351, "1.3.51", "file:///rac-v10351-esphome.ota")["modelVersion"]
+m = mc.ota_manifest(b"x" * 10, 10351, "1.3.51", "file:///rac-v10351-esphome.ota", 0xFFF1, 0x8001)["modelVersion"]
 check(m["softwareVersion"] == 10351 and m["maxApplicableSoftwareVersion"] == 10350 and m["otaFileSize"] == 10,
       "convert: the manifest offers the image to every version below it")
 
@@ -162,16 +162,21 @@ r = cli("slots", "127.0.0.1", ENVF=str(envf))
 check(r.returncode == 1 and "could not source" in r.stderr and "syntax error" in r.stderr,
       "a settings file with a syntax error is refused, and bash's own message is shown")
 
-# Two things a settings file can do that the script does not see. Both are behaviour today.
+# A settings file that ends the shell is told from one that was read to the end, and the status of
+# its last line says nothing.
 envf.write_text("OTA_TOOL=/t\nexit 0\n")
 with patched(mc, ENVF=envf), environ(OTA_TOOL=None):
-    cfg = mc.load_env()
-check(cfg == {}, "a settings file that calls `exit 0` loads as NO settings at all, with no error")
-envf.write_text('OTA_TOOL=/t\n[ -n "$NOT_SET_ANYWHERE" ] && X=1\n')
-with patched(mc, ENVF=envf), environ(NOT_SET_ANYWHERE=None):
     msg = died(mc.load_env)
-check(msg and "could not source" in msg,
-      "a settings file whose last line is a false test is 'could not source', though every setting was read")
+check(msg and "the shell ended before the last line" in msg,
+      "a settings file that calls `exit 0` is refused: it used to load as no settings at all, with no error")
+envf.write_text('OTA_TOOL=/t\n[ -n "$NOT_SET_ANYWHERE" ] && X=1\n')
+with patched(mc, ENVF=envf), environ(NOT_SET_ANYWHERE=None, OTA_TOOL=None):
+    cfg = mc.load_env()
+check(cfg.get("OTA_TOOL") == "/t" and "X" not in cfg and "__READ_TO_THE_END__" not in cfg,
+      "a settings file whose last line is a false test loads: every setting was read")
+with patched(mc, ENVF=envf), patched(mc.shutil, which=lambda tool: None):
+    msg = died(mc.load_env)
+check(msg and "no bash on PATH" in msg, "without bash the settings file cannot be read, and that is the message")
 
 if os.geteuid() != 0:
     envf.write_text("OTA_TOOL=/t\n")
@@ -187,12 +192,13 @@ check(msg and msg.startswith("B is not set"), "need() names the first setting th
 check(mc.serial_base({}) == 1100 and mc.serial_base({"SERIAL_BASE": ""}) == 1100, "SERIAL_BASE defaults to 1100")
 check(mc.serial_base({"SERIAL_BASE": " 2000 "}) == 2000, "SERIAL_BASE is read as a decimal integer, spaces ignored")
 check(mc.serial_base({"SERIAL_BASE": "0"}) == 0, "SERIAL_BASE=0 is taken as 0 (the string is not empty)")
-known_failure(raised(mc.serial_base, {"SERIAL_BASE": "eleven hundred"}) in (None, "Die"),
-              "a SERIAL_BASE that is not a number is refused with a message",
-              "matter-convert.py (was dev.py:541) serial_base(): int() raises ValueError, which reaches the user as a traceback")
-known_failure(raised(mc.serial_base, {"SERIAL_BASE": "0x44C"}) in (None, "Die"),
-              "a hex SERIAL_BASE is read, or refused with a message",
-              "matter-convert.py (was dev.py:541) serial_base(): same ValueError, while VID and PID in the same file are hex")
+check(mc.serial_base({"SERIAL_BASE": "0x44C"}) == 1100, "a hex SERIAL_BASE is read, like VID and PID in the same file")
+for bad in ("eleven hundred", "-5", "1e3", "0x", "11 00", str(2 ** 32)):
+    msg = died(mc.serial_base, {"SERIAL_BASE": bad})
+    check(msg and msg.startswith(f"SERIAL_BASE={bad!r} is not a number"), f"SERIAL_BASE={bad!r} is refused with a message that names it")
+check(mc.breakglass_port({"BREAKGLASS_PORT": "2324"}) == 2324, "BREAKGLASS_PORT is read as a number")
+for bad in ("abc", "0", "65536", "-1"):
+    check(died(mc.breakglass_port, {"BREAKGLASS_PORT": bad}) is not None, f"BREAKGLASS_PORT={bad} is refused")
 
 # ================================================================================================
 print("== matter-convert.py: convert, from the built image to the .ota and its manifest ==")
@@ -258,14 +264,19 @@ mv = json.loads((built / "rac-v10400-esphome.json").read_text())["modelVersion"]
 check(mv["softwareVersionString"] == "1.4.0" and mv["maxApplicableSoftwareVersion"] == 10399,
       "--software-version 10400 is labelled 1.4.0 and offered to every version below it")
 
-# Two inputs convert takes without a word. Both are behaviour today, and both produce an update
-# that does nothing on the unit: a serial below the running Matter image's is applied and then
-# not booted, and a softwareVersion at or below the running one is never offered.
+# Two inputs that produce an update which does nothing on a unit that runs the last Matter
+# release: a serial not above that image's is installed and then not booted, and a softwareVersion
+# at or below the running one is never offered. Both are allowed (the unit may run an older
+# release) and both are warned about.
+msg, out, err = convert(image=good)
+check(msg is None and "WARNING" not in err, "the defaults convert without a warning")
 msg, out, err = convert(image=good, serial=5)
-check(msg is None and "WARNING" not in err, "a --serial far below SERIAL_BASE is accepted with no warning")
+check(msg is None and "FWHS serial 5 is not above 11450" in err, "a --serial at or below the last Matter release's is warned about")
+msg, out, err = convert(image=good, serial=11451)
+check(msg is None and "WARNING" not in err, "a --serial one above it is not")
 msg, out, err = convert(image=good, software_version=10350)
-check(msg is None and "WARNING" not in err,
-      "a --software-version equal to the last Matter release (10350) is accepted with no warning")
+check(msg is None and "softwareVersion 10350 is not above the last Matter release" in err,
+      "a --software-version equal to the last Matter release (10350) is warned about")
 
 msg, out, err = convert(board="amebaz2-sdk", image=good)
 check(msg is None and "only the factory layout has been converted on hardware" in err, "the sdk layout converts with a warning")
@@ -295,25 +306,28 @@ check(raw.is_file(), "the re-signed .bin of the failed run stays behind (no .ota
 msg, out, err = convert(image=good, stage=True)
 check(msg and msg.startswith("PI_HOST is not set"), "--stage without the provider host settings is refused before anything is built")
 
-how = raised(convert, image=b"")
-known_failure(how is None and convert(image=b"")[0] is not None,
-              "an empty slot image file is refused with a message",
-              "matter-convert.py (was dev.py:593) convert(): read_serial() runs for the progress line before the length check in "
-              "esphome_matter_image(), so a file under 0xF8 bytes ends in an ImageFormatError traceback")
+for label, image in (("empty", b""), ("of 16 bytes", bytes(16)), ("that ends before the serial", bytes(az.SERIAL_OFF + 3))):
+    msg, out, err = convert(image=image)
+    check(msg and "too short" in msg, f"a slot image file that is {label} is refused with a message")
 
 msg, out, err = convert(image=good, settings='VID="0xFFF2"\nPID="0x8002"\n')
-mv = json.loads(manifest.read_text())["modelVersion"] if manifest.is_file() else {}
-known_failure(mv.get("vid") == 0xFFF2 and mv.get("pid") == 0x8002,
-              "the manifest carries the VID and PID of the settings file",
-              "matter-convert.py (was dev.py:607) convert(): ota_manifest() is called without vid/pid, so the manifest always says "
-              "0xFFF1/0x8001 while the .ota header is built from the settings file's VID/PID")
+mv = json.loads(manifest.read_text())["modelVersion"]
+tool_args = json.loads(ota.read_bytes().split(b"\n", 1)[0])
+check(mv["vid"] == 0xFFF2 and mv["pid"] == 0x8002 and tool_args[1:5] == ["-v", "0xFFF2", "-p", "0x8002"],
+      "the manifest and the .ota header carry the same VID and PID, those of the settings file")
+msg, out, err = convert(image=good, settings='VID="65522"\n')
+check(json.loads(manifest.read_text())["modelVersion"]["vid"] == 0xFFF2, "a decimal VID is the same number in the manifest")
+for setting in ('VID="vendor"', 'PID="0x18001"', 'SERIAL_BASE="lots"'):
+    msg, out, err = convert(image=good, settings=setting + "\n")
+    check(msg and msg.startswith(setting.split("=")[0] + "=") and "is not a number" in msg,
+          f"{setting} is refused with a message before anything is written")
 
 # ================================================================================================
 print("== matter-convert.py: staging on the OTA provider host ==")
 
 stage_cfg = {"PI_HOST": "root@provider", "PI_OTA_DIR": "/data/ota", "PI_SSH_KEY": "/keys/id"}
 local_manifest = TMP / "rac-v10351-esphome.json"
-local_manifest.write_text(json.dumps(mc.ota_manifest(b"x", 10351, "1.3.51", "file:///rac-v10351-esphome.ota")) + "\n")
+local_manifest.write_text(json.dumps(mc.ota_manifest(b"x", 10351, "1.3.51", "file:///rac-v10351-esphome.ota", 0xFFF1, 0x8001)) + "\n")
 local_ota = TMP / "rac-v10351-esphome.ota"
 local_ota.write_bytes(b"x")
 
@@ -470,7 +484,7 @@ check(mc.breakglass_slots("127.0.0.1", "tok", unit.port, timeout=0.2) is None, "
 unit.close()
 check(mc.breakglass_slots("127.0.0.1", "tok", closed_port(), timeout=1) is None, "slots: a refused connection counts as no answer")
 check(mc.breakglass_slots("", "tok", 1) is None and mc.breakglass_slots("127.0.0.1", "", 1) is None
-      and mc.breakglass_slots("127.0.0.1", "tok", "") is None, "slots: no address, no token or no port asks nothing")
+      and mc.breakglass_slots("127.0.0.1", "tok", 0) is None, "slots: no address, no token or no port asks nothing")
 unit = FakeUnit(lambda c: c.sendall(b"ok: " + b"x" * 700))
 reply = mc.breakglass_query("127.0.0.1", unit.port, "tok:slots", 2)
 unit.close()
@@ -497,9 +511,8 @@ check(r.returncode == 1 and "BREAKGLASS_TOKEN is not set" in r.stderr, "the prob
 slots_env.write_text('BREAKGLASS_TOKEN="tok"\nBREAKGLASS_PORT=abc\n')
 for cmd in ("slots", "backup"):
     r = cli(cmd, "127.0.0.1", ENVF=str(slots_env))
-    known_failure(r.returncode == 1 and "Traceback" not in r.stderr,
-                  f"{cmd}: a BREAKGLASS_PORT that is not a number is refused with a message",
-                  "matter-convert.py (was dev.py:645) and matter-convert.py (was dev.py:675: int() on the setting raises ValueError, which reaches the user as a traceback")
+    check(r.returncode == 1 and "BREAKGLASS_PORT='abc' is not a number" in r.stderr and "Traceback" not in r.stderr,
+          f"{cmd}: a BREAKGLASS_PORT that is not a number is refused with a message")
 
 # matter-backup against a stand-in unit. The image is 1 MiB and more because the carve only
 # accepts [0x100000, 0x180000], the range of a real application image.

@@ -33,6 +33,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -83,9 +84,18 @@ def load_env(required=()):
     child processes."""
     if not ENVF.is_file():
         die(f"missing {ENVF} -- copy ota-release.env.example and fill it in")
-    rc, cfg = _env0(["bash", "-c", 'set -a; . "$1" >/dev/null || exit 97; set +a; env -0', "bash", str(ENVF)])
-    if rc != 0:
-        die(f"could not source {ENVF}")
+    if not shutil.which("bash"):
+        die(f"{ENVF} is a bash file and there is no bash on PATH")
+    syntax = subprocess.run(["bash", "-n", str(ENVF)], stderr=subprocess.PIPE, text=True)
+    if syntax.returncode != 0:
+        die(f"could not source {ENVF}: {syntax.stderr.strip()}")
+    # The marker is printed after the file, so a file that ends the shell (an `exit`) is told from
+    # one that was read to its last line. The status of the file's last command says nothing: a
+    # settings file may well end in a test that is false.
+    rc, cfg = _env0(["bash", "-c", 'set -a; . "$1" >/dev/null; set +a; printf "%s\\0" "__READ_TO_THE_END__=1"; env -0',
+                     "bash", str(ENVF)])
+    if rc != 0 or cfg.pop("__READ_TO_THE_END__", None) != "1":
+        die(f"could not source {ENVF}: the shell ended before the last line (does the file call `exit`?)")
     for k in required:
         if not cfg.get(k):
             die(f"{k} is not set (in {ENVF})")
@@ -98,7 +108,23 @@ def need(cfg, *keys):
             die(f"{k} is not set (in {ENVF})")
 
 
-def ota_manifest(ota_bytes, v, semver, otaurl, vid=0xFFF1, pid=0x8001, min_version=1):
+def setting_int(cfg, key, default=None, most=0xFFFFFFFF):
+    """A numeric setting, decimal or 0x hex, from 0 to `most`. Dies with a message that names it."""
+    text = (cfg.get(key) or "").strip()
+    if not text:
+        if default is None:
+            die(f"{key} is not set (in {ENVF})")
+        return default
+    try:
+        value = int(text, 16) if text.lower().startswith("0x") else int(text)
+    except ValueError:
+        value = -1
+    if not 0 <= value <= most:
+        die(f"{key}={text!r} is not a number from 0 to {most} (in {ENVF})")
+    return value
+
+
+def ota_manifest(ota_bytes, v, semver, otaurl, vid, pid, min_version=1):
     """The python-matter-server provider manifest for one .ota (key order is the wire order)."""
     return {"modelVersion": {
         "vid": vid, "pid": pid, "softwareVersion": v, "softwareVersionString": semver,
@@ -224,7 +250,14 @@ CARVE_MIN, CARVE_MAX = 0x100000, 0x180000
 
 
 def serial_base(cfg):
-    return int(cfg.get("SERIAL_BASE") or 1100)
+    return setting_int(cfg, "SERIAL_BASE", default=1100)
+
+
+def breakglass_port(cfg):
+    port = setting_int(cfg, "BREAKGLASS_PORT", most=65535)
+    if port == 0:
+        die(f"BREAKGLASS_PORT=0 is not a port (in {ENVF})")
+    return port
 
 
 def esphome_matter_image(image, serial, slot_len):
@@ -259,6 +292,7 @@ def convert(board, name=None, software_version=None, serial=None, stage=False):
         die("convert is for --board amebaz2-factory or amebaz2-sdk: it needs the Matter firmware "
             "running on the stock module to install the image (amebaz2-native has none)")
     cfg = load_env(("OTA_TOOL", "VID", "PID"))
+    vid, pid, base = setting_int(cfg, "VID", most=0xFFFF), setting_int(cfg, "PID", most=0xFFFF), serial_base(cfg)
     if stage:
         need(cfg, "PI_HOST", "PI_OTA_DIR", "PI_SSH_KEY")
     slot_len = dev.ESPHOME_AMEBAZ2_SLOTS[board][1]
@@ -267,15 +301,23 @@ def convert(board, name=None, software_version=None, serial=None, stage=False):
         die(f"no {src} -- run: dev.py build esphome --board {board}" + (f" --name {name}" if name else ""))
     name = name or "hisense-ac"
     v = software_version or MATTER_FINAL_VERSION + 1
-    serial = serial or serial_base(cfg) + v
+    serial = serial or base + v
     semver = int_to_semver(v)
     if board != "amebaz2-factory":
         warn(f"{board}: only the factory layout has been converted on hardware (2026-10-10)")
+    # Neither is refused: a unit may run an older Matter release than the last one. Both make an
+    # update that does nothing on a unit that runs the last one.
+    if v <= MATTER_FINAL_VERSION:
+        warn(f"softwareVersion {v} is not above the last Matter release ({MATTER_FINAL_VERSION}): a unit on that "
+             "release is never offered this update")
+    if serial <= base + MATTER_FINAL_VERSION:
+        warn(f"FWHS serial {serial} is not above {base + MATTER_FINAL_VERSION}, the serial of the last Matter release: "
+             "a unit that runs it installs this image and then boots the old one again (matter-convert.py slots <ip>)")
     say(f"convert {src.name} ({name}, {board[8:]} layout): FWHS serial {serial}, Matter softwareVersion {v}")
     image = src.read_bytes()
+    signed = esphome_matter_image(image, serial, slot_len)
     say(f"  built image: {len(image):#x} bytes, serial {amebaz2_image.read_serial(image)}, "
         f"slot {slot_len:#x} ({100 * len(image) // slot_len} % used)")
-    signed = esphome_matter_image(image, serial, slot_len)
     out = REPO / "firmware/built-images"
     out.mkdir(parents=True, exist_ok=True)
     raw, ota, manifest = (out / f"rac-v{v}-esphome.{ext}" for ext in ("bin", "ota", "json"))
@@ -287,7 +329,7 @@ def convert(board, name=None, software_version=None, serial=None, stage=False):
                         str(raw), str(ota)], stdout=subprocess.DEVNULL)
     if r.returncode != 0:
         die("ota_image_tool.py create failed")
-    manifest.write_text(json.dumps(ota_manifest(ota.read_bytes(), v, semver, f"file:///{ota.name}")) + "\n")
+    manifest.write_text(json.dumps(ota_manifest(ota.read_bytes(), v, semver, f"file:///{ota.name}", vid, pid)) + "\n")
     say(f"  image:    {raw}  (re-signed, every trailer and the byte-sum verified)")
     say(f"  ota:      {ota}  (+ .json manifest)")
     if stage:
@@ -325,7 +367,7 @@ def breakglass_slots(ip, token, port, timeout=8):
     if not ip or not token or not port:
         return None
     try:
-        r = breakglass_query(ip, int(port), f"{token}:slots", timeout)
+        r = breakglass_query(ip, port, f"{token}:slots", timeout)
     except OSError:
         return None
     return r if r.startswith("ok:") else None
@@ -342,7 +384,7 @@ def backup_file_tag(ip):
 def backup(ip, out=""):
     cfg = load_env()
     need(cfg, "BREAKGLASS_TOKEN", "BREAKGLASS_PORT")
-    token, port, base = cfg["BREAKGLASS_TOKEN"], int(cfg["BREAKGLASS_PORT"]), serial_base(cfg)
+    token, port, base = cfg["BREAKGLASS_TOKEN"], breakglass_port(cfg), serial_base(cfg)
     say(f"backup {ip}:{port} (fetch + validate the inactive-slot stock image)")
 
     def fail(msg):   # die loudly, save nothing
@@ -421,7 +463,7 @@ def slots(ip):
     custom firmware is alive, silence proves nothing."""
     cfg = load_env()
     need(cfg, "BREAKGLASS_TOKEN", "BREAKGLASS_PORT")
-    port = cfg["BREAKGLASS_PORT"]
+    port = breakglass_port(cfg)
     r = breakglass_slots(ip, cfg["BREAKGLASS_TOKEN"], port)
     if r:
         say(f"{ip}:{port} answered: {r}")
