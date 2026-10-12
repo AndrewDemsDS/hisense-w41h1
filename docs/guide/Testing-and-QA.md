@@ -137,7 +137,9 @@ clang-tidy) and only warns if the pinned tools are not installed yet.
   `firmware/test/hil_esphome_actuation.py` stays out of `run_tests.sh` on purpose. It drives every
   control over the native API, checks that nothing else moved, and ends with the bus counter
   deltas: retries are listed, a rise in `Failed commands` fails the run. It restores the state it
-  found, and leaves the unit off if it had to switch it on.
+  found, also when a step fails, on Ctrl-C and at its hard timeout, reads the unit back and fails
+  if anything is not as found, and leaves the unit off if it had to switch it on. A unit that is
+  running when it connects is taken to be in use and is not touched without `--allow-running`.
 - **A tap on the bus**: `reverse-engineering/tools/decode_ac_frames.py --port <tap>` decodes what
   is on the wire, and `firmware/esp32-recon/` is a console on the bus for byte-level questions.
 - **Standing rule for glue code**: the ESPHome hub cannot run on the host, so any glue *decision*

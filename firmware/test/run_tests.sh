@@ -135,6 +135,7 @@ echo "== Layer 6: tooling edge cases (dev.py, the scripts, the hook, the lint li
 python3 ./test_dev_edges.py
 python3 ./test_scripts_edges.py
 python3 ./test_flasher.py
+python3 ./test_hil_restore.py
 
 echo
 echo "ALL QA LAYERS PASSED"
