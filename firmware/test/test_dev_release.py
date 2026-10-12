@@ -52,7 +52,7 @@ check(e["PLATFORMIO_BUILD_CACHE_DIR"] == "/mine", "esphome env: the caller's cac
 e = dev.esphome_env({"HOME": "/home/you", "PLATFORMIO_BUILD_CACHE_DIR": ""})
 check("PLATFORMIO_BUILD_CACHE_DIR" not in e, "esphome env: an empty value switches the cache off")
 
-# --- which board file and substitutions each --board builds ---
+# --- which board file each --board builds ---
 import tempfile  # noqa: E402
 
 calls = []
@@ -68,15 +68,14 @@ with tempfile.TemporaryDirectory() as tmp:
     finally:
         dev.run, dev.have, dev.ESPHOME_DIR = real
 by_board = dict(zip(("c3", "c3-plus", "classic", "amebaz2-factory"), calls))
-check("w41h1.yaml" in by_board["c3"] and "esp32-c3-devkitm-1" in by_board["c3"],
-      "--board c3 builds w41h1.yaml with the C3 board and pins as -s overrides, as it always has")
-check("w41h1-esp32c3-plus.yaml" in by_board["c3-plus"] and "-s" not in by_board["c3-plus"],
-      "--board c3-plus builds its own board file and passes no pins")
-check("w41h1.yaml" in by_board["classic"] and "esp32dev" in by_board["classic"], "--board classic builds w41h1.yaml")
-check("w41h1-amebaz2-factory.yaml" in by_board["amebaz2-factory"], "--board amebaz2-factory builds its own board file")
-for call in calls:
-    check((ROOT / "firmware/esphome" / [a for a in call if a.endswith(".yaml")][0]).is_file(),
-          f"the board file dev.py names exists: {[a for a in call if a.endswith('.yaml')][0]}")
+for board, config in (("c3", "w41h1-esp32c3.yaml"), ("c3-plus", "w41h1-esp32c3-plus.yaml"), ("classic", "w41h1.yaml"),
+                      ("amebaz2-factory", "w41h1-amebaz2-factory.yaml")):
+    check(by_board[board][-2:] == ["config", config] and "-s" not in by_board[board],
+          f"--board {board} builds {config} and overrides nothing in it")
+check(set(dev.BOARDS) == {"c3", "c3-plus", "classic", *dev.ESPHOME_AMEBAZ2_BOARDS}, "every --board value has a board file")
+check(len(set(dev.BOARDS.values())) == len(dev.BOARDS), "and no two boards share one: one board, one image")
+for board, config in dev.BOARDS.items():
+    check((ROOT / "firmware/esphome" / config).is_file(), f"the board file dev.py names for {board} exists: {config}")
 
 # --- CLI ---
 d = subprocess.run([sys.executable, str(SCRIPTS / "dev.py"), "flash", "esphome", "--board", "amebaz2-factory"],

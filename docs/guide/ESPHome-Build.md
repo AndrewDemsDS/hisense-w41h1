@@ -116,9 +116,9 @@ esphome logs w41h1.yaml                   # logs only, later
 | `hisense_ac__encryption_key` | the API key Home Assistant adopts the node with. Make a new one, the example file says how |
 
 The older form, `esphome -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 run
-w41h1.yaml`, still works. It is what `dev.py --board c3` runs, and it builds the node of
-`w41h1-esp32c3.yaml` without the status LED. `dev.py --board c3-plus` builds
-`w41h1-esp32c3-plus.yaml`.
+w41h1.yaml`, still works. It builds the node of `w41h1-esp32c3.yaml` without the status LED, and
+it is what `dev.py --board c3` ran until 2026-10-12. `dev.py --board c3` now builds
+`w41h1-esp32c3.yaml` itself, and `--board c3-plus` builds `w41h1-esp32c3-plus.yaml`.
 
 Home Assistant discovers the node over mDNS and adopts it with the API key from `secrets.yaml`
 ([below](#adopt-it-in-home-assistant)).

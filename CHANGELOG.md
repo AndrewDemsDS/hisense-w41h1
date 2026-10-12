@@ -116,6 +116,12 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   renamed files, files with non-ASCII names and `.mdx`.
 - **`dev.py`**: `$ESPHOME` is split into words and never run by a shell, so `ESPHOME="uvx esphome"`
   works and text after a `;` in it is no longer executed. Tool lookups need no bash.
+- **Changes what `dev.py --board c3` builds:** it compiled `w41h1.yaml` with the C3 board and pins
+  as `-s` overrides, which is the node of `w41h1-esp32c3.yaml` without its status LED. Every
+  `--board` value now names one board file, so `--board c3` builds `w41h1-esp32c3.yaml` and the
+  node gains the status LED on GPIO8 (the SuperMini's blue LED: dark when healthy, blinking while
+  Wi-Fi, Home Assistant or the A/C bus is down). No entity changes. `--board classic` is
+  unchanged.
 
 ## Matter and ESPHome side by side - 2026-10-10
 

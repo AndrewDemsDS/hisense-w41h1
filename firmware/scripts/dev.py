@@ -48,6 +48,16 @@ TEST = REPO / "firmware/test"
 
 RETIRED = ("the Matter firmwares are retired (issue #182). dev.py builds ESPHome only; the last tree "
            "with the amebaz2 and esp32 targets and the `ota` steps is the tag matter-final")
+# One board, one board file: what `dev.py build --board X` compiles is what
+# `esphome compile <that file>` compiles. The pins, the chip and the LED live in the file.
+BOARDS = {
+    "c3": "w41h1-esp32c3.yaml",                 # ESP32-C3 SuperMini
+    "c3-plus": "w41h1-esp32c3-plus.yaml",       # ESP32-C3 SuperMini Plus (RGB pixel on GPIO8)
+    "classic": "w41h1.yaml",                    # ESP32-D0WDQ6
+    "amebaz2-factory": "w41h1-amebaz2-factory.yaml",
+    "amebaz2-sdk": "w41h1-amebaz2-sdk.yaml",
+    "amebaz2-native": "w41h1-amebaz2-native.yaml",
+}
 ESPHOME_AMEBAZ2_BOARDS = ("amebaz2-factory", "amebaz2-sdk", "amebaz2-native")
 ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2-* has test and build. A first flash is matter-convert.py (over the "
                         "air from the retired Matter firmware), the clip or UART download mode, and later updates are "
@@ -130,7 +140,7 @@ def esphome_argv():
 
 
 class Ctx:
-    """Parsed invocation: board-derived pins and options."""
+    """Parsed invocation: the board file and the options."""
     def __init__(self, target, board, port, sim_port, name=None, friendly_name=None):
         self.target = target
         self.board = board
@@ -138,23 +148,18 @@ class Ctx:
         self.sim_port = sim_port
         self.name = name
         self.friendly_name = friendly_name
-        if board == "c3":
-            self.pins, self.esphome_board = (5, 6, 10), "esp32-c3-devkitm-1"
-        elif board == "c3-plus":
-            # Same chip and pins as c3. It has a board file of its own for the RGB pixel on GPIO8.
-            self.pins, self.esphome_board = (5, 6, 10), "esp32-c3-devkitm-1"
-        elif board == "classic":
-            self.pins, self.esphome_board = (19, 18, 4), "esp32dev"
-        elif board in ESPHOME_AMEBAZ2_BOARDS:
-            # The stock module's own MCU through LibreTiny. Its pins are fixed by the module and
-            # live in the board file, so nothing is passed as a substitution.
-            self.pins, self.esphome_board = ("PA14", "PA13", "PA17"), "cr3l"
-        elif board == "amebaz2":
+        if board == "amebaz2":
             # No default: an image built for the wrong layout bricks the unit at its first update.
             die("--board amebaz2 needs the unit's flash layout: amebaz2-factory, amebaz2-sdk or "
                 "amebaz2-native (firmware/docs/15-esphome-path.md, 'Which flash layout a unit has')")
-        else:
+        if board not in BOARDS:
             die("--board must be c3, c3-plus, classic, amebaz2-factory, amebaz2-sdk or amebaz2-native")
+        self.config = BOARDS[board]
+
+    def pin(self, which):
+        """A bus pin of the board, read from its board file (tx, rx or de)."""
+        m = re.search(rf'^  {which}_pin:\s*"?(\w+)"?', (ESPHOME_DIR / self.config).read_text(), re.M)
+        return m.group(1) if m else "?"
 
     def need_port(self, cmd):
         if not self.port:
@@ -172,25 +177,18 @@ class Ctx:
             die(f"'{cmd[0]}' not found (dev.py fetch esphome, or set ESPHOME=)")
         if not (ESPHOME_DIR / "secrets.yaml").is_file():
             die(f"no {ESPHOME_DIR}/secrets.yaml -- cp secrets.yaml.example secrets.yaml and fill it in")
-        config = "w41h1.yaml"
-        subs = ["-s", "board", self.esphome_board, "-s", "tx_pin", str(self.pins[0]),
-                "-s", "rx_pin", str(self.pins[1]), "-s", "de_pin", str(self.pins[2])]
-        if self.board in ESPHOME_AMEBAZ2_BOARDS:
-            if sub not in ("config", "compile"):
-                die(ESPHOME_AMEBAZ2_ONLY)
-            config, subs = f"w41h1-{self.board}.yaml", []
-        elif self.board == "c3-plus":
-            # The board file holds the pins and the status pixel, so nothing is passed.
-            config, subs = "w41h1-esp32c3-plus.yaml", []
+        if self.board in ESPHOME_AMEBAZ2_BOARDS and sub not in ("config", "compile"):
+            die(ESPHOME_AMEBAZ2_ONLY)
         # A second node needs its own hostname: two boards both called hisense-ac fight over the
         # same mDNS name and Home Assistant device.
+        subs = []
         if self.name:
             subs += ["-s", "name", self.name]
         if self.friendly_name:
             subs += ["-s", "friendly_name", self.friendly_name]
         env = esphome_env(os.environ) if cache else {k: v for k, v in os.environ.items()
                                                       if k != "PLATFORMIO_BUILD_CACHE_DIR"}
-        run([*cmd, *subs, sub, config, *args], cwd=ESPHOME_DIR, env=env)
+        run([*cmd, *subs, sub, self.config, *args], cwd=ESPHOME_DIR, env=env)
 
 
 def build_dir(name=None):
@@ -330,7 +328,7 @@ def bench(ctx):
         die(f"virtual_ac.py needs pyserial for {sys.executable} (Debian/Ubuntu: sudo apt install "
             "python3-serial; Arch: sudo pacman -S python-pyserial)")
     say("bench wiring (no A/C, no mains):")
-    say(f"  USB-TTL:    board TX GPIO{ctx.pins[0]} -> adapter RX, board RX GPIO{ctx.pins[1]} <- adapter TX, GND-GND (3.3 V adapter)")
+    say(f"  USB-TTL:    board TX GPIO{ctx.pin('tx')} -> adapter RX, board RX GPIO{ctx.pin('rx')} <- adapter TX, GND-GND (3.3 V adapter)")
     say("  USB-RS485:  transceiver A-A, B-B, GND-GND (board DI/RO/DE wired as for the A/C)")
     if not ask("wired like that?"):
         return

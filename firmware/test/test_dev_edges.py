@@ -132,12 +132,10 @@ check(r.returncode == 0 and "5/5 next steps" in r.stdout and "Staged bring-up" i
 # ================================================================================================
 print("== dev.py edges: boards, the esphome command, build and erase ==")
 
-for board, pins, esphome_board in (("c3", (5, 6, 10), "esp32-c3-devkitm-1"), ("c3-plus", (5, 6, 10), "esp32-c3-devkitm-1"),
-                                   ("classic", (19, 18, 4), "esp32dev")):
+# The pins are read from the board file, so the wiring note of `bench` cannot drift from it.
+for board, pins in (("c3", ("5", "6", "10")), ("c3-plus", ("5", "6", "10")), ("classic", ("19", "18", "4"))):
     c = dev.Ctx("esphome", board, None, None)
-    check(c.pins == pins and c.esphome_board == esphome_board, f"--board {board}: pins {pins}, {esphome_board}")
-for board in dev.ESPHOME_AMEBAZ2_BOARDS:
-    check(dev.Ctx("esphome", board, None, None).pins == ("PA14", "PA13", "PA17"), f"--board {board}: the module's own pins")
+    check((c.pin("tx"), c.pin("rx"), c.pin("de")) == pins, f"--board {board}: tx, rx, de are {pins}, as its board file says")
 check(died(dev.Ctx, "esphome", "", None, None) is not None, "an empty board is refused")
 
 # Which esphome is run: $ESPHOME, then PATH, then pipx's directory.
@@ -187,10 +185,9 @@ with patched(dev, run=record_run, ESPHOME_DIR=esphome_dir), environ(ESPHOME="esp
             check(msg and "has test and build" in msg and not calls, f"esphome {sub} for the stock module is refused")
         dev.Ctx("esphome", "classic", None, None, "ac-2", "Bedroom A/C").esphome_run("run", "--device", "/dev/ttyX")
         a = calls[-1]["args"]
-        check(a == ["esphome-stub", "-s", "board", "esp32dev", "-s", "tx_pin", "19", "-s", "rx_pin", "18",
-                    "-s", "de_pin", "4", "-s", "name", "ac-2", "-s", "friendly_name", "Bedroom A/C",
+        check(a == ["esphome-stub", "-s", "name", "ac-2", "-s", "friendly_name", "Bedroom A/C",
                     "run", "w41h1.yaml", "--device", "/dev/ttyX"],
-              "classic: substitutions first, then the subcommand, the file and the caller's arguments")
+              "classic: the node's name first, then the subcommand, the board file and the caller's arguments")
         check(calls[-1]["cwd"] == esphome_dir, "esphome runs in the ESPHome directory")
         check(calls[-1]["env"].get("PLATFORMIO_BUILD_CACHE_DIR", "").endswith("w41h1-dev/pio-build-cache"),
               "esphome gets the build cache directory")
@@ -202,14 +199,13 @@ with patched(dev, run=record_run, ESPHOME_DIR=esphome_dir), environ(ESPHOME="esp
         check(calls[-1]["args"] == ["esphome-stub", "-s", "friendly_name", "Plus", "config", "w41h1-esp32c3-plus.yaml"],
               "C3 Plus: the board file, and a friendly name alone is passed")
 
-# --board c3 builds w41h1.yaml with -s overrides. The repo also has w41h1-esp32c3.yaml, which adds
-# the status LED package, so `dev.py build --board c3` and `esphome compile w41h1-esp32c3.yaml`
-# are two different images for the same board. Documented here, reported as a simplification.
+# --board c3 used to build w41h1.yaml with -s overrides while the repo also has w41h1-esp32c3.yaml,
+# which adds the status LED: two different images for one board. It builds the board file now.
 c3_file = (ROOT / "firmware/esphome/w41h1-esp32c3.yaml").read_text()
 with patched(dev, run=record_run, have=lambda tool: True, ESPHOME_DIR=esphome_dir), environ(ESPHOME="esphome-stub"):
     dev.Ctx("esphome", "c3", None, None).esphome_run("compile")
-check("w41h1.yaml" in calls[-1]["args"] and "status-led.yaml" in c3_file,
-      "--board c3 builds w41h1.yaml, not w41h1-esp32c3.yaml (which alone has the status LED)")
+check(calls[-1]["args"] == ["esphome-stub", "compile", "w41h1-esp32c3.yaml"] and "status-led.yaml" in c3_file,
+      "--board c3 builds w41h1-esp32c3.yaml, the file with the SuperMini's status LED")
 
 # build: the stock-module slot image is a side effect of the link step, so a fully cached build
 # has none and dev.py builds once more without the cache.

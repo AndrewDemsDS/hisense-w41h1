@@ -30,10 +30,9 @@ esphome run w41h1-esp32c3.yaml            # ESP32-C3 SuperMini
 esphome run w41h1-esp32c3-plus.yaml       # ESP32-C3 SuperMini Plus (RGB pixel on GPIO8)
 ```
 
-Or `firmware/scripts/dev.py flash esphome --board c3 --port <port>` from the repo root. That
-passes the C3 board and pins to `w41h1.yaml` as `-s` overrides, which still works and produces the
-node of `w41h1-esp32c3.yaml` without its status LED. `--board c3-plus` builds
-`w41h1-esp32c3-plus.yaml` as it is.
+Or `firmware/scripts/dev.py flash esphome --board c3 --port <port>` from the repo root, which
+builds `w41h1-esp32c3.yaml` as it is. `--board c3-plus` builds `w41h1-esp32c3-plus.yaml` and
+`--board classic` builds `w41h1.yaml`.
 
 ## Boards
 
