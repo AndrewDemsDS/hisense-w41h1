@@ -4,6 +4,15 @@ hisense_ac:
   id: ac_bus
   uart_id: uart_bus
   de_pin: ${de_pin}
+  on_setup_request:
+    - logger.log:
+        format: "Setup requested, request bits 0x%02X"
+        args: [x]
+    - hisense_ac.set_setup_indicator: true
+    - hisense_ac.set_setup_indicator:
+        id: ac_bus
+        state: !lambda return (x & 0x20) == 0;
+    - lambda: id(ac_bus).set_setup_indicator(!id(ac_bus).setup_indicator());
 
 climate:
   - platform: hisense_ac

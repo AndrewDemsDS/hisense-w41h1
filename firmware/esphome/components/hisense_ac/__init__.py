@@ -8,11 +8,11 @@ settle, wire time plus 25 ms drain). Leave it out only when the UART's ``flow_co
 owns DE instead.
 """
 
-from esphome import pins
+from esphome import automation, pins
 import esphome.codegen as cg
 from esphome.components import uart
 import esphome.config_validation as cv
-from esphome.const import CONF_ID
+from esphome.const import CONF_ID, CONF_STATE
 
 CODEOWNERS = ["@AndrewDemsDS"]
 DEPENDENCIES = ["uart"]
@@ -21,15 +21,22 @@ DOMAIN = "hisense_ac"
 hisense_ac_ns = cg.esphome_ns.namespace("hisense_ac")
 HisenseAC = hisense_ac_ns.class_("HisenseAC", cg.Component)
 StatusListener = hisense_ac_ns.class_("StatusListener")
+SetSetupIndicatorAction = hisense_ac_ns.class_(
+    "SetSetupIndicatorAction", automation.Action
+)
 
 CONF_HISENSE_AC_ID = "hisense_ac_id"
 CONF_DE_PIN = "de_pin"
+CONF_ON_SETUP_REQUEST = "on_setup_request"
 
 CONFIG_SCHEMA = (
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(HisenseAC),
             cv.Optional(CONF_DE_PIN): pins.gpio_output_pin_schema,
+            # The remote's "77" gesture (horizontal airflow six times). `x` is the request
+            # bits of the unit's 0x1E reply.
+            cv.Optional(CONF_ON_SETUP_REQUEST): automation.validate_automation({}),
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -55,9 +62,38 @@ HISENSE_AC_CLIENT_SCHEMA = cv.Schema(
 )
 
 
+_CALLBACK_AUTOMATIONS = (
+    automation.CallbackAutomation(
+        CONF_ON_SETUP_REQUEST,
+        "add_on_setup_request_callback",
+        [(cg.uint8, "x")],
+    ),
+)
+
+
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
     if CONF_DE_PIN in config:
         cg.add(var.set_de_pin(await cg.gpio_pin_expression(config[CONF_DE_PIN])))
+    await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)
+
+
+@automation.register_action(
+    "hisense_ac.set_setup_indicator",
+    SetSetupIndicatorAction,
+    cv.maybe_simple_value(
+        {
+            cv.GenerateID(): cv.use_id(HisenseAC),
+            cv.Required(CONF_STATE): cv.templatable(cv.boolean),
+        },
+        key=CONF_STATE,
+    ),
+    synchronous=True,
+)
+async def hisense_ac_set_setup_indicator_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    cg.add(var.set_state(await cg.templatable(config[CONF_STATE], args, cg.bool_)))
+    return var
