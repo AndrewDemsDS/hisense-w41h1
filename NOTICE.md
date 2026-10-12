@@ -1,22 +1,23 @@
 # NOTICE: third-party components & licensing
 
-This project (the **original code** in `firmware/src/rs485-driver/`, `firmware/test/`,
-`firmware/scripts/`, the `.zap`/cluster definitions in `firmware/src/sdk-edits/`, the
+This project (the **original code** in `firmware/esphome/`, `firmware/test/`,
+`firmware/scripts/`, `firmware/flasher/`, `firmware/esp32-recon/`, the
 `reverse-engineering/tools/`, and all documentation) is licensed **MIT**: see
 [`LICENSE`](LICENSE).
 
-It is **not a self-contained firmware build**. It builds *on top of* two large third-party
-SDKs that are **not redistributed here**: you obtain them yourself and this repo applies
-its changes to them (see [`patches/`](patches/) and
-[`firmware/src/sdk-edits/README.md`](firmware/src/sdk-edits/README.md)).
+Nothing third-party is vendored. The build fetches its tools on your machine.
 
-## Third-party dependencies (obtain these yourself)
+## Third-party dependencies (fetched, not redistributed)
 
-| Component | License | How this repo modifies it |
+| Component | License | How it is used |
 |---|---|---|
-| **Realtek AmebaZ2 SDK** (`ameba-rtos-z2`), base RTOS/BSP for the RTL8710C | **Proprietary, © Realtek Semiconductor.** *Not redistributable.* | Base-SDK build-glue edits shipped as [`patches/ameba-rtos-z2.patch`](patches/ameba-rtos-z2.patch). Pinned base commit: `0ee0460bc2cf`. **The patch touches only build-config files (`GCC-RELEASE/Makefile`, `*.json`), executable-bit changes on the prebuilt `gcc_utility` tools, and one Apache-2.0-licensed header, no proprietary Realtek source or binaries are embedded.** |
-| **Realtek AmebaZ2 Matter component** (`.../application/matter/`) (Realtek's Matter integration layer | **Proprietary / Apache-2.0 mix) © Realtek.** *Not redistributable.* | Our `room_air_conditioner` example is our own code (dropped into this layer); Realtek framework-file edits (e.g. `matter_events.h`, `platform_opts_matter.h`, the example makefiles) are documented as in-place diffs in `sdk-edits/README.md`. **Realtek proprietary source is never checked in** (e.g. `matter_core.cpp` is used unmodified from the SDK and not vendored here). |
-| **connectedhomeip / Matter SDK** (`connectedhomeip`) | **Apache-2.0, © Project CHIP Authors.** | SDK-file edits shipped as [`patches/connectedhomeip.patch`](patches/connectedhomeip.patch). Pinned base commit: `cc74311cffac`. |
+| **ESPHome** ([esphome/esphome](https://github.com/esphome/esphome)) | MIT (Python and tooling) / GPL-3.0 (C++ runtime), © ESPHome | Builds the firmware. `hisense_ac` is an external component in this repo. Version `2026.7.4` is pinned in `.github/workflows/qa.yaml` and `firmware/scripts/dev.py`. |
+| **ESP-IDF** ([espressif/esp-idf](https://github.com/espressif/esp-idf)) | Apache-2.0, © Espressif | Downloaded by ESPHome for ESP32 builds. Also the SDK of `firmware/esp32-recon/`. |
+| **LibreTiny** ([libretiny-eu/libretiny](https://github.com/libretiny-eu/libretiny)) and the **Realtek AmebaZ2 SDK** it wraps | MIT (LibreTiny). The Realtek SDK is proprietary, © Realtek Semiconductor | Downloaded by ESPHome for the stock-module builds. No Realtek source or binary is in this repository. |
+| **connectedhomeip** ([project-chip/connectedhomeip](https://github.com/project-chip/connectedhomeip)) | Apache-2.0, © Project CHIP Authors | Only its `ota_image_tool.py`, and only for `dev.py convert`, which wraps an image for a unit that still runs the retired Matter firmware. You point `OTA_TOOL` at your own checkout. |
+
+A firmware image you build links ESPHome's GPL-3.0 runtime. That matters if you distribute the
+binary. This repository distributes source only.
 
 ## Adapted lint tooling
 
@@ -25,14 +26,13 @@ The root `.clang-format` and `.clang-tidy`, and the custom rules in
 `script/ci-custom.py` (ESPHome's Python and tooling are MIT-licensed, © 2019 ESPHome).
 Nothing from ESPHome's GPL C++ runtime is copied.
 
-## Matter credentials
+## The retired Matter firmwares
 
-The firmware uses **CSA test attestation credentials**: test Vendor ID `0xFFF1`, a Product ID
-in the test-DAC range (`0x8001`), and the SDK's test DAC/PAI/CD. These are **development-only**:
-the device is **not Matter-certified**, commissions only into controllers that accept test certs
-(e.g. `python-matter-server --enable-test-net-dcl`, Home Assistant), shows an "uncertified device"
-prompt, and **may not be sold**. Generate your own per-device discriminator/passcode with
-`firmware/scripts/gen-creds.sh` (see the README).
+Until 2026-10 this repository carried two Matter firmwares, as original sources plus patches over
+Realtek's SDKs, connectedhomeip and esp-matter. They used CSA **test** attestation credentials
+(test Vendor ID `0xFFF1`), were never certified and could not be sold. They are retired (issue
+#182). The tree at the tag `matter-final` has them, with the `NOTICE.md` and `UPSTREAM.md` that
+describe their dependencies and pins.
 
 ## AI assistance
 

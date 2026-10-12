@@ -5,7 +5,7 @@ This is the validation half of the sniffing operation: it takes raw bytes (from
 sniff.py's hex log, a raw dump, a pasted hex string, or a live serial port),
 reassembles F4 F5 .. F4 FB frames (un-stuffing doubled F4), verifies the 2-byte
 big-endian checksum, and decodes every field using the SAME byte offsets as the
-firmware driver (firmware/src/rs485-driver/hisense_rs485.{h,cpp}).
+reference driver (firmware/test/reference-driver/hisense_rs485.{h,cpp}).
 
 Point: if the driver's assumptions (borrowed from the AEH-W4A1 reference) don't
 match the real W41H1 wire, this prints the mismatch loudly -- wrong checksum,
@@ -157,7 +157,7 @@ def decode_command(f):
 
 
 def decode_status(f):
-    # Field map fully confirmed by W41H1 sniffing (see INTEGRATION.md). Frame is
+    # Field map fully confirmed by W41H1 sniffing (see firmware/test/reference-driver/README.md). Frame is
     # LEN-driven (byte[4]+9 = 160), temps are DIRECT integer C, flags1 bits are
     # vswing7/hswing6/heat4/eco2/turbo1, sleep@17, compressor@42, outdoor@44.
     out = []

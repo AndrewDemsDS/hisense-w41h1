@@ -2,8 +2,8 @@
 title: Home
 nav_order: 1
 description: >-
-  Run a Hisense air conditioner locally from Home Assistant with no ConnectLife cloud: ESPHome or
-  Matter firmware on an ESP32 in the module bay, or Matter on the stock AEH-W41H1 module.
+  Run a Hisense air conditioner locally from Home Assistant with no ConnectLife cloud: ESPHome
+  firmware on an ESP32 in the module bay, or on the stock AEH-W41H1 module itself.
 ---
 
 # Hisense AEH-W41H1: de-cloud your air conditioner
@@ -12,26 +12,24 @@ Run a **Hisense air conditioner entirely locally** through Home Assistant, with 
 account and no cloud dependency. The A/C's `AEH-W41H1` Wi-Fi module talks to the unit over an
 internal RS-485 bus; this project replaces what sits on that bus with firmware you control.
 
-Three firmwares are documented, all running on real units. In order of preference:
+There is one firmware, an ESPHome component, and three kinds of hardware it runs on:
 
-1. **ESPHome** (recommended): drop an ESP32 plus an RS-485 transceiver into the module bay and the
-   A/C appears natively in Home Assistant. No commissioning, no matter-server.
-2. **ESP32 with Matter**: the same board running Matter, for controllers beyond Home Assistant.
-3. **AmebaZ2**: reflash the stock W41H1 module in place with Matter. No added hardware, but a
-   one-time clip write.
+1. **An ESP32 board** (recommended): drop an ESP32 plus an RS-485 transceiver into the module bay
+   and the A/C appears natively in Home Assistant. No pairing code, no extra integration.
+2. **The stock W41H1 module** itself, through ESPHome's LibreTiny platform. No added hardware, but
+   no rollback, and a clip on the flash chip is the only recovery. First run in an A/C on
+   2026-10-10.
+3. **Other ESPHome chips** (ESP8266, RP2040): example configs that compile and have not been run.
 
-One script, `python3 firmware/scripts/dev.py`, builds, flashes, tests and updates all three.
+One script, `python3 firmware/scripts/dev.py`, tests, builds and flashes.
 Start with the **[User Guide](guide/User-Guide.html)**.
 
-## State of the project
+## Matter firmware (retired)
 
-As of 2026-10-10 the three firmwares expose the same controls and diagnostics
-([side by side](guide/Entities-and-Diagnostics.html)). Only the ESPHome build confirms a command
-and sends it again when the unit missed it.
-[Issue #182](https://github.com/AndrewDemsDS/hisense-w41h1/issues/182) proposes retiring the two
-Matter builds in favour of ESPHome. It is open and undecided: ESPHome on the stock module's own MCU
-has run on one unit through LibreTiny since 2026-10-10, with no long run behind it yet. Both Matter builds remain supported until
-the issue is settled.
+Until 2026-10 the project also shipped two Matter firmwares. Both are retired
+([issue #182](https://github.com/AndrewDemsDS/hisense-w41h1/issues/182)) and live on under the tag
+`matter-final`. What that means for a unit that runs one, and how to move it to ESPHome:
+[Matter firmware (retired)](guide/Matter-Firmware-Retired.html).
 
 Everything below is written from a working system, not a plan. The RS-485 protocol was
 reverse-engineered from the stock firmware and validated against live hardware.
@@ -45,28 +43,25 @@ without opening anything.
 
 | Page | What it covers |
 |---|---|
-| [User guide](guide/User-Guide.html) | pick a firmware, then `dev.py` from clone to running node |
+| [User guide](guide/User-Guide.html) | pick the hardware, then `dev.py` from clone to running node |
 | [Hardware and wiring](guide/Hardware-and-Wiring.html) | pinout, the 4-pin module port, RS-485 A/B |
-| [ESP32 build environment](guide/ESP32-Build-Environment.html) | from a clean Linux machine to a flashed ESP32, every step by hand |
-| [ESPHome build](guide/ESPHome-Build.html) | recommended: ESP32, native to Home Assistant |
-| [ESP32 Matter build](guide/ESP32-Replacement-Build.html) | the same ESP32 board running Matter |
-| [Installing on the AmebaZ2 module](guide/Installing-Custom-Firmware.html) | flashing the stock module over a CH341A SPI clip |
-| [Commissioning and Home Assistant](guide/Commissioning-and-HA-Setup.html) | pairing a Matter build into python-matter-server and HA |
+| [Build environment](guide/ESP32-Build-Environment.html) | from a clean Linux machine to a flashed board, every step by hand |
+| [ESPHome build](guide/ESPHome-Build.html) | the firmware: entities, boards, adopting it in Home Assistant, updates |
+| [ESP32 replacement board](guide/ESP32-Replacement-Build.html) | parts, wiring, the pins to avoid, staged bring-up |
 | [Everyday control](guide/Everyday-Control.html) | modes, fan, swing, Eco / Quiet / Turbo / Sleep |
-| [Entities, endpoints and diagnostics](guide/Entities-and-Diagnostics.html) | the three firmwares side by side, the beeper, the bus counters, confirm and retry |
-| [OTA updates](guide/OTA-Updates.html) | Matter OTA, the break-glass HTTP path, and the serial trap |
-| [Migrating ESP32 Matter to ESPHome](guide/Migrating-ESP32-Matter-to-ESPHome.html) | move an esp-matter board to ESPHome over the air |
+| [Entities and diagnostics](guide/Entities-and-Diagnostics.html) | every entity, the beeper, the bus counters, confirm and retry |
+| [Climate groups](guide/Climate-Groups.html) | several A/Cs as one thermostat |
 | [Recovery and reflash](guide/Recovery-and-Reflash.html) | getting back from a bad flash |
 | [FAQ and gotchas](guide/FAQ-Gotchas.html) | the things that actually bite |
 
-## Choosing a path
+## Choosing the hardware
 
-If Home Assistant is your only controller, use the [ESPHome build](guide/ESPHome-Build.html). If
-anything else (Apple Home, Google Home, Alexa) must see the A/C, use Matter on the ESP32, or on the
-stock AmebaZ2 module if you want to keep the original hardware.
-[The path comparison](firmware/13-path-comparison.html) sets the three tracks side by side on cost,
-toolchain, reproducibility, OTA mechanics, flash headroom and diagnostics, with figures measured on
-this project's own hardware rather than taken from datasheets.
+Use an ESP32 board unless you have a reason to keep the original module.
+[The comparison](firmware/13-path-comparison.html) sets the two side by side on cost, first flash,
+recovery, toolchain and maturity, with figures measured on this project's own hardware.
+
+Apple Home, Google Home and Alexa are reached through Home Assistant's own Matter or HomeKit
+bridge.
 
 ## Reverse engineering
 
@@ -78,17 +73,16 @@ claims:
 - [Device-type to capability map](internals/11-model-capability-map.html): how the A/C advertises its own features
 - [Hardware](internals/01-hardware.html) · [Cloud and firewall](internals/04-cloud-and-firewall.html) · [ESP32 replacement](internals/05-esp32-replacement.html)
 
-## Firmware and build
+## Firmware notes
 
-- [Firmware build and OTA procedure](firmware/10-firmware-ota-procedure.html): the canonical reference
-- [Matter clusters exposed](firmware/01-expose-all-clusters.html) · [Attestation](firmware/02-fix-attestation.html)
-- [QA strategy](firmware/04-qa-strategy.html) · [Energy monitoring](firmware/09-energy-monitoring.html)
+- [The ESPHome firmware: design and the stock module](firmware/15-esphome-path.html)
+- [The stock module: how it boots, and recovery](firmware/10-stock-module-boot-and-recovery.html)
+- [ESP32 board notes](firmware/16-esp32-board-notes.html) · [QA strategy](firmware/04-qa-strategy.html) · [Energy monitoring](firmware/09-energy-monitoring.html)
 - [Stock parity gaps](firmware/07-stock-parity-gaps.html): what the stock firmware does that this does not, yet
 
 ## Source
 
 Code, issues and releases: [github.com/AndrewDemsDS/hisense-w41h1](https://github.com/AndrewDemsDS/hisense-w41h1)
 
-Uses Matter **test** credentials, so this is for development and personal use. It is not a
-certified Matter product and is not affiliated with Hisense, Realtek or the CSA. Reverse
-engineering of hardware you own, for interoperability.
+Not affiliated with Hisense, Realtek or ESPHome. Reverse engineering of hardware you own, for
+interoperability.

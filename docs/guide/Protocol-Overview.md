@@ -5,7 +5,7 @@ frames look like and where the truth lives. This is **not** a byte reference. Th
 `reverse-engineering/docs/03-rs485-ac-protocol.md`.
 
 ← back to [Home](Home) · siblings: [Repo Map and Build Pipeline](Repo-Map-and-Build-Pipeline) ·
-[ESP32 Replacement Build](ESP32-Replacement-Build)
+[ESP32 Replacement Board](ESP32-Replacement-Build)
 
 ---
 
@@ -15,9 +15,10 @@ Framing, checksum, and every byte offset were sniff-confirmed against the **real
 (command + status) by remote-button correlation. The offsets originally borrowed from the
 older `AEH-W4A1` reference project were **wrong in several places** and are corrected in this
 repo. **Do not re-derive or "fix" them from reference or other-model docs.** The executable
-source of truth is the driver: `firmware/src/rs485-driver/hisense_rs485.cpp`
-(`hisense_parse_status` / `hisense_build_command`) +
-`firmware/src/rs485-driver/matter_aircon_map.h`.
+source of truth is the codec in the ESPHome component,
+`firmware/esphome/components/hisense_ac/hisense_protocol.cpp`, and the hardware-validated
+reference driver it is tested against, `firmware/test/reference-driver/hisense_rs485.cpp`
+(`hisense_parse_status` / `hisense_build_command`).
 
 ## Physical layer
 
@@ -31,8 +32,8 @@ Two facts about DE differ between the RE docs; both are correct in context. The 
 bible (doc 03) notes the transceiver on the *stock module* is effectively auto-direction (no
 `gpio_*` in the UART path it first analysed), while the deeper stock-firmware trace (doc 10)
 proves the stock driver **does** bring up a DE line on **PA_17** and toggles it around every TX
-(5 ms pre-guard, 1 ms post-guard). The ESP32 port and the corrected AmebaZ2 driver drive DE.
-Bring-up ordering matters a lot, covered below.
+(5 ms pre-guard, 1 ms post-guard). This project's firmware drives DE on every board: 5 ms of
+settle before the first byte, and the frame's wire time plus 25 ms before release.
 
 ## Frame envelope
 
@@ -127,45 +128,49 @@ Two directions, two different frames. Full tables (with the confirmed hex per fi
 **Power and mode in one frame.** The ESPHome build sends a mode request to a unit that is off as
 one frame with `0x0C` in byte 18, as the stock module does. `0x5C` and `0x3C` are in the stock
 image. The values for auto, dry and fan-only (`0x9C`, `0x7C`, `0x1C`) follow from the same field
-rule and are marked `VERIFY` in the source. The two Matter builds still send a power-on frame
-followed by a mode frame. Evidence and file offsets: doc 10 section 5b-2.
+rule and are marked `VERIFY` in the source. If the unit is still off at the check, the node falls
+back to a power-on frame followed by a mode frame. Evidence and file offsets: doc 10 section 5b-2.
 
 **Horizontal swing is N/A**: no motor on this unit; the bit toggles but nothing moves. Only
-vertical swing is advertised over Matter. Left in the builder as dead code for a hypothetical
-H-swing variant.
+vertical swing is offered by default (`supports_horizontal_swing` turns the other on for a variant
+that has the motor).
 
-## Matter ↔ RS-485 mapping
+## Entity ↔ RS-485 mapping
 
-The bridge translates Matter thermostat/fan attributes to A/C fields. The mapping is
-extracted into the pure, host-tested `firmware/src/rs485-driver/matter_aircon_map.h`
-that `matter_drivers.cpp` uses.
+The component translates climate, switch and select writes to A/C fields and status frames back
+to entity state. The mapping and every decision around it (shadow sync, confirm and retry, preset
+planning) are pure functions in `firmware/esphome/components/hisense_ac/hisense_map.h`, host-tested.
 
-| Matter attribute | A/C concept |
+| Home Assistant | A/C concept |
 |---|---|
-| `SystemMode` / `Mode` | off / cool / heat / auto |
-| `LocalTemperature` | indoor temp sensor |
-| `OccupiedCoolingSetpoint` / `OccupiedHeatingSetpoint` | cool / heat target |
-| fan / swing / eco extras | `ac_fan_*`, `ac_swing_*`, `ac_power_save`, … |
+| climate mode, off | mode field (cool / heat / auto / dry / fan), power bit |
+| current temperature | indoor temp sensor |
+| target temperature | setpoint, whole degrees, 16 to 32 °C, cool and heat only |
+| fan mode, swing mode | six-step fan ladder, vertical swing |
+| eco / turbo / quiet / sleep presets and switches | the special-mode bytes, sent 10 s apart |
 
-## The "77" recommission mechanism
+## The "77" request
 
 There is **no dedicated reset frame**. The remote's *Horizon Airflow ×6 → "77"* is a
 remote→mainboard key sequence; the mainboard signals the module by setting a **request bit in
 its reply to the ~1 Hz `0x1E` heartbeat**. Static RE inferred bit3 (`0x08`); the **hardware
 truth** is that "77" pulses **`payload[4] = 0x20` (bit5, smart-config)** for a single ~1 Hz
-frame, then clears. Our driver keys on `0x08|0x20` (edge-triggered, repeat pulses collapsed by
-a pending-guard) → `matter_driver_on_recommission` → `OpenBasicCommissioningWindow` advertises
-a beacon **while staying commissioned** (fabric not wiped). Conversely, the A/C lights "77" iff
-the module reports `prov_status` in its **outbound** `0x1E`, so the display tracks our pairing
-state. Both directions are **proven on hardware**. Full bitfields + the outbound builder in
-doc 03's "Recommission" section.
+frame, then clears. Conversely, the A/C lights "77" iff the module reports `prov_status` in its
+**outbound** `0x1E`, so the display tracks the module's pairing state. Both directions are
+**proven on hardware**. Full bitfields and the outbound builder are in doc 03's "Recommission"
+section.
 
-> ⚠️ **Bring-up ordering.** Initialize the DE GPIO (PA_17) and UART from a **task**,
-> after the RTOS scheduler and SDK HAL are up, never from a static ctor or pre-scheduler
-> Matter init. Doing it early faults through unpopulated HAL tables (this was the v4 boot
-> fault). The exact stock ordering (mutex first, persistent `gpio_t`, DE toggle sequence) and
-> the root-cause analysis are in
-> `reverse-engineering/docs/10-stock-fw-init-and-comms.md`.
+The vendor firmware uses the request to reset Wi-Fi and start pairing. The retired Matter builds
+used it to reopen their commissioning window. The ESPHome firmware has no pairing step and does
+not act on it: a node gets new Wi-Fi through its setup hotspot. The reference driver under
+`firmware/test/reference-driver/` still carries the handler (edge-triggered on `0x08|0x20`, with a
+re-entry lockout) for anyone who needs the behaviour.
+
+> ⚠️ **Bring-up ordering on the stock module.** Initialize the DE GPIO (PA_17) and UART from a
+> **task**, after the RTOS scheduler and SDK HAL are up, never from a static constructor. Doing it
+> early faults through unpopulated HAL tables (this was a boot fault in an early build). The exact
+> stock ordering (mutex first, persistent `gpio_t`, DE toggle sequence) and the root-cause analysis
+> are in `reverse-engineering/docs/10-stock-fw-init-and-comms.md`.
 
 ## The two deep references
 

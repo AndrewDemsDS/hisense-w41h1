@@ -1,72 +1,65 @@
 # Build, Flash and Test
 
-Getting started from source, one section per firmware target, in order of preference: ESPHome,
-then ESP32 with Matter, then the stock AmebaZ2 module. Every step goes through
-`firmware/scripts/dev.py`, which holds the release logic, calls the helper scripts
-(`esp32-lint.sh`, the setup scripts) and prints each command before running it, so you can also
-copy the commands and run them by hand. The task-oriented walkthrough is the
-[User Guide](User-Guide); this page has the detail behind it.
+Getting started from source. Every step goes through `firmware/scripts/dev.py`, which prints each
+command before running it, so you can also copy the commands and run them by hand. The
+task-oriented walkthrough is the [User Guide](User-Guide); this page has the detail behind it.
 
 ← back to [Home](Home) · siblings: [User Guide](User-Guide) ·
 [Repo Map and Build Pipeline](Repo-Map-and-Build-Pipeline) · [Testing and QA](Testing-and-QA) ·
-[ESPHome Build](ESPHome-Build) · [ESP32 Replacement Build](ESP32-Replacement-Build)
+[ESPHome Build](ESPHome-Build) · [ESP32 Replacement Board](ESP32-Replacement-Build)
 
 ---
 
-## Which target
+## Which board
 
-| Target | Hardware | Reaches | Page |
-|---|---|---|---|
-| `esphome` (preferred) | an ESP32-C3 SuperMini or classic ESP32 plus a 3.3 V transceiver | Home Assistant only | [ESPHome Build](ESPHome-Build) |
-| `esp32` | the same ESP32 board and wiring | Matter (HA, Apple, Google, Alexa) | [ESP32 Replacement Build](ESP32-Replacement-Build) |
-| `amebaz2` | the stock W41H1 module, reflashed over a SOIC-8 clip | Matter | [Installing the Firmware](Installing-Custom-Firmware) |
+| `--board` | Hardware | Page |
+|---|---|---|
+| `c3` (default) | ESP32-C3 SuperMini plus a 3.3 V transceiver | [ESP32 Replacement Board](ESP32-Replacement-Build) |
+| `classic` | classic ESP32 (D0WDQ6) plus a 3.3 V transceiver | [ESP32 Replacement Board](ESP32-Replacement-Build) |
+| `amebaz2-factory`, `amebaz2-sdk`, `amebaz2-native` | the stock W41H1 module through LibreTiny, by the flash layout the unit has | [ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board) |
 
 ## Verification status
 
 What each step has been run against. "Simulator" means `virtual_ac.py`, not an A/C.
 
-| Step | esphome | esp32 (C3) | esp32 (classic) | amebaz2 |
-|---|---|---|---|---|
-| Host QA (`dev.py test`) | CI, every push (plus `esphome config`) | CI, every push | CI, every push | CI, every push |
-| `dev.py build` on a real toolchain | yes, C3, 2026-09-14 | yes, 2026-09-14 (app 6% partition free; `busmon` too) | yes, 2026-09-15 (app 19% partition free) | yes, 2026-09-14 (v10332) |
-| Fresh clone on clean Ubuntu 24.04: `doctor`, `fetch`, `test`, `build` | yes, both boards, 2026-09-15 | yes, 2026-09-15 | yes, 2026-09-15 | yes, 2026-09-15 (serial verified) |
-| `busmon` against the real bus | n/a | untested | hardware (2026-07-12) | n/a |
-| Matter app against `virtual_ac.py` | n/a | simulator (2026-08-07) | untested | n/a |
-| Node on a live A/C, USB-powered (stage 2) | hardware | untested on these pins | hardware | hardware |
-| Powered from the connector (stage 3) | hardware (units run this way) | untested | see [ESP32 Replacement Build](ESP32-Replacement-Build) | hardware |
-| `dev.py` flash / bench on hardware | untested | untested | untested | n/a (clip) |
+| Step | ESP32 boards | stock module |
+|---|---|---|
+| Host QA (`dev.py test`) | CI, every push (plus `esphome config` on every board file) | CI, every push (plus a compile of all three layouts) |
+| `dev.py build` on a real toolchain | yes, C3, 2026-09-14 | yes, all three layouts |
+| Fresh clone on clean Ubuntu 24.04: `doctor`, `fetch`, `test`, `build` | yes, both boards, 2026-09-15 | not run |
+| Node on a live A/C, USB-powered (stage 2) | hardware | n/a |
+| Powered from the connector (stage 3) | hardware (units run this way) | hardware, factory layout only (2026-10-10) |
+| `dev.py` flash / bench on hardware | untested | n/a (no serial flash through `dev.py`) |
 
-Builds have been run through the wrapper; nothing has yet been flashed or benched through it on a
-real board. If a step fails, the printed `$ ...` command is the thing to debug.
+If a step fails, the printed `$ ...` command is the thing to debug.
 
 ## The guided flow
 
 ```
-python3 firmware/scripts/dev.py walk <target> [--board c3|classic] [--port /dev/ttyACM0]
+python3 firmware/scripts/dev.py walk esphome [--board c3|classic] [--port /dev/ttyACM0]
 ```
 
-It asks before each step: check tools and SDK pins, host QA and lint, build, (erase), flash and
-monitor, then prints the staged bring-up with its safety warnings. Each step is also a
-standalone command:
+It asks before each step: check the tools, host QA and the config check, build, (erase), flash and
+logs, then prints the staged bring-up with its safety warnings. Each step is also a standalone
+command:
 
 | Command | Does |
 |---|---|
-| `doctor <target>` | read-only: tools on `PATH`, SDK checkouts at the `versions.env` pins |
-| `fetch <target>` | fetch the pinned SDKs (asks first; several GB) |
-| `test <target>` | `firmware/test/run_tests.sh`, then the target's lint |
-| `build <target>` | build the app |
-| `erase <target> --port P` | erase-flash, brand-new boards only, needs typed `ERASE` |
-| `flash <target> --port P` | flash, then monitor |
-| `monitor <target> --port P` | serial console only |
-| `bench <target> --port P --sim-port S` | firmware against `virtual_ac.py`, no A/C |
-| `next <target>` | the staged bring-up and its warnings |
-| `convert esphome --board amebaz2-factory [--stage]` | wrap the built ESPHome image as a Matter `.ota` the stock module's Matter firmware installs, see [Converting a Stock Module](Converting-a-Stock-Module-to-ESPHome) |
-| `ota <amebaz2\|esp32> <step> [args]` | Matter OTA through the release scripts, see [OTA Updates](OTA-Updates) |
+| `doctor esphome` | read-only: tools on `PATH`, ESPHome at the pinned version, `secrets.yaml` present |
+| `fetch esphome` | `pipx install esphome==2026.7.4`, create `secrets.yaml` (asks first) |
+| `test esphome` | `firmware/test/run_tests.sh`, then `esphome config` |
+| `build esphome` | `esphome compile` |
+| `erase esphome --port P` | erase-flash, brand-new boards only, needs typed `ERASE` |
+| `flash esphome --port P` | flash over USB, then logs |
+| `monitor esphome --port P` | serial logs only |
+| `bench esphome --port P --sim-port S` | firmware against `virtual_ac.py`, no A/C |
+| `next esphome` | the staged bring-up and its warnings |
+| `convert esphome --board amebaz2-factory [--stage]` | wrap the built ESPHome image as a Matter `.ota` that the retired Matter firmware on a stock module installs, see [Converting a Stock Module](Converting-a-Stock-Module-to-ESPHome) |
+| `matter-slots <ip>`, `matter-backup <ip> [out.bin]` | read-only probes of a unit that still runs that Matter firmware |
 
-`--board` defaults to `c3`. It picks the IDF target (`esp32c3` or `esp32`) and, for ESPHome, the
-board and pin substitutions passed to `esphome -s`. For ESPHome there are also `--board amebaz2-factory`,
-`amebaz2-sdk` and `amebaz2-native`, the stock module through LibreTiny by the flash layout the
-unit has: `test`, `build` and `convert`. There is no serial flash for the module through `dev.py`
+`--board` defaults to `c3`. It picks the board and pin substitutions passed to `esphome -s`. With
+`--board amebaz2-factory`, `amebaz2-sdk` or `amebaz2-native` there is `test`, `build` and
+`convert`. There is no serial flash for the module through `dev.py`
 ([ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board)).
 
 ESPHome builds go through a PlatformIO build cache (`PLATFORMIO_BUILD_CACHE_DIR`, default
@@ -75,7 +68,7 @@ module, ESP8266, RP2040) and does nothing for the ESP32 boards, which ESPHome bu
 tools and ccache. Set the variable to an empty string to switch it off. The numbers and the two
 caveats are in `firmware/esphome/README.md`, "Build cache".
 
-## ESPHome
+## Build and flash
 
 ```
 python3 firmware/scripts/dev.py fetch esphome      # pipx install esphome==2026.7.4, creates secrets.yaml
@@ -89,83 +82,12 @@ command line, so the YAML never needs editing to switch boards. `dev.py` uses th
 `PATH`; set `ESPHOME` to point at another install. Later updates go over the air with
 `esphome run`, passing the same board overrides you flashed with: a C3 node given the classic
 defaults receives an image for the wrong chip. Both command lines are in
-[OTA Updates](OTA-Updates#esphome-updates) (`dev.py ota` is Matter-only).
-
-## ESP32 (esp-matter)
-
-```
-python3 firmware/scripts/dev.py fetch esp32        # ESP-IDF + esp-matter at the versions.env pins
-python3 firmware/scripts/dev.py test esp32
-python3 firmware/scripts/dev.py build esp32 --board c3
-python3 firmware/scripts/dev.py flash esp32 --board c3 --port /dev/ttyACM0
-```
-
-New to ESP-IDF, or want the same steps without the wrapper?
-[ESP32 Build Environment](ESP32-Build-Environment) starts from a clean machine.
-
-- **Host packages first.** `fetch` checks the host prerequisites before cloning anything, and
-  `doctor esp32` reports them: without `libusb-1.0` ESP-IDF's `install.sh` fails only after
-  downloading every toolchain, and without `curl` and glib esp-matter's install fails in
-  connectedhomeip's bootstrap. Both print the one `apt install` line that fixes them (the list is in
-  the [User Guide](User-Guide#what-you-need)).
-- **Where things live.** ESP-IDF defaults to `~/esp/esp-idf` and esp-matter to `~/esp/esp-matter`;
-  set `IDF_PATH` / `ESP_MATTER_PATH` to use existing checkouts. `fetch` follows esp-matter's own
-  documented procedure (shallow submodules, `checkout_submodules.py --platform esp32 linux`).
-- **Python version.** esp-matter's install does not resolve on Python 3.14, and the ESP-IDF env and
-  the esp-matter venv must share one interpreter. `fetch` runs esp-matter's `install.sh` inside the
-  ESP-IDF environment so its `pip install` lands in the IDF venv (a distro Python refuses it as
-  externally-managed).
-- **Running `fetch` again.** A second bootstrap of connectedhomeip's environment always fails in
-  pigweed's `activate.sh` with `pw: command not found`, even after a clean first install. `fetch`
-  therefore reuses an environment that is already bootstrapped (`install.sh --no-bootstrap`), so
-  re-running it after fixing a host package is safe.
-- **Where `idf.py` runs.** In `firmware/esp32-matter/` for the Matter app and in
-  `firmware/esp32-matter/smoketest/` for `busmon`. Each has its own `sdkconfig` and `build/`.
-  `dev.py` only calls `idf.py set-target` when the configured target differs, because that call
-  wipes both.
-- **Brand-new board.** Run `dev.py erase esp32 --port P` once before the first flash. A vendor
-  test image can leave a Wi-Fi config in NVS that makes every commissioning attempt fail with
-  `CHIP Error 0x000000AC` (full story in `firmware/esp32-matter/README.md`). Never erase a
-  commissioned node: that wipes its fabric.
-- **Dev build vs release.** `dev.py build` is a plain `idf.py build`. An image that goes out over
-  OTA must come from `dev.py ota esp32 release`, which archives the
-  delta base first ([OTA Updates](OTA-Updates#esp32-delta-ota)).
-
-## AmebaZ2 (stock module)
-
-```
-python3 firmware/scripts/dev.py fetch amebaz2      # firmware/setup.sh then scripts/setup.sh, ~25 GB
-python3 firmware/scripts/dev.py test amebaz2       # host QA + dev.py ota amebaz2 lint
-python3 firmware/scripts/dev.py build amebaz2      # dev.py ota amebaz2 build: full clean, FWHS serial, verify
-```
-
-`dev.py flash amebaz2` does not write anything. It prints the two real paths, because both carry
-risks a wrapper should not hide: a first install is a SOIC-8 clip write
-([Installing the Firmware](Installing-Custom-Firmware), dump the chip first), and a commissioned
-node takes `dev.py ota amebaz2 release`. Read `firmware/docs/10-firmware-ota-procedure.md` before
-the first OTA.
-
-Two AmebaZ2 build failures seen while verifying, both with misleading symptoms:
-
-- **`No module named 'matter'` in AmebaZ2 codegen, zero ninja steps.** The connectedhomeip
-  pigweed venv is dead, usually because the host Python was upgraded underneath it. `dev.py ota amebaz2 build`
-  now stops earlier with that diagnosis. Rebuild the venv with a Python the SDK supports first on
-  `PATH` (3.11 worked): `cd <sdk>/connectedhomeip && rm -rf .environment && source scripts/bootstrap.sh`.
-- **`make: *** [Makefile:49: is_matter] Error 2` with no visible cause.** The console shows only
-  the tail of that step; the full output is in `/tmp/ota-ismatter.log`. On a fresh SDK it held
-  `build_info.h: No such file or directory`: the SDK's makefile generated that header in parallel with
-  the objects that include it, so the first build ever raced. `dev.py ota amebaz2 build` now orders the
-  header first. Once it held
-  `Segmentation fault` from the Realtek `arm-none-eabi-gcc` driver, crashing in its own license
-  ("visa") check before compiling. An unchanged re-run passed, and the crash could not be
-  reproduced on demand, so treat it as intermittent: re-run before debugging further.
+[ESPHome Build](ESPHome-Build#updates).
 
 ## Bench stage: no A/C
 
-`bench` flashes the bus-facing firmware and starts `firmware/test/virtual_ac.py` on a second USB
-adapter that plays the A/C's part. For `esphome` it flashes the normal image and follows its logs;
-for `esp32` it flashes `smoketest/` (`busmon`, a live bus monitor: the real driver's handshake,
-poll and status parse, logging every decoded frame).
+`bench` flashes the normal image and starts `firmware/test/virtual_ac.py` on a second USB adapter
+that plays the A/C's part, then follows the node's logs.
 
 Two ways to wire it, no mains anywhere:
 
@@ -178,30 +100,26 @@ Board pins are C3 TX 5 / RX 6 / DE 10, classic TX 19 / RX 18 / DE 4.
 
 ```
 python3 firmware/scripts/dev.py bench esphome --board c3 --port /dev/ttyACM0 --sim-port /dev/ttyUSB0
-python3 firmware/scripts/dev.py bench esp32   --board c3 --port /dev/ttyACM0 --sim-port /dev/ttyUSB0
 ```
 
-On ESPHome the pass is the `AC bus link` binary sensor turning on and the climate entity
-populating. On `esp32`, the simulator side first answers the handshake:
+The simulator side first answers the handshake:
 
 ```
 # virtual A/C up. initial: {'power': True, 'mode': 'cool', 'setpoint': 24, ...}
   [0x0A] handshake poll -> echoed slave reply
 ```
 
-then `busmon` logs one decoded frame per second, with `frames` and `RX` both climbing:
-
-```
-I busmon: A/C #1: power=1 mode=... set=24C indoor=25C outdoor=32C fan=0x.. comp=..Hz ...
-W busmon: t=3s: frames=3 TX=... RX=... | rx_task_up=1 ...
-```
-
-`frames=0` with `TX` climbing and `RX=0` is a wiring fault: TX and RX swapped, no common ground, or
+The pass is the `AC bus link` binary sensor turning on and the climate entity populating. A link
+that stays off with the node sending is a wiring fault: TX and RX swapped, no common ground, or
 (through a transceiver) DE not reaching the chip.
+
+To look at the bus without Home Assistant in the way, `firmware/esp32-recon/` is a small ESP-IDF
+tool for the same board: a console on the wire that decodes every frame, with a tap mode that only
+listens.
 
 ## After the bench
 
-`dev.py next <target>` prints the remaining stages: real bus with the board USB-powered and **only
+`dev.py next esphome` prints the remaining stages: real bus with the board USB-powered and **only
 A/B** connected (the ground-loop rule), then full integration powered from the connector. Its
 warnings (3.3 V transceiver, the C3 DE pulldown, C3 USB pins, classic PSRAM pins) are the ones in
-[ESP32 Replacement Build](ESP32-Replacement-Build).
+[ESP32 Replacement Board](ESP32-Replacement-Build).

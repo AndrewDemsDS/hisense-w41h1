@@ -36,25 +36,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 CPP_EXT = (".c", ".cc", ".cpp", ".h", ".hpp", ".tcc")
 
-# Trees we own. Everything else (SDK copies, patches, the HACS submodule) is out of scope.
+# Trees we own. Everything else is out of scope.
 INCLUDE = [
-    "firmware/src/rs485-driver/*",
-    "firmware/esp32-matter/main/*",
-    "firmware/esp32-matter/components/hisense_hal/*",
-    "firmware/esp32-matter/smoketest/*",
     "firmware/esp32-recon/*",
     "firmware/esphome/components/hisense_ac/*",
     "firmware/test/*",
 ]
 
-# Never lint or reformat these, even if a path argument names them. sdk-edits holds copies of
-# Realtek/CHIP example files and generated captures; reformatting them breaks every SDK rebase.
+# Never lint or reformat these, even if a path argument names them.
 EXCLUDE = [
-    "firmware/src/sdk-edits/*",
-    "patches/*",
-    "sdk/*",
     "dumps/*",
-    "integrations/*",
     "*/build/*",
     "*/managed_components/*",
 ]
@@ -64,16 +55,16 @@ VENDOR_BANNER = re.compile(r"confidential", re.IGNORECASE)
 
 # Integer-constant #define is allowed where a macro is the only thing that works.
 NO_DEFINES_EXEMPT = {
-    # C-API headers: included from C translation units (esp32-recon) and inside extern "C", and
-    # test_diag_contract.py parses the HISENSE_FEAT1_/HISENSE_FAULT1_ #defines as the contract
-    # with the HACS integration. constexpr is C++ only, so these stay macros.
-    "firmware/src/rs485-driver/hisense_rs485.h",
-    "firmware/src/rs485-driver/matter_aircon_map.h",
-    "firmware/src/rs485-driver/esphome_aircon_map.h",
-    "firmware/src/rs485-driver/power_estimate.h",
-    # Stand-ins for SDK headers (PinNames.h, FreeRTOS.h): they must look like the real macros.
+    # C-API headers: included from C translation units (esp32-recon) and inside extern "C".
+    # constexpr is C++ only, so these stay macros.
+    "firmware/test/reference-driver/hisense_rs485.h",
+    "firmware/test/reference-driver/aircon_map_common.h",
+    "firmware/test/reference-driver/esphome_aircon_map.h",
+    "firmware/test/reference-driver/power_estimate.h",
+    # Stand-ins for the Realtek SDK's headers (PinNames.h, FreeRTOS.h) that the reference driver
+    # includes: they must look like the real macros.
     "firmware/test/hal_stub.h",
-    "firmware/esp32-matter/components/hisense_hal/include/*",
+    "firmware/esp32-recon/components/hisense_hal/include/*",
 }
 
 # Headers that are one-line shims mirroring an SDK header name; hal_stub.h carries the guard.
@@ -281,22 +272,22 @@ def fix_rules(content: str) -> str:
 # clang-tidy: the host-compilable set (mirrors firmware/test/run_tests.sh)
 # ---------------------------------------------------------------------------------------------
 
-C11 = ["-std=c++11", "-Ifirmware/test/stubinc", "-Ifirmware/test", "-Ifirmware/src/rs485-driver"]
+C11 = ["-std=c++11", "-Ifirmware/test/stubinc", "-Ifirmware/test", "-Ifirmware/test/reference-driver"]
 C17_PORT = ["-std=c++17", "-Ifirmware/esphome/components/hisense_ac"]
 HDR = ["-x", "c++-header"]
 
 # (file, flags). Headers are listed as their own units so each is checked under the .clang-tidy
 # of its own directory, not the one of whichever test happens to include it. The ESPHome glue
 # (hisense_ac.cpp, climate, select, switch) needs ESPHome's headers and is gated by
-# ESPHome's own tooling instead; the esp32-matter and esp32-recon trees need ESP-IDF.
+# ESPHome's own tooling instead; the esp32-recon tree needs ESP-IDF.
 TIDY_UNITS = [
-    ("firmware/src/rs485-driver/hisense_rs485.cpp", C11),
-    ("firmware/src/rs485-driver/hisense_rs485.h", HDR + C11),
-    ("firmware/src/rs485-driver/matter_aircon_map.h", HDR + C11),
-    ("firmware/src/rs485-driver/esphome_aircon_map.h", HDR + C11),
-    ("firmware/src/rs485-driver/power_estimate.h", HDR + C11),
+    ("firmware/test/reference-driver/hisense_rs485.cpp", C11),
+    ("firmware/test/reference-driver/hisense_rs485.h", HDR + C11),
+    ("firmware/test/reference-driver/aircon_map_common.h", HDR + C11),
+    ("firmware/test/reference-driver/esphome_aircon_map.h", HDR + C11),
+    ("firmware/test/reference-driver/power_estimate.h", HDR + C11),
     ("firmware/test/test_codec.cpp", C11),
-    ("firmware/test/test_matter_map.cpp", C11),
+    ("firmware/test/test_reference_map.cpp", C11),
     ("firmware/test/test_esphome_map.cpp", C11),
     ("firmware/test/test_esphome_codec_parity.cpp", C11[1:] + C17_PORT),
     ("firmware/test/test_esphome_bus.cpp", C17_PORT),

@@ -5,28 +5,28 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "== Layer 1a: codec golden regression =="
-g++ -std=c++11 -Wall -Istubinc -I. -I../src/rs485-driver \
-    test_codec.cpp ../src/rs485-driver/hisense_rs485.cpp -o test_codec
+g++ -std=c++11 -Wall -Istubinc -I. -Ireference-driver \
+    test_codec.cpp reference-driver/hisense_rs485.cpp -o test_codec
 ./test_codec
 
 echo
-echo "== Layer 1b: Matter <-> A/C mapping (Matter-side QA, no chip) =="
-g++ -std=c++11 -Wall -Istubinc -I. -I../src/rs485-driver \
-    test_matter_map.cpp ../src/rs485-driver/hisense_rs485.cpp -o test_matter_map
-./test_matter_map
+echo "== Layer 1b: reference map (fan ladder, setpoint clamp, running state, power estimate) =="
+g++ -std=c++11 -Wall -Istubinc -I. -Ireference-driver \
+    test_reference_map.cpp reference-driver/hisense_rs485.cpp -o test_reference_map
+./test_reference_map
 
 echo
 echo "== Layer 1c: ESPHome <-> A/C mapping (ESPHome-side QA, no chip, no ESPHome) =="
-g++ -std=c++11 -Wall -Istubinc -I. -I../src/rs485-driver \
-    test_esphome_map.cpp ../src/rs485-driver/hisense_rs485.cpp -o test_esphome_map
+g++ -std=c++11 -Wall -Istubinc -I. -Ireference-driver \
+    test_esphome_map.cpp reference-driver/hisense_rs485.cpp -o test_esphome_map
 ./test_esphome_map
 echo
-echo "== Layer 1d: ESPHome codec port == original driver (parity, see the test's header) =="
+echo "== Layer 1d: ESPHome codec port == reference driver (parity, see the test's header) =="
 # The port is C++17 (ESPHome's nested namespaces); the original stays C++11 as it ships.
-g++ -std=c++11 -Wall -Istubinc -I. -I../src/rs485-driver -c ../src/rs485-driver/hisense_rs485.cpp \
+g++ -std=c++11 -Wall -Istubinc -I. -Ireference-driver -c reference-driver/hisense_rs485.cpp \
     -o parity_driver.o
 g++ -std=c++17 -Wall -c ../esphome/components/hisense_ac/hisense_protocol.cpp -o parity_port.o
-g++ -std=c++17 -Wall -Istubinc -I. -I../src/rs485-driver -I../esphome/components/hisense_ac \
+g++ -std=c++17 -Wall -Istubinc -I. -Ireference-driver -I../esphome/components/hisense_ac \
     test_esphome_codec_parity.cpp parity_port.o parity_driver.o -o test_esphome_codec_parity
 rm -f parity_driver.o parity_port.o
 ./test_esphome_codec_parity
@@ -86,28 +86,12 @@ sys.exit(0 if ok else 1)
 PY
 
 echo
-echo "== Layer 3: diagnostics bitmap contract (firmware <-> HACS integration) =="
-python3 ./test_diag_contract.py
-
-echo
-echo "== Layer 4: AmebaZ2 image signing chain (#75) =="
+echo "== Layer 3: AmebaZ2 image signing chain (#75) =="
 python3 ./test_image_chain.py
 
 echo
-echo "== Layer 5: OTA pre-flight + staging guards =="
-python3 ./test_ota_guards.py
-
-echo
-echo "== Layer 6: AmebaZ2 build clock survives merge + cherry-pick (#137) =="
-bash ./test_image_epoch.sh
-
-echo
-echo "== Layer 7: dev.py release engine (version, endpoint and tag rules, #143) =="
+echo "== Layer 4: dev.py (convert re-signing, provider staging, command line) =="
 python3 ./test_dev_release.py
-
-echo
-echo "== Layer 8: headless .zap editor + data-model contract (beeper endpoint, mfg-cluster ids) =="
-python3 ./test_zap_edit.py
 
 echo
 echo "ALL QA LAYERS PASSED"

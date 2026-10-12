@@ -13,4 +13,4 @@ body:
     id: context
     attributes:
       label: Context
-      description: Your hardware, HA / matter-server setup, and what you've already tried.
+      description: Your hardware, Home Assistant setup, and what you've already tried.

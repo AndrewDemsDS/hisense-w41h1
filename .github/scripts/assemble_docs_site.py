@@ -31,25 +31,22 @@ SOURCES = [
 ]
 
 # Guide pages read in a deliberate order rather than alphabetically: a newcomer needs wiring before
-# flashing before commissioning. Anything unlisted sorts after these, alphabetically.
-# The firmware pages follow the preferred variant: ESPHome, then ESP32 Matter, then AmebaZ2.
+# flashing before everyday use. Anything unlisted sorts after these, alphabetically.
 GUIDE_ORDER = [
     "User-Guide",
     "Hardware-and-Wiring",
     "ESP32-Build-Environment",
     "ESPHome-Build",
     "ESP32-Replacement-Build",
-    "Installing-Custom-Firmware",
-    "Commissioning-and-HA-Setup",
     "Everyday-Control",
     "Entities-and-Diagnostics",
     "Climate-Groups",
-    "OTA-Updates",
-    "Migrating-ESP32-Matter-to-ESPHome",
-    "Converting-a-Stock-Module-to-ESPHome",
     "Recovery-and-Reflash",
     "Build-Flash-Test",
     "FAQ-Gotchas",
+    "Matter-Firmware-Retired",
+    "Migrating-ESP32-Matter-to-ESPHome",
+    "Converting-a-Stock-Module-to-ESPHome",
 ]
 
 # Wiki pages that are navigation fragments, plus its own linter. Not content.

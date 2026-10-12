@@ -1,4 +1,4 @@
-// esp32-recon — independent RS-485 A/C bus diagnostic tool (no Matter).
+// esp32-recon: independent RS-485 A/C bus diagnostic tool.
 //
 // Boot flow: NVS -> netif/event loop -> core state -> select capture mode
 // (tap|master, from NVS, default tap = passive/safe) -> esp_console + commands ->

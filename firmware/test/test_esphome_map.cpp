@@ -1,9 +1,9 @@
 // test_esphome_map.cpp -- ESPHome-side QA (no chip, no ESPHome installed): asserts the
 // ESPHome<->Hisense mapping and ties it end-to-end to the validated wire bytes, the same way
-// test_matter_map.cpp does for the Matter path.
+// test_reference_map.cpp does for the Matter path.
 //
 // esphome_aircon_map.h deliberately holds only the enum mapping; the fan ladder, setpoint
-// clamp and running-state derivation are reused from matter_aircon_map.h. So the interesting
+// clamp and running-state derivation are reused from aircon_map_common.h. So the interesting
 // cases here are the ones where ESPHome and Matter differ: Hisense AUTO maps to ESPHome's
 // AUTO (not HEAT_COOL, which means "heat or cool to the target"), and hvac_action is an
 // enum rather than a bitmap, with a Dry state Matter has no running-state bit for.
@@ -15,7 +15,7 @@
 
 #include "hal_stub.h"
 #include "esphome_aircon_map.h"
-#include "matter_aircon_map.h"
+#include "aircon_map_common.h"
 #include "hisense_rs485.h"
 #include "test_common.h"
 #include <cstdio>
@@ -167,9 +167,9 @@ int main() {
 
   // ---- setpoint clamp is shared with the Matter path, so just pin the contract ----
   printf("[setpoint]\n");
-  CHECK(matter_clamp_setpoint_c(10) == 16, "below range clamps to 16");
-  CHECK(matter_clamp_setpoint_c(40) == 32, "above range clamps to 32");
-  CHECK(matter_clamp_setpoint_c(22) == 22, "in range unchanged");
+  CHECK(hisense_clamp_setpoint_c(10) == 16, "below range clamps to 16");
+  CHECK(hisense_clamp_setpoint_c(40) == 32, "above range clamps to 32");
+  CHECK(hisense_clamp_setpoint_c(22) == 22, "in range unchanged");
 
   // ---- #117: the setpoint travels in the PANEL's unit ----------------------------------
   // ESPHome is always Celsius, but the A/C reads byte 19 in its display unit. With the panel

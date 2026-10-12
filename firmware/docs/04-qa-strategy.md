@@ -1,162 +1,108 @@
-# QA & testing strategy (W41H1 Matter firmware)
+# QA & testing strategy
 
-How this firmware is validated **without depending on the physical A/C or the chip being in
-hand**, and where hardware is still required. Standard embedded/IoT test pyramid: mock the
-hardware, test each layer at the cheapest meaningful level, keep real hardware as a thin top
-gate. Adapted for a **reverse-engineered** protocol, where our own sniffed frames are ground
-truth.
+How this firmware is validated without the physical A/C or the chip in hand, and where hardware is
+still required. The commands and the list of tests are in
+[`docs/guide/Testing-and-QA.md`](../../docs/guide/Testing-and-QA.md). This page is the reasoning.
+
+The protocol is reverse-engineered, so the ground truth is our own sniffed frames. Every layer
+below is built on that: captured bytes become golden vectors, and nothing is derived from another
+model's documentation.
 
 ## The layers
 
-| # | Layer | What it proves | Needs HW? | Ours |
-|---|-------|----------------|-----------|------|
-| 1 | Host unit / codec (mocked HAL) | encoder/parser produce/accept the right bytes | no | `test/test_codec.cpp` + `test/hal_stub.h` |
-| 2 | Device sim + record/replay | full command↔status loop against a modeled A/C | no | `test/virtual_ac.py` + sniffed golden frames |
-| 3 | Full-firmware sim (Renode) | the **real** driver code on the **real** core | no | `test/renode/` (scaffold) |
-| 4 | Matter protocol (mapping test + loopback OTA sim) | cluster↔command mapping; OTA convert plumbing | partly | `test_matter_map` + `test/sim_ota_convert.sh` |
-| 5 | HIL, hardware in the loop | timing, RF, the real A/C | yes | flash + HA + DI-tap sniffer |
+| # | Layer | Proves | HW? |
+|---|---|---|---|
+| 1 | Host unit tests with a mocked HAL | builders and parsers produce and accept the right bytes, and mapping and retry decisions are right | no |
+| 2 | Device simulation, golden-frame replay | the command and status loop against a modeled A/C | no |
+| 3 | Build checks | the YAML and schemas are valid on every board, and the stock-module image is laid out for its flash | no |
+| 4 | Bench | a flashed board against the simulator on a USB adapter | a board |
+| 5 | HIL | timing, RF, the real A/C | yes |
 
-Run layers 1–2 now: `firmware/test/run_tests.sh` (host-only, CI-friendly, exits
-non-zero on any failure).
+## Layer 1: host unit tests
 
-## Layer 1: host unit tests with a mocked HAL
+Two bodies of code are tested on the host.
 
-The bottom of the pyramid: mock the hardware-abstraction layer so driver logic
-runs on a PC. `hal_stub.h` mocks the Ameba `serial_*` + FreeRTOS API; the *real*
-`hisense_rs485.cpp` links against it and `test_codec.cpp` asserts every command
-byte and every parsed status field against the **hardware-confirmed golden
-values** (AUTO→`0x90`, fan `0x0B..0x13`, eco `0x30`, turbo `0x0C`, direct-°C
-temps, the flag bits, checksum, F4-stuffing, and rejection of malformed frames).
-330 assertions, milliseconds, no A/C. This is the regression gate for every codec
-change.
+**The reference driver** (`firmware/test/reference-driver/`) is the project's first bus driver. It
+ran on real units for months under the retired Matter builds, and it is frozen. It compiles
+against a stub of the Realtek HAL (`firmware/test/hal_stub.h`, `stubinc/`). `test_codec.cpp` holds
+it to captured frames, byte for byte.
 
-## Layer 2: device simulation + golden-frame record/replay
+**The ESPHome component's protocol sources** (`hisense_protocol.*`, `hisense_map.h`,
+`hisense_bus.*`) have no ESPHome dependency by design, so they compile on the host too.
+`test_esphome_codec_parity.cpp` runs every builder and parser of the port and of the reference
+over the same inputs (exhaustive where the domain is small, the full command cartesian product,
+seeded random frames for the parsers) and compares the results field by field. That comparison is
+why a second copy of the codec is safe.
 
-For a reverse-engineered protocol this is the highest-value technique: the frames
-we captured off the real W41H1 are the **golden master**, and `virtual_ac.py` is
-a software model of the indoor unit that speaks the validated bus, it answers
-status-request polls with a 160-byte status frame and applies command frames to
-its state. `run_tests.sh` round-trips it against `decode_ac_frames.py`
-(simulator encodes → decoder reads back the same state; driver golden command
-bytes → simulator mutates correctly). It also runs **interactively**: point it at
-a PTY (`--pty`), a real serial port (`--port`, e.g. a USB-TTL loopback or the
-DI/RO tap for on-hardware cross-checks), or a TCP socket (`--connect`, for Renode).
+Things a codec test must include, each learned from a miss:
 
-## Layer 3: full-firmware simulation (Renode)
+- a real **combined multi-field** command frame. The node always sends one, never a single-field
+  frame.
+- an actual **doubled-`0xF4`** stuffing round trip. A frame whose checksum never contains `0xF4`
+  never exercises the stuff and un-stuff path.
+- **fixpoint** checks on every map pair (status to command and back), which guard against a
+  readback being sent out again as a new command.
 
-Renode runs unmodified Cortex-M firmware against emulated peripherals in CI, the
-only no-chip way to exercise the driver's RX-IRQ/bus-task/TX-queue code on the
-actual core. `test/renode/` has the platform scaffold (Cortex-M33 + memory map +
-UART0 @ `0x40003000`) and a run script that bridges UART0 to `virtual_ac.py`.
-**Recommended first target: a minimal bare-metal driver-test ELF**, not the full
-Matter image (booting `flash_is.bin` needs the ROM/XIP/PMU modeled, see
-`test/renode/README.md`).
+## Layer 2: device simulation
 
-## Layer 4: Matter protocol QA
+`firmware/test/virtual_ac.py` models the indoor unit: it answers the handshake, serves 160-byte
+status frames and applies command frames to its state. `run_tests.sh` checks it against the
+independent frame decoder in `reverse-engineering/tools/`, in both directions, so the simulator
+and the decoder cannot be wrong in the same way without a third party (the captures) noticing.
 
-Two halves, one buildable without hardware and one needing a running device:
+`test_esphome_bus.cpp` runs the component's bus scheduler against a simulated unit:
+reply windows, hold-off, link loss, re-sends.
 
-**4a, mapping unit test (built, no chip).** The Matter↔A/C translation is
-extracted into a pure header (`firmware/src/rs485-driver/matter_aircon_map.h`)
-that `matter_drivers.cpp` *actually uses*, and `test/test_matter_map.cpp` asserts
-the whole table **end-to-end to the wire**: a Matter attribute value → mapping →
-`hisense_build_command` → the hardware-confirmed byte (Auto→`0x90`, SpeedSetting
-6→`0x13`, RockSetting up-down→byte32 `0xC0`, setpoint 2200→byte19 `0x2D`, …), plus
-the reverse (status→SpeedCurrent/PercentCurrent/SystemMode). 119 assertions, host,
-no chip, the offline equivalent of a chip-tool write. In `run_tests.sh`.
+## Layer 3: build checks
 
-**4b, chip-tool / CSA Test Harness (needs a device).** Matter's official QA/cert
-tool is the CSA **Test Harness** (Raspberry-Pi, PICS-driven, chip-tool underneath);
-because the Phase-0 image uses CHIP default test creds (`0xFFF1`), it passes the
-TH baseline and chip-tool commissions/controls it out of the box. For automated
-regression, script **chip-tool** attribute reads/writes as YAML against the
-commissioned device and assert the cluster surface behaves. (Add once flashed, or
-run against a Linux CHIP app if you want it fully hardware-free.)
+`esphome config` validates every board file and every platform schema of the component without a
+toolchain, in seconds. CI also compiles all three stock-module layouts for real, because that is
+the one platform with a different compiler and integer widths, and because the build itself checks
+that the image's slot addresses are those of the layout the file names.
 
-**4c, OTA conversion sim (built, no chip).** `firmware/test/sim_ota_convert.sh`
-runs connectedhomeip's Linux `chip-ota-requestor-app` (device stand-in) +
-`chip-ota-provider-app` + `chip-tool` on loopback: it commissions both, serves our
-`.ota`, announces the provider, and asserts the real OTA sequence
-(`QueryImage → UpdateAvailable → BDX → ApplyUpdateRequest`). This validates the
-`.ota` packaging + OTA transport (the F2 stock→custom plumbing) with zero hardware;
-it does not exercise the AmebaZ2 image processor / real boot.
+ESPHome's own CI scripts run against the component too (`esphome-upstream-check.sh`), on the
+pinned release and on their development branch.
 
-## Layer 5: HIL (the thin top, needs the chip)
+## Layer 4: bench
 
-Flash `built-images/flash_rac-stock-v1.bin` (Phase 0/1) via the CH341A clip,
-commission in Home Assistant, then use the **DI-tap sniffer** as the hardware
-assertion: `decode_ac_frames.py --port <tap>` confirms the firmware puts the
-*correct bytes on the wire* for each Matter action, against the real A/C. This is
-the only layer that covers RF, real bus timing, and the physical unit.
+`dev.py bench esphome` flashes a board and runs it against `virtual_ac.py` over a USB-TTL or
+USB-RS485 adapter. It proves the wiring, the UART and DE timing on the real chip before any wire
+touches the appliance.
 
-### Scripted HIL checks
+## Layer 5: HIL
 
-`firmware/test/hil_display_actuation.py` drives the ep9 Display switch on every
-commissioned node (ids from `ota-release.env`, so nothing is hardcoded) and asserts
-two things: the OnOff attribute really transitions in both directions, and no other
-A/C attribute moves as a side effect.
+`firmware/test/hil_esphome_actuation.py` drives a node on a real A/C over the native API and
+checks two properties for every control:
 
-The second assertion is the interesting one. `display` rides the *combined* command
-frame, so every display command resends mode, setpoint, fan, and swing from the
-command shadow. If the shadow drifts, or the one-shot reset to
-`HISENSE_DISPLAY_NOCHANGE` leaks, those fields move and driving the panel silently
-retunes the A/C.
+1. **Actuation.** The command lands and the entity changes state. A command that matches the
+   current value is a no-op that proves nothing, so every step forces a real change.
+2. **No collateral.** Most controls ride the combined command frame, which is rebuilt from the
+   command shadow. If the shadow drifts, driving one control retunes the A/C. So after each step
+   everything else must be where it was.
 
-Two traps this encodes, both of which produced false results by hand:
+It also reads the bus counters: a readback that would pass on a dead bus is rejected, every wait
+watches `Command retries` and waits longer when it moved, and the run ends with the counter
+deltas. Retries are listed and are fine. A rise in `Failed commands` is a failed check. The
+restore step leaves the unit off when the run itself switched it on (an earlier version put the
+mode back after the power-off and left two units running, #175).
 
-1. `OnOff.OnOff` is read-only. Writing it returns `0x88 UNSUPPORTED_WRITE`; the switch
-   must be driven with On/Off *commands*, which is also how Home Assistant drives it.
-2. A command matching the current attribute value is a no-op. No attribute change, no
-   update callback, no frame on the wire. The script seeds a known state first so both
-   legs are genuine transitions and it cannot pass on a no-op.
+It is deliberately **not** part of `run_tests.sh`, which stays hardware-free. The panel display is
+not asserted: the A/C reports no display state, so whether it lit remains a human observation.
 
-`firmware/test/hil_esphome_actuation.py` is the ESPHome counterpart. It drives the node over the
-native API and checks the same two properties for every control. Since 2026-10 it also reads the
-bus counters: a readback that would pass on a dead bus is rejected, every wait watches
-`Command retries` and waits longer when it moved, and the run ends with the counter deltas. Retries
-are listed and are fine. A rise in `Failed commands` is a failed check. The restore step leaves the
-unit off when the run itself switched it on (an earlier version put the mode back after the
-power-off and left two units running, #175).
+For byte-level questions on a live bus there are two more tools: a tap decoded by
+`reverse-engineering/tools/decode_ac_frames.py --port <tap>`, and `firmware/esp32-recon/`, a
+console on the wire with a listen-only mode (`HIL-RUNBOOK.md` there).
 
-Both scripts are deliberately **not** wired into `run_tests.sh`, which stays no-hardware. The panel
-itself is not asserted: the A/C reports no display state, so whether it physically lit
-remains a human observation.
+## Standing rule: decisions do not live in glue
 
-## Standing methodology: glue code is host-untestable as written
+The ESPHome hub (`hisense_ac.cpp` and the entity classes) needs ESPHome's headers, so it cannot run
+in Layer 1. Any **decision** it makes (is this my own echo, should the shadow sync, is this command
+confirmed, which special-mode frame goes next) is a pure function in `hisense_map.h` with a host
+test. The glue only moves values.
 
-`matter_drivers.cpp` (the SDK-side Matter glue) needs CHIP headers to compile, so it cannot run
-in Layer 1: echo-suppression, shadow-sync hold-off, and the re-entrant `Set()`-callback loop have
-**zero** host coverage, only the pure functions in `matter_aircon_map.h` / `hisense_rs485.cpp`
-are exercised by Layers 1–2. This is exactly how the downlink→readback→uplink feedback-loop bug
-(HIL v5: HA setpoint/mode writes bounced back as 3–6 re-commands) slipped through review and had
-to be caught on hardware instead of on a laptop. Standing rule for new glue code:
+This rule comes from a bug that escaped review: on an early build, a status readback was written
+back as a command, which produced another readback, three to six times per user action. It lived
+in a layer no host test could reach and was caught on hardware.
 
-1. Extract any glue **decision** ("is this write my own downlink echo?", "should the shadow
-   sync?") into a pure function in `matter_aircon_map.h`, then unit-test it there, don't leave
-   decisions living only inside CHIP callback bodies.
-2. Add **fixpoint/idempotence** tests on map pairs, they guard the whole feedback-loop bug class:
-   `hisense_mode_to_matter(matter_mode_to_hisense(m))==m`, `matter_setpoint_to_c(sp*100)==sp`
-   (16..32), `rock_to_swing(swing_to_rock(v,h))==(v,h)`.
-3. Test a real **combined multi-field** command frame (the driver always sends one, never a
-   single-field frame) and an actual **doubled-`0xF4`** stuffing round-trip, picking a frame
-   whose checksum never contains `0xF4` means the stuff/un-stuff path is never exercised.
-
-(Promoted from the 2026-07 bug-hunt review; the specific findings that motivated it are tracked
-as GitHub issues.)
-
-## Why we're well-positioned
-
-The reverse-engineering already produced the two assets that are usually the hardest part of
-RE-driver QA: a **validated codec** and a **golden corpus of real frames**. That's what lets
-Layers 1-3 run entirely without the A/C or the chip.
-
-## References
-
-Grounded in standard practice: mock-the-HAL host testing
-([ElectronVector](http://www.electronvector.com/blog/when-you-want-to-unit-test-abstract-the-hardware)),
-device-driver test automation + device simulation
-([jumperiot](https://medium.com/jumperiot/how-to-automate-device-drivers-testing-in-iot-embedded-software-projects-44c164158f43)),
-Renode full-firmware sim in CI
-([Antmicro](https://antmicro.com/blog/2024/12/introducing-renode-vscode-extension),
-[MDPI study](https://www.mdpi.com/2673-4591/79/1/52)), and the Matter Test Harness
-([project-chip/certification-tool](https://github.com/project-chip/certification-tool)).
+One known gap: `test_esphome_confirm.cpp` repeats the hub's command paths to test them, and that
+copy can drift from the hub.

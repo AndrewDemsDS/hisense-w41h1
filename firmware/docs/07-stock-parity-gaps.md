@@ -1,12 +1,19 @@
 # 07 · Stock-parity gap matrix
 
 Single source of truth for "what does the stock A/C do that we don't (yet) mirror." Consolidates
-the previously-scattered lists in `05-ha-control-and-native-ui.md`, `01-expose-all-clusters.md`,
-`reverse-engineering/docs/{03,05,10}`, and the recon `HIL-RUNBOOK.md`.
+lists that used to be scattered over the design notes, `reverse-engineering/docs/{03,05,10}` and
+the recon `HIL-RUNBOOK.md`.
+
+> **The Matter firmwares are retired** (tag `matter-final`, issue #182). This matrix was written against them. Its Notes column names
+> their endpoints (`ep3 OnOff`, the manufacturer cluster `0xFFF1FC00`) and firmware versions. On
+> the ESPHome firmware each exposed row is the entity of the same name
+> (`docs/guide/Entities-and-Diagnostics.md`). The decode and control columns are protocol facts
+> and hold for both. File references are to the reference driver, now under
+> `firmware/test/reference-driver/`.
 
 Columns: **DEC** = decoded in the driver · **CTRL** = a command builder exists · **EXP** = exposed
-to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` flags
-(`hisense_rs485.h:338-374`, decoder `.cpp:247-282`); the Ghidra-authoritative bit map is
+to Home Assistant. Capability source = the `0x66/40` ProductType `HisenseFeatures` flags
+(`hisense_rs485.h`); the Ghidra-authoritative bit map is
 `reverse-engineering/docs/10 §5a` (`handle_producttype_cmd_result @0x9b6f0c4c`).
 
 ## Matrix
@@ -43,13 +50,13 @@ to Matter/HA. Capability source = the `0x66/40` ProductType `HisenseFeatures` fl
 Differences in how the node talks to the unit, found in the 2026-10 re-read of the stock image
 (`reverse-engineering/docs/10` sections 4.6 and 5b-2):
 
-| Stock behaviour | ESPHome | Matter builds |
-|---|---|---|
-| Power and mode in one `0x65` frame (byte 18 = mode bits with `0x0C`) | yes, from 2026-10-10 (#179), with a fallback to two frames | no: a power-on frame, then a mode frame |
-| A command is checked against the reply | not acted on: the reply layout is not captured on this bus, so the verdict is only logged | no |
-| A command is checked against the next status and sent again | yes (#179) | no: sent once, the miss is counted in `UnansweredCommands` |
+| Stock behaviour | ESPHome firmware |
+|---|---|
+| Power and mode in one `0x65` frame (byte 18 = mode bits with `0x0C`) | yes, from 2026-10-10 (#179), with a fallback to two frames |
+| A command is checked against the reply | not acted on: the reply layout is not captured on this bus, so the verdict is only logged |
+| A command is checked against the next status and sent again | yes (#179) |
 
-The Matter rows are the open part of issue #168. Whether they get closed depends on issue #182.
+The retired Matter builds had none of the three (issue #168).
 
 ## Cheap wins: shipped
 
@@ -59,7 +66,7 @@ on/off → an OnOff switch on ep9) both shipped under #19, on both AmebaZ2 and E
 Everything else (8 °C heat, purify, dimmer level, AI, demand-response, stepless fan, 8-pos louvre) is
 now **read-only exposed** through the `Features1` capability bitmap (#82, #39): each still needs its
 *control frame* reverse-engineered before it can be **driven**, and several are argued
-physically-absent on this unit (`docs/05:79-80`). Not cheap; defer / track under #52.
+physically-absent on this unit. Not cheap; defer / track under #52.
 
 ## Reading capabilities live
 
@@ -68,7 +75,8 @@ attribute `0x0012` (`Features1`, packed bitmap), alongside `CompressorHz` (`0x00
 (`0x0013`). matter-server reads all three live, and the `hisense-unified-ac` HACS integration decodes
 them into the Compressor frequency, Capabilities, and Faults entities (#82, #39, closed). The bus
 counters, `LinkToken` and `BusLink` (`0x0014` to `0x0019`) sit beside them from AmebaZ2 1.3.49 /
-ESP32 1.1.19, read by the integration from 1.6.0 (`docs/14`). The telnet `:2323` `decode` path still works as a secondary read.
+ESP32 1.1.19, read by the integration from 1.6.0. On the ESPHome firmware the same values are the
+`capability_*` and `fault_*` binary sensors, the Compressor frequency sensor and the bus counters.
 
 ## Data-quality bugs found during this review (→ issue #83): RESOLVED
 

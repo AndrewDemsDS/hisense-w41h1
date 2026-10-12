@@ -1,5 +1,6 @@
-# Flash the firmware region 0x0..0x140000 (~1.27MB app) + set QE. Region write preserves
-# the Matter commissioning KV (0x2FF000+) -> no re-commission. Transport: ch341common.
+# Write the region 0x0..0x140000 (~1.27MB) + set QE. A region write leaves everything above
+# 0x140000 alone: the second firmware slot and the settings areas at the top of flash. The range
+# is the one the retired Matter clip image used. Transport: ch341common.
 import sys
 from ch341common import flash_region
 if __name__=="__main__":

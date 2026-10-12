@@ -2,10 +2,10 @@
 title: Firmware
 nav_order: 3
 has_children: true
-description: Build, OTA procedure, Matter clusters, attestation, QA strategy and energy monitoring for the custom firmware.
+description: Design notes, the stock module's boot and recovery, ESP32 board notes, QA strategy and energy monitoring for the ESPHome firmware.
 ---
 
 # Firmware
 
-How the firmware is built, versioned and shipped, what it exposes over Matter, and how it is tested
-without hardware.
+Design notes for the ESPHome firmware, how the stock module boots and is recovered, the reasons
+behind the ESP32 wiring rules, and how the firmware is tested without hardware.

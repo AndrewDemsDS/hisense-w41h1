@@ -1,5 +1,5 @@
-# Whole-chip 4MB write (erases factory data incl. the Matter KV -> recoverable from the
-# stock dump). Use for a clean-slate restore/flash. Transport: ch341common.
+# Whole-chip 4MB write + set QE: every byte of the chip is replaced, per-unit data included.
+# Use it to put a unit's own full dump back. Transport: ch341common.
 import sys
 from ch341common import flash_region
 if __name__=="__main__":

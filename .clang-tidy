@@ -2,7 +2,7 @@
 # clang-tidy 22.1.8, the version ESPHome pins). Same check set and naming rules; the only removals
 # are options that name ESPHome itself (make_unique from esphome/core/helpers.h). Subtrees with a
 # real constraint narrow this with their own .clang-tidy (InheritParentConfig), e.g. the C-API
-# driver in firmware/src/rs485-driver/. Run: firmware/scripts/cpp-lint.sh check
+# driver in firmware/test/reference-driver/. Run: firmware/scripts/cpp-lint.sh check
 ---
 Checks: >-
   *,

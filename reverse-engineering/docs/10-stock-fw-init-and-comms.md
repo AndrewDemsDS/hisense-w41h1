@@ -267,7 +267,7 @@ Two source threads appeared to conflict; they describe different byte origins:
 > per-model identifier*. The `01 01` in the captured stock DI frames is this model's device type.
 > Read these bytes from `handle_devType_cmd_result`'s inner `[3]/[4]` on the class-`0x0A` reply
 > (frame bytes `[16]/[17]`), **never** from that reply's envelope `[9]/[10]`. See
-> `firmware/src/rs485-driver/hisense_rs485.cpp` (`hisense_devtype_from_reply`).
+> `firmware/test/reference-driver/hisense_rs485.cpp` (`hisense_devtype_from_reply`).
 
 ### 4.6 Timing / retry summary **[PROVEN]**
 - Per-transaction listen: **500 ms**. Timeout → status 7 → transaction returns 0.

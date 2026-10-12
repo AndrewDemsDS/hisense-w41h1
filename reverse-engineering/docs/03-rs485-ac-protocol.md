@@ -67,7 +67,7 @@ Parser facts (verbatim from the disassembly):
   `serial_irq_set(RxIrq)` into a ring buffer (same pattern `hisense_rs485.cpp` uses), no
   polling, no busy-spin `serial_getc()`.
 - **TX pacing / no interleave**: sends are serialized and paced by a single bus task (rules in
-  [`INTEGRATION.md` §5](../../firmware/src/rs485-driver/INTEGRATION.md#5-bus-timing)); no more
+  [the reference driver's README](../../firmware/test/reference-driver/README.md#bus-timing)); no more
   back-to-back `hisense_tx_frame()`.
 - **TX tail timing**: `hisense_tx_raw()` waits ~3 ms (≥2 byte-times) after the last
   `serial_putc()` so the shift register drains before the next send.
@@ -105,7 +105,7 @@ ac_dr                   ac_trans_102_64
 
 These offsets were confirmed on the **real W41H1 bus** by toggling each control on the
 remote and diffing the 160-byte A/C→module status reply (`f4 f5 01 … 66 …`). The
-authoritative parse lives in [`hisense_rs485.cpp`](../../firmware/src/rs485-driver/hisense_rs485.cpp)
+authoritative parse lives in [`hisense_rs485.cpp`](../../firmware/test/reference-driver/hisense_rs485.cpp)
 (`hisense_parse_status`); this table records the **remote-button correlation** that backs it,
 including fields the driver does not currently consume.
 

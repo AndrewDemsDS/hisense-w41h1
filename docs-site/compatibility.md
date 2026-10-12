@@ -61,13 +61,12 @@ ESP32 plus an RS-485 transceiver in the module bay instead, speaking the same bu
 about €5, needs no CH341A clip, and is the recommended path if you do not already have a working
 `AEH-W41H1`: those modules are fragile and increasingly hard to buy.
 
-On that board you pick the firmware: the Matter build, or the
-[ESPHome build](guide/ESPHome-Build.html) if Home Assistant is the only controller you need. The
-[path comparison](firmware/13-path-comparison.html) covers the tradeoffs with figures measured on
-real hardware.
+The board runs the [ESPHome build](guide/ESPHome-Build.html). The
+[hardware comparison](firmware/13-path-comparison.html) covers the tradeoffs against keeping the
+module, with figures measured on real hardware.
 
 ## What you get either way
 
-Local control in Home Assistant with no cloud, over ESPHome or Matter: mode, setpoint, fan speeds, swing, and
+Local control in Home Assistant with no cloud, over ESPHome: mode, setpoint, fan speeds, swing, and
 the Eco / Quiet / Turbo / Sleep special modes, plus temperature and energy telemetry. See
 [everyday control](guide/Everyday-Control.html).

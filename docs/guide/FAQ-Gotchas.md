@@ -1,28 +1,33 @@
 # FAQ & Gotchas
 
 The load-bearing traps, distilled for operator/future-you. Each answer links to the authoritative
-doc. The ESPHome questions come first; the rest are about the Matter builds.
+doc.
 
-## Which firmware should I use?
+## Which hardware should I use?
 
-**ESPHome**, if Home Assistant is your only controller: the smallest toolchain and no
-commissioning. **ESP32 with Matter** if Apple Home, Google Home or Alexa must see the A/C. **AmebaZ2**
-only if you want to keep the original module and are happy with a one-time clip write.
-([User Guide](User-Guide#pick-a-firmware))
+**An ESP32 board** (a C3 SuperMini or a classic ESP32 with a 3.3 V transceiver) in place of the
+module, unless you have a reason not to: cheap, flashed and recovered over USB. **The stock
+module** through LibreTiny keeps the original hardware, with no rollback and the clip as the only
+recovery. ([User Guide](User-Guide#pick-the-hardware))
 
-## Is Matter support going away?
+## What happened to the Matter firmware?
 
-It is proposed and undecided. Issue #182 argues for keeping ESPHome as the only firmware once it
-runs on the stock module too, which it does not yet. Until then both Matter builds are supported.
-([Home](Home#state-of-the-project))
+It is retired. `main` carries the ESPHome firmware only, and the last tree with the two Matter
+builds is the tag `matter-final`. A unit that runs one keeps working.
+([Matter Firmware (Retired)](Matter-Firmware-Retired))
 
-## Can I switch an ESP32 node from Matter to ESPHome without opening the unit?
+## Can Apple Home, Google Home or Alexa see the A/C?
 
-Yes, through the Matter firmware's HTTP break-glass path. It has been done once, on a C3, and
-there is no automatic rollback. Read the risks first:
-[Migrating an ESP32 Node from Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome).
+Through Home Assistant: expose the climate entity with HA's own Matter or HomeKit bridge. The node
+itself talks to Home Assistant only.
 
-## ESPHome: the `AC bus link` sensor stays off.
+## Can I switch a node from the old Matter firmware to ESPHome without opening the unit?
+
+Yes, on both kinds of hardware, and each has been done once with no automatic rollback. Read the
+risks first: [an ESP32 board](Migrating-ESP32-Matter-to-ESPHome),
+[a stock module](Converting-a-Stock-Module-to-ESPHome).
+
+## The `AC bus link` sensor stays off.
 
 The node is running but hears nothing from the A/C. In order of likelihood:
 
@@ -36,7 +41,7 @@ The node is running but hears nothing from the A/C. In order of likelihood:
 Raise `logger: level:` to `DEBUG` to see every decoded frame, or prove the wiring with no A/C at all
 using `dev.py bench esphome`. ([Build, Flash & Test](Build-Flash-Test#bench-stage-no-ac))
 
-## ESPHome: Home Assistant can't find the node, or rejects it.
+## Home Assistant can't find the node, or rejects it.
 
 - **Not discovered:** mDNS does not cross VLANs. Add it by hand (ESPHome integration, host = the
   node's IP, port 6053).
@@ -46,110 +51,56 @@ using `dev.py bench esphome`. ([Build, Flash & Test](Build-Flash-Test#bench-stag
 - **It never joined Wi-Fi:** look for the `hisense-ac-setup` hotspot and set Wi-Fi through its
   captive portal.
 
-([Commissioning & HA Setup](Commissioning-and-HA-Setup#esphome-build-adopt-it))
+([ESPHome Build](ESPHome-Build#adopt-it-in-home-assistant))
 
-## ESPHome: how do I update it?
+## How do I update it?
 
-Over the air, with `esphome run w41h1.yaml` from `firmware/esphome/` (same `-s` board overrides you
-flashed with). No version bump, delta base or matter-server involved.
-([OTA Updates](OTA-Updates#esphome-updates))
+Over the air, with `esphome run` on the node's board file from `firmware/esphome/` (or the same
+`-s` board overrides you flashed with). No version bump involved.
+([ESPHome Build](ESPHome-Build#updates))
 
 ## My ESP32 board won't flash or has stopped booting.
 
 Hold **BOOT** while plugging in USB to force download mode, then flash again. An ESP32 always
-recovers over USB. ([Recovery & Reflash](Recovery-and-Reflash#esp32-boards-esphome-and-matter))
+recovers over USB. ([Recovery & Reflash](Recovery-and-Reflash#esp32-boards))
 
-## The OTA "finished successfully" but the device is still on the old version. Did it roll back?
+## A stock module went quiet after an update. Is it bricked?
 
-On **AmebaZ2**, usually the serial trap: the bootloader picks the slot by `FWHS.header.serial`,
-not `softwareVersion`. `dev.py ota amebaz2 build` sets it, so it only bites a hand-built image.
-([OTA Updates](OTA-Updates#the-ota-serial-trap-the-script-handles-it))
+Often not. A module that booted an image without working Wi-Fi credentials is alive and
+unreachable. Look for its `<name>-setup` access point. What settles it is the flash QE bit, read
+with the clip: the bootloader clears it when it rejects an image.
+(`firmware/docs/10-stock-module-boot-and-recovery.md`)
 
-On **ESP32**, a delta-OTA device rejects a full image and silently stays put.
-([OTA Updates](OTA-Updates#esp32-delta-ota))
+## An update to a stock module "finished" but the old firmware is still running.
 
-## The OTA errors "Target node did not process the update file". Is it broken?
-
-No. OTA is flaky by design. The ephemeral provider loses a discovery race on the first attempt(s).
-**Retry 3–5×, ~15 s apart** (the script does). Verify the *reported* version changed; don't trust
-"finished". ([OTA Updates](OTA-Updates))
-
-## Why won't the provider serve my new firmware?
-
-The version must be **strictly greater** than what's running (convention: running + 1), and you must
-never reuse a rolled-back version number. Matter-server and the device cache by version. `--bump`
-handles it; `lint` blocks a stale version. ([OTA Updates](OTA-Updates))
-
-## I OTA'd new endpoints/entities but they don't show in HA.
-
-HA caches the node structure. After a structure-changing OTA you need a **node re-interview**.
-`flash` auto-interviews, otherwise reload the Matter integration (Settings → Devices & Services →
-Matter → ⋮ → Reload). ([Commissioning & HA Setup](Commissioning-and-HA-Setup))
-
-## The node commissioned but shows `available=False`.
-
-Cross-VLAN **IPv6 mDNS** doesn't cross by default, and many mDNS reflectors won't relay it. Fix:
-dual-home the matter-server host onto the A/C's VLAN (a tagged IPv6-only sub-interface), then restart
-matter-server. ([Commissioning & HA Setup](Commissioning-and-HA-Setup))
-
-## Why must endpoints stay contiguous?
-
-A gap was one of three confounded factors in a boot-crash, never isolated, so contiguity is a
-zero-cost precaution that `lint` enforces. Renumber to close a hole.
-([Repo Map](Repo-Map-and-Build-Pipeline#the-three-build-traps-summary-docs10-is-canonical))
-
-## My build finished in ~110 seconds. Good?
-
-Yes, if ninja compiled the core (hundreds of `[N/353] c++` lines) and rebuilt `libCHIP.a`. Judge by
-activity, not wall-clock. ([Repo Map](Repo-Map-and-Build-Pipeline#the-three-build-traps-summary-docs10-is-canonical))
+The module's bootloader picks the slot with the higher `FWHS` serial, not the newest write. An
+image whose serial is not above the running one never boots. LibreTiny's serials rise with the
+build time, so this only bites an image that was re-signed by hand or built with a clock that went
+backwards. (`firmware/docs/10-stock-module-boot-and-recovery.md`)
 
 ## What is "77"?
 
-Press the remote's swing button **6 times** → the display shows **"77"**: the module resets its
-Wi-Fi and opens the Matter commissioning window. Use it before commissioning a unit.
-([Commissioning & HA Setup](Commissioning-and-HA-Setup))
-
-## HA shows a duplicate Power switch and split fan/mode tiles. How do I clean it up?
-
-That's the raw Matter device. Install the **`hisense-unified-ac`** integration to merge everything
-into one climate entity (special modes become presets), then hide the redundant native Power switch
-and raw special-mode switches. ([Everyday Control](Everyday-Control))
+Press the remote's swing button **6 times** and the display shows **"77"**. On the vendor firmware
+that resets the module's Wi-Fi and starts pairing. There is no reset frame: the mainboard sets a
+request bit in its heartbeat reply, and the display lights when the module reports that it is
+provisioning. The ESPHome firmware does not act on the request. To give a node new Wi-Fi, use its
+setup hotspot or re-flash. ([Protocol Overview](Protocol-Overview#the-77-request))
 
 ## Setpoint changes do nothing sometimes.
 
-Temperature is only honored in **cool/heat**. A temp change in dry / fan-only / auto / off is a no-op
-and shows no target (the unified integration gates this explicitly). ([Everyday Control](Everyday-Control))
-
-The ESPHome build refuses the write while the unit runs in dry, fan-only or auto and logs a warning,
-so the entity keeps the setpoint the unit reports. In auto the unit holds its own value: a write
-used to show for about four seconds and then revert.
-
-On the Matter builds, a cooling setpoint below about 18 °C or a heating setpoint above about 30 °C
-was rejected before AmebaZ2 1.3.49 and ESP32 1.1.19 (the Thermostat server's default dead band).
-Those versions accept the full 16 to 32 °C.
+Temperature is only honored in **cool/heat**. The firmware refuses the write while the unit runs
+in dry, fan-only or auto and logs a warning, so the entity keeps the setpoint the unit reports. In
+auto the unit holds its own value. ([Everyday Control](Everyday-Control))
 
 ## A command did not take. How do I tell what happened?
 
-Look at the bus counters ([Entities, Endpoints and Diagnostics](Entities-and-Diagnostics#bus-counters)).
-`Unanswered commands` rising means the unit did not acknowledge a frame. The ESPHome build sends
-such a command again and counts it in `Command retries`, or in `Failed commands` if it gave up.
-The Matter builds send once: the write is lost and the entity returns to the unit's real state.
+Look at the bus counters ([Entities and Diagnostics](Entities-and-Diagnostics#bus-counters)).
+`Unanswered commands` rising means the unit did not acknowledge a frame. The node sends such a
+command again and counts it in `Command retries`, or in `Failed commands` if it gave up.
 
 ## Can I stop the indoor unit beeping on every command?
 
-Yes, with the **Beeper** switch, on all three firmwares (Matter: AmebaZ2 1.3.49 or ESP32 1.1.19
-and later, after a re-interview). It only silences commands from the node. The remote still beeps.
-
-## The sleep select is unavailable on an AmebaZ2 node.
-
-Some AmebaZ2 builds before 1.3.50 shipped an empty sleep profile list, so Home Assistant had no
-options to show. Update to 1.3.50 or later and re-interview the node.
-
-## Eco/Turbo/Mute/Sleep don't respond on the raw device.
-
-The manufacturer cluster (`0xFFF1FC00`) is **read-only** to python-matter-server. A direct write
-returns null, not a real command. Control them through the unified integration's **presets**; on the
-plain device they only surface as auto-detected switches/select. ([Everyday Control](Everyday-Control) · `firmware/docs/05-ha-control-and-native-ui.md`)
+Yes, with the **Beeper** switch. It only silences commands from the node. The remote still beeps.
 
 ## The module keeps browning out / the radio drops.
 
@@ -159,33 +110,17 @@ unplugged. ([Hardware & Wiring](Hardware-and-Wiring))
 
 ## I bricked a module. Now what?
 
-An ESP32 board recovers over USB (see above). A stock AmebaZ2 module: reflash with the **CH341A clip** (not flashrom). Region write to repair (preserves commissioning),
-or whole-chip write of `flash_rac-stock-v1.bin` for a clean restore. Keep `dumps/w41h1_dump1.bin` as
-the net. ([Recovery & Reflash](Recovery-and-Reflash))
+An ESP32 board recovers over USB (see above). A stock module: write its own full dump back with
+the **CH341A clip** and the tools in `firmware/flasher/` (not flashrom). Without a dump of that
+unit there is no complete way back, which is why you take one first.
+([Recovery & Reflash](Recovery-and-Reflash))
 
 ## How do I find out which features MY A/C has?
 
-Flash the **debug** image and ask it. The A/C reports its own capabilities in a `0x66/40`
-ProductType reply, and the debug flavour exposes that over a `:2323` console:
+Read the `capability_*` binary sensors. The A/C reports its own capabilities in a ProductType
+reply, and the firmware publishes one sensor per flag: 8 °C frost-guard heat, purify, AI mode, an
+8-position louvre, humidity, a dimmable display and so on.
 
-```
-nc <device-ip> 2323
-features
-```
-
-You get the decoded flags for **that unit**, including whether it has 8 °C frost-guard heat,
-purify, AI mode, an 8-position louvre, humidity and a dimmable display.
-
-A `0` means *not on this unit*, never *not on this model*. Two units of the same model can differ,
-which is why the firmware gates features at runtime on what the A/C reports rather than assuming.
-
-The console is debug-only on purpose: it has no authentication and can drive the A/C bus, so it is
-kept out of release images. Flash the release image once you have your answer.
-
-## Which image should I flash, release or debug?
-
-**Release**, unless you are doing bench work. Both are published with every tagged release and are
-identical apart from diagnostics: the debug image adds the `:2323` console and verbose logging, and
-carries the security tradeoff above. Files are named by flavour
-(`flash_rac-integrated-v<N>-debug.bin` vs `flash_rac-integrated-v<N>.bin`); the version number is
-the same for both, so check the filename rather than the version.
+A flag that is off means *not on this unit*, never *not on this model*. Two units of the same model
+can differ. Trim the YAML to what your unit reports
+([ESPHome Build](ESPHome-Build#capability-gating-is-a-yaml-decision)).

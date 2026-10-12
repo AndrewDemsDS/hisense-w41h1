@@ -2,11 +2,11 @@
 //
 // Links the REAL driver (hisense_rs485.cpp) against a mocked HAL (hal_stub.h)
 // and asserts its pure functions against the hardware-confirmed "golden" byte
-// values captured off the real W41H1 during sniffing (see INTEGRATION.md). Any
+// values captured off the real W41H1 during sniffing (see reference-driver/README.md). Any
 // regression in the command builder or status parser fails here, on a PC, in
 // milliseconds -- no A/C, no chip.
 //
-// Build/run:  ./run_tests.sh   (or: g++ -I. -I../src/rs485-driver test_codec.cpp ../src/rs485-driver/hisense_rs485.cpp
+// Build/run:  ./run_tests.sh   (or: g++ -I. -Ireference-driver test_codec.cpp reference-driver/hisense_rs485.cpp
 // -o test_codec && ./test_codec)
 
 #include "hal_stub.h"

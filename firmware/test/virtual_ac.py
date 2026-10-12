@@ -13,7 +13,7 @@ Two ways to wire it up:
                      the module's DI/RO tap for on-hardware cross-checking).
 
 This is the executable spec of the status encoding: field offsets and value
-maps match firmware/src/rs485-driver + INTEGRATION.md (all hardware-confirmed).
+maps match firmware/test/reference-driver and its README.md (all hardware-confirmed).
 """
 
 import argparse, os, sys, time

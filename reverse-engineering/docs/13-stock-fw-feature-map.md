@@ -229,7 +229,8 @@ per-model gating ([11-model-capability-map.md](11-model-capability-map.md)).
    Step 3 was **missing until 2026-07-25** and is what bricked a unit (#75). Round-trip
    proof the recipe is now complete: running it with the serial left unchanged reproduces
    the original stock image byte-for-byte. Implemented and self-checked in
-   `firmware/scripts/dev.py ota amebaz2 revert --repackage`; still awaiting one on-hardware
+   `firmware/scripts/amebaz2_image.py` (the `revert --repackage` step that used it is in the
+   tree at the tag `matter-final`). Still awaiting one on-hardware
    confirmation. Delivery via Matter OTA, `ATWO`, or `HOTA=`.
 3. **The cloud channel cannot be spoofed** (pinned CA + per-device dkey), and **no
    public stock image exists**: the example file on `download.hismarttv.com` is from

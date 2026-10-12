@@ -5,8 +5,6 @@
 *.img
 *.der
 *.key
-# Attestation material (DAC/PAI/CD) generated during the build
-dac* pai* cd*
 # Strings / analysis dumps may contain credentials
 strings.txt
 strings*.txt
@@ -22,14 +20,11 @@ strings*.txt
 capture_*.log
 *.cap
 
-# Build SDK (15 GB) lives outside the repo; sdk is a symlink to it
-/sdk
-
 # Build output / firmware artifacts (regenerable; some contain factory secrets)
 **/build/
 *.ota
-# built-images/ is entirely generated (flash images, .ota payloads, .json OTA
-# descriptors, release-state dotfiles) — none of it belongs in git.
+# built-images/ is entirely generated (slot backups, conversion images and their
+# provider manifests): none of it belongs in git.
 firmware/built-images/
 
 # Python
@@ -61,7 +56,7 @@ firmware/scripts/ota-release.env
 
 # compiled host-test binaries (build artifacts)
 /firmware/test/test_codec
-/firmware/test/test_matter_map
+/firmware/test/test_reference_map
 /firmware/test/test_esphome_map
 /firmware/test/test_esphome_codec_parity
 /firmware/test/test_esphome_bus

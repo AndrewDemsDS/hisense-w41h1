@@ -1,105 +1,63 @@
-# Entities, Endpoints and Diagnostics
+# Entities and Diagnostics
 
-What each of the three firmwares exposes, side by side, and how to read the bus diagnostics that
-tell you whether the node and the A/C are talking. For day-to-day use see
-[Everyday Control](Everyday-Control). This page is the reference behind it.
+Every entity the firmware exposes, and how to read the bus diagnostics that tell you whether the
+node and the A/C are talking. For day-to-day use see [Everyday Control](Everyday-Control). This
+page is the reference behind it.
 
-Versions this page describes: ESPHome component on `main` as of 2026-10-10, AmebaZ2 1.3.50,
-ESP32 Matter 1.1.19, and the companion integration `hisense-unified-ac` 1.6.0.
+This page describes the ESPHome component on `main`.
 
-## Parity table
+## Entities
 
-"Matter" means both Matter builds. They have the same endpoints: the AmebaZ2 build takes them
-from the `.zap`, the ESP32 build creates them in code, and a host test
-(`firmware/test/test_zap_edit.py`) checks the two against the shared map.
+| Function | Entity |
+|---|---|
+| Power, mode, setpoint | `climate` |
+| Fan (auto and five speeds), vertical swing | `climate` fan and swing modes |
+| Indoor temperature | `climate` current temperature |
+| Outdoor temperature | `sensor` Outdoor temperature |
+| Eco | `switch` Eco, preset `eco` |
+| Quiet | `switch` Quiet, preset `quiet` |
+| Turbo | `switch` Turbo, preset `turbo` |
+| Sleep profile | `select` Sleep profile, `sleep_*` presets |
+| Aux heat relay | `binary_sensor` Aux heat relay |
+| Coil temperature | `sensor` Coil temperature |
+| Panel display | `switch` Panel display |
+| Any fault | `binary_sensor` Fault |
+| Beeper | `switch` Beeper |
+| Power, voltage, current | `sensor` Power, Voltage, Current |
+| Energy today | `total_daily_energy` (stock ESPHome platform) |
+| Compressor frequency | `sensor` Compressor frequency |
+| Capability flags | 13 `binary_sensor` `capability_*` |
+| Per-fault detail | 18 `binary_sensor` `fault_*` |
+| Bus checksum errors | `sensor` `checksum_errors` |
+| Bus reply timeouts | `sensor` `reply_timeouts` |
+| Unanswered commands | `sensor` `unanswered_commands` |
+| Bus link losses | `sensor` `link_losses` |
+| Command retries, failed commands | `sensor` `command_retries`, `failed_commands` |
+| A/C device type | `text_sensor` `link_token` |
+| Bus link | `binary_sensor` `bus_link` |
+| Uptime, WiFi signal, Reset reason | on every board. The text of the reset reason is the chip's own and differs between platforms |
+| Serial port restarts, Flash layout | the stock module only. The first counts how often the firmware had to reopen the bus port after the link dropped, and should stay at 0 |
 
-| Function | ESPHome entity | Matter endpoint and cluster | Unified integration 1.6.0 |
-|---|---|---|---|
-| Power, mode, setpoint | `climate` | ep1 OnOff + Thermostat | climate |
-| Fan (auto and five speeds), vertical swing | `climate` fan and swing modes | ep1 FanControl (`FanMode`, `PercentSetting`, `RockSetting`) | climate fan and swing modes |
-| Indoor temperature | `climate` current temperature | ep1 Thermostat `LocalTemperature` | climate current temperature |
-| Outdoor temperature | `sensor` Outdoor temperature | ep2 TemperatureMeasurement | Outdoor temperature |
-| Eco | `switch` Eco, preset `eco` | ep3 OnOff, label `Eco` | Eco switch, preset |
-| Quiet | `switch` Quiet, preset `quiet` | ep4 OnOff, label `Quiet` | Quiet switch, preset |
-| Turbo | `switch` Turbo, preset `turbo` | ep5 OnOff, label `Turbo` | Turbo switch, preset |
-| Sleep profile | `select` Sleep profile, `sleep_*` presets | ep6 ModeSelect (Off, General, Old, Young, Kids) | Sleep profile select, presets |
-| Aux heat relay | `binary_sensor` Aux heat relay | ep7 contact sensor (BooleanState), label `Aux Heat` | Aux heat relay |
-| Coil temperature | `sensor` Coil temperature | ep8 TemperatureMeasurement | Coil temperature |
-| Panel display | `switch` Panel display | ep9 OnOff, label `Display` | Panel display switch |
-| Any fault | `binary_sensor` Fault | ep10 contact sensor (BooleanState), label `Fault` | Fault |
-| Beeper | `switch` Beeper | ep11 OnOff, label `Beeper` | Beeper switch |
-| Power, voltage, current | `sensor` Power, Voltage, Current | ep1 ElectricalPowerMeasurement | Power, Voltage, Current |
-| Energy today | `total_daily_energy` (stock ESPHome platform) | none | none (use a Riemann sum helper on Power) |
-| Compressor frequency | `sensor` Compressor frequency | ep1 mfg `0x0010` | Compressor frequency |
-| Capability flags | 13 `binary_sensor` `capability_*` | ep1 mfg `0x0012` `Features1` | one binary sensor per flag |
-| Per-fault detail | 18 `binary_sensor` `fault_*` | ep1 mfg `0x0013` `Faults1` | one binary sensor per fault |
-| Bus checksum errors | `sensor` `checksum_errors` | ep1 mfg `0x0014` `ChecksumErrors` | Bus checksum errors |
-| Bus reply timeouts | `sensor` `reply_timeouts` | ep1 mfg `0x0015` `ReplyTimeouts` | Bus reply timeouts |
-| Unanswered commands | `sensor` `unanswered_commands` | ep1 mfg `0x0016` `UnansweredCommands` | Unanswered commands |
-| Bus link losses | `sensor` `link_losses` | ep1 mfg `0x0017` `LinkLosses` | Bus link losses |
-| A/C device type | `text_sensor` `link_token` | ep1 mfg `0x0018` `LinkToken` | AC device type |
-| Bus link | `binary_sensor` `bus_link` | ep1 mfg `0x0019` `BusLink` | AC bus link |
-| Command retries, failed commands | `sensor` `command_retries`, `failed_commands` | none: the Matter builds do not retry | none |
+### Behaviour worth knowing
 
-"mfg" is the manufacturer cluster `0xFFF1FC00` on endpoint 1. Home Assistant's Matter integration
-does not render it, so on a Matter node those rows only appear through the unified integration,
-which reads them from matter-server by raw attribute path. The mfg attributes `0x0000` to `0x0003`
-(Eco, Turbo, Mute, SleepProfile) mirror the ep3 to ep6 controls.
+| Situation | What the firmware does |
+|---|---|
+| A command the unit does not take | sent again, see [below](#confirm-and-retry) |
+| Mode request to a unit that is off | one frame carrying mode and power-on |
+| Setpoint outside cool and heat | refused by the entity in auto, dry and fan-only (the unit keeps its own) |
+| Special modes changed together | 10 s between special-mode frames, because the unit ignores one that lands too soon after another |
+| Horizontal swing | `supports_horizontal_swing` option, off by default |
+| Outdoor and coil temperature after a power cut | for a while after mains power returns the unit reports both as exactly -20 C, a placeholder. They show as unknown until real readings arrive. (One observation, one unit, 2026-10-10.) |
 
-### Where the firmwares differ
-
-- **Outdoor and coil temperature after a power cut.** For a while after mains power returns the
-  unit reports both as exactly -20 C, a placeholder. The ESPHome build shows them as unknown until
-  real readings arrive. The two Matter builds publish the placeholder, so they show -20 C in that
-  window. (One observation, one unit, 2026-10-10.)
-- **Uptime, WiFi signal and Reset reason** are on every ESPHome board. The text of the reset
-  reason is the chip's own and differs between platforms.
-- **Serial port restarts** and **Flash layout** exist only on the stock module under ESPHome. The
-  first counts how often the
-  firmware had to reopen the bus port after the link dropped, and should stay at 0.
-
-| | ESPHome | Matter (AmebaZ2 and ESP32) |
-|---|---|---|
-| A command the unit does not take | sent again, see [below](#confirm-and-retry-esphome-only) | sent once; the miss is counted in `UnansweredCommands` |
-| Mode request to a unit that is off | one frame carrying mode and power-on | a power-on frame, then a mode frame |
-| Setpoint outside cool and heat | refused by the entity in auto, dry and fan-only (the unit keeps its own) | a no-op in dry and fan-only: the setpoint is stripped from the frame |
-| Special-mode pacing | 10 s between special-mode frames | none: two switches toggled together can lose the second |
-| Energy counter | yes | no |
-| Horizontal swing | `supports_horizontal_swing` option, off by default | not exposed |
-
-The Matter column lists known gaps, recorded in pull request #173 and issue #168. Issue #182
-proposes retiring the Matter builds instead of closing them. See
-[Home](Home#state-of-the-project).
-
-## Version requirements on the Matter builds
-
-| Feature | AmebaZ2 | ESP32 Matter |
-|---|---|---|
-| Beeper endpoint (ep11) | 1.3.49 | 1.1.19 |
-| Bus counters, `LinkToken`, `BusLink` (`0x0014` to `0x0019`) | 1.3.49 | 1.1.19 |
-| Setpoints over the full 16 to 32 °C range | 1.3.49 | 1.1.19 |
-| Sleep profile list populated on ep6 | 1.3.50 (empty in some earlier builds) | all |
-| Glue fixes for SystemMode Auto ending as Cool (#170, #173) | 1.3.48 | 1.1.18 |
-
-After an update that adds an endpoint, Home Assistant needs a node re-interview before the new
-entity appears ([Commissioning & HA Setup](Commissioning-and-HA-Setup#re-interview-after-a-structure-changing-ota)).
-
-Two notes on the setpoint range. Before these versions the Thermostat server applied its default
-dead band between the heating and cooling setpoints, so AmebaZ2 refused cooling setpoints below
-18.5 °C and heating setpoints above 29.5 °C, and ESP32 refused below 18 °C and above 30 °C. The
-fix sets `MinSetpointDeadBand` to 0. On ESP32 that attribute is stored in flash, so a node on which
-a controller once wrote another value keeps that value until 0 is written again.
-
-On AmebaZ2 the sleep profile names live in a Realtek SDK file this repo cannot vendor. A restored
-SDK brought back the stock table, and builds made from it shipped an empty `SupportedModes` list:
-Home Assistant showed the sleep select as unavailable while `CurrentMode` still worked. From 1.3.50
-`dev.py ota amebaz2 build` writes the list on every build (`firmware/src/sdk-edits/README.md`).
+The retired Matter builds exposed the same functions as endpoints and a manufacturer cluster. That
+table is in this page's history at the `matter-final` tag
+([Matter Firmware (Retired)](Matter-Firmware-Retired)).
 
 ## Beeper
 
 The indoor unit beeps when it takes a command. The beep is requested per frame: bit 2 of frame
-byte 23 in a class `0x65` command, which the stock module calls `t_beep` and sets by default. All
-three firmwares now have a Beeper switch that clears the bit on every command frame the node sends.
+byte 23 in a class `0x65` command, which the stock module calls `t_beep` and sets by default. The
+Beeper switch clears the bit on every command frame the node sends.
 
 - Turning the switch off sends nothing. It takes effect from the next command.
 - The setting is stored on the node and survives a reboot. It is on by default, so behaviour does
@@ -107,10 +65,8 @@ three firmwares now have a Beeper switch that clears the bit on every command fr
 - The remote control still makes the unit beep. That path does not go through the node.
 - The A/C does not report a beeper state, so the switch shows what was last set.
 
-Hardware status: on an ESPHome node, a unit was heard to stay silent with the switch off
-(maintainer's check, 2026-10-10). The Matter builds clear the same bit through the same routine,
-and a host test compares the two byte for byte, but nobody has listened to a unit driven by a
-Matter node with the switch off.
+Hardware status: a unit was heard to stay silent with the switch off (maintainer's check,
+2026-10-10).
 
 ## Bus counters
 
@@ -123,53 +79,40 @@ on a reboot.
 | Reply timeouts | frames of any kind the unit did not answer within 500 ms |
 | Unanswered commands | the reply timeouts that were commands (a user write the unit never acknowledged) |
 | Link losses | times the link was declared lost: five status polls in a row without a valid reply |
-| A/C device type | the two bytes the unit reports about itself in the handshake, `HH LL`. Unknown (0 on Matter) until learned |
+| A/C device type | the two bytes the unit reports about itself in the handshake, `HH LL`. Unknown until learned |
 | Bus link | on while the unit answers its status poll |
 
-ESPHome adds two more, which exist because only that firmware retries:
+Two more count the retries:
 
 | Value | Counts |
 |---|---|
 | Command retries | commands sent again, for either reason described below |
 | Failed commands | commands given up on after the last re-send, plus commands dropped at a link loss |
 
-One difference in meaning: on ESPHome `unanswered_commands` counts every unanswered send, so one
-command lost three times counts 3. On the Matter builds nothing is sent again, so each lost command
-counts once.
+`unanswered_commands` counts every unanswered send, so one command lost three times counts 3.
 
 ### Reading them
 
-**ESPHome.** They are ordinary sensors on the device page, in the Diagnostic group. Declare the
-ones you want in the YAML. The shipped `w41h1.yaml` declares all of them.
-
-**Matter, with the unified integration.** Version 1.6.0 creates a sensor for each counter and for
-the device type when the node reports the attribute, and uses `BusLink` for its `AC bus link`
-sensor. The integration reads them from matter-server, so its entry needs the Matter server URL
-and node id (both are filled in by the config flow).
-
-**Matter, by hand.** matter-server stores the attributes under the numeric path
-`<endpoint>/<cluster id>/<attribute id>`, all decimal. The cluster id `0xFFF1FC00` is `4294048768`,
-so the six values are `1/4294048768/20` to `1/4294048768/25`. Read one with matter-server's
-`read_attribute` WebSocket command, or look in the node's attribute dump.
+They are ordinary sensors on the device page, in the Diagnostic group. Declare the ones you want in
+the YAML. The shipped `w41h1.yaml` declares all of them.
 
 ### What the numbers mean
 
 - **All zero, bus link on:** healthy.
 - **Reply timeouts rising, bus link still on:** the unit misses some polls. Occasional misses are
   harmless because the next poll asks again.
-- **Unanswered commands rising:** a write was lost. On ESPHome, check whether `failed_commands`
-  also rose. If it did not, a re-send landed and nothing was lost in the end. On Matter the command
-  is gone and the entity returns to the unit's real state at the next status.
+- **Unanswered commands rising:** a send was lost. Check whether `failed_commands` also rose. If
+  it did not, a re-send landed and nothing was lost in the end.
 - **Link losses rising:** the unit stopped answering for at least five polls. Check the wiring and
   the DE pin first ([FAQ & Gotchas](FAQ-Gotchas)). Commands sent during the outage are lost.
 - **Checksum errors rising:** corrupt bytes on the wire, usually wiring, a floating DE line or a
   marginal supply.
 
-## Confirm and retry (ESPHome only)
+## Confirm and retry
 
-Before 2026-10-10 every firmware sent a command frame once and never checked the result. Hardware
-runs on two ESPHome units failed about one check in 52, each time with `unanswered_commands` at
-exactly 1 (pull request #179). The ESPHome component now checks each command twice.
+Before 2026-10-10 a command frame was sent once and the result never checked. Hardware runs on two
+units failed about one check in 52, each time with `unanswered_commands` at exactly 1 (pull request
+#179). The component now checks each command twice.
 
 | Check | When | If it fails |
 |---|---|---|
@@ -186,8 +129,6 @@ older pair of frames, power-on and then the mode.
 
 ### Limits
 
-- The Matter builds do not have it. They send once. A design for the shared driver is written up in
-  pull request #173 and is not implemented.
 - Some differences are never re-sent, because they are the unit's own behaviour: its setpoint
   in auto, dry and fan-only, the mode, setpoint and fan that turbo forces, the fan under quiet or a
   sleep profile, and anything except power on a unit that reports off.

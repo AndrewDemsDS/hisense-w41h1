@@ -1,5 +1,5 @@
 // test_common.h -- shared pass/fail counters + CHECK macro for the host tests
-// (test_codec.cpp, test_matter_map.cpp). Each test is its own translation unit /
+// (test_codec.cpp, test_reference_map.cpp). Each test is its own translation unit /
 // binary, so the internal-linkage counters below get a fresh copy per test.
 #pragma once
 #include <cstdio>

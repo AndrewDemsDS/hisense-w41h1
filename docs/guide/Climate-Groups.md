@@ -2,8 +2,7 @@
 
 Several A/Cs, one thermostat. With every unit exposing the same climate vocabulary, a Home Assistant
 climate group can drive them together: one setpoint, one mode, one fan speed, one preset for the
-whole house. This works across firmwares, so an ESPHome node and a Matter node can sit in the same
-group.
+whole house.
 
 The group is a control layer, not a new control loop. Each A/C still regulates on its own indoor
 sensor; the group keeps their settings in step.
@@ -14,15 +13,15 @@ sensor; the group keeps their settings in step.
 |---|---|---|
 | Home Assistant | 2026.3 or later | required by Climate Group Helper |
 | [Climate Group Helper](https://github.com/bjrnptrsn/climate_group_helper) | 1.10.0 or later | the group itself, from the HACS default list |
-| ESPHome build (this repo) | current `main` | special modes as climate presets, fan names below |
-| Matter builds + [hisense-unified-ac](https://github.com/AndrewDemsDS/hisense-unified-ac) | 1.4.0 or later | six-step fan names on the Matter path |
-| AmebaZ2 firmware | 1.3.38 or later | in-between fan speeds stick (earlier images bump them one step) |
+| ESPHome firmware (this repo) | current `main` | special modes as climate presets, fan names below |
 
-ESP32 Matter builds need no firmware change for grouping.
+A unit that still runs one of the retired Matter builds can join the same group through the
+[hisense-unified-ac](https://github.com/AndrewDemsDS/hisense-unified-ac) integration (1.4.0 or
+later), whose climate entity uses the same names. Add that entity, not the raw Matter climate.
 
 ## The shared vocabulary
 
-Every unit, whatever its firmware, exposes these names. A group offers only what all its members
+Every unit exposes these names. A group offers only what all its members
 agree on, so matching names is what makes the whole set available.
 
 | Attribute | Values |
@@ -36,24 +35,17 @@ agree on, so matching names is what makes the whole set available.
 A unit that lacks a capability (a cooling-only unit, no quiet flag) offers fewer values, and the
 group narrows to match.
 
-## Pick the right member entities
-
-| Firmware | Add this entity | Not this |
-|---|---|---|
-| ESPHome | the node's `climate` entity | |
-| ESP32 Matter, AmebaZ2 Matter | the **hisense-unified-ac** climate entity | the raw Matter climate: it has no fan, swing or presets, and reports a 7 to 35 °C range |
-
 ## Set it up
 
 1. HACS → search **Climate Group Helper** → download → restart Home Assistant.
 2. Settings → Devices & services → Helpers → **Create helper** → **Climate Group**.
-3. Name it (for example `House AC`) and add the member entities from the table above.
+3. Name it (for example `House AC`) and add each node's `climate` entity.
 4. Open the new helper's options, turn on **advanced mode**, save, and open the options again to see
    the sync and timing sections. Apply the settings below.
 
 ## Recommended settings
 
-These are the values the group was validated with on a mixed ESPHome + Matter house.
+These are the values the group was validated with.
 
 | Option | Value | Why |
 |---|---|---|
@@ -66,14 +58,14 @@ These are the values the group was validated with on a mixed ESPHome + Matter ho
 | Retry attempts / delay | 2 / 1.0 s | all members are local |
 | Force retry | off | local members report their state reliably |
 | Member command delay | 0 s | |
-| UI grace period | 5 s | the ESPHome build holds a commanded value for 4 s before reading back |
+| UI grace period | 5 s | the firmware holds a commanded value for 4 s before reading back |
 
 ## How it behaves
 
 - **Mirror means the whole house.** Switching one unit off with its remote switches every member
   off. That is the point of a group; use member isolation rules if a room should opt out.
 - **Presets settle slowly.** The A/C ignores a special-mode command that lands within about 8 s of
-  the previous one, so the ESPHome build spaces them 10 s apart and a combined preset such as
+  the previous one, so the firmware spaces them 10 s apart and a combined preset such as
   `eco_sleep_old` takes about 10 s. The entity keeps showing the requested preset until it has
   landed, so a mirroring group does not copy a half-applied state.
 - **Some modes own the fan.** While turbo, quiet or a sleep profile is active, a different fan speed

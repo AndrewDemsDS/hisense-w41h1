@@ -2,7 +2,7 @@
 
 Turnkey procedures for the hardware-in-the-loop issues, using `esp32-recon`. Each is
 "wire it, flash it, run these commands, record the result on the issue." No procedure
-needs the Matter stack.
+needs Home Assistant or a paired node.
 
 ## Setup (once)
 
@@ -22,7 +22,7 @@ esp32-recon> wifi <ssid> <pass>  # then reach it remotely: nc esp32-recon.local 
 
 The `snap`/`diff` delta finder is the core RE tool: capture a baseline frame, toggle one
 thing on the remote, `diff` shows exactly which byte/bit moved. Reference field offsets are
-in `firmware/src/rs485-driver/hisense_rs485.h` (status flags at `[35]`/`[36]`, mode `[18]`,
+in `firmware/test/reference-driver/hisense_rs485.h` (status flags at `[35]`/`[36]`, mode `[18]`,
 setpoint `[19]`, etc.).
 
 ---

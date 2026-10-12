@@ -15,7 +15,7 @@ local integrations; the W41H1 does not, which is what motivated this work.
    [`docs/02-matter-local-control.md`](docs/02-matter-local-control.md).
 2. **ESP32 replacement (fallback).** The module talks to the A/C mainboard over **RS-485**
    (`F4 F5 … F4 FB` frames, 9600 baud). An ESP32 + RS-485 transceiver replaces the dongle
-   entirely, running either the Matter firmware or ESPHome. Frame format:
+   entirely, running ESPHome. Frame format:
    [`docs/03-rs485-ac-protocol.md`](docs/03-rs485-ac-protocol.md); full command↔function
    map + value tables: [`docs/05-esp32-replacement.md`](docs/05-esp32-replacement.md);
    ready-to-flash ESPHome config: [`../firmware/esphome/`](../firmware/esphome/).

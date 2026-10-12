@@ -11,8 +11,8 @@
 title: Hisense AEH-W41H1 de-cloud
 description: >-
   Replace the ConnectLife cloud on a Hisense AEH-W41H1 air conditioner with local Home Assistant
-  control: ESPHome or Matter firmware on an ESP32, or Matter on the stock AmebaZ2 module.
-  Reverse-engineered RS-485 protocol, OTA, and full hardware documentation.
+  control: ESPHome firmware on an ESP32, or on the stock module itself.
+  Reverse-engineered RS-485 protocol and full hardware documentation.
 url: https://andrewdemsds.github.io
 baseurl: /hisense-w41h1
 
