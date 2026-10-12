@@ -70,7 +70,16 @@ def changelog_sections(repo):
     if not path.is_file():
         raise Problem(f"{CHANGELOG} is missing")
     lines = path.read_text(encoding="utf-8").splitlines()
-    starts = [i for i, line in enumerate(lines) if line.startswith("## ")]
+    # A `## ` line inside a fenced code block is a shell comment or an example, not a heading.
+    starts, fence = [], None
+    for i, line in enumerate(lines):
+        mark = re.match(r"\s*(```+|~~~+)", line)
+        if mark and fence is None:
+            fence = mark.group(1)[0]
+        elif mark and mark.group(1)[0] == fence:
+            fence = None
+        elif fence is None and line.startswith("## "):
+            starts.append(i)
     sections = []
     for n, i in enumerate(starts):
         end = starts[n + 1] if n + 1 < len(starts) else len(lines)
@@ -87,13 +96,21 @@ def version_section(sections, version):
     return None
 
 
+def is_unreleased(title):
+    """`## Unreleased`, `## Unreleased changes` or Keep a Changelog's `## [Unreleased]`."""
+    return re.match(r"\[?unreleased\b", title, re.I) is not None
+
+
 def git(repo, *args):
     # Under a git hook, GIT_DIR and GIT_INDEX_FILE name the repository being committed to and
     # would win over -C. The tree asked about is `repo`, so they are dropped.
     env = {k: v for k, v in os.environ.items()
            if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX", "GIT_COMMON_DIR")}
-    r = subprocess.run(["git", "-C", str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                       env=env)
+    try:
+        r = subprocess.run(["git", "-C", str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                           env=env)
+    except OSError as e:
+        raise Problem(f"git {' '.join(args)}: cannot run git ({e.strerror})")
     if r.returncode != 0:
         raise Problem(f"git {' '.join(args)}: {r.stderr.strip()}")
     return r.stdout
@@ -107,14 +124,14 @@ def check_basic(repo, problems):
         return version
     _, sections = changelog_sections(repo)
     titles = [title for title, _, _ in sections]
-    if version_section(sections, version) is None and not any(t.lower().startswith("unreleased") for t in titles):
+    if version_section(sections, version) is None and not any(is_unreleased(t) for t in titles):
         problems.append(f"{CHANGELOG} has neither a `## {version}` section nor a `## Unreleased` one")
 
     # Not below the newest release. A shallow CI checkout has no tags, and then there is nothing
     # to compare with: the tag check of the release workflow covers the release itself.
     try:
         tags = git(repo, "tag", "--list", "v[0-9]*").split()
-    except (Problem, FileNotFoundError):
+    except Problem:
         tags = []
     released = [as_tuple(t[1:]) for t in tags if SEMVER.fullmatch(t[1:])]
     if released and as_tuple(version) < max(released):
@@ -147,7 +164,9 @@ def check_tag(repo, version, tag, problems):
 
 def check_base(repo, base, problems):
     merge_base = git(repo, "merge-base", base, "HEAD").strip()
-    changed = git(repo, "diff", "--name-only", merge_base, "HEAD").split("\n")
+    # -z: git quotes and escapes a name with a non-ASCII letter in its line output, and such a
+    # name would no longer start with a watched prefix.
+    changed = git(repo, "diff", "--name-only", "-z", merge_base, "HEAD").split("\0")
     watched = [f for f in changed if f.startswith(WATCHED)]
     if watched and CHANGELOG not in changed:
         shown = ", ".join(watched[:5]) + (f" and {len(watched) - 5} more" if len(watched) > 5 else "")

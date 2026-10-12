@@ -283,14 +283,11 @@ check(r.returncode == 0 and r.stdout.strip() == "2.0.0-rc1", "--print prints wha
 
 # The changelog.
 for name, heading, wanted in (("lower", "## unreleased", 0), ("suffix", "## Unreleased changes", 0),
+                              ("bracket", "## [Unreleased]", 0), ("bracket-date", "## [Unreleased] - soon", 0),
+                              ("word", "## Unreleasedness", 1), ("other", "## [Released]", 1),
                               ("nospace", "##Unreleased", 1), ("h3", "### Unreleased", 1), ("h1", "# Unreleased", 1)):
     r = lint(tree(f"log-{name}", changelog=f"# Changelog\n\n{heading}\n\n- a change\n"))
     check(r.returncode == wanted, f"`{heading}` {'counts' if wanted == 0 else 'does not count'} as the Unreleased section")
-r = lint(tree("log-bracket", changelog="# Changelog\n\n## [Unreleased]\n\n- a change\n"))
-known_failure(r.returncode == 0, "`## [Unreleased]` counts as the Unreleased section",
-              "version-lint.py:111 check_basic(): the title must START with 'unreleased', so the Keep a Changelog "
-              "spelling is refused while `## [2.0.0]` is accepted for a release")
-
 released = tree("released", changelog="# Changelog\n\n## 2.0.0 - 2026-10-12\n\n- the release\n\n## 1.0.0\n\n- old\n- older\n", repo=True)
 r = lint(released, "--notes", "1.0.0")
 check(r.returncode == 0 and r.stdout == "- old\n- older\n", "--notes VERSION prints that section, and the last one runs to the end of the file")
@@ -304,9 +301,11 @@ r = lint(tree("bracketed", changelog="# Changelog\n\n## [2.0.0] - 2026-10-12\n\n
 check(r.returncode == 0, "a tag is accepted against a `## [2.0.0] - date` section")
 fenced = tree("fenced", changelog="# Changelog\n\n## 2.0.0\n\n- how to build:\n\n```bash\n## not a heading, a shell comment\nmake\n```\n\n- last entry\n")
 r = lint(fenced, "--notes")
-known_failure("- last entry" in r.stdout, "--notes keeps the whole section when it holds a code block with a `## ` line",
-              "version-lint.py:76 changelog_sections(): every line that starts with `## ` is a heading, code blocks "
-              "included, so the release text is cut short at that line with no error")
+check(r.returncode == 0 and "## not a heading, a shell comment" in r.stdout and r.stdout.rstrip().endswith("- last entry"),
+      "--notes keeps the whole section when it holds a code block with a `## ` line")
+tilde = tree("fenced-tilde", changelog="# Changelog\n\n## 2.0.0\n\n~~~\n## in a tilde block\n```\n## still inside: the other fence does not close it\n~~~\n\n## 1.0.0\n\n- old\n")
+check(lint(tilde, "--notes").stdout.count("## ") == 2 and lint(tilde, "--notes", "1.0.0").stdout == "- old\n",
+      "a fence closes only with its own kind, and the heading after it is a heading again")
 
 # Tags.
 tags = tree("tags", version="9.5.0", repo=True)
@@ -337,10 +336,8 @@ git(good, "checkout", "-q", "-b", "unicode", "main")
 write(good / "firmware/esphome/components/hisense_ac/caf\u00e9.cpp", "// new\n")
 git(good, "add", "-A")
 git(good, "commit", "-q", "-m", "a component file with a non-ASCII name")
-known_failure(lint(good, "--base", "main").returncode == 1,
-              "a new component file with a non-ASCII name needs a changelog entry",
-              "version-lint.py:147 check_base(): `git diff --name-only` quotes and escapes such a path, so it no "
-              "longer starts with the watched prefix. `-z` gives the plain names")
+r = lint(good, "--base", "main")
+check(r.returncode == 1 and "caf\u00e9.cpp" in r.stderr, "a new component file with a non-ASCII name needs a changelog entry, and is named as it is")
 git(good, "checkout", "-q", "main")
 
 # The ESPHome pin.
@@ -367,9 +364,7 @@ check(lint(pins).returncode == 0, "a pin file that is absent is skipped, not ref
 no_git = {**GIT_ENV, "PATH": str(TMP)}
 check(lint(good, env=no_git).returncode == 0, "with no git on PATH the basic checks still pass (no tags to compare with)")
 r = lint(good, "--base", "main", env=no_git)
-known_failure(r.returncode == 1 and "Traceback" not in r.stderr, "--base with no git on PATH fails with a message",
-              "version-lint.py:95 git(): FileNotFoundError is only caught around the tag listing, so check_base() "
-              "ends in a traceback")
+check(r.returncode == 1 and "Traceback" not in r.stderr and "cannot run git" in r.stderr, "--base with no git on PATH fails with a message")
 
 # ================================================================================================
 print("== cpp-lint.py: which files it takes, and its own rules ==")
