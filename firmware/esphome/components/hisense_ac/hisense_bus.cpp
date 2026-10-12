@@ -122,6 +122,8 @@ void BusScheduler::poll(uint32_t now) {
     this->setup_started_ = true;
     setup_request_lockout(&this->setup_, now);
   }
+  // Here and not only when a reply arrives: a silent unit must not keep an old lockout armed.
+  setup_request_expire(&this->setup_, now);
   // Several phases can complete in one call (a reply already buffered, a zero wait); the bound
   // only guards against a logic error spinning here.
   for (int guard = 0; guard < 16; guard++) {
@@ -233,6 +235,8 @@ void BusScheduler::start_step_(uint32_t now) {
       // Byte 16 bit 6 says whether we have heard the A/C's 0x1E. Any reply class is accepted:
       // the A/C sometimes answers the heartbeat with a 0x66.
       size_t n = build_link_heartbeat(this->heard_ac_, this->setup_indicator_, f, sizeof(f));
+      if (this->setup_indicator_)
+        setup_request_flag_sent(&this->setup_);
       this->begin_transaction_(f, n, 0x00, now);
       return;
     }
@@ -343,8 +347,10 @@ void BusScheduler::on_step_done_(size_t reply_len, uint32_t now) {
       bool silent = this->link_miss_ >= BUS_LINK_LOST_POLLS;
       if (silent != this->link_down_) {
         this->link_down_ = silent;
-        if (silent)
+        if (silent) {
           this->link_losses_++;
+          setup_request_link_lost(&this->setup_);
+        }
         if (this->listener_ != nullptr)
           this->listener_->on_bus_link(!silent);
       }

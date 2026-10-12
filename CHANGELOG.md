@@ -101,6 +101,11 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   frame cut short, made the receiver miss the frame that followed (one "Reply timeouts" count and
   a missed status poll each time). It now looks again at the byte that broke a frame and follows
   a later start tag as a second candidate.
+- **One "77" gesture is one setup request.** `on_setup_request` could fire twice for one gesture
+  when the unit's two request bits changed while the request stood, every 10 s for a request bit
+  that stayed up, and once more after a lost link. It now fires once per unbroken run of replies
+  that ask. A unit that sends one pulse per gesture, as the one on the bench does, behaves as
+  before.
 
 ### The Matter firmwares are retired, ESPHome is the only firmware (2026-10-12, #182)
 - **Removed** the AmebaZ2 Matter build (the SDK setup scripts, `patches/`, `versions.env`, the

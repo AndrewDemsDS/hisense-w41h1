@@ -114,6 +114,7 @@ class BusScheduler {
 
   // While on, every heartbeat carries the module's provisioning flag and the panel shows "77".
   // Switching it off starts the lockout that keeps the closing press from opening it again.
+  // `now_ms` is the same clock poll() gets.
   void set_setup_indicator(bool on, uint32_t now_ms);
   bool setup_indicator() const { return this->setup_indicator_; }
   // Request bits of the last 0x1E reply with a good checksum, before any debounce. For diagnostics:

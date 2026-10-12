@@ -413,34 +413,64 @@ void setup_request_lockout(SetupRequestTracker *tracker, uint32_t now_ms) {
   tracker->lockout_since = now_ms;
 }
 
+void setup_request_expire(SetupRequestTracker *tracker, uint32_t now_ms) {
+  if (tracker->lockout_armed && now_ms - tracker->lockout_since >= SETUP_REQUEST_LOCKOUT_MS)
+    tracker->lockout_armed = false;
+}
+
+void setup_request_flag_sent(SetupRequestTracker *tracker) { tracker->reconfig_quiet = false; }
+
+void setup_request_link_lost(SetupRequestTracker *tracker) {
+  tracker->streak = 0;
+  tracker->latched = false;
+}
+
 uint8_t setup_request_step(SetupRequestTracker *tracker, uint8_t req_bits, bool indicating, uint32_t now_ms) {
-  uint8_t req = req_bits & LINK_REQ_MASK;
+  uint8_t asking = req_bits & LINK_REQ_MASK;
   // Bit 3 while the module's own flag is on the wire, or before a reply without it, is not a
   // request anyone made.
   if (indicating) {
     tracker->reconfig_quiet = false;
-  } else if ((req & LINK_REQ_RECONFIG) == 0) {
+  } else if ((asking & LINK_REQ_RECONFIG) == 0) {
     tracker->reconfig_quiet = true;
   }
   if (!tracker->reconfig_quiet)
-    req &= static_cast<uint8_t>(~LINK_REQ_RECONFIG);
-  // A request that changes kind without a quiet reply in between starts over, so the second kind
-  // is not swallowed by the first one's latch.
-  if (req != 0 && req != tracker->last_req) {
-    tracker->streak = 0;
-    tracker->latched = false;
+    asking &= static_cast<uint8_t>(~LINK_REQ_RECONFIG);
+  setup_request_expire(tracker, now_ms);
+  const bool locked_out =
+      smartcfg_lockout_mask(LINK_REQ_SMARTCFG, now_ms, tracker->lockout_armed, tracker->lockout_since) == 0;
+
+  // Bit 5 counts when it appears outside the lockout. One that appears inside it, or simply stays
+  // up, is spent: it does not count later because the lockout has run out in the meantime.
+  const bool smartcfg = (asking & LINK_REQ_SMARTCFG) != 0;
+  if (!smartcfg) {
+    tracker->smartcfg_live = false;
+  } else if (!tracker->smartcfg_seen) {
+    tracker->smartcfg_live = !locked_out;
   }
-  tracker->last_req = req;
-  // An expired lockout is disarmed here, or it would read as running again after a clock wrap.
-  if (tracker->lockout_armed && now_ms - tracker->lockout_since >= SETUP_REQUEST_LOCKOUT_MS)
-    tracker->lockout_armed = false;
-  const uint8_t gated = smartcfg_lockout_mask(req, now_ms, tracker->lockout_armed, tracker->lockout_since);
-  // Only bit 3 can be handed back, so only a request that includes it has to be held.
-  const uint8_t hold = gated == LINK_REQ_SMARTCFG ? 1 : SETUP_REQUEST_HOLD_FRAMES;
-  if (setup_request_debounce(gated, &tracker->streak, &tracker->latched, hold) <= 0)
+  tracker->smartcfg_seen = smartcfg;
+
+  // Bit 3 counts once it has been there for SETUP_REQUEST_HOLD_FRAMES replies in a row.
+  const uint8_t reconfig = asking & LINK_REQ_RECONFIG;
+  const bool reconfig_counts =
+      setup_request_debounce(reconfig, &tracker->streak, &tracker->latched, SETUP_REQUEST_HOLD_FRAMES) > 0;
+
+  if (asking == 0) {
+    tracker->taken = false;
     return 0;
+  }
+  // One unbroken run of replies that ask is one request, whichever bits come and go inside it.
+  // And a request that includes bit 3 waits for bit 3: only that bit can be handed back.
+  if (tracker->taken || (reconfig != 0 && !reconfig_counts))
+    return 0;
+  uint8_t request = reconfig;
+  if (tracker->smartcfg_live && !locked_out)
+    request |= LINK_REQ_SMARTCFG;
+  if (request == 0)
+    return 0;
+  tracker->taken = true;
   setup_request_lockout(tracker, now_ms);
-  return gated;
+  return request;
 }
 
 // ---- Parsers -----------------------------------------------------------------------------------

@@ -1138,7 +1138,7 @@ static void test_setup_request() {
   // setup_request_lockout sets both fields.
   H::SetupRequestTracker tr;
   CHECK(!tr.lockout_armed && tr.lockout_since == 0 && !tr.reconfig_quiet && tr.streak == 0 && !tr.latched &&
-            tr.last_req == 0,
+            !tr.smartcfg_seen && !tr.smartcfg_live && !tr.taken,
         "a new tracker is the boot state");
   H::setup_request_lockout(&tr, 1000);
   CHECK(tr.lockout_armed && tr.lockout_since == 1000, "the lockout is armed from the time given");
@@ -1178,28 +1178,104 @@ static void test_setup_request() {
   CHECK(H::setup_request_step(&q, 0x08, false, 11000) == 0x08, "third reply: taken");
   CHECK(H::setup_request_step(&q, 0x08, true, 12000) == 0 && !q.reconfig_quiet, "indicating again: the gate shuts");
 
-  // Line 419: a request that changes kind starts its count again. Two replies of bit 3, then
-  // bits 3 and 5 together: three more are needed, not one.
+  // The count of bit 3 is its own: bit 5 arriving on top does not start it again. Two replies of
+  // bit 3, then bits 3 and 5 together: that is the third reply with bit 3, and both are reported.
   H::SetupRequestTracker k;
   H::setup_request_step(&k, 0, false, 1000);
   CHECK(H::setup_request_step(&k, 0x08, false, 2000) == 0 && H::setup_request_step(&k, 0x08, false, 3000) == 0,
         "two replies of bit 3");
-  CHECK(H::setup_request_step(&k, 0x28, false, 4000) == 0 && k.streak == 1, "then bits 3 and 5: the count starts over");
-  CHECK(H::setup_request_step(&k, 0x28, false, 5000) == 0, "second");
-  CHECK(H::setup_request_step(&k, 0x28, false, 6000) == 0x28, "third: taken, both bits");
-  // Line 418: a change to a numerically smaller request restarts too. Bit 5 taken, then bit 3
-  // alone: the latch of the first must not swallow the second.
+  CHECK(H::setup_request_step(&k, 0x28, false, 4000) == 0x28 && k.streak == 3 && k.latched && k.taken,
+        "then bits 3 and 5: the third reply with bit 3, taken with both bits");
+  CHECK(H::setup_request_step(&k, 0x28, false, 5000) == 0 && H::setup_request_step(&k, 0x08, false, 6000) == 0 &&
+            H::setup_request_step(&k, 0x20, false, 7000) == 0,
+        "and nothing more while the unit keeps asking, in whatever form");
+  CHECK(H::setup_request_step(&k, 0, false, 8000) == 0 && !k.taken && k.streak == 0 && !k.latched && !k.smartcfg_seen,
+        "a reply that asks nothing ends the run");
+  // Bit 5 with a bit 3 that counts waits for bit 3's hold, and is reported with it only when it
+  // is still there then.
+  H::SetupRequestTracker w;
+  H::setup_request_step(&w, 0, false, 1000);
+  CHECK(H::setup_request_step(&w, 0x28, false, 2000) == 0 && w.smartcfg_live && !w.taken, "both bits: bit 5 waits");
+  CHECK(H::setup_request_step(&w, 0x28, false, 3000) == 0, "second");
+  CHECK(H::setup_request_step(&w, 0x28, false, 4000) == 0x28, "third: both");
+  H::SetupRequestTracker w2;
+  H::setup_request_step(&w2, 0, false, 1000);
+  H::setup_request_step(&w2, 0x28, false, 2000);
+  CHECK(H::setup_request_step(&w2, 0x20, false, 3000) == 0x20,
+        "bit 3 gone again after one reply: bit 5 is taken alone");
+  // Bit 5 taken, then bit 3 held with no quiet reply between: the same run, no second request.
   H::SetupRequestTracker d;
   H::setup_request_step(&d, 0, false, 1000);
-  CHECK(H::setup_request_step(&d, 0x20, false, 2000) == 0x20, "bit 5 taken");
+  CHECK(H::setup_request_step(&d, 0x20, false, 2000) == 0x20 && d.taken, "bit 5 taken");
   CHECK(H::setup_request_step(&d, 0x08, false, 3000) == 0 && d.streak == 1 && !d.latched,
         "bit 3 next: counted from one");
   CHECK(H::setup_request_step(&d, 0x08, false, 4000) == 0, "second");
-  CHECK(H::setup_request_step(&d, 0x08, false, 5000) == 0x08, "third: taken");
+  CHECK(H::setup_request_step(&d, 0x08, false, 5000) == 0 && d.streak == 3 && d.latched,
+        "third: its hold is complete, but the run has had its request");
+  // Bit 5 that appears inside the lockout is spent, also when it outlives the lockout.
+  H::SetupRequestTracker s;
+  H::setup_request_lockout(&s, 1000);
+  CHECK(H::setup_request_step(&s, 0x20, false, 10999) == 0 && s.smartcfg_seen && !s.smartcfg_live,
+        "bit 5 at 9.999 s: seen, not live");
+  CHECK(H::setup_request_step(&s, 0x20, false, 11000) == 0 && H::setup_request_step(&s, 0x20, false, 60000) == 0,
+        "still up when the lockout is over: not taken");
+  CHECK(H::setup_request_step(&s, 0, false, 61000) == 0 && !s.smartcfg_seen, "gone");
+  CHECK(H::setup_request_step(&s, 0x20, false, 62000) == 0x20, "a new pulse is taken");
+  // Bit 5 that appeared outside the lockout, with the lockout restarted (the indication switched
+  // off) before bit 3's hold is complete: bit 3 is reported alone.
+  H::SetupRequestTracker x;
+  H::setup_request_step(&x, 0, false, 1000);
+  H::setup_request_step(&x, 0x28, false, 2000);
+  H::setup_request_step(&x, 0x28, false, 3000);
+  H::setup_request_lockout(&x, 3500);
+  CHECK(H::setup_request_step(&x, 0x28, false, 4000) == 0x08, "bit 5 is held back by the lockout that began meanwhile");
   // Bits outside the mask never reach the tracker's state.
   H::SetupRequestTracker m;
-  CHECK(H::setup_request_step(&m, 0xD7, false, 1000) == 0 && m.last_req == 0 && m.streak == 0,
+  CHECK(H::setup_request_step(&m, 0xD7, false, 1000) == 0 && !m.smartcfg_seen && !m.taken && m.streak == 0,
         "other bits are no request");
+
+  // setup_request_expire: disarms at exactly 10 s, leaves the rest alone, and is safe to repeat.
+  H::SetupRequestTracker e;
+  H::setup_request_expire(&e, 5);
+  CHECK(!e.lockout_armed && e.lockout_since == 0, "expire on a tracker with no lockout does nothing");
+  H::setup_request_lockout(&e, 0xFFFFFF00u);
+  H::setup_request_expire(&e, 0xFFFFFF00u + 9999);
+  CHECK(e.lockout_armed, "9.999 s, across the wrap: armed");
+  H::setup_request_expire(&e, 0xFFFFFF00u + 10000);
+  CHECK(!e.lockout_armed && e.lockout_since == 0xFFFFFF00u, "10 s: disarmed");
+  H::setup_request_expire(&e, 0xFFFFFF00u + 5);
+  CHECK(!e.lockout_armed, "and it stays disarmed whatever the clock says later");
+
+  // setup_request_flag_sent: the gate for bit 3 shuts without a reply having been read.
+  H::SetupRequestTracker fs;
+  H::setup_request_step(&fs, 0, false, 1000);
+  CHECK(fs.reconfig_quiet, "(gate open)");
+  H::setup_request_flag_sent(&fs);
+  CHECK(!fs.reconfig_quiet, "the flag went out: the gate is shut");
+  int fires = 0;
+  for (int i = 0; i < 5; i++)
+    fires += H::setup_request_step(&fs, 0x08, false, 2000 + i * 1000) != 0;
+  CHECK(fires == 0, "the flag handed back for five replies with the indication already off: no request");
+  CHECK(H::setup_request_step(&fs, 0, false, 8000) == 0 && fs.reconfig_quiet,
+        "a reply without it opens the gate again");
+
+  // setup_request_link_lost: the hold of bit 3 starts again, nothing else changes.
+  H::SetupRequestTracker ll;
+  H::setup_request_step(&ll, 0, false, 1000);
+  H::setup_request_step(&ll, 0x08, false, 2000);
+  H::setup_request_step(&ll, 0x08, false, 3000);
+  H::setup_request_lockout(&ll, 3000);
+  H::setup_request_link_lost(&ll);
+  CHECK(ll.streak == 0 && !ll.latched && ll.reconfig_quiet && ll.lockout_armed && ll.lockout_since == 3000,
+        "link lost: the count is gone, the gate and the lockout are as they were");
+  CHECK(H::setup_request_step(&ll, 0x08, false, 70000) == 0 && H::setup_request_step(&ll, 0x08, false, 71000) == 0,
+        "back: first and second reply");
+  CHECK(H::setup_request_step(&ll, 0x08, false, 72000) == 0x08, "third: taken");
+  H::setup_request_link_lost(&ll);
+  CHECK(ll.taken, "a request already taken stays taken across a lost link");
+  CHECK(H::setup_request_step(&ll, 0x08, false, 73000) == 0 && H::setup_request_step(&ll, 0x08, false, 74000) == 0 &&
+            H::setup_request_step(&ll, 0x08, false, 75000) == 0,
+        "and the bit still standing afterwards is not reported again");
 }
 
 // ---- Frame assembler ---------------------------------------------------------------------------

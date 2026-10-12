@@ -270,7 +270,13 @@ static void test_tracker_smartcfg() {
   CHECK(feed(&closed, SMARTCFG, false, &now, 1) == 0, "pulse 1 s after the mode closed is ignored");
   CHECK(feed(&closed, 0, false, &now, 7) == 0, "quiet");
   CHECK(feed(&closed, SMARTCFG, false, &now, 1) == 0, "pulse 9 s after is still ignored");
-  CHECK(feed(&closed, SMARTCFG, false, &now, 1) == 1, "a deliberate gesture 10 s after is taken");
+  // The bit still up one reply later, when the 10 s are over, is the same pulse and stays ignored:
+  // a bit that was first seen inside the lockout does not count for outliving it. (This check used
+  // to expect a request here, which is the "0x20 that stays up fires when the lockout ends"
+  // weakness. A gesture is a pulse with a reply without it on either side.)
+  CHECK(feed(&closed, SMARTCFG, false, &now, 1) == 0, "the same pulse still up at 10 s is not a new gesture");
+  CHECK(feed(&closed, 0, false, &now, 1) == 0, "quiet");
+  CHECK(feed(&closed, SMARTCFG, false, &now, 1) == 1, "a deliberate gesture after the 10 s is taken");
 }
 
 static void test_tracker_reconfig() {
@@ -326,14 +332,18 @@ static void test_tracker_reconfig() {
           "and reports both bits");
   }
   {
-    // The kind changes with no quiet reply in between: the second kind is not lost in the first
-    // one's latch. 0x08 held and taken, then 0x20 alone once the lockout is over.
+    // The kind changes with no quiet reply in between. One unbroken run of replies that ask is
+    // one request, so the 0x20 that takes over from a held and taken 0x08 is not a second one.
+    // (This check used to expect a second request. The restart that gave it is the same one that
+    // reported a held 0x08 twice when bit 5 came or went on top of it, and with a toggle on the
+    // request two reports are setup mode opened and closed by one gesture.)
     H::SetupRequestTracker t;
     feed(&t, 0, false, &now, 2);
     CHECK(feed(&t, RECONFIG, false, &now, 3) == 1, "0x08 taken");
     CHECK(feed(&t, RECONFIG, false, &now, 10) == 0, "still held, lockout over");
-    CHECK(feed(&t, SMARTCFG, false, &now, 1, &reason) == 1 && reason == SMARTCFG,
-          "0x20 straight after is its own request");
+    CHECK(feed(&t, SMARTCFG, false, &now, 3) == 0, "0x20 straight after, no reply without a request between: same run");
+    CHECK(feed(&t, 0, false, &now, 1) == 0, "a reply that asks nothing ends the run");
+    CHECK(feed(&t, SMARTCFG, false, &now, 1, &reason) == 1 && reason == SMARTCFG, "0x20 after it is its own request");
   }
   {
     // Inside the lockout a 0x28 reply is 0x08 to the debounce, so it still needs the hold.

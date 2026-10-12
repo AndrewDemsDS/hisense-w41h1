@@ -380,14 +380,28 @@ int setup_request_debounce(uint8_t req_bits, uint8_t *streak, bool *latched, uin
 
 // `req_bits` without bit 5 while the lockout runs: `armed`, and less than SETUP_REQUEST_LOCKOUT_MS
 // since `since_ms`. Bit 3 is never removed here. Elapsed time on a 32 bit clock, so it is right
-// through the 49.7 day wrap as long as the caller disarms an expired lockout (the tracker does).
+// through the 49.7 day wrap as long as the caller disarms an expired lockout (setup_request_expire).
 uint8_t smartcfg_lockout_mask(uint8_t req_bits, uint32_t now_ms, bool armed, uint32_t since_ms);
 
 // All of the above for a stream of replies. Zero-initialised is the boot state.
+//
+// The rules, each of which the exhaustive test in test_esphome_setup_edges.cpp checks over every
+// order of replies:
+//  - One unbroken run of replies that ask for something gives one request, whichever of the two
+//    bits come and go inside it. A reply that asks nothing ends the run.
+//  - Bit 3 counts after SETUP_REQUEST_HOLD_FRAMES replies in a row, and never while the module's
+//    own flag is on the wire or before a reply without it.
+//  - Bit 5 counts on the reply in which it appears, if no lockout is running then. Alone it is
+//    taken at once; with a bit 3 that counts it waits for that bit's hold.
 struct SetupRequestTracker {
+  // Bit 3: replies in a row that carried it as a request, and whether that run has counted.
   uint8_t streak{0};
   bool latched{false};
-  uint8_t last_req{0};
+  // Bit 5: it was in the previous reply, and it appeared outside the lockout (so it may count).
+  bool smartcfg_seen{false};
+  bool smartcfg_live{false};
+  // A request was reported and the unit has not stopped asking since.
+  bool taken{false};
   // Bit 3 only counts after a reply without it, seen while the module's own flag was off the
   // wire. That covers a unit that hands the flag back, and a request still standing at boot,
   // which would otherwise be taken again after every restart.
@@ -397,6 +411,16 @@ struct SetupRequestTracker {
 };
 // Start (or restart) the bit 5 lockout. Call at boot and whenever the indication is switched off.
 void setup_request_lockout(SetupRequestTracker *tracker, uint32_t now_ms);
+// Disarm a lockout that has run out. setup_request_step does it for every reply; call it also on
+// a schedule that does not depend on replies (the scheduler: every poll), or a lockout left armed
+// by a unit that then stays silent for a whole turn of the 32 bit clock reads as running again.
+void setup_request_expire(SetupRequestTracker *tracker, uint32_t now_ms);
+// The module's own flag went out in a heartbeat: from here on bit 3 may be that flag handed back,
+// also when the indication is switched off again before the reply to that heartbeat is read.
+void setup_request_flag_sent(SetupRequestTracker *tracker);
+// The unit stopped answering. "Replies in a row" does not reach across that: the hold of bit 3
+// starts again when the unit is back.
+void setup_request_link_lost(SetupRequestTracker *tracker);
 // Feed one reply's request bits (from link_request_bits). `indicating`: the module's provisioning
 // flag is on the wire. Returns the request bits once per accepted request, 0 otherwise. An
 // accepted request starts the lockout by itself.
