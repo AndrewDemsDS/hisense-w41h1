@@ -115,7 +115,10 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   itself, and runs `docs/guide/lint.py` when a guide page is staged. `stop-slop.sh` also reads
   renamed files, files with non-ASCII names and `.mdx`.
 - **`dev.py`**: `$ESPHOME` is split into words and never run by a shell, so `ESPHOME="uvx esphome"`
-  works and text after a `;` in it is no longer executed. Tool lookups need no bash.
+  works and text after a `;` in it is no longer executed. Tool lookups need no bash. The command line
+  is `argparse` now: a wrong word gets a message that names it, each command has `--help`, and
+  the word `esphome` after the command is optional. The `ota`, `amebaz2` and `esp32` words no
+  longer answer with a pointer to `matter-final`.
 - **Changes what `dev.py --board c3` builds:** it compiled `w41h1.yaml` with the C3 board and pins
   as `-s` overrides, which is the node of `w41h1-esp32c3.yaml` without its status LED. Every
   `--board` value now names one board file, so `--board c3` builds `w41h1-esp32c3.yaml` and the

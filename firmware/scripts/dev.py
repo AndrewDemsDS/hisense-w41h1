@@ -3,19 +3,20 @@
 and bench it (issues #118, #143).
 
 Every external command is printed before it runs. Run it as
-`python3 firmware/scripts/dev.py <cmd> esphome [opts]`. It needs only python3.
+`python3 firmware/scripts/dev.py <cmd> [esphome] [opts]`. It needs only python3. The word
+`esphome` after the command is optional: it dates from when there were other firmwares.
 
 Commands:
-  walk    esphome                        guided: doctor -> test -> build -> flash -> next (y/N each)
-  doctor  esphome                        check the tools and the ESPHome version (read-only)
-  fetch   esphome                        install the pinned ESPHome with pipx (asks first)
-  test    esphome                        host QA (run_tests.sh) + `esphome config`
-  build   esphome                        compile the firmware
-  erase   esphome --port P               erase-flash, BRAND-NEW ESP32 boards only (typed confirmation)
-  flash   esphome --port P               flash over USB + logs
-  monitor esphome --port P               serial logs only
-  bench   esphome --port P --sim-port S  the node against virtual_ac.py over a USB adapter, no A/C
-  next    esphome                        print the staged bring-up and its safety warnings
+  walk                       guided: doctor -> test -> build -> flash -> next (y/N each)
+  doctor                     check the tools and the ESPHome version (read-only)
+  fetch                      install the pinned ESPHome with pipx (asks first)
+  test                       host QA (run_tests.sh) + `esphome config`
+  build                      compile the firmware
+  erase   --port P           erase-flash, BRAND-NEW ESP32 boards only (typed confirmation)
+  flash   --port P           flash over USB + logs
+  monitor --port P           serial logs only
+  bench   --port P --sim-port S   the node against virtual_ac.py over a USB adapter, no A/C
+  next                       print the staged bring-up and its safety warnings
 
 Board: --board c3 (ESP32-C3 SuperMini, default), --board c3-plus (ESP32-C3 SuperMini Plus, the
 one with an RGB pixel on GPIO8) or --board classic (ESP32-D0WDQ6), the ESP32 replacement board.
@@ -23,7 +24,7 @@ one with an RGB pixel on GPIO8) or --board classic (ESP32-D0WDQ6), the ESP32 rep
 through LibreTiny, by the flash layout the unit has: test and build (factory has run on a
 module, sdk and native have not). Node identity: --name <hostname> and --friendly-name <text>
 (default hisense-ac / "Air Conditioner"; give every node after the first its own). Env: ESPHOME
-(esphome command, default `esphome`). ESPHome builds reuse compiled objects through
+(the esphome command, default `esphome`; it may carry arguments, as in "uvx esphome"). ESPHome builds reuse compiled objects through
 PLATFORMIO_BUILD_CACHE_DIR (default ~/.cache/w41h1-dev/pio-build-cache; set it yourself to move it,
 or to an empty string to switch it off).
 
@@ -33,6 +34,7 @@ esp-matter builds, their release steps, the way back to the vendor firmware over
 retired. The last tree that has them is the tag `matter-final`.
 """
 
+import argparse
 import os
 import re
 import shlex
@@ -46,8 +48,6 @@ REPO = HERE.parent.parent
 ESPHOME_DIR = REPO / "firmware/esphome"
 TEST = REPO / "firmware/test"
 
-RETIRED = ("the Matter firmwares are retired (issue #182). dev.py builds ESPHome only; the last tree "
-           "with the amebaz2 and esp32 targets and the `ota` steps is the tag matter-final")
 # One board, one board file: what `dev.py build --board X` compiles is what
 # `esphome compile <that file>` compiles. The pins, the chip and the LED live in the file.
 BOARDS = {
@@ -139,22 +139,33 @@ def esphome_argv():
 
 
 
+def board_name(text):
+    """A --board value, or a refusal that says which ones there are."""
+    if text == "amebaz2":
+        # No default: an image built for the wrong layout bricks the unit at its first update.
+        die("--board amebaz2 needs the unit's flash layout: amebaz2-factory, amebaz2-sdk or "
+            "amebaz2-native (firmware/docs/15-esphome-path.md, 'Which flash layout a unit has')")
+    if text not in BOARDS:
+        die(f"--board must be one of {', '.join(BOARDS)} (got '{text}')")
+    return text
+
+
+def hostname(text):
+    """A --name value. Empty means the default name."""
+    if text and not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?", text):
+        die(f"--name '{text}' is not a valid hostname (lowercase letters, digits, hyphens; max 31)")
+    return text or None
+
+
 class Ctx:
     """Parsed invocation: the board file and the options."""
-    def __init__(self, target, board, port, sim_port, name=None, friendly_name=None):
-        self.target = target
+    def __init__(self, board="c3", port=None, sim_port=None, name=None, friendly_name=None):
         self.board = board
         self.port = port
         self.sim_port = sim_port
         self.name = name
         self.friendly_name = friendly_name
-        if board == "amebaz2":
-            # No default: an image built for the wrong layout bricks the unit at its first update.
-            die("--board amebaz2 needs the unit's flash layout: amebaz2-factory, amebaz2-sdk or "
-                "amebaz2-native (firmware/docs/15-esphome-path.md, 'Which flash layout a unit has')")
-        if board not in BOARDS:
-            die("--board must be c3, c3-plus, classic, amebaz2-factory, amebaz2-sdk or amebaz2-native")
-        self.config = BOARDS[board]
+        self.config = BOARDS[board_name(board)]
 
     def pin(self, which):
         """A bus pin of the board, read from its board file (tx, rx or de)."""
@@ -386,56 +397,43 @@ def walk(ctx):
 
 
 # ---- argument parsing + dispatch -------------------------------------------------------------
-def usage(code):
-    print(__doc__.strip())
-    sys.exit(code)
+COMMANDS = {"walk": walk, "doctor": doctor, "fetch": fetch, "test": test_target, "build": build,
+            "erase": erase, "flash": flash, "monitor": monitor, "bench": bench, "next": next_steps}
+# What exists for the stock module: it has no USB port to flash, watch or bench over.
+AMEBAZ2_COMMANDS = ("doctor", "fetch", "test", "build")
+
+
+class Parser(argparse.ArgumentParser):
+    """A usage error is one ERROR line and exit 1, like every other refusal."""
+    def error(self, message):
+        die(message)
+
+
+def parser():
+    opts = Parser(add_help=False, allow_abbrev=False)
+    opts.add_argument("target", nargs="?", choices=["esphome"], default="esphome", help=argparse.SUPPRESS)
+    opts.add_argument("--board", type=board_name, default="c3", help=f"one of {', '.join(BOARDS)} (default c3)")
+    opts.add_argument("--port", help="the board's serial device, for example /dev/ttyACM0")
+    opts.add_argument("--sim-port", help="the USB-TTL or USB-RS485 adapter virtual_ac.py talks through (bench)")
+    opts.add_argument("--name", type=hostname, help="the node's hostname (default hisense-ac)")
+    opts.add_argument("--friendly-name", help='the node\'s name in Home Assistant (default "Air Conditioner")')
+    ap = Parser(prog="dev.py", add_help=False, allow_abbrev=False)
+    sub = ap.add_subparsers(dest="cmd", metavar="command", required=True)
+    for name in COMMANDS:
+        sub.add_parser(name, parents=[opts], allow_abbrev=False)
+    return ap
 
 
 def main(argv):
-    if not argv:
-        usage(1)
-    if argv[0] in ("-h", "--help", "help"):
-        usage(0)
-    cmd = argv[0]
-    if cmd == "ota":
-        die(RETIRED)
-    target = argv[1] if len(argv) > 1 else ""
-    if target in ("amebaz2", "esp32"):
-        die(RETIRED)
-    if target != "esphome":
-        die(f"target must be esphome (got '{target}')")
-    rest = argv[2:]
-
-    board, port, sim_port, name, friendly_name, i = "c3", None, None, None, None, 0
-    while i < len(rest):
-        a = rest[i]
-        if a == "--board" and i + 1 < len(rest):
-            board = rest[i + 1]; i += 2
-        elif a == "--port" and i + 1 < len(rest):
-            port = rest[i + 1]; i += 2
-        elif a == "--sim-port" and i + 1 < len(rest):
-            sim_port = rest[i + 1]; i += 2
-        elif a == "--name" and i + 1 < len(rest):
-            name = rest[i + 1]; i += 2
-        elif a == "--friendly-name" and i + 1 < len(rest):
-            friendly_name = rest[i + 1]; i += 2
-        else:
-            die(f"unknown option: {a}")
-    if name and not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?", name):
-        die(f"--name '{name}' is not a valid hostname (lowercase letters, digits, hyphens; max 31)")
-    ctx = Ctx(target, board, port, sim_port, name, friendly_name)
-    if board in ESPHOME_AMEBAZ2_BOARDS and cmd not in ("doctor", "fetch", "test", "build"):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        sys.exit(0 if argv else 1)
+    a = parser().parse_args(argv)
+    if a.board in ESPHOME_AMEBAZ2_BOARDS and a.cmd not in AMEBAZ2_COMMANDS:
         die(ESPHOME_AMEBAZ2_ONLY)
-
-    dispatch = {"walk": walk, "doctor": doctor, "fetch": fetch, "test": test_target,
-                "build": build, "erase": erase, "flash": flash, "monitor": monitor,
-                "bench": bench, "next": next_steps}
-    fn = dispatch.get(cmd)
-    if not fn:
-        usage(1)
-    result = fn(ctx)
+    result = COMMANDS[a.cmd](Ctx(a.board, a.port, a.sim_port, a.name, a.friendly_name))
     # doctor returns False on gaps -> non-zero exit.
-    if cmd == "doctor" and result is False:
+    if a.cmd == "doctor" and result is False:
         sys.exit(1)
 
 

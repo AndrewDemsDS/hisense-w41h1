@@ -478,30 +478,18 @@ def slots(ip):
 
 
 # ---- command line ------------------------------------------------------------------------------
-class Parser(argparse.ArgumentParser):
-    """A usage error is one ERROR line and exit 1, like every other refusal."""
-    def error(self, message):
-        die(message)
-
-
 def positive_int(text):
     if not text.isdigit() or int(text) < 1:
         raise argparse.ArgumentTypeError(f"takes a positive integer (got '{text}')")
     return int(text)
 
 
-def hostname(text):
-    if text and not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?", text):
-        raise argparse.ArgumentTypeError(f"'{text}' is not a valid hostname (lowercase letters, digits, hyphens; max 31)")
-    return text
-
-
 def main(argv):
-    ap = Parser(prog="matter-convert.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = dev.Parser(prog="matter-convert.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", metavar="{convert,slots,backup}")
     p = sub.add_parser("convert", help="wrap the built ESPHome image as a Matter .ota")
     p.add_argument("--board", required=True)
-    p.add_argument("--name", type=hostname)
+    p.add_argument("--name", type=dev.hostname)
     p.add_argument("--software-version", type=positive_int)
     p.add_argument("--serial", type=positive_int)
     p.add_argument("--stage", action="store_true")

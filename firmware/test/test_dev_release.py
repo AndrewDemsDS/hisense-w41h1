@@ -64,7 +64,7 @@ with tempfile.TemporaryDirectory() as tmp:
     dev.ESPHOME_DIR = pathlib.Path(tmp)
     try:
         for board in ("c3", "c3-plus", "classic", "amebaz2-factory"):
-            dev.Ctx("esphome", board, None, None).esphome_run("config")
+            dev.Ctx(board, None, None).esphome_run("config")
     finally:
         dev.run, dev.have, dev.ESPHOME_DIR = real
 by_board = dict(zip(("c3", "c3-plus", "classic", "amebaz2-factory"), calls))
@@ -80,12 +80,7 @@ for board, config in dev.BOARDS.items():
 # --- CLI ---
 d = subprocess.run([sys.executable, str(SCRIPTS / "dev.py"), "flash", "esphome", "--board", "amebaz2-factory"],
                    capture_output=True, text=True)
-check(d.returncode == 1, f"CLI refuses flash on the stock module: exit {d.returncode}")
-for args, why in ((["ota", "amebaz2", "build"], "the retired ota steps"),
-                  (["build", "amebaz2"], "the retired amebaz2 target"),
-                  (["build", "esp32"], "the retired esp32 target")):
-    d = subprocess.run([sys.executable, str(SCRIPTS / "dev.py"), *args], capture_output=True, text=True)
-    check(d.returncode == 1 and "matter-final" in d.stderr, f"CLI refuses {why} and names the matter-final tag")
+check(d.returncode == 1 and "has test and build" in d.stderr, f"CLI refuses flash on the stock module: exit {d.returncode}")
 
 print("== DEV.PY OK ==" if ok else "== DEV.PY FAILED ==")
 sys.exit(0 if ok else 1)
