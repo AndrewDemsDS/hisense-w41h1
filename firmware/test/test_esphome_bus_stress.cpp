@@ -1278,7 +1278,8 @@ static void test_reply_faults() {
           CHECK(timeouts == 0 && chk == 0, "a repeated reply costs nothing (%u timeouts)", (unsigned) timeouts);
           break;
         case FAULT_BAD_SUM:
-          CHECK(chk == (cls == 0x66 ? 1u : 0u), "checksum errors counted: %u", (unsigned) chk);
+          // Every damaged frame is counted once, whichever class it is.
+          CHECK(chk == 1u, "checksum errors counted: %u", (unsigned) chk);
           break;
         case FAULT_DROP:
         case FAULT_TRUNCATE:
@@ -1430,12 +1431,12 @@ static void script_token_change(Rig &r) {
   CHECK(r.rec.links.size() == 4, "two losses, two recoveries (%zu edges)", r.rec.links.size());
 }
 
-// DEFECT (reported, not fixed in this wave): the device type is taken from a DevType reply without
-// looking at its checksum (hisense_bus.cpp, the latch in the LISTEN case; devtype_from_reply() in
-// hisense_protocol.cpp checks length and class only). One damaged reply during the handshake stamps
-// a wrong pair into bytes 7/8 of every frame that follows, until the link has been lost and the
-// recovery probe is answered cleanly. hisense_protocol.cpp says of the wrong pair in that place
-// that it "kills the link on hardware".
+// Was a defect: the device type was taken from a DevType reply without looking at its checksum, so
+// one damaged reply during the handshake stamped a wrong pair into bytes 7/8 of every frame that
+// followed, until the link had been lost and the recovery probe was answered cleanly.
+// hisense_protocol.cpp says of the wrong pair in that place that it "kills the link on hardware".
+// Now the damaged reply is a failed try: it is counted, nothing is adopted from it, and the probe
+// goes out again 500 ms later.
 static void script_devtype_bad_checksum(Rig &r) {
   int left = 1;
   r.ac.fault = [&left](uint8_t cls, uint8_t) {
@@ -1450,12 +1451,16 @@ static void script_devtype_bad_checksum(Rig &r) {
   r.run(3000);
   uint8_t hi = 0, lo = 0;
   bool seen = r.bus.link_token(&hi, &lo);
-  XFAIL(!(seen && lo == 0x42), "a DevType reply with a bad checksum is not adopted (got %02X %02X)", hi, lo);
+  CHECK(!(seen && lo == 0x42), "a DevType reply with a bad checksum is not adopted (got %02X %02X)", hi, lo);
   bool stamped_wrong = false;
   for (auto &w : r.ac.writes)
     if (cls_of(w) != 0x0A && w.bytes[8] == 0x42)
       stamped_wrong = true;
-  XFAIL(!stamped_wrong, "no frame carries the damaged device type");
+  CHECK(!stamped_wrong, "no frame carries the damaged device type");
+  CHECK(seen && hi == 0x01 && lo == 0x02, "the second, whole reply supplies the device type (got %02X %02X)", hi, lo);
+  CHECK(r.count(0x0A) == 2 && cls_of(r.ac.writes[0]) == 0x0A && cls_of(r.ac.writes[1]) == 0x0A,
+        "the damaged reply is a failed try: the probe is sent a second time (%zu probes)", r.count(0x0A));
+  CHECK(r.bus.checksum_mismatches() == 1, "the damaged reply is counted (%u)", (unsigned) r.bus.checksum_mismatches());
 }
 
 // A frame start that goes nowhere (F4 F5) directly ahead of a reply takes the reply with it: the
@@ -2281,7 +2286,7 @@ int main(int argc, char **argv) {
   everywhere("status reply cut at every length", script_truncate_sweep);
   everywhere("our own frames echoed", script_echo);
   everywhere("device type changes while the link is down", script_token_change);
-  everywhere("DEFECT: DevType reply with a bad checksum", script_devtype_bad_checksum);
+  everywhere("DevType reply with a bad checksum", script_devtype_bad_checksum);
   everywhere("false frame start ahead of a reply", script_stx_pair);
   everywhere("unsolicited frames between cycles", script_unsolicited);
 

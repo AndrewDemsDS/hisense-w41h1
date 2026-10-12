@@ -332,8 +332,19 @@ size_t stamp_beep(const uint8_t *in, size_t len, bool beep, uint8_t *out, size_t
 bool parse_status(const uint8_t *buf, size_t len, AcState *out);
 bool parse_features(const uint8_t *buf, size_t len, AcFeatures *out);
 bool parse_faults(const uint8_t *buf, size_t len, AcFaults *out);
-// Device type and sub-type from a 0x0A DevType reply: inner payload [3]/[4] = frame 16/17.
+// Device type and sub-type from a 0x0A DevType reply: inner payload [3]/[4] = frame 16/17. Reads
+// the two bytes and judges nothing else; see devtype_reply_usable() for what may be adopted.
 bool devtype_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo);
+// Whether a DevType reply may be adopted as the pair stamped into bytes 7/8 of every later frame.
+// `checksum_ok` is status_checksum_ok() of the same frame. The stock module runs every reply, this
+// one included, through one parser that rejects a checksum mismatch before any handler sees the
+// payload (RE docs/03 "Parser facts", docs/10 section 4.2 step 5), and a wrong pair in bytes 7/8
+// makes the unit reject every frame (docs/10 section 4.5). 00 00 means "not linked yet" to the
+// stock module and is never adopted. VERIFY: no capture of a real DevType reply is in the
+// repository. That it carries the 2-byte sum follows from the frame being LEN + 9 bytes long
+// (every deployed unit learns its type through an assembler that requires exactly that), which in
+// the stock parser's layout leaves two bytes between the payload and the end tag.
+bool devtype_reply_usable(bool checksum_ok, const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo);
 
 // ---- Setup request: the remote's "77" gesture --------------------------------------------------
 // Horizontal airflow pressed six times on the remote makes the mainboard set a request bit in

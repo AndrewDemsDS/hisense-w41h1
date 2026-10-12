@@ -50,7 +50,8 @@ class BusListener {
   // the scheduler itself has no logger, which keeps it buildable without ESPHome.
   // Every complete frame received, of any class, before its checksum is judged.
   virtual void on_bus_frame(const uint8_t *frame, size_t len) {}
-  // A status-class frame whose checksum did not match. It is counted and not parsed.
+  // A complete frame, of any class, whose checksum did not match. It is counted and nothing is
+  // read from it: no status, no device type, no setup request.
   virtual void on_bus_checksum_error(const uint8_t *frame, size_t len) {}
   // The reply window closed with no frame of the expected class (0 = any class was acceptable).
   virtual void on_bus_timeout(uint8_t expect_class) {}
@@ -94,6 +95,7 @@ class BusScheduler {
   bool wants_fast_loop() const { return this->phase_ == Phase::TX_SETTLE || this->phase_ == Phase::TX_DRAIN; }
 
   bool link_token(uint8_t *hi, uint8_t *lo) const;  // false until a DevType reply supplied it
+  // Complete frames received with a bad checksum, of any class, since boot.
   uint32_t checksum_mismatches() const { return this->chk_mismatch_; }
   // Counters since boot, for diagnostics. A reply window that closed empty, of any kind; a queued
   // command among those (each send counts); a command frame sent again for that reason; a
@@ -149,6 +151,8 @@ class BusScheduler {
   uint32_t phase_until_{0};
   uint32_t cycle_start_{0};
   uint8_t expect_class_{0};
+  // The frame in rx_ passed its checksum. Set for every frame received, read by its consumers.
+  bool reply_sound_{false};
 
   uint8_t tx_[TX_FRAME_MAX + 2]{};
   size_t tx_len_{0};

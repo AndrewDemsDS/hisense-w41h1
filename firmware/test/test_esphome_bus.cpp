@@ -94,6 +94,8 @@ class SimAC : public H::BusIO {
   bool stale_1e_before_ack = false;  // a late 0x1E lands in the command's window, ahead of its ack
   uint32_t ack_starts = 0, ack_ends = 0;
   bool truncate_next_status = false;  // one status reply cut off after 60 bytes
+  int corrupt_devtype_left = 0;       // this many DevType replies arrive with one flipped bit in byte 17
+  bool corrupt_link_reply = false;    // every 0x1E reply arrives with one flipped bit in its checksum
   // Time of the last byte of the newest reply queued, to tell whether a write overlaps a reply.
   uint32_t reply_ends = 0;
   uint32_t reply_delay = 40;
@@ -151,11 +153,18 @@ class SimAC : public H::BusIO {
       uint16_t s = H::checksum_range(f.data(), 2, f.size() - 4);
       f[f.size() - 4] = (uint8_t) (s >> 8);
       f[f.size() - 3] = (uint8_t) s;
+      if (corrupt_devtype_left > 0) {
+        corrupt_devtype_left--;
+        f[17] ^= 0x40;  // 01 02 arrives as 01 42, under the checksum of 01 02
+      }
       queue_(f, at);
     } else if (cls == 0x07) {
       queue_(ac_frame(20, 0x07, 0x00), at);
     } else if (cls == 0x1E) {
-      queue_(ac_frame(28, 0x1E, 0x00), at);
+      auto f = ac_frame(28, 0x1E, 0x00);
+      if (corrupt_link_reply)
+        f[25] ^= 0x01;
+      queue_(f, at);
     } else if (cls == 0x66 && req[14] == 0x40) {
       auto f = ac_frame(64, 0x66, 0x40);
       f[18] = 0x80;  // cool_heat
@@ -403,6 +412,87 @@ static void test_correlation_and_checksum() {
     CHECK(rec.checksum_errors == (int) bus.checksum_mismatches(), "each mismatch reaches the listener (%d)",
           rec.checksum_errors);
     CHECK(rec.links.size() == 1 && !rec.links[0].second, "and count as link misses");
+  }
+}
+
+// Nothing is taken from a frame that fails its checksum: not the device type (it would be stamped
+// into bytes 7/8 of every later frame, and a wrong pair there makes the unit reject them all, RE
+// docs/10 section 4.5), not the handshake answer, and not "I have heard the unit".
+static void test_damaged_frames_are_not_believed() {
+  printf("-- a frame with a bad checksum: no device type, no handshake answer, no 'heard'\n");
+  {
+    SimAC ac;
+    ac.corrupt_devtype_left = 3;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 6000);
+    size_t probes = 0;
+    while (probes < ac.writes.size() && cls(ac.writes[probes]) == 0x0A)
+      probes++;
+    CHECK(probes == 4, "three damaged replies are three failed tries, the fourth is answered (%zu probes)", probes);
+    for (size_t k = 1; k < probes; k++) {
+      // A damaged reply ends its window when it arrives, then the usual 500 ms before the next try.
+      uint32_t gap = ac.writes[k].t - ac.writes[k - 1].t;
+      CHECK(gap > 500 && gap < 5 + H::bus_tx_time_ms(20) + 25 + 500 + 500, "try %zu follows after %u ms", k,
+            (unsigned) gap);
+    }
+    uint8_t hi = 0, lo = 0;
+    CHECK(bus.link_token(&hi, &lo) && hi == 0x01 && lo == 0x02, "device type from the whole reply (%02X %02X)", hi, lo);
+    bool wrong = false;
+    for (auto &w : ac.writes)
+      if (cls(w) != 0x0A && (w.bytes[7] != 0x01 || w.bytes[8] != 0x02))
+        wrong = true;
+    CHECK(!wrong, "no frame carries the damaged pair 01 42");
+    CHECK(bus.checksum_mismatches() == 3 && rec.checksum_errors == 3,
+          "each damaged reply counted and reported (%u, %d)", (unsigned) bus.checksum_mismatches(),
+          rec.checksum_errors);
+    CHECK(rec.statuses >= 2 && rec.links.empty(), "the link comes up as usual afterwards");
+  }
+  {
+    // Every DevType reply damaged: ten tries, then on with the seeded 01 01, as for a silent unit.
+    SimAC ac;
+    ac.corrupt_devtype_left = 1000;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 12000);
+    size_t probes = 0;
+    while (probes < ac.writes.size() && cls(ac.writes[probes]) == 0x0A)
+      probes++;
+    uint8_t hi = 0xEE, lo = 0xEE;
+    CHECK(probes == 10 && cls(ac.writes[probes]) == 0x07, "ten tries, then 0x07 (%zu)", probes);
+    CHECK(!bus.link_token(&hi, &lo) && hi == 0x01 && lo == 0x01, "no device type learned, the seed stays (%02X %02X)",
+          hi, lo);
+    CHECK(ac.writes[probes].bytes[7] == 0x01 && ac.writes[probes].bytes[8] == 0x01, "0x07 carries the seed 01 01");
+  }
+  {
+    // The heartbeat's byte 16 turns from 0xF0 to 0xB0 once the unit's reply was heard. A reply
+    // that fails its checksum is not that.
+    SimAC ac;
+    ac.corrupt_link_reply = true;
+    Recorder rec;
+    H::BusScheduler bus;
+    bus.setup(&ac, &rec, true);
+    run(bus, 4500);
+    int beats = 0, heard = 0;
+    for (auto &w : ac.writes) {
+      if (cls(w) != 0x1E)
+        continue;
+      beats++;
+      heard += w.bytes[16] == 0xB0 ? 1 : 0;
+    }
+    CHECK(beats >= 4 && heard == 0, "damaged 0x1E replies: the heartbeat keeps saying not-heard (%d of %d)", heard,
+          beats);
+    CHECK(rec.statuses >= 3, "status still flows (%d)", rec.statuses);
+    ac.corrupt_link_reply = false;
+    size_t mark = ac.writes.size();
+    run(bus, 2500);
+    bool now_heard = false;
+    for (size_t i = mark; i < ac.writes.size(); i++)
+      if (cls(ac.writes[i]) == 0x1E && ac.writes[i].bytes[16] == 0xB0)
+        now_heard = true;
+    CHECK(now_heard, "a whole reply turns it to heard");
   }
 }
 
@@ -835,6 +925,7 @@ int main() {
   test_link_loss_and_recovery();
   test_correlation_and_checksum();
   test_boot_retries();
+  test_damaged_frames_are_not_believed();
   test_peripheral_de();
   test_command_fate();
   test_stale_frame_in_command_window();

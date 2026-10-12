@@ -90,6 +90,14 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   the extended tier) and a DevType reply 22. The frames real units send (160, 45 and at least 22
   bytes) decode as before.
 
+- **A damaged DevType reply is no longer believed.** The device type the unit reports in its
+  `0x0A` reply is stamped into bytes 7/8 of every later frame, and it was taken from that reply
+  without a look at its checksum: one flipped bit and the unit rejected every frame until the
+  link had been lost and found again. A reply that fails its checksum is now a failed try (the
+  probe goes out again 500 ms later), and it no longer counts as "heard the unit" in the
+  heartbeat. The "Checksum errors" sensor counts every damaged frame, of any class, where it
+  counted status frames only.
+
 ### The Matter firmwares are retired, ESPHome is the only firmware (2026-10-12, #182)
 - **Removed** the AmebaZ2 Matter build (the SDK setup scripts, `patches/`, `versions.env`, the
   `.zap` and `firmware/src/sdk-edits/`, `firmware/src/version.txt` and its CI rule), the ESP32

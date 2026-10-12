@@ -254,7 +254,8 @@ known["builders/builder-enum-range"] = cmd(8, 0, 0, 0, 0, 0, 24, fold=0)
 known["builders/single-field-offset"] = bytes([0x86, 0, 0, 0x00])
 known["builders/tx-f4-in-body"] = bytes([0x87, 0, 28 - 13]) + LINK_HEARTBEAT[2:28] + bytes([0, 0xF4, 0xF4, 0])
 # Boot with DE; the DevType reply 01 02 arrives with bit 0 of byte 17 flipped (damage 17) and a
-# checksum that no longer matches; the scheduler adopts 01 03 as the link token.
+# checksum that no longer matches. The scheduler used to adopt 01 03 as the link token. Fixed, kept
+# as a plain regression input for the bus harness.
 known["bus/bus-token-no-checksum"] = b"\x01" + EXCHANGE + reply(0x01, 0x02, 17) + tick(1)
 
 

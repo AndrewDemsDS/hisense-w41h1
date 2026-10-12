@@ -574,6 +574,18 @@ bool devtype_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo
   return true;
 }
 
+bool devtype_reply_usable(bool checksum_ok, const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo) {
+  uint8_t type;
+  uint8_t sub;
+  if (!checksum_ok || !devtype_from_reply(reply, n, &type, &sub) || (type == 0 && sub == 0))
+    return false;
+  if (hi != nullptr)
+    *hi = type;
+  if (lo != nullptr)
+    *lo = sub;
+  return true;
+}
+
 // ---- FrameAssembler ----------------------------------------------------------------------------
 void FrameAssembler::reset() {
   this->in_message_ = false;

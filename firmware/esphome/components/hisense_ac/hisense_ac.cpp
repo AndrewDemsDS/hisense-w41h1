@@ -48,7 +48,7 @@ void HisenseAC::on_bus_frame(const uint8_t *frame, size_t len) {
 }
 
 void HisenseAC::on_bus_checksum_error(const uint8_t *frame, size_t len) {
-  ESP_LOGW(TAG, "Status frame with a bad checksum dropped (%" PRIu32 " since boot)", this->bus_.checksum_mismatches());
+  ESP_LOGW(TAG, "Frame with a bad checksum dropped (%" PRIu32 " since boot)", this->bus_.checksum_mismatches());
 }
 
 void HisenseAC::on_bus_timeout(uint8_t expect_class) {

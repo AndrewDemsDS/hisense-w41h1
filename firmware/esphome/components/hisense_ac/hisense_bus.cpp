@@ -159,6 +159,14 @@ void BusScheduler::poll(uint32_t now) {
           const uint8_t *f = this->rx_.data();
           if (this->listener_ != nullptr)
             this->listener_->on_bus_frame(f, n);
+          // The assembler delivers on framing alone. The checksum is judged here, once, for every
+          // frame and every consumer below.
+          this->reply_sound_ = status_checksum_ok(f, n);
+          if (!this->reply_sound_) {
+            this->chk_mismatch_++;
+            if (this->listener_ != nullptr)
+              this->listener_->on_bus_checksum_error(f, n);
+          }
           this->check_link_reply_(f, n, now);
           // A completed frame of the wrong class is a late reply to something else: drop it and
           // keep listening within this window.
@@ -167,7 +175,7 @@ void BusScheduler::poll(uint32_t now) {
             // to the vendor module, so it is never adopted.
             uint8_t hi;
             uint8_t lo;
-            if (devtype_from_reply(f, n, &hi, &lo) && (hi != 0 || lo != 0)) {
+            if (devtype_reply_usable(this->reply_sound_, f, n, &hi, &lo)) {
               this->token_[0] = hi;
               this->token_[1] = lo;
               this->token_seen_ = true;
@@ -270,7 +278,8 @@ void BusScheduler::start_step_(uint32_t now) {
 void BusScheduler::on_step_done_(size_t reply_len, uint32_t now) {
   switch (this->step_) {
     case Step::BOOT_DEVTYPE:
-      if (reply_len > 0) {
+      // Only a reply that passes its checksum is the handshake answer; a damaged one is a failed try.
+      if (reply_len > 0 && this->reply_sound_) {
         this->step_ = Step::BOOT_07;
         return;
       }
@@ -290,7 +299,9 @@ void BusScheduler::on_step_done_(size_t reply_len, uint32_t now) {
       return;
     case Step::HEARTBEAT:
       if (reply_len > 0) {
-        this->heard_ac_ = true;
+        // Byte 16 of the next heartbeat says "heard you", so the frame has to be a whole one.
+        if (this->reply_sound_)
+          this->heard_ac_ = true;
         this->consume_(reply_len);  // no-op unless the A/C answered with a 0x66
       }
       this->step_ = Step::DRAIN;
@@ -353,17 +364,11 @@ void BusScheduler::on_step_done_(size_t reply_len, uint32_t now) {
 }
 
 // A 0x66 reply is either the ProductType answer (subtype 0x40) or the status frame. A well-framed
-// frame with a bad checksum is counted and not parsed.
+// frame with a bad checksum was counted when it arrived and is not parsed.
 bool BusScheduler::consume_(size_t n) {
   const uint8_t *f = this->rx_.data();
-  if (n < CMD_HEADER_LEN || f[FRAME_CLASS_OFFSET] != CLASS_STATUS)
+  if (n < CMD_HEADER_LEN || f[FRAME_CLASS_OFFSET] != CLASS_STATUS || !this->reply_sound_)
     return false;
-  if (!status_checksum_ok(f, n)) {
-    this->chk_mismatch_++;
-    if (this->listener_ != nullptr)
-      this->listener_->on_bus_checksum_error(f, n);
-    return false;
-  }
   if (f[14] == SUBTYPE_PRODUCT_TYPE) {
     AcFeatures ft;
     if (parse_features(f, n, &ft)) {
