@@ -18,7 +18,7 @@ sniffed frames are the ground truth.
 |---|---|---|---|---|
 | 1 | Host unit tests | the codec, the mapping, the bus scheduler and the retry rules produce and accept the right bytes | no | `firmware/test/test_*.cpp` |
 | 2 | Device simulation | the command and status loop against a modeled A/C | no | `firmware/test/virtual_ac.py` + sniffed golden frames |
-| 3 | Build checks | the YAML, every platform schema, and a real compile for the stock module | no | `esphome config`, `esphome compile` in CI |
+| 3 | Build checks | the YAML, every platform schema, and a real compile for the ESP32 boards and the stock module | no | `esphome config`, `esphome compile` in CI |
 | 4 | Bench | the flashed node against the simulator on a USB adapter | a board | `dev.py bench esphome` |
 | 5 | HIL, hardware in the loop | timing, RF, the real A/C | yes | `hil_esphome_actuation.py`, a tap on the bus |
 
@@ -121,8 +121,14 @@ clang-tidy) and only warns if the pinned tools are not installed yet.
 ## Beyond the host tests
 
 - **Build checks in CI**: `esphome config` on every board file and on the upstream-shaped
-  component tests, and a real compile of all three stock-module layouts, which also fails when
-  the image's slot addresses are not those of the layout the file names.
+  component tests, a real compile of all three stock-module layouts, which also fails when
+  the image's slot addresses are not those of the layout the file names, and a real compile of
+  the three ESP32 board files and of the hub with no entity platform. Both compile jobs fail on
+  a compiler warning from the components.
+- **Version and changelog**: `run_tests.sh` ends with `firmware/scripts/version-lint.py` and its
+  own test (`test_version_lint.py`), which feeds the lint trees that have to fail. CI runs the
+  same lint with the history, for the rule that a component or package change comes with a
+  changelog entry ([Repo Map](Repo-Map-and-Build-Pipeline#version-and-releases)).
 - **HIL**: the only layer covering RF, real bus timing and the physical unit.
   `firmware/test/hil_esphome_actuation.py` stays out of `run_tests.sh` on purpose. It drives every
   control over the native API, checks that nothing else moved, and ends with the bus counter

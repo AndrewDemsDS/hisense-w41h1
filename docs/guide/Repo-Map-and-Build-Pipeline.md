@@ -11,10 +11,10 @@ Where the code lives, how it is tested and built, and what CI checks.
 
 | Path | What |
 |---|---|
-| `firmware/esphome/` | **the firmware**: board files (`w41h1*.yaml`), shared `packages/`, the `hisense_ac` component under `components/`, the stock-module board support, upstream-shaped tests under `tests/` |
+| `firmware/esphome/` | **the firmware**: board files (`w41h1*.yaml`), shared `packages/` (with the version in `packages/version.yaml`), the `hisense_ac` and `w41h1_module` components under `components/`, upstream-shaped tests under `tests/` |
 | `firmware/test/` | host tests, `virtual_ac.py`, the hardware actuation check, and `reference-driver/` |
 | `firmware/test/reference-driver/` | the project's first bus driver, frozen. The component's codec is tested against it |
-| `firmware/scripts/` | `dev.py` (the one entry point), `amebaz2_image.py` (stock-module image format), the lint scripts |
+| `firmware/scripts/` | `dev.py` (the one entry point), `amebaz2_image.py` (stock-module image format), the lint scripts, `version-lint.py` and the compile gate CI runs |
 | `firmware/flasher/` | CH341A clip tools for the stock module's SPI flash: dump, write, status register |
 | `firmware/esp32-recon/` | a small ESP-IDF diagnostic tool: a console on the A/C bus, built on the reference driver |
 | `firmware/docs/` | design notes and hardware reference, published under "Firmware" on the docs site |
@@ -55,9 +55,9 @@ python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
 ```
 
 `dev.py` wraps `esphome` and prints each command, so everything can also be run by hand from
-`firmware/esphome/` ([Build Environment](ESP32-Build-Environment#by-hand)). There is no version
-file to bump and no release image to package: a node is built from the tree and updated over the
-air with `esphome run` ([ESPHome Build](ESPHome-Build#updates)).
+`firmware/esphome/` ([Build Environment](ESP32-Build-Environment#by-hand)). There is no release
+image to package: a node is built from the tree and updated over the air with `esphome run`
+([ESPHome Build](ESPHome-Build#updates)).
 
 `firmware/esphome/secrets.yaml` is gitignored. `secrets.yaml.example` holds placeholders, and CI
 builds with those.
@@ -80,12 +80,25 @@ also gitignored.
 How the module boots and what its bootloader accepts:
 `firmware/docs/10-stock-module-boot-and-recovery.md`.
 
+## Version and releases
+
+The firmware version is written once, in `firmware/esphome/packages/version.yaml`, as ESPHome's
+`project:` block. `packages/node.yaml` includes that file, so every node built from the packages
+carries the version and Home Assistant shows it as the device's firmware. It is semver and
+started at 2.0.0. The Matter firmwares were 1.x.
+
+A release is the git tag `v<version>` on `main`, and `CHANGELOG.md` has a section per release.
+The number moves only when a release is cut. Between releases, changes are listed under
+`## Unreleased`. `firmware/scripts/version-lint.py` checks the pieces against each
+other (below), and `CONTRIBUTING.md` ("Releasing") has the four steps.
+
 ## Hooks
 
 Hooks are opt-in per clone: `git config core.hooksPath firmware/.githooks`. The **pre-commit hook**
-runs `firmware/test/run_tests.sh` when the host tests, `dev.py` or the component's protocol sources
-are staged, `cpp-lint.sh check --no-tidy` on staged C/C++ files, and `stop-slop.sh` on staged
-markdown (bypass: `--no-verify`).
+runs `firmware/test/run_tests.sh` when the host tests, `dev.py` or a component's sources are
+staged, `version-lint.py` when a package, the changelog or a workflow is staged,
+`cpp-lint.sh check --no-tidy` on staged C/C++ files, and `stop-slop.sh` on staged markdown
+(bypass: `--no-verify`).
 
 ## Continuous integration (GitHub Actions)
 
@@ -95,13 +108,27 @@ markdown (bypass: `--no-verify`).
   - `host-qa`: shellcheck, ruff, `cpp-lint.sh check` (clang-format, custom rules and clang-tidy on
     the C/C++ we own), `firmware/test/run_tests.sh`, and `esphome config` on every board file and
     on the upstream-shaped component tests.
+  - `version`: `version-lint.py` with the full history. The version is `MAJOR.MINOR.PATCH` and
+    not below the newest release tag, `CHANGELOG.md` has a section for it or an Unreleased one,
+    and every pin of the ESPHome release names the same one. In a pull request it also fails
+    when a file under `firmware/esphome/components/` or `firmware/esphome/packages/` changed and
+    `CHANGELOG.md` did not.
   - `esphome-amebaz2`: a real compile of all three stock-module layouts.
+  - `esphome-esp32`: a real compile of `w41h1.yaml`, `w41h1-esp32c3.yaml`,
+    `w41h1-esp32c3-plus.yaml` and the hub with no entity platform. It fails on a compiler warning
+    from the components and when a board image does not carry the version.
   - `esphome-upstream`: ESPHome's own CI gates against the component, on the pinned release
     (required) and on their development branch (informational).
+- **`esphome-release.yaml`** runs when a tag `vX.Y.Z` is pushed. The tag has to equal the version
+  and sit on `main`. It runs the host tests, validates and compiles every board file, and creates
+  the GitHub release with that version's `CHANGELOG.md` section as its text. It attaches no
+  firmware image: one built in CI holds the placeholder secrets, which are public.
 - **`pages.yaml`** builds and publishes the docs site when a doc changes.
 
-There is no release workflow and no self-hosted runner. Dependabot proposes updates for the GitHub
-Actions and the pinned Python requirements.
+Every job runs on a GitHub-hosted runner and states its own permissions. Only the job that
+creates the release can write to the repository. Dependabot proposes updates for the GitHub
+Actions and the pinned Python requirements. The ESPHome release is pinned by hand, in four
+places that `version-lint.py` holds equal.
 
 ## Docs site
 

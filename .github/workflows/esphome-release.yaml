@@ -1,0 +1,194 @@
+name: ESPHome release
+
+# A release of the ESPHome firmware: the components, the packages and the board files at one
+# version. Pushing the tag `v<version>` is the whole trigger (CONTRIBUTING.md, "Releasing").
+#
+# The release has NO firmware images attached, on purpose. An image built here is built with
+# secrets.yaml.example, so it holds a Wi-Fi name nobody has, and an API key and a hotspot
+# password that are public in this repository. Whoever flashed it would have a node that anyone
+# who has read the example file can talk to, and that node drives an A/C. A user builds their own
+# image from the tagged tree with their own secrets, and the release text says how.
+#
+# The old `amebaz2-v*` and `esp32-v*` tags belong to the retired Matter firmwares and do not
+# start this workflow.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+# Nothing is granted here. Each job states what it needs, and only `release` may write.
+permissions: {}
+
+# Kept equal to qa.yaml's pin by firmware/scripts/version-lint.py.
+env:
+  ESPHOME_VERSION: "2026.7.4"
+
+concurrency:
+  group: esphome-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The tag, the version file and the changelog agree, the tagged commit is on main, and the host
+  # tests pass. A missing changelog section fails here, before anything is compiled.
+  verify:
+    # GitHub-only: the Gitea mirror reads this directory too and has no hosted runner.
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      notes: ${{ steps.notes.outputs.notes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # main, to check the tag is on it, and the older tags
+
+      - name: Tag, version and changelog agree
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 firmware/scripts/version-lint.py --tag "$TAG"
+          # The release text is this section. Cut it now, so an empty one fails here.
+          python3 firmware/scripts/version-lint.py --notes > /dev/null
+          echo "version=$(python3 firmware/scripts/version-lint.py --print)" >> "$GITHUB_OUTPUT"
+
+      - name: The tagged commit is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::the tagged commit is not on main: a release is cut from main"
+            exit 1
+          fi
+
+      - name: Host QA
+        run: bash firmware/test/run_tests.sh
+
+      - name: ESPHome config validation
+        run: |
+          pipx install "esphome==$ESPHOME_VERSION"
+          cd firmware/esphome
+          cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
+          for b in w41h1*.yaml tests/build*.yaml; do esphome config "$b" > /dev/null; done
+
+      # Every board file has to be in the compile matrix below, which names them one by one.
+      - name: Every board file is compiled below
+        run: |
+          cd firmware/esphome
+          all="w41h1.yaml w41h1-esp32c3.yaml w41h1-esp32c3-plus.yaml w41h1-amebaz2-factory.yaml"
+          all="$all w41h1-amebaz2-sdk.yaml w41h1-amebaz2-native.yaml w41h1-esp8266.yaml w41h1-rp2040.yaml"
+          for b in w41h1*.yaml; do
+            case " $all " in
+              *" $b "*) ;;
+              *) echo "::error::$b is not compiled by esphome-release.yaml: add it to the matrix"; exit 1 ;;
+            esac
+          done
+
+      # The changelog section plus how to use the release. It is handed to the release job as an
+      # output, so the one job that can write runs nothing from the tree.
+      - name: Release text
+        id: notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            python3 firmware/scripts/version-lint.py --notes "$VERSION"
+            echo
+            echo "## Using this release"
+            echo
+            echo "There are no firmware images attached. An image has to be built with your own"
+            echo "Wi-Fi credentials, API key and hotspot password, so you build it from this tag:"
+            echo
+            echo '```bash'
+            echo "git clone --branch v$VERSION --depth 1 https://github.com/$REPO"
+            echo "cd $(basename "$REPO")/firmware/esphome"
+            echo "cp secrets.yaml.example secrets.yaml   # then fill it in"
+            echo "esphome run w41h1-esp32c3.yaml         # or the file for your board"
+            echo '```'
+            echo
+            echo "Built with ESPHome $ESPHOME_VERSION. To use the components and packages from"
+            echo "your own configuration, pinned to this tag, see"
+            echo "[Using a release from your own configuration](https://github.com/$REPO/blob/v$VERSION/firmware/esphome/README.md#using-a-release-from-your-own-configuration)."
+          } > release-notes.md
+          cat release-notes.md
+          delimiter="notes-$(openssl rand -hex 16)"
+          { echo "notes<<$delimiter"; cat release-notes.md; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
+
+
+  # Every board file compiles from the tagged tree, the components without a warning of their
+  # own, and each image carries the version. One job per toolchain, so they run side by side.
+  # The trees the QA workflow saved from main are restored and nothing is saved here. The images
+  # are thrown away (see the top of this file).
+  compile:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - toolchain: esp32
+            cache-path: ~/.cache/esphome/idf
+            cache-key: idf-esphome-esp32-
+            configs: w41h1.yaml w41h1-esp32c3.yaml w41h1-esp32c3-plus.yaml
+          - toolchain: amebaz2
+            cache-path: ~/.platformio
+            cache-key: pio-esphome-amebaz2-
+            configs: w41h1-amebaz2-factory.yaml w41h1-amebaz2-sdk.yaml w41h1-amebaz2-native.yaml
+          - toolchain: examples
+            cache-path: ""
+            cache-key: ""
+            configs: w41h1-esp8266.yaml w41h1-rp2040.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Restore the toolchain
+        if: ${{ matrix.cache-path != '' }}
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ matrix.cache-path }}
+          # Never an exact hit: the newest entry with this prefix is the one wanted.
+          key: ${{ matrix.cache-key }}release-${{ github.run_id }}
+          restore-keys: |
+            ${{ matrix.cache-key }}
+
+      # ESPHome uses ccache for ESP-IDF builds when the binary is there, and the restored tree
+      # holds the cache the QA workflow filled.
+      - name: ccache for the ESP-IDF build
+        if: ${{ matrix.toolchain == 'esp32' }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ccache
+
+      - name: Compile
+        env:
+          CONFIGS: ${{ matrix.configs }}
+        run: |
+          pipx install "esphome==$ESPHOME_VERSION"
+          # Word splitting is wanted: CONFIGS is a list of file names from this file.
+          # shellcheck disable=SC2086
+          bash firmware/scripts/esphome-compile-check.sh $CONFIGS
+
+  # The only job that can write. It checks nothing out: it creates the GitHub release for the
+  # tag from the text the verify job made, with no files attached.
+  release:
+    needs: [verify, compile]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          NOTES: ${{ needs.verify.outputs.notes }}
+        run: |
+          printf '%s\n' "$NOTES" > release-notes.md
+          gh release create "$TAG" --verify-tag --title "ESPHome firmware $VERSION" \
+            --notes-file release-notes.md
