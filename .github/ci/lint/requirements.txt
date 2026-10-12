@@ -1,0 +1,11 @@
+# The lint tools CI installs, each at one version. The QA workflow installs this file into a venv
+# (the lint-extra and coverage jobs) and reads the ruff line for host-qa, so a bump here is the
+# whole change. Dependabot (pip, this directory) proposes the bumps.
+#   python3 -m venv /tmp/lint && /tmp/lint/bin/pip install -r .github/ci/lint/requirements.txt
+actionlint-py==1.7.12.25   # the workflows: syntax, expressions, and shellcheck on every run: block
+zizmor==1.30.1             # the workflows: security audit
+shellcheck-py==0.11.0.1    # the shellcheck actionlint calls
+cppcheck==1.5.3            # Cppcheck 2.22.0, on the pure sources of the components
+ruff==0.15.20              # Python lint, rules in ruff.toml
+gcovr==8.6                 # the coverage table: firmware/test/coverage/run.sh runs it through uvx
+uv==0.13.0                 # uvx, with this file as its constraints (UV_CONSTRAINT)

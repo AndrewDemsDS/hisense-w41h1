@@ -6,8 +6,8 @@
 #   flash:   esphome run firmware/esphome/w41h1-rp2040.yaml
 
 substitutions:
-  name: hisense-ac
-  friendly_name: Air Conditioner
+  # name and friendly_name default to hisense-ac / Air Conditioner (packages/node.yaml). Set
+  # both here for a second node on the same network.
   # UART1 (GP4 / GP5), which leaves UART0 and USB free for the log.
   tx_pin: GPIO4
   rx_pin: GPIO5

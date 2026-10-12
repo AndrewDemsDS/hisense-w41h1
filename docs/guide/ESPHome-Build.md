@@ -63,8 +63,9 @@ and the GPIO warnings from [ESP32 Replacement Board](ESP32-Replacement-Build) an
 module. The shipped defaults are the validated classic-ESP32 set (TX 19, RX 18, DE 4); an ESP32-C3
 SuperMini uses 5 / 6 / 10.
 
-There is one file per board in `firmware/esphome/`, and each holds only the node's name, the three
-pins and the platform block. The entities come from a shared package, so they are the same on
+There is one file per board in `firmware/esphome/`, and each holds only the chip, the three pins
+and what that board has on top (a status LED, the stock module's flash layout). The node's name
+defaults to `hisense-ac`: set `name` and `friendly_name` in the file for a second node. The entities come from a shared package, so they are the same on
 every board.
 
 | File | Board | Status |

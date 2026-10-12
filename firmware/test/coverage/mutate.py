@@ -141,18 +141,18 @@ def fresh_work(work: Path):
         '#include "hisense_map.h"\n#include "hisense_bus.h"\n#include "w41h1_uart_policy.h"\n'
         "bool probe_reply_class_ok(unsigned char a, unsigned char b) "
         "{ return esphome::hisense_ac::reply_class_ok(a, b); }\n"
-        "bool probe_uart(W41h1UartWatch *w, bool a, bool b, unsigned c) "
+        "bool probe_uart(W41H1UartWatch *w, bool a, bool b, unsigned c) "
         "{ return w41h1_uart_restart_due(w, a, b, c); }\n"
         # Default member initialisers only show where a struct is constructed.
         "namespace H = esphome::hisense_ac;\n"
         "void probe_defaults(H::AcCommand *a, H::AcState *b, H::AcFeatures *c, H::AcFaults *d,\n"
         "    H::SetupRequestTracker *e, H::FrameAssembler *f, H::PowerIntent *g, H::SpecialState *h,\n"
         "    H::UnitView *i, H::CommandIntent *j, H::PendingCommand *k, H::OutdoorTempGate *l,\n"
-        "    W41h1UartWatch *m) {\n"
+        "    W41H1UartWatch *m) {\n"
         "  *a = H::AcCommand{}; *b = H::AcState{}; *c = H::AcFeatures{}; *d = H::AcFaults{};\n"
         "  *e = H::SetupRequestTracker{}; *f = H::FrameAssembler{}; *g = H::PowerIntent{};\n"
         "  *h = H::SpecialState{}; *i = H::UnitView{}; *j = H::CommandIntent{};\n"
-        "  *k = H::PendingCommand{}; *l = H::OutdoorTempGate{}; *m = W41h1UartWatch{};\n"
+        "  *k = H::PendingCommand{}; *l = H::OutdoorTempGate{}; *m = W41H1UartWatch{};\n"
         "}\n"
     )
 
