@@ -3,7 +3,7 @@
 // Plain integers only, no Arduino and no ESPHome, so the host tests compile it as it is
 // (firmware/test/test_esphome_uart_policy.cpp). The restart itself is in w41h1_module.cpp.
 #pragma once
-#include <stdint.h>
+#include <cstdint>
 
 // While the link stays down the port is restarted this often. A restart costs one poll at most.
 // A unit that is switched off at the mains while the node stays powered gets a restart four
