@@ -11,8 +11,8 @@ body:
     id: version
     attributes:
       label: Firmware version
-      description: softwareVersion / git tag (e.g. `amebaz2-v1.2.6` or `esp32-v1.0.5`), or "stock".
-      placeholder: amebaz2-v1.2.6
+      description: The commit the node was built from (`git rev-parse --short HEAD`) and the ESPHome version.
+      placeholder: 8c0f746, ESPHome 2026.7.4
     validations:
       required: true
   - type: dropdown
@@ -20,8 +20,9 @@ body:
     attributes:
       label: Target
       options:
-        - AmebaZ2 module (original RTL8710C)
-        - ESP32 replacement
+        - ESP32 replacement board
+        - Stock module (RTL8710C, LibreTiny)
+        - Another ESPHome chip
         - Host QA / tooling only
     validations:
       required: true
@@ -29,7 +30,7 @@ body:
     id: what
     attributes:
       label: What happened
-      description: Expected vs actual. Include the exact command and any serial / matter-server log lines.
+      description: Expected vs actual. Include the exact command and the node's log lines.
     validations:
       required: true
   - type: textarea

@@ -2,7 +2,7 @@ version: 2
 # Automated dependency-update PRs. GitHub Actions are SHA-pinned in the workflows
 # (supply-chain safety); Dependabot proposes the bumps as reviewable PRs so the pins
 # stay current without hand-resolving SHAs. Python ecosystems track the pinned
-# requirements files added for the OTA + reverse-engineering tooling.
+# requirements files of the clip flasher and the reverse-engineering tooling.
 updates:
   - package-ecosystem: github-actions
     directory: /
@@ -15,7 +15,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: pip
-    directory: /firmware/scripts
+    directory: /firmware/flasher
     schedule:
       interval: weekly
     commit-message:
