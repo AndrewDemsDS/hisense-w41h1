@@ -628,30 +628,32 @@ check(code == 0 and "no _Sidebar.md" in out, "no sidebar at all only warns")
 
 # The leak denylist.
 for body, why in (("See /home/alice/projects/x/ for it.", "a home path"), ("On node 14 it works.", "a node number below 20"),
+                  ("On node 80 it works.", "a node number of 20 or more"), ("Commission node 4660 again.", "a four-digit node number"),
+                  ("Reach it at 172.16.4.20.", "a 172.16.0.0/12 address"), ("Reach it at 172.31.255.1.", "the last 172.16.0.0/12 network"),
+                  ("Mail someone@gmail.com.", "a personal mail address"), ("`ssh me@10.0.0.5`", "an address in inline code: not exempt either"),
                   ("Reach it at 192.168.4.114.", "a private address outside the placeholder range"),
                   ("Reach it at 10.0.0.5.", "a 10.x address"), ("Open homeassistant.local.", "the Home Assistant host name"),
                   ("```\nssh you@192.168.10.149\n```", "an address inside a code block: code is not exempt from the leak rules")):
     code, errs = page_errors(body)
     check(code == 1 and any("public-ready leak" in e for e in errs), f"leak refused: {why}")
 for body, why in (("See /home/you/projects/x/ and /home/user/x/.", "the placeholder home paths"),
+                  ("Reach it at 172.15.0.1, 172.32.0.1 or 8.8.8.8.", "public addresses next to the private 172 range"),
+                  ("Use node <node>, the node id Home Assistant shows.", "a node placeholder"),
+                  ("Mail hello@example.com.", "an example.com mail address"),
+                  ("The node 2x faster.", "the word node before something that is not a number"),
                   ("Reach it at 192.168.1.50.", "the 192.168.1.x placeholder range"), ("Use your-ha-host.local.", "the placeholder host")):
     code, errs = page_errors(body)
     check(code == 0 and not errs, f"placeholder accepted: {why}")
-code, errs = page_errors("On node 80 it works.")
-known_failure(code == 1, "a node number of 20 or more is a leak",
-              "docs/guide/lint.py:44 LEAKS: the pattern is `node (?:[0-9]|1[0-9])`, so `node 80` (a real node of this "
-              "installation) passes")
-code, errs = page_errors("Reach it at 172.16.4.20.")
-known_failure(code == 1, "a 172.16.0.0/12 address is a private IP",
-              "docs/guide/lint.py:46 LEAKS: only 192.168.x and 10.x are matched")
-code, errs = page_errors("Reach it at fe80::1ff:fe23:4567 or mail someone@gmail.com.")
-check(code == 0, "IPv6 addresses and mail addresses are not on the denylist (behaviour today)")
+code, errs = page_errors("Reach it at fe80::1ff:fe23:4567.")
+check(code == 0, "IPv6 addresses are not on the denylist (behaviour today)")
 code, errs = page_errors("Firmware 10.3.50.1 is out.")
 check(code == 1, "a four-part version number that starts with 10. is taken for a private address (a false alarm)")
-code, errs = page_errors("Write a link as `[text](Page-Name)`.")
-known_failure(code == 0, "link syntax shown in inline code is not checked as a link",
-              "docs/guide/lint.py:177 check_file(): only fenced blocks are skipped, so a link example in backticks is "
-              "reported as a broken link")
+for body, why in (("Write a link as `[text](Page-Name)`.", "link syntax shown in inline code"),
+                  ("Use ``[a](Missing-Page)`` or `![d](images/none.png)`.", "the same in double backticks, and an image example")):
+    code, errs = page_errors(body)
+    check(code == 0 and not errs, f"accepted: {why} is an example, not a link")
+code, errs = page_errors("See `this` and [x](Missing-Page) and `that`.")
+check(code == 1 and any("Missing-Page" in e for e in errs), "a real link between two pieces of inline code is still checked")
 
 # What the linter covers. It reads the *.md files beside itself and nothing else.
 code, out = wiki({"Home.md": PAGE, "sub/Deep.md": "### bad \u2014 /home/alice/x/\n"})
