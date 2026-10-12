@@ -317,6 +317,7 @@ TIDY_UNITS = [
     ("firmware/esphome/components/hisense_ac/hisense_protocol.cpp", C17_PORT),
     ("firmware/esphome/components/hisense_ac/hisense_bus.cpp", C17_PORT),
     ("firmware/esphome/components/hisense_ac/hisense_map.h", HDR + C17_PORT),
+    ("firmware/esphome/components/w41h1_module/w41h1_uart_policy.h", HDR + C17_MODULE),
 ]
 
 # Host-compilable units that are NOT checked yet, each with the one finding that keeps it out
@@ -326,9 +327,8 @@ TIDY_PENDING = [
     ("firmware/test/test_esphome_edge_cases.cpp", C17_PORT),
     # :346 misc-redundant-expression: `i < 13 && i < H::PRESET_COUNT`
     ("firmware/test/test_esphome_map_gaps.cpp", C17_PORT + C17_MODULE[1:]),
-    # :6 modernize-deprecated-headers: <stdint.h>, wants <cstdint>
-    ("firmware/esphome/components/w41h1_module/w41h1_uart_policy.h", HDR + C17_MODULE),
 ]
+
 
 # Checks whose --fix is mechanical and cannot change behaviour. `fix` applies only these, and
 # only where the file's own .clang-tidy enables them; everything else is reported by `check`.

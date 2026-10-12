@@ -837,6 +837,12 @@ echo "$name $config" >> "$FAKE_LOG"
 [ -f secrets.yaml ] || { echo "no secrets.yaml"; exit 9; }
 out="$(dirname "$config")/.esphome/build/$name/src/esphome/core"
 mkdir -p "$out"
+pio="$(dirname "$config")/.esphome/build/$name/.pioenvs/$name"
+mkdir -p "$pio"
+# The slot image is written unless the build cache is on and FAKE_NO_SLOT says it came back whole.
+if [ -n "${FAKE_SLOT:-}" ] && { [ -z "${FAKE_NO_SLOT:-}" ] || [ -z "${PLATFORMIO_BUILD_CACHE_DIR:-}" ]; }; then
+  touch "$pio/image_firmware_is.$FAKE_SLOT.bin"
+fi
 case "$config" in
   *tests/*) echo "#define ESPHOME_VERSION 1" > "$out/defines.h" ;;
   *) echo "#define ESPHOME_PROJECT_VERSION \\"${FAKE_VERSION:-3.1.4}\\"" > "$out/defines.h" ;;
@@ -902,6 +908,24 @@ for form in ("./tests/build.esp32-idf.yaml", "././tests/build.esp32-idf.yaml", s
     check(code == 0, f"the same file given as {form.replace(str(C), '<repo>')} is the same file: no version is asked of it")
 code, out, log = compile_check("./w41h1.yaml", FAKE_VERSION="3.1.3")
 check(code == 1 and "was built without firmware version 3.1.4" in out, "and a board file given as ./w41h1.yaml is still asked for the version")
+
+# A stock-module board file names a flash layout, and its build has to leave that layout's slot image.
+write(C / "firmware/esphome/w41h1-amebaz2-factory.yaml", "substitutions:\n  name: hisense-ac\n  layout: factory\n")
+write(C / "firmware/esphome/components/w41h1_module/layout-factory.json", '{"flash": {"ota1": "0x010000+0x170000"}}')
+SLOT_DIR = C / "firmware/esphome/.esphome/build/ci-w41h1-amebaz2-factory/.pioenvs/ci-w41h1-amebaz2-factory"
+CACHE = {"PLATFORMIO_BUILD_CACHE_DIR": str(TMP / "pio-cache")}
+code, out, log = compile_check("w41h1-amebaz2-factory.yaml", FAKE_SLOT="0x010000", **CACHE)
+check(code == 0 and len(log) == 1 and "image_firmware_is.0x010000.bin" in out, "a stock-module file whose build leaves the slot image passes after one compile")
+shutil.rmtree(SLOT_DIR)
+code, out, log = compile_check("w41h1-amebaz2-factory.yaml", FAKE_SLOT="0x010000", FAKE_NO_SLOT="1", **CACHE)
+check(code == 0 and len(log) == 2 and "building w41h1-amebaz2-factory.yaml without the cache" in out,
+      "no slot image after a fully cached build: it builds once more without the build cache, and passes")
+shutil.rmtree(SLOT_DIR)
+code, out, log = compile_check("w41h1-amebaz2-factory.yaml", FAKE_SLOT="0x00C000", **CACHE)
+check(code == 1 and len(log) == 2 and "did not produce image_firmware_is.0x010000.bin" in out,
+      "an image named after another layout's address fails: the layout file was not applied")
+code, out, log = compile_check("w41h1.yaml", **CACHE)
+check(code == 0 and len(log) == 1 and "slot image" not in out, "a board file that names no layout is not asked for a slot image")
 
 # ================================================================================================
 print("== how the lists agree: workflows, run_tests.sh, the lint scope, .gitignore ==")

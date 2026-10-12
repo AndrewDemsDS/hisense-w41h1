@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Compile ESPHome configurations as a gate: each one has to build, this repo's components have to
-# build without a compiler warning, and a board file's image has to carry the firmware version.
+# build without a compiler warning, a board file's image has to carry the firmware version, and a
+# stock-module board file (one that names a flash `layout:`) has to leave the slot image of that
+# layout behind (image_firmware_is.<first slot address>.bin).
 # The QA workflow runs it on the ESP32 board files and the release workflow on every board file.
 #
 #   firmware/scripts/esphome-compile-check.sh w41h1-esp32c3.yaml tests/build.hub-only.esp32-c3-idf.yaml
@@ -28,6 +30,30 @@ for config in "$@"; do
     tail -n 200 "$log"
     echo "::error::$config does not compile"
     exit 1
+  fi
+  # A stock-module board file. LibreTiny writes the slot image as a side effect of the link step
+  # and names it after the address it is built for, so the name shows that the layout file was
+  # applied. When the build cache hands back the linked firmware whole, the link never runs and
+  # the image is missing: build once more without the cache (dev.py build does the same).
+  layout="$(sed -n 's/^  layout: *"\{0,1\}\([a-z]\{1,\}\)"\{0,1\} *$/\1/p' "$config" 2>/dev/null | head -n 1 || true)"
+  if [ -n "$layout" ]; then
+    addr="$(python3 -c 'import json, sys; print("0x%06X" % int(json.load(open(sys.argv[1]))["flash"]["ota1"].split("+")[0], 16))' \
+      "components/w41h1_module/layout-$layout.json")"
+    out="$(dirname "$config")/.esphome/build/$name/.pioenvs/$name"
+    if [ ! -f "$out/image_firmware_is.$addr.bin" ]; then
+      echo "no slot image after a fully cached build: building $config without the cache"
+      rm -f "$out/raw_firmware.elf" "$out/firmware.uf2"
+      if ! env -u PLATFORMIO_BUILD_CACHE_DIR "$esphome_cmd" -s name "$name" compile "$config" > "$log" 2>&1; then
+        tail -n 200 "$log"
+        echo "::error::$config does not compile without the build cache"
+        exit 1
+      fi
+    fi
+    if [ ! -f "$out/image_firmware_is.$addr.bin" ]; then
+      echo "::error::$config did not produce image_firmware_is.$addr.bin: was the $layout layout applied?"
+      exit 1
+    fi
+    ls -l "$out/image_firmware_is.$addr.bin"
   fi
   echo "== $config"
   # PlatformIO puts a colour reset in front of its size lines, so they are not anchored.

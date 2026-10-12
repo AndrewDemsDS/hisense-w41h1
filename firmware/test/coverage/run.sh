@@ -10,7 +10,7 @@
 #
 #   --baseline   leave out the gap tests (test_esphome_*_gaps.cpp), to see what they add
 #
-# Not part of the default suite: it needs uvx (for gcovr) and takes about 15 s.
+# Not part of the default suite: it needs gcovr (uvx fetches it, or set GCOVR) and takes about 15 s.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -87,18 +87,26 @@ filters=(
   --filter "$comp/hisense_map\.h" --filter "$comp/hisense_bus\.cpp" --filter "$comp/hisense_bus\.h"
   --filter "$module/w41h1_uart_policy\.h"
 )
+# gcovr: $GCOVR when set (a command, with arguments if it needs any), otherwise through uvx at
+# the version CI pins in .github/ci/lint/requirements.txt, so a laptop and CI print one table.
+if [ -n "${GCOVR:-}" ]; then
+  read -r -a gcovr <<< "$GCOVR"
+else
+  export UV_CONSTRAINT="${UV_CONSTRAINT:-$repo/.github/ci/lint/requirements.txt}"
+  gcovr=(uvx gcovr)
+fi
 # Branches the compiler adds for exceptions and for unreachable code are not test targets.
 common=(--root "$repo" "${filters[@]}" --exclude-throw-branches --exclude-unreachable-branches
   --merge-mode-functions=merge-use-line-min "$out/obj")
 
 echo
 echo "== line coverage =="
-uvx gcovr "${common[@]}" --txt "$out/lines.txt" --html-details "$out/html/index.html" \
+"${gcovr[@]}" "${common[@]}" --txt "$out/lines.txt" --html-details "$out/html/index.html" \
   --json "$out/coverage.json" >/dev/null
 cat "$out/lines.txt"
 echo
 echo "== branch coverage =="
-uvx gcovr "${common[@]}" --txt-metric branch --txt "$out/branches.txt" >/dev/null
+"${gcovr[@]}" "${common[@]}" --txt-metric branch --txt "$out/branches.txt" >/dev/null
 cat "$out/branches.txt"
 
 echo

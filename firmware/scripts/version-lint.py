@@ -43,6 +43,7 @@ ESPHOME_PINS = (
     (".github/workflows/esphome-release.yaml", r'^\s*ESPHOME_VERSION:\s*"?([0-9.]+)"?\s*$'),
     ("firmware/scripts/dev.py", r'^ESPHOME_PIN = "([0-9.]+)"'),
     ("firmware/scripts/esphome-upstream-check.sh", r'^ESPHOME_SPEC="esphome==([0-9.]+)"'),
+    (".github/ci/esphome/requirements.txt", r"^esphome==([0-9.]+)"),
 )
 
 
