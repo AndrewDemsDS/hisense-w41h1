@@ -7,13 +7,21 @@
 # with the hardware-validated timing (5 ms settle, 25 ms drain).
 #
 # Substitutions the including file must define: tx_pin, rx_pin, de_pin.
+# Substitutions it may override: w41h1_components (below).
+
+substitutions:
+  # Where the components come from. The default is the components/ directory beside the file
+  # given to `esphome` (a local path is resolved against that file's directory, which is why the
+  # board files sit next to components/ and not in a directory of their own). A config that
+  # takes these packages from git has no such directory and overrides this with a git source
+  # pinned to the same release tag (README, "Using a release from your own configuration").
+  # packages/amebaz2.yaml reads the same substitution for w41h1_module.
+  w41h1_components:
+    type: local
+    path: components
 
 external_components:
-  - source:
-      type: local
-      # Relative to the directory of the file given to `esphome`, which is why the board files sit
-      # next to components/ and not in a directory of their own.
-      path: components
+  - source: ${w41h1_components}
     components: [hisense_ac]
 
 # Only needed by total_daily_energy below, to know when the day rolls over.
@@ -99,8 +107,7 @@ sensor:
     link_losses:
       name: Bus link losses
 
-  # Energy for the HA Energy dashboard, integrated from the power estimate. The Matter path
-  # had no equivalent: this is one of the things ESPHome gives away for free.
+  # Energy for the HA Energy dashboard, integrated from the power estimate.
   - platform: total_daily_energy
     name: Energy today
     power_id: ac_power

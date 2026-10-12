@@ -147,7 +147,7 @@ struct AcCommand {
   // Also switch the unit on, in this frame (byte 18 |= CMD_POWER_ON_BITS). Set for the one frame
   // that powers the unit on, never kept in the shadow. Cool 0x5C and heat 0x3C are the stock
   // module's own bytes. VERIFY on hardware: auto 0x9C, dry 0x7C and fan 0x1C, which follow from the
-  // same field rule and which the stock Matter path never sends.
+  // same field rule and which this project's earlier firmware never sent.
   bool power_on{false};
 };
 

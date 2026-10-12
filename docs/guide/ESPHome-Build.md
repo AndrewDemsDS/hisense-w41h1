@@ -31,8 +31,12 @@ measured figures, is `firmware/docs/13-path-comparison.md` in the repo.
 | Entity | Covers |
 |---|---|
 | `climate` | power, mode (auto/cool/heat/dry/fan_only), setpoint 16 to 32, fan (auto, low, medium_low, medium, medium_high, high), swing, current temperature, action, special-mode presets |
-| `switch` | Eco, Turbo, Quiet, panel display |
+| `switch` | Eco, Turbo, Quiet, panel display, beeper |
 | `select` | Sleep profile (Off / General / Old / Young / Kids) |
+| `sensor` | indoor, outdoor and coil temperature, compressor Hz, power, voltage, current, bus checksum errors, uptime, Wi-Fi signal |
+| `binary_sensor` | aux heat relay, bus link, aggregate fault, 18 per-bit faults, 13 capability flags |
+| `text_sensor` | A/C device type (the learned link bytes), reset reason |
+| `button` | Start Wi-Fi setup ([below](#wi-fi-setup-mode-and-the-status-led)) |
 
 Quiet is a preset, not a fan speed: the A/C only reaches it through its mute flag, and while it is
 on the fan reads `low`.
@@ -46,12 +50,10 @@ after the previous one, so a combined preset such as `eco_sleep_old` takes about
 While turbo, quiet or a sleep profile is active they own the fan, and a fan change is refused
 rather than silently undone a second later. The switches and the select still work and share the
 same pacing, so keep them for dashboards or delete them if the presets are all you use.
-| `sensor` | indoor, outdoor and coil temperature, compressor Hz, power, voltage, current, bus checksum errors, uptime, Wi-Fi signal |
-| `binary_sensor` | aux heat relay, bus link, aggregate fault, 18 per-bit faults, 13 capability flags |
-| `text_sensor` | A/C device type (the learned link bytes), reset reason |
 
 Plus what ESPHome gives for free: OTA, a captive-portal AP fallback, logs streamed over the API on
-the deployed image, and `total_daily_energy` feeding the HA Energy dashboard.
+the deployed image, and `total_daily_energy` feeding the HA Energy dashboard. The device page in
+Home Assistant shows the firmware version ([Updates](#updates)).
 
 ## Hardware
 
@@ -69,12 +71,19 @@ every board.
 |---|---|---|
 | `w41h1.yaml` | classic ESP32, TX 19 / RX 18 / DE 4 | runs on a live A/C |
 | `w41h1-esp32c3.yaml` | ESP32-C3 SuperMini, 5 / 6 / 10 | runs on a live A/C |
+| `w41h1-esp32c3-plus.yaml` | ESP32-C3 SuperMini Plus, 5 / 6 / 10 | compiles. The same node as the row above plus the RGB pixel, which has not been checked on a board |
 | `w41h1-amebaz2-factory.yaml`, `-sdk.yaml`, `-native.yaml` | the stock W41H1 module itself, one file per flash layout | factory layout runs on one module in an A/C (2026-10-10); sdk and native compile only (see below) |
 | `w41h1-esp8266.yaml`, `w41h1-rp2040.yaml` | ESP8266 D1 mini, Raspberry Pi Pico W | examples, compile only, never run |
 
 TX and RX go to the `uart:` block and DE to the `hisense_ac:` component, all three through the
 `tx_pin`, `rx_pin` and `de_pin` substitutions. The component drives DE itself with the
 hardware-validated timing (5 ms settle, 25 ms drain).
+
+**SuperMini or SuperMini Plus?** Look at the LED on GPIO8. The plain SuperMini has a small blue
+LED there. The Plus has an addressable RGB pixel (a WS2812: a square white package), and usually
+an external antenna connector as well. The two need different files, because a pin toggled as
+for a plain LED means nothing to the pixel, and a pixel that nothing writes to can sit lit in a
+random colour.
 
 ## Flash it
 
@@ -91,15 +100,25 @@ By hand:
 ```bash
 pipx install esphome==2026.7.4            # the pinned version; plain pip is refused on recent distro Pythons
 cd firmware/esphome
-cp secrets.yaml.example secrets.yaml      # Wi-Fi credentials + an API encryption key
+cp secrets.yaml.example secrets.yaml      # then fill it in (below)
 esphome run w41h1.yaml                    # classic ESP32: build, flash, follow the logs
 esphome run w41h1-esp32c3.yaml            # C3 SuperMini
+esphome run w41h1-esp32c3-plus.yaml       # C3 SuperMini Plus
 esphome logs w41h1.yaml                   # logs only, later
 ```
 
+`secrets.yaml` is gitignored and holds four values. The build stops if one is missing.
+
+| Secret | What |
+|---|---|
+| `wifi_ssid`, `wifi_password` | the network the node joins |
+| `wifi_ap_password` | the password of the node's own setup hotspot, at least 8 characters. Whoever joins that hotspot can move the node to another network, so do not keep the placeholder |
+| `hisense_ac__encryption_key` | the API key Home Assistant adopts the node with. Make a new one, the example file says how |
+
 The older form, `esphome -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 run
-w41h1.yaml`, still works and builds the same node as `w41h1-esp32c3.yaml`. It is what `dev.py
---board c3` runs.
+w41h1.yaml`, still works. It is what `dev.py --board c3` runs, and it builds the node of
+`w41h1-esp32c3.yaml` without the status LED. `dev.py --board c3-plus` builds
+`w41h1-esp32c3-plus.yaml`.
 
 Home Assistant discovers the node over mDNS and adopts it with the API key from `secrets.yaml`
 ([below](#adopt-it-in-home-assistant)).
@@ -116,7 +135,8 @@ No pairing code and no extra integration.
 
 1. **Get it on Wi-Fi.** The node joins the network in `firmware/esphome/secrets.yaml`. If it cannot
    (wrong password, different network), it opens a hotspot named **`hisense-ac-setup`** after about a
-   minute. Join it from a phone; the captive portal asks for your Wi-Fi and the node reboots onto it.
+   minute. Join it from a phone with the `wifi_ap_password` from `secrets.yaml`; the captive
+   portal asks for your Wi-Fi and the node reboots onto it.
 2. **Add it in Home Assistant.** HA discovers the node over mDNS: Settings → Devices & Services shows
    a discovered **ESPHome** device. Select **Configure** and paste the API encryption key, the
    `hisense_ac__encryption_key` value from your `secrets.yaml`.
@@ -141,16 +161,55 @@ esphome run w41h1-esp32c3.yaml
 
 The first line is for the classic ESP32, the second for a C3 SuperMini. ESPHome builds the image,
 offers the node over the network as the upload target (pick it, or pass
-`--device hisense-ac.local` or the node's IP), uploads it and follows the logs. There is no version
-number to bump. Build from the same `secrets.yaml` as the first flash: a different API key locks
-Home Assistant out until you update the key there. The reference YAML sets no OTA password, so
+`--device hisense-ac.local` or the node's IP), uploads it and follows the logs. Build from the same
+`secrets.yaml` as the first flash: a different API key locks Home Assistant out until you update
+the key there. The reference YAML sets no OTA password, so
 anything on the same network can push an image; add `password:` under `ota:` if the node shares a
 network you do not control.
+
+The firmware has a version, written once in `firmware/esphome/packages/version.yaml` and built
+into every node. Home Assistant shows it on the device page as the firmware, for example
+`2.0.0 (ESPHome 2026.7.4)`. There is nothing to bump for an update of your own node: the version
+is that of the tree you build from. To move to a release, check out its tag (`git checkout
+v2.0.0`) and run the line above. Releases are listed on the repository's releases page with what
+changed, and they carry no firmware image: an image holds your Wi-Fi credentials and keys, so you
+build your own. A configuration kept outside a clone can pin the components and the packages to
+a tag from git (`firmware/esphome/README.md`, "Using a release from your own configuration").
 
 If a node stops answering after an update, reflash it over USB
 ([Recovery & Reflash](Recovery-and-Reflash#esp32-boards)). The stock module is updated the same
 way with its own board file, and has no USB to fall back on
 ([below](#the-stock-module-without-a-replacement-board)).
+
+## Wi-Fi setup mode and the status LED
+
+To move a node to another network without a cable, press **horizontal airflow six times** on the
+remote. The panel shows "77" and the node opens its hotspot, `<name>-setup`. Join it with the
+`wifi_ap_password` and enter the new network in the captive portal (if the phone does not open
+it, browse to the hotspot's gateway address). The `Start Wi-Fi setup` button in Home Assistant
+does the same for a unit whose remote is not at hand.
+
+Setup mode ends in a restart, on whichever comes first: the new network has connected, the
+gesture is repeated (at least 10 s after the first), or 10 minutes have passed. The node is off
+the network for that time and the A/C keeps running and keeps answering the remote. A gesture
+made by mistake costs nothing else: the node comes back on the network it had. Put the new
+network in `secrets.yaml` as well, because an update built from a changed configuration goes
+back to the credentials compiled in.
+
+This has not run on hardware yet. The limits, and what happens on the bus, are in
+`firmware/esphome/README.md` ("Wi-Fi setup mode and the 77 gesture").
+
+A board with an LED on a GPIO can show the node's state. The LED is dark while everything is
+fine.
+
+| Board file | LED | Shows |
+|---|---|---|
+| `w41h1-esp32c3.yaml` | the SuperMini's blue LED on GPIO8 (`packages/status-led.yaml`) | slow blink: no Wi-Fi, no Home Assistant connection, or the A/C not answering. Fast blink: the setup hotspot is open |
+| `w41h1-esp32c3-plus.yaml` | the Plus board's RGB pixel on GPIO8 (`packages/status-pixel.yaml`) | blue: the setup hotspot is open. Red: no Wi-Fi for 15 s. Amber: Wi-Fi up, the A/C not answering for 15 s |
+
+The other board files have no status LED. Either package can be added to a board file with the
+pin as a substitution. A power LED wired to the supply, and the LEDs on an RS-485 transceiver
+board, cannot be switched from firmware.
 
 ## Bring it up in stages
 

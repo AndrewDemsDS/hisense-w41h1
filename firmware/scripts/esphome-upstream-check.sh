@@ -26,7 +26,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 COMPONENT="$REPO/firmware/esphome/components/hisense_ac"
 TESTS="$REPO/firmware/esphome/tests/components/hisense_ac"
 
-# Kept in the esphome==X.Y.Z form so Renovate bumps it with the other ESPHome pins.
+# The release this repo builds with. version-lint.py fails when the pins differ.
 ESPHOME_SPEC="esphome==2026.7.4"
 REF="${ESPHOME_UPSTREAM_REF:-${ESPHOME_SPEC#esphome==}}"
 

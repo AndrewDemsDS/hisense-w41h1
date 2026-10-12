@@ -94,4 +94,9 @@ echo "== Layer 4: dev.py (convert re-signing, provider staging, command line) ==
 python3 ./test_dev_release.py
 
 echo
+echo "== Layer 5: the firmware version, the changelog and the ESPHome pin =="
+python3 ../scripts/version-lint.py
+python3 ./test_version_lint.py
+
+echo
 echo "ALL QA LAYERS PASSED"

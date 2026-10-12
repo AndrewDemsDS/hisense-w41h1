@@ -1,12 +1,13 @@
-# ESPHome variant
+# ESPHome firmware
 
-Local, Matter-free control of a Hisense A/C over the reverse-engineered RS-485 bus, exposed to
-Home Assistant through ESPHome's native API. Same ESP32 hardware and wiring as the esp-matter
-build, none of the Matter stack. **Home Assistant only.**
+Local control of a Hisense A/C over the reverse-engineered RS-485 bus, exposed to Home Assistant
+through ESPHome's native API. It runs on an ESP32 board that takes the Wi-Fi module's place, and
+on the stock module itself. **Home Assistant only.** The Matter firmwares this project used to
+ship are retired (tag `matter-final`).
 
 One component and one set of entities for every board. The ESP32 and ESP32-C3 builds run on live
-units. A build for the stock module's own MCU compiles and has not been on hardware yet
-([Boards](#boards)).
+units, and so does the stock module's factory-layout build, on one module ([Boards](#boards)).
+The firmware has a version, and a release is a git tag ([Version and releases](#version-and-releases)).
 
 The user guide covers everything a builder needs, so it is not repeated here:
 
@@ -26,27 +27,31 @@ The user guide covers everything a builder needs, so it is not repeated here:
 cp secrets.yaml.example secrets.yaml      # Wi-Fi, hotspot password, API key; the real file is gitignored
 esphome run w41h1.yaml                    # classic ESP32: build, flash, follow logs
 esphome run w41h1-esp32c3.yaml            # ESP32-C3 SuperMini
+esphome run w41h1-esp32c3-plus.yaml       # ESP32-C3 SuperMini Plus (RGB pixel on GPIO8)
 ```
 
 Or `firmware/scripts/dev.py flash esphome --board c3 --port <port>` from the repo root. That
 passes the C3 board and pins to `w41h1.yaml` as `-s` overrides, which still works and produces the
-same node as `w41h1-esp32c3.yaml`.
+node of `w41h1-esp32c3.yaml` without its status LED. `--board c3-plus` builds
+`w41h1-esp32c3-plus.yaml` as it is.
 
 ## Boards
 
 | File | Board | TX / RX / DE | Status | Image (ESPHome 2026.7.4) |
 |---|---|---|---|---|
-| `w41h1.yaml` | classic ESP32 (`esp32dev`), board and pins overridable with `-s` | 19 / 18 / 4 | runs on a live A/C | 923 KB, 50 % of the slot |
-| `w41h1-esp32c3.yaml` | ESP32-C3 SuperMini | 5 / 6 / 10 | runs on a live A/C | 986 KB, 54 % |
-| `w41h1-esp32c3-plus.yaml` | ESP32-C3 SuperMini Plus (RGB pixel on GPIO8, see [Status LED](#status-led)) | 5 / 6 / 10 | compiles; same node as the row above plus the pixel, which has not been checked on a board | 1017 KB, 55 % |
-| `w41h1-amebaz2-factory.yaml`, `-sdk.yaml`, `-native.yaml` | the stock W41H1 module itself (RTL8710C through LibreTiny), one file per flash layout | PA14 / PA13 / PA17 | **factory layout runs on one module in an A/C (2026-10-10)**; sdk and native compile, never run | 605 KB, 40 % of the factory layout's slot, 35 % of the other two |
-| `w41h1-esp8266.yaml` | ESP8266 D1 mini | GPIO15 / GPIO13 / GPIO5 | example, compiles, never run | 506 KB, 48 % |
-| `w41h1-rp2040.yaml` | Raspberry Pi Pico W | GPIO4 / GPIO5 / GPIO6 | example, compiles, never run | 590 KB, 56 % |
+| `w41h1.yaml` | classic ESP32 (`esp32dev`), board and pins overridable with `-s` | 19 / 18 / 4 | runs on a live A/C | 929 KB, 51 % of the slot |
+| `w41h1-esp32c3.yaml` | ESP32-C3 SuperMini | 5 / 6 / 10 | runs on a live A/C | 987 KB, 54 % |
+| `w41h1-esp32c3-plus.yaml` | ESP32-C3 SuperMini Plus (RGB pixel on GPIO8, see [Status LED](#status-led)) | 5 / 6 / 10 | compiles; same node as the row above plus the pixel, which has not been checked on a board | 1018 KB, 55 % |
+| `w41h1-amebaz2-factory.yaml`, `-sdk.yaml`, `-native.yaml` | the stock W41H1 module itself (RTL8710C through LibreTiny), one file per flash layout | PA14 / PA13 / PA17 | **factory layout runs on one module in an A/C (2026-10-10)**; sdk and native compile, never run | 610 KB, 40 % of the factory layout's slot, 35 % of the other two |
+| `w41h1-esp8266.yaml` | ESP8266 D1 mini | GPIO15 / GPIO13 / GPIO5 | example, compiles, never run | 513 KB, 49 % |
+| `w41h1-rp2040.yaml` | Raspberry Pi Pico W | GPIO4 / GPIO5 / GPIO6 | example, compiles, never run | 596 KB, 57 % |
 
 Every board file is three things: the node's name, the pins, and the platform block. Everything
-else comes from two packages that all of them include, so the entity names and object ids are the
+else comes from packages that all of them include, so the entity names and object ids are the
 same on every chip:
 
+- `packages/version.yaml`: the firmware version, and nothing else. `node.yaml` includes it
+  ([Version and releases](#version-and-releases)).
 - `packages/node.yaml`: logger, API, Wi-Fi, the setup hotspot and
   [setup mode](#wi-fi-setup-mode-and-the-77-gesture), and three diagnostics every
   board has (`Uptime`, `WiFi signal`, `Reset reason`). Wi-Fi power saving is
@@ -77,7 +82,7 @@ factory layout has run on one module in an A/C since 2026-10-10:** boot, Wi-Fi, 
 updates over the air. The sdk and native layouts compile and have not run on hardware. What was
 measured and what is open is in
 [`../docs/15-esphome-path.md`](../docs/15-esphome-path.md#the-stock-module-through-libretiny).
-A unit that runs this project's Matter firmware is converted over the air:
+A unit that still runs this project's retired Matter firmware is converted over the air:
 [`docs/guide/Converting-a-Stock-Module-to-ESPHome.md`](../../docs/guide/Converting-a-Stock-Module-to-ESPHome.md).
 
 There are three files because a module can have one of three flash layouts, and the image has to
@@ -135,7 +140,7 @@ The other open risks, in short:
 - Nothing rolls a bad update back. An image that does not boot needs the clip.
 - A first flash with the clip or UART download mode must leave flash `0x1000..0x3FFF` (the
   module's calibration data) as it was. The over-the-air conversion does not touch it.
-- No long run yet, and the way back to the Matter firmware has not been tried.
+- No long run yet, and the way back to the retired Matter firmware has not been tried.
 
 `dev.py test esphome --board amebaz2-factory` and `dev.py build esphome --board amebaz2-factory`
 (or `amebaz2-sdk`, `amebaz2-native`) validate and compile one. `dev.py convert esphome --board
@@ -159,6 +164,91 @@ firmware whole, and LibreTiny's slot images (`image_firmware_is.*.bin`), which i
 writes while linking, are not produced. `firmware.uf2`, the file an update uses, is. `dev.py build`
 notices and builds once more without the cache. PlatformIO never prunes the directory. Delete it
 when it has grown.
+
+## Version and releases
+
+The firmware version is written in one file, `packages/version.yaml`, as ESPHome's `project:`
+block. It is semver and starts at 2.0.0 (the retired Matter firmwares were 1.x). `node.yaml`
+includes that file, so a node built from the packages carries the version without anything in
+its own YAML:
+
+- Home Assistant shows it as the device's firmware, for example `2.0.0 (ESPHome 2026.7.4)`.
+- The ESPHome dashboard shows it beside the node, and the node announces it over mDNS.
+- It is in the image as `ESPHOME_PROJECT_VERSION`.
+
+The version is not part of any entity's name, object id or unique id, so a new version does not
+move an entity in Home Assistant. With a project set, Home Assistant takes the device's
+manufacturer and model from the project name (`AndrewDemsDS` and `hisense-w41h1`). Between two
+releases the tree keeps the number of the last one. The `compiled on` line in the log tells two
+builds of one version apart.
+
+A release is the git tag `vX.Y.Z` on `main`, with a section in [`CHANGELOG.md`](../../CHANGELOG.md)
+and a GitHub release that carries that section. Releases have no firmware images attached: an
+image holds its builder's Wi-Fi credentials, API key and hotspot password, so everyone builds
+their own. How a release is cut: [`CONTRIBUTING.md`](../../CONTRIBUTING.md#releasing).
+
+### Using a release from your own configuration
+
+A clone checked out at the tag is the simplest way: `git clone --branch v2.0.0`, then the
+[Quick use](#quick-use) lines. A configuration kept somewhere else can take the release from git
+instead, in two ways.
+
+**The components only.** Your YAML defines the UART, the hub and the entities itself (every
+option is in [`upstream/hisense_ac.mdx`](upstream/hisense_ac.mdx)):
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com/AndrewDemsDS/hisense-w41h1
+      ref: v2.0.0
+      path: firmware/esphome/components
+    components: [hisense_ac]      # and w41h1_module on the stock module
+```
+
+A node built this way has no firmware version unless its YAML sets `esphome: project:` itself.
+
+**The packages too**, which gives the node of the board files: every entity, setup mode and the
+version. The packages are ESPHome remote packages, and one substitution points them at the
+components of the same tag:
+
+```yaml
+substitutions:
+  name: bedroom-ac
+  friendly_name: Bedroom A/C
+  tx_pin: "5"
+  rx_pin: "6"
+  de_pin: "10"
+  w41h1_components:
+    type: git
+    url: https://github.com/AndrewDemsDS/hisense-w41h1
+    ref: v2.0.0
+    path: firmware/esphome/components
+
+packages:
+  w41h1:
+    url: https://github.com/AndrewDemsDS/hisense-w41h1
+    ref: v2.0.0
+    files:
+      - firmware/esphome/packages/node.yaml
+      - firmware/esphome/packages/ota.yaml
+      - firmware/esphome/packages/hisense-ac.yaml
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+```
+
+The tag is written twice and both have to be the same one. The four secrets `node.yaml` reads
+(`wifi_ssid`, `wifi_password`, `wifi_ap_password`, `hisense_ac__encryption_key`) come from the
+`secrets.yaml` beside your own file. For the status LED add `packages/status-led.yaml` or
+`packages/status-pixel.yaml` to `files:` and its substitutions to yours. For the stock module
+take `packages/amebaz2.yaml` in place of `ota.yaml`, set `layout`, and use the pins of the
+`w41h1-amebaz2-*.yaml` files.
+
+Without the `w41h1_components` substitution the packages look for a `components/` directory
+beside the file given to `esphome`, which is how the board files in this repository find theirs.
 
 ## Recovery and indication
 
@@ -269,17 +359,21 @@ safe mode ([`../docs/15-esphome-path.md`](../docs/15-esphome-path.md#which-flash
 |---|---|
 | `w41h1.yaml` | the classic ESP32 board file and the original entry point; board and pins are substitutions |
 | `w41h1-*.yaml` | one file per other board (see [Boards](#boards)) |
-| `packages/` | what the board files include: `node.yaml`, `hisense-ac.yaml`, `ota.yaml`, the optional `status-led.yaml` and `status-pixel.yaml`, and `amebaz2.yaml` for the stock module (configuration only) |
+| `packages/` | what the board files include: `node.yaml`, `version.yaml` (through `node.yaml`), `hisense-ac.yaml`, `ota.yaml`, the optional `status-led.yaml` and `status-pixel.yaml`, and `amebaz2.yaml` for the stock module (configuration only) |
 | `components/hisense_ac/` | the custom component: hub, climate, switches, select, sensors |
 | `components/w41h1_module/` | the stock module's own component, `rtl87xx` only: its flash layouts (`layout-*.json`), the layout guard (`w41h1_slots.h`), the reboot workaround, and the serial port recovery (`w41h1_module.cpp`, with its timing rule in `w41h1_uart_policy.h`) |
 | `tests/components/hisense_ac/` | every option of every platform, at the path and in the shape ESPHome's own `tests/components/<name>/` uses, so it moves upstream unchanged |
 | `tests/components/w41h1_module/` | every option of `w41h1_module`, in the same shape, for the one platform it validates on |
 | `tests/test_build_components/` | stand-ins for ESPHome's shared UART test packages, so the relative include in the test resolves here too |
-| `tests/build.*.yaml` | repo-only harness so `esphome config` and `esphome compile` can run those tests (CI runs `config`). `build.rtl87xx-ard.yaml` builds the `w41h1_module` test and, with it, every option of `hisense_ac` on AmebaZ2, for which `hisense_ac` has no upstream-shaped test |
+| `tests/build.*.yaml` | repo-only harness so `esphome config` and `esphome compile` can run those tests (CI runs `config`). `build.rtl87xx-ard.yaml` builds the `w41h1_module` test and, with it, every option of `hisense_ac` on AmebaZ2, for which `hisense_ac` has no upstream-shaped test. `build.hub-only.esp32-c3-idf.yaml` is the hub with no entity platform, which CI also compiles |
 | `secrets.yaml.example` | template for the gitignored `secrets.yaml` |
 
-Every file in the component passes ESPHome's own gates as of their `dev` branch in September 2026:
-`script/ci-custom.py`, their `.clang-format` and `.clang-tidy`, ruff format, and pylint.
+Every file of the `hisense_ac` component passes ESPHome's own gates on the release this repo
+builds with: `script/ci-custom.py`, their `.clang-format` and `.clang-tidy`, ruff, and pylint
+(`firmware/scripts/esphome-upstream-check.sh`, a required CI job). The same job runs against
+their `dev` branch for information. `w41h1_module` is held to the same clang-format and custom
+source rules by `cpp-lint.sh`. It is not put through ESPHome's Python gates: it is specific to
+this module and not meant for upstream.
 
 [`upstream/hisense_ac.mdx`](upstream/hisense_ac.mdx) is the draft of the component's page for
 ESPHome's documentation repository (`esphome-docs`, `src/content/docs/components/`), which an
@@ -330,23 +424,23 @@ boot.
 
 ### The codec port (`hisense_protocol.*`, `hisense_map.h`)
 
-The shared driver under `firmware/src/rs485-driver/` cannot pass those gates and is not meant to:
-it also has to build on AmebaZ2. Upstream ESPHome needs a component that carries its own protocol
-code, so the component holds an ESPHome-style port of the codec: frame builders and parsers,
-the enum and fan-ladder mapping, presets, the power estimate, and the remote's "77" request with
-the heartbeat flag that shows "77" on the panel. It leaves out the rest of the stock module's
-cloud pairing (smart-config itself and the binding token).
+The component carries its own protocol code: frame builders and parsers, the enum and
+fan-ladder mapping, presets, the power estimate, and the remote's "77" request with the
+heartbeat flag that shows "77" on the panel. It leaves out the rest of the stock module's cloud
+pairing (smart-config itself and the binding token). The code is an ESPHome-style port of the
+project's first bus driver, which ran in the retired Matter firmwares and is kept, frozen, as a
+test reference in `firmware/test/reference-driver/`.
 
-A second copy is only safe because it cannot drift. `firmware/test/test_esphome_codec_parity.cpp`
-runs every builder and parser of both over the same inputs (the full command cartesian product,
-exhaustive small domains, and seeded random frames) and compares them byte for byte and field by
-field. It runs in `run_tests.sh`, so the lint gate and CI fail on any divergence. A protocol fix
-lands in the shared driver first, then gets ported here until the parity test passes again.
+`firmware/test/test_esphome_codec_parity.cpp` runs every builder and parser of both over the same
+inputs (the full command cartesian product, exhaustive small domains, and seeded random frames)
+and compares them byte for byte and field by field. It runs in `run_tests.sh`, so the lint gate
+and CI fail on any divergence. The reference is the hardware-validated side of that comparison.
+A protocol change that the reference also covers is made in both, so the test keeps its meaning.
 
 The port is the only transport: `packages/hisense-ac.yaml` has a `uart:` block and the bus is
 scheduled in `loop()` (`hisense_bus.*`). It passed the hardware-in-loop actuation test on a live A/C (48/49 on
 2026-09-25; the one miss, heat_cool readback, is an intermittent A/C-side flake). The earlier
-fallback that ran the shared driver's own FreeRTOS bus task was removed: it pulled in files from
+fallback that ran the first driver's own FreeRTOS bus task was removed: it pulled in files from
 outside the component, which upstream ESPHome cannot accept.
 
 ### Portability

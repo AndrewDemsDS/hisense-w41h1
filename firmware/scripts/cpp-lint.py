@@ -40,6 +40,7 @@ CPP_EXT = (".c", ".cc", ".cpp", ".h", ".hpp", ".tcc")
 INCLUDE = [
     "firmware/esp32-recon/*",
     "firmware/esphome/components/hisense_ac/*",
+    "firmware/esphome/components/w41h1_module/*",
     "firmware/test/*",
 ]
 

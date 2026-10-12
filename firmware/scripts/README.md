@@ -30,6 +30,8 @@ Three commands exist for a stock module that still runs the retired Matter firmw
 | `amebaz2_image.py` | The stock module's image format: sub-image chain walk, verify, re-sign (#75). Used by `dev.py convert`, tested by `../test/test_image_chain.py`. |
 | `cpp-lint.sh`, `cpp-lint.py` | C/C++ lint for every tree we own: `check` (clang-format, custom rules, clang-tidy: what CI runs) and `fix`. See `docs/guide/Testing-and-QA.md`. |
 | `esphome-upstream-check.sh` | Runs ESPHome's own CI scripts against the `hisense_ac` component, in a checkout of `esphome/esphome`. |
+| `version-lint.py` | The firmware version (`../esphome/packages/version.yaml`), the changelog and the release tag, checked against each other: `--tag vX.Y.Z` before a release, `--base <ref>` for the changelog rule of a pull request, `--notes` to print a version's changelog section. Runs in `run_tests.sh`, the pre-commit hook and CI. |
+| `esphome-compile-check.sh` | Compiles the ESPHome configurations it is given and fails on a compiler warning from this repo's components or an image without the version. CI's compile gate for the ESP32 boards and for a release. |
 | `stop-slop.sh` | Pre-commit gate that blocks the clearest AI-writing tells in newly added prose. |
 | `ota-release.env.example` | Template for `ota-release.env` (gitignored): the settings of `convert` and the `matter-*` commands. Nothing else reads it. Never commit your filled-in copy. |
 

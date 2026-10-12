@@ -9,9 +9,15 @@ on:
   pull_request:
     branches: [main, dev]
 
-# Least privilege: this gate only reads the tree (checkout + host scripts), never writes.
+# Least privilege: this gate only reads the tree (checkout + host scripts), never writes. Every
+# job repeats it, so a job added later has to state its own.
 permissions:
   contents: read
+
+# The ESPHome release every job builds with, written once. firmware/scripts/version-lint.py holds
+# it equal to the pins in dev.py, esphome-upstream-check.sh and esphome-release.yaml.
+env:
+  ESPHOME_VERSION: "2026.7.4"
 
 jobs:
   host-qa:
@@ -19,6 +25,8 @@ jobs:
     # ubuntu-latest runner. Skip on Gitea so the job doesn't queue forever there.
     if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -57,17 +65,43 @@ jobs:
       # compile is the esphome-amebaz2 job below.
       - name: ESPHome config validation
         run: |
+          pipx install "esphome==$ESPHOME_VERSION"
           cd firmware/esphome
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
           # Every board file: they share packages/, so a change made for one chip is checked
-          # against all of them.
-          for b in w41h1*.yaml; do pipx run esphome==2026.7.4 config "$b"; done
-          # The exact invocation `dev.py --board c3` makes, which the deployed nodes were built with.
-          pipx run esphome==2026.7.4 -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 \
-            config w41h1.yaml
-          # The upstream-shaped component test (tests/components/hisense_ac/) sets every option of every
-          # platform, which w41h1.yaml does not.
-          for t in tests/build*.yaml; do pipx run esphome==2026.7.4 config "$t"; done
+          # against all of them. The glob takes in a board file added later.
+          for b in w41h1*.yaml; do esphome config "$b"; done
+          # The exact invocation `dev.py --board c3` makes, which the first nodes were built with.
+          esphome -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 config w41h1.yaml
+          # The upstream-shaped component tests (tests/components/) set every option of every
+          # platform, which the board files do not, and build.hub-only.* is the hub with no
+          # platform at all.
+          for t in tests/build*.yaml; do esphome config "$t"; done
+
+  # The firmware version (firmware/esphome/packages/version.yaml), the changelog and the release
+  # tags, with the history the checkout of host-qa does not have. host-qa already runs the checks
+  # that need no history, through run_tests.sh. This job adds two. In a pull request, a change
+  # under firmware/esphome/components/ or packages/ against the merge base has to come with a
+  # CHANGELOG.md entry. No version bump is asked for: the number moves when a release is cut.
+  # And with the tags fetched, the version may not be below the newest release.
+  version:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # the merge base and the tags
+      - name: Version, changelog and release tags
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            python3 firmware/scripts/version-lint.py --base "origin/$BASE_REF"
+          else
+            python3 firmware/scripts/version-lint.py
+          fi
 
   # The stock module's own MCU through ESPHome's LibreTiny platform (w41h1-amebaz2-*.yaml, one
   # per flash layout a unit can have). These are the board files nobody builds on the way to an
@@ -80,6 +114,8 @@ jobs:
   esphome-amebaz2:
     if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -99,6 +135,7 @@ jobs:
 
       - name: Compile every flash layout
         run: |
+          pipx install "esphome==$ESPHOME_VERSION"
           cd firmware/esphome
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
           # An object served from the build cache prints no compiler output, so the warning check
@@ -110,13 +147,13 @@ jobs:
           for want in factory:0x010000 sdk:0x00C000 native:0x010000; do
             layout=${want%%:*}
             # Its own name, so each layout gets its own build directory.
-            if ! pipx run esphome==2026.7.4 -s name "ac-$layout" compile "w41h1-amebaz2-$layout.yaml" \
-                > build.log 2>&1; then
+            if ! esphome -s name "ac-$layout" compile "w41h1-amebaz2-$layout.yaml" > build.log 2>&1; then
               tail -n 200 build.log
               exit 1
             fi
             echo "== $layout"
-            grep -a -E '^(RAM|Flash):|Successfully compiled' build.log
+            # PlatformIO puts a colour reset in front of its size lines, so they are not anchored.
+            grep -a -E '(RAM|Flash): +\[|Successfully compiled' build.log
             # The SDK and the platform warn about their own code. Ours has to build clean here
             # too: this is the only target with a different compiler and integer widths.
             if grep -a -E 'components/(hisense_ac|w41h1_module)/.*(warning|error)' build.log; then
@@ -133,7 +170,7 @@ jobs:
             if [ ! -f "$out/image_firmware_is.${want##*:}.bin" ]; then
               echo "no slot image after a fully cached build: building $layout without the cache"
               rm -f "$out/raw_firmware.elf" "$out/firmware.uf2"
-              env -u PLATFORMIO_BUILD_CACHE_DIR pipx run esphome==2026.7.4 -s name "ac-$layout" \
+              env -u PLATFORMIO_BUILD_CACHE_DIR esphome -s name "ac-$layout" \
                 compile "w41h1-amebaz2-$layout.yaml" > build.log 2>&1 || { tail -n 200 build.log; exit 1; }
             fi
             ls -l "$out/firmware.uf2" "$out/image_firmware_is.${want##*:}.bin"
@@ -152,6 +189,52 @@ jobs:
           path: ~/.platformio
           key: pio-esphome-amebaz2-${{ github.run_id }}
 
+  # The ESP32 boards, which are the ones that run in A/C units: a real compile of the classic
+  # ESP32 file and of both ESP32-C3 files (the SuperMini with its status LED, the Plus with its
+  # RGB pixel and the RMT driver), plus the hub with no entity platform. `esphome config` in
+  # host-qa cannot see a C++ error, and the AmebaZ2 job builds with another compiler. ESPHome
+  # builds these with ESP-IDF's own tools, not PlatformIO, and keeps the framework, the two
+  # toolchains (Xtensa and RISC-V) and a ccache under ~/.cache/esphome/idf, so that is the
+  # directory cached. ccache replays a cached object's compiler output, so the warning check
+  # below also sees warnings from objects this run did not compile. Compile-only: the images
+  # carry the placeholder secrets and are thrown away.
+  esphome-esp32:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Every run restores the newest entry. Only main saves one, as in esphome-amebaz2.
+      - name: Restore the ESP-IDF tree
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/esphome/idf
+          key: idf-esphome-esp32-${{ github.run_id }}
+          restore-keys: |
+            idf-esphome-esp32-
+
+      - name: Compile the ESP32 board files
+        env:
+          # ESPHome switches ccache on when the binary is there and keeps the cache in the
+          # directory above. Capped, so the saved entry stays well inside the cache quota.
+          CCACHE_MAXSIZE: 600M
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ccache
+          pipx install "esphome==$ESPHOME_VERSION"
+          bash firmware/scripts/esphome-compile-check.sh w41h1.yaml w41h1-esp32c3.yaml \
+            w41h1-esp32c3-plus.yaml tests/build.hub-only.esp32-c3-idf.yaml
+
+      - name: Save the ESP-IDF tree
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/esphome/idf
+          key: idf-esphome-esp32-${{ github.run_id }}
+
   # ESPHome's own CI gates, run against the hisense_ac component placed in a checkout of
   # esphome/esphome (see firmware/scripts/esphome-upstream-check.sh). The pinned-release run is
   # required. The dev run is informational: their rules move ahead of the release this repo builds
@@ -161,6 +244,8 @@ jobs:
   esphome-upstream:
     if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:

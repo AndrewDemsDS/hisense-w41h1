@@ -62,6 +62,8 @@ climate:
   the transceiver's DE (and RE) line. The component raises it 5 ms before each frame and lowers it
   25 ms after the last byte. Leave it out only if the UART's `flow_control_pin` or the transceiver
   itself switches direction.
+- **on_setup_request** (*Optional*, [Automation](/automations)): An automation to perform when
+  the user asks for setup from the remote. See [`on_setup_request`](#hisense_ac-on_setup_request).
 
 ## Climate
 
@@ -236,6 +238,56 @@ text_sensor:
 
 - **link_token** (*Optional*): The two-byte device type the unit reports when the link comes up.
   All options from [Text Sensor](/components/text_sensor#config-text_sensor).
+
+## Automations
+
+<span id="hisense_ac-on_setup_request"></span>
+
+### `on_setup_request`
+
+This automation is triggered when the user presses the horizontal airflow button on the remote
+six times. On the stock Wi-Fi module that gesture starts pairing and the unit's panel shows "77".
+The component only reports it, once per gesture, and what happens next is up to the
+configuration. A variable `x` of type `uint8_t` holds the request bits the unit sent: `0x20`,
+`0x08` or both.
+
+```yaml
+hisense_ac:
+  id: ac_bus
+  on_setup_request:
+    - hisense_ac.set_setup_indicator: true
+    - delay: 30s
+    - hisense_ac.set_setup_indicator: false
+```
+
+A request is ignored for 10 seconds after the previous one. A unit that raises `0x08` has to hold
+it for three replies in a row, and that bit is ignored while the panel indicator below is on.
+
+<span id="hisense_ac-set_setup_indicator_action"></span>
+
+### `hisense_ac.set_setup_indicator` Action
+
+This action shows "77" on the unit's panel, or takes it off again. While it is on, the component
+tells the unit that the module is being set up, as the stock module does while it pairs. Nothing
+else changes: the unit keeps running and keeps taking commands.
+
+```yaml
+on_...:
+  then:
+    - hisense_ac.set_setup_indicator: true
+
+    # Long form, with a templated state
+    - hisense_ac.set_setup_indicator:
+        id: ac_bus
+        state: !lambda "return id(setup_active);"
+```
+
+- **id** (*Optional*, [ID](/guides/configuration-types#id)): ID of the hub.
+- **state** (**Required**, boolean, [templatable](/automations/templates)): `true` to show "77",
+  `false` to clear it.
+
+The same is available in lambdas as `id(ac_bus).set_setup_indicator(true)`, and
+`id(ac_bus).setup_indicator()` returns the current state.
 
 ## See Also
 

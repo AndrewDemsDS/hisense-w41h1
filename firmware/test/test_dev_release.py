@@ -138,6 +138,32 @@ check(e["PLATFORMIO_BUILD_CACHE_DIR"] == "/mine", "esphome env: the caller's cac
 e = dev.esphome_env({"HOME": "/home/you", "PLATFORMIO_BUILD_CACHE_DIR": ""})
 check("PLATFORMIO_BUILD_CACHE_DIR" not in e, "esphome env: an empty value switches the cache off")
 
+# --- which board file and substitutions each --board builds ---
+import tempfile  # noqa: E402
+
+calls = []
+real = dev.run, dev.have, dev.ESPHOME_DIR
+with tempfile.TemporaryDirectory() as tmp:
+    (pathlib.Path(tmp) / "secrets.yaml").write_text("")
+    dev.run = lambda args, env=None, cwd=None, check=True: calls.append([str(a) for a in args])
+    dev.have = lambda tool: True
+    dev.ESPHOME_DIR = pathlib.Path(tmp)
+    try:
+        for board in ("c3", "c3-plus", "classic", "amebaz2-factory"):
+            dev.Ctx("esphome", board, None, None).esphome_run("config")
+    finally:
+        dev.run, dev.have, dev.ESPHOME_DIR = real
+by_board = dict(zip(("c3", "c3-plus", "classic", "amebaz2-factory"), calls))
+check("w41h1.yaml" in by_board["c3"] and "esp32-c3-devkitm-1" in by_board["c3"],
+      "--board c3 builds w41h1.yaml with the C3 board and pins as -s overrides, as it always has")
+check("w41h1-esp32c3-plus.yaml" in by_board["c3-plus"] and "-s" not in by_board["c3-plus"],
+      "--board c3-plus builds its own board file and passes no pins")
+check("w41h1.yaml" in by_board["classic"] and "esp32dev" in by_board["classic"], "--board classic builds w41h1.yaml")
+check("w41h1-amebaz2-factory.yaml" in by_board["amebaz2-factory"], "--board amebaz2-factory builds its own board file")
+for call in calls:
+    check((ROOT / "firmware/esphome" / [a for a in call if a.endswith(".yaml")][0]).is_file(),
+          f"the board file dev.py names exists: {[a for a in call if a.endswith('.yaml')][0]}")
+
 # --- CLI ---
 for args, why in ((["convert", "esphome", "--board", "amebaz2-native"], "native"),
                   (["convert", "esphome"], "an ESP32 board"),

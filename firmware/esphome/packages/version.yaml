@@ -1,0 +1,17 @@
+# The firmware version. This file is the one place it is written: semver, and equal to the git
+# tag of a release without the leading "v". firmware/scripts/version-lint.py checks it against
+# CHANGELOG.md and, on a tag build, against the tag. How a release is cut: CONTRIBUTING.md,
+# "Releasing".
+#
+# node.yaml includes this file, so every node built from the packages carries the version: Home
+# Assistant shows it as the device's firmware ("2.0.0 (ESPHome 2026.7.4)") and the ESPHome
+# dashboard beside the node. Between two releases the number is that of the last release. The
+# build time in the log's "compiled on" line tells two builds of one version apart.
+#
+# The version is not part of any entity's name, object id or unique id.
+
+esphome:
+  project:
+    # "<author>.<project>". Home Assistant shows the two halves as manufacturer and model.
+    name: AndrewDemsDS.hisense-w41h1
+    version: "2.0.0"

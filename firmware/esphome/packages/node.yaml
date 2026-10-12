@@ -1,7 +1,7 @@
-# The node itself: identity, logging, the Home Assistant API, Wi-Fi and its setup mode, and the
-# node's own diagnostics. Nothing here names a chip, so every board file includes it as is. A board
-# file adds its platform block and whatever that platform needs on top (see w41h1-amebaz2.yaml for
-# an example).
+# The node itself: identity, logging, the Home Assistant API, Wi-Fi and its setup mode, the
+# node's own diagnostics, and the firmware version. Nothing here names a chip, so every board file
+# includes it as is. A board file adds its platform block and whatever that platform needs on top
+# (see w41h1-amebaz2-factory.yaml for an example).
 #
 # Substitutions the including file must define: name, friendly_name.
 # Substitutions it may override: wifi_power_save, wifi_setup_timeout (below).
@@ -13,15 +13,18 @@ substitutions:
   # radio stays on: `none`. ESPHome's own default is `light` on ESP32 and RP2040, where the radio
   # sleeps between beacons. On an ESP32-C3 with a weak signal (about -77 dBm) that default gave
   # 65 % ping loss, an API connection dropping about once a minute, and commands that never
-  # reached the unit. With `none`: 100 of 100 pings, a command taken in 0.5 s (2026-10-10). The
-  # Matter firmware forces the radio on for the same reason. ESP8266 and LibreTiny already
-  # default to `none`. The cost is current: the radio no longer sleeps between beacons. A board
-  # on a supply too weak for that can go back with `wifi_power_save: light` in its board file,
-  # or `-s wifi_power_save light` on the command line.
+  # reached the unit. With `none`: 100 of 100 pings, a command taken in 0.5 s (2026-10-10).
+  # ESP8266 and LibreTiny already default to `none`. The cost is current: the radio no longer
+  # sleeps between beacons. A board on a supply too weak for that can go back with
+  # `wifi_power_save: light` in its board file, or `-s wifi_power_save light` on the command line.
   wifi_power_save: none
   # How long setup mode (below) keeps the hotspot open before the node restarts onto the network
   # it had.
   wifi_setup_timeout: 10min
+
+# The firmware version (esphome: project:), from the one file that holds it.
+packages:
+  version: !include version.yaml
 
 esphome:
   name: ${name}

@@ -6,6 +6,8 @@
 // called by Home Assistant, never by our own publish_state(), so a downlink -> readback -> uplink
 // feedback loop cannot form. The only timing defence needed is the hub's command hold-off, which
 // stops a poll already in flight from visibly reverting a control the user just moved.
+#include "esphome/core/defines.h"
+#ifdef USE_CLIMATE
 #include "esphome/components/climate/climate.h"
 #include "hisense_ac.h"
 
@@ -62,3 +64,5 @@ class HisenseClimate : public climate::Climate, public Component {
 };
 
 }  // namespace esphome::hisense_ac
+
+#endif  // USE_CLIMATE

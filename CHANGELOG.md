@@ -5,7 +5,83 @@ Entries up to 2026-10-10 also cover the two Matter firmwares, which are retired:
 such as "AmebaZ2 1.3.50" or "ESP32 1.1.19" and paths under `firmware/src/` and
 `firmware/esp32-matter/` refer to the tree at the tag `matter-final`.
 
+From 2.0.0 on, a release of the ESPHome firmware is a `## X.Y.Z - date` section here and the git
+tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unreleased`
+([Releasing](CONTRIBUTING.md#releasing)).
+
 ## Unreleased
+
+This becomes 2.0.0, the first release of the ESPHome firmware under a version number of its own.
+The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
+
+### The firmware has a version, releases are tags, and CI compiles the ESP32 boards (2026-10-12)
+- **The version is written once**, in `firmware/esphome/packages/version.yaml`: semver, starting
+  at 2.0.0. `packages/node.yaml` includes that file, so every node built from the packages
+  carries it as ESPHome's `project:` without a change to its own YAML. Home Assistant shows it
+  as the device's firmware, "2.0.0 (ESPHome 2026.7.4)", and the ESPHome dashboard shows it beside
+  the node.
+- **Changes existing nodes at their next build:** with a project set, Home Assistant takes the
+  device's manufacturer and model from the project name, so they read `AndrewDemsDS` and
+  `hisense-w41h1` where they read the chip maker and the board. The node also announces the
+  project in its mDNS record. No entity name, object id or unique id changes: the entity
+  registration in the generated code is the same line for line on all eight board files. As
+  with any change of configuration, a network saved through the setup portal is dropped at the
+  update and the node comes up on the Wi-Fi in `secrets.yaml`.
+- **A release is the tag `vX.Y.Z`.** Pushing it runs `.github/workflows/esphome-release.yaml`:
+  the tag has to equal the version and sit on `main`, the host tests run, every board file
+  compiles with the components free of warnings, and the GitHub release gets this file's section
+  for that version as its text. No firmware image is attached: one built in CI holds the
+  placeholder secrets, which are public. Steps: `CONTRIBUTING.md`, "Releasing".
+- **`firmware/scripts/version-lint.py`** holds it together and runs in `run_tests.sh`, the
+  pre-commit hook and CI: the version is `MAJOR.MINOR.PATCH`, this file has a section for it or
+  an Unreleased one, the version is not below the newest release tag, and every pin of the
+  ESPHome release names the same one. In a pull request, CI fails when a file under
+  `firmware/esphome/components/` or `firmware/esphome/packages/` changed and this file did not.
+  A version bump is not required per change. The number moves when a release is cut.
+- **The packages work from git.** `packages/hisense-ac.yaml` and `packages/amebaz2.yaml` take the
+  source of the components from a substitution, `w41h1_components`, whose default is the local
+  `components/` directory as before. A configuration outside this repository can now include the
+  packages as ESPHome remote packages pinned to a release tag and point that substitution at the
+  same tag (`firmware/esphome/README.md`, "Using a release from your own configuration").
+- **Fixed: a configuration with the `hisense_ac` hub and no `climate:` platform did not
+  compile** (`esphome/components/climate/climate.h: No such file or directory`). The climate
+  sources are now compiled only when the climate platform is in the configuration, as the switch
+  and select sources already were. `tests/build.hub-only.esp32-c3-idf.yaml` covers it.
+- CI: a new `esphome-esp32` job compiles `w41h1.yaml`, `w41h1-esp32c3.yaml`,
+  `w41h1-esp32c3-plus.yaml` and the hub-only test, fails on a compiler warning from the
+  components and checks that each board image carries the version. Until now the ESP32 files
+  only went through `esphome config`. A `version` job runs the version and changelog rules with
+  the full history. The ESPHome release is pinned once per workflow, and every job states its
+  own permissions.
+- `dev.py --board c3-plus` builds and flashes `w41h1-esp32c3-plus.yaml`.
+
+### Wi-Fi setup mode on the remote's "77" gesture, and a status LED (2026-10-12, #189)
+- **Setup mode.** Horizontal airflow pressed six times on the remote puts "77" on the panel and
+  opens the node's hotspot, `<name>-setup`, with ESPHome's captive portal to enter a new network.
+  A `Start Wi-Fi setup` button in Home Assistant does the same. It ends in a restart: when the
+  new network has connected, when the gesture is repeated, or after `wifi_setup_timeout` (10
+  minutes). Nothing is written to flash on the way in, and credentials that did not connect are
+  replaced by the ones the node had. Not run on hardware yet.
+- **Changes existing nodes: the hotspot has a password and `secrets.yaml` needs one more
+  entry**, `wifi_ap_password` (at least 8 characters). A build without it stops with a message
+  naming the missing secret.
+- The hub gains the trigger `on_setup_request` and the action `hisense_ac.set_setup_indicator`,
+  and sets its warning status while the bus link is down.
+- **Optional status LED**, dark while the node is healthy: `packages/status-led.yaml` for a plain
+  LED on a GPIO and `packages/status-pixel.yaml` for one WS2812 pixel on an ESP32.
+  `w41h1-esp32c3.yaml` now includes the first (the SuperMini's blue LED on GPIO8). The new
+  `w41h1-esp32c3-plus.yaml` is the same node for the SuperMini Plus, which has an RGB pixel on
+  that pin. The pixel has not been checked on a board.
+
+### The stock module's glue is a component, `w41h1_module` (2026-10-12, #188)
+- What the stock module needs on top of a plain `rtl87xx` node moved out of YAML lambdas and a
+  header into `firmware/esphome/components/w41h1_module/`: the three flash layouts and their
+  build-time and boot-time checks, the reboot workaround for LibreTiny issue 396, the serial port
+  recovery for the A/C bus, and the `Flash layout` and `Serial port restarts` diagnostics.
+  `packages/amebaz2.yaml` is configuration only. The entities and their object ids are the same.
+- The component validates only on `rtl87xx` with the RTL8710C family and has its own
+  upstream-shaped test under `tests/components/w41h1_module/`. It uses nothing outside its
+  directory, so it also works from a git source.
 
 ### The Matter firmwares are retired, ESPHome is the only firmware (2026-10-12, #182)
 - **Removed** the AmebaZ2 Matter build (the SDK setup scripts, `patches/`, `versions.env`, the
@@ -22,6 +98,11 @@ such as "AmebaZ2 1.3.50" or "ESP32 1.1.19" and paths under `firmware/src/` and
 - **Docs** describe one firmware on three kinds of hardware. Hardware facts from the Matter
   documents moved to `firmware/docs/10-stock-module-boot-and-recovery.md` and
   `firmware/docs/16-esp32-board-notes.md`.
+
+## Matter and ESPHome side by side - 2026-10-10
+
+Everything from July to 2026-10-10. It was never one release: the Matter firmwares had their own
+tags (`amebaz2-v*`, `esp32-v*`) and the ESPHome nodes were built from `main`.
 
 ### ESPHome on the stock module: the receiver stall has a cause and a fix (2026-10-10)
 - **Fixed: the bus receiver stops on the stock module.** LibreTiny keeps received bytes in the

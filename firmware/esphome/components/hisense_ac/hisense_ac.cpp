@@ -236,8 +236,10 @@ void HisenseAC::process_status_(const AcState &state) {
   if (!this->special_busy() && !this->in_command_holdoff())
     this->projected_ = special_from_status(state.eco_on, state.turbo_on, state.mute_on, state.sleep_raw);
 
+#ifdef USE_CLIMATE
   if (this->climate_ != nullptr)
     this->climate_->update_from_bus(state, this->in_command_holdoff());
+#endif
   for (auto *listener : this->listeners_)
     listener->on_status(state);
 
