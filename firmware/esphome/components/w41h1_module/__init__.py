@@ -76,7 +76,19 @@ def _only_on_the_stock_module(config):
     return config
 
 
+def _listed_once(config):
+    # Without this a second entry is refused with ESPHome's "expected a dictionary", which does
+    # not say what is wrong.
+    if isinstance(config, list):
+        raise cv.Invalid(
+            "w41h1_module can be listed only once: a module has one flash layout, one A/C bus "
+            "and one update server."
+        )
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
+    _listed_once,
     _only_on_the_stock_module,
     cv.Schema(
         {
