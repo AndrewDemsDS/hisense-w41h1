@@ -14,7 +14,7 @@
 //
 // A command frame that gets no reply is sent again in the next cycle's command slot, ahead of
 // everything queued behind it, up to COMMAND_SENDS_MAX sends and only while the unit answers its
-// status poll (hisense_map.h holds the rule).
+// status poll (command_resend_allowed below).
 //
 // I/O goes through BusIO, so the scheduler can be driven against a simulated A/C in a host test.
 // No ESPHome includes.
@@ -81,6 +81,47 @@ inline uint32_t bus_tx_time_ms(size_t len) {
   return static_cast<uint32_t>((len * 10 * 1000 + BUS_BAUD_RATE - 1) / BUS_BAUD_RATE);
 }
 
+// ---- Command rules ------------------------------------------------------------------------------
+// Pure, so they are tested without a scheduler (test_esphome_confirm.cpp, test_esphome_map_gaps.cpp).
+
+// A frame with no reply goes out again in the next cycle's command slot, in front of anything queued
+// behind it, so a newer command can never be overtaken by an older one. Three sends in all. Only
+// while the unit is answering its status poll: a unit that answers nothing is a dead bus, and frames
+// re-sent into it would pile up and all land when it comes back.
+static constexpr uint8_t COMMAND_SENDS_MAX = 3;
+
+inline bool command_resend_allowed(uint8_t sends, bool unit_answering) {
+  return unit_answering && sends < COMMAND_SENDS_MAX;
+}
+
+// What the reply to a command frame says. The stock transaction primitive accepts a reply as verified
+// when its payload repeats the first two payload bytes of the command and carries 1 in the third
+// (RE docs/10 section 4.2 step 6). Payload byte N is frame byte 13 + N, so that is frame bytes 13
+// and 14 echoed, and the value 1 at frame offset 15.
+// VERIFY: the layout is read from the stock image and has not been captured on this bus. Until a
+// capture backs it the verdict is logged and nothing is decided on it: the hub's status check
+// (confirm_decision in hisense_map.h) is what tells a command that took from one that did not.
+static constexpr size_t CMD_REPLY_ACK_OFFSET = 15;
+static constexpr uint8_t CMD_REPLY_ACK_VALUE = 0x01;
+
+enum CommandReply : uint8_t {
+  COMMAND_REPLY_NONE = 0,   // the window closed empty
+  COMMAND_REPLY_ACK = 1,    // echo of the command, ack byte 1
+  COMMAND_REPLY_NAK = 2,    // echo of the command, ack byte something else
+  COMMAND_REPLY_OTHER = 3,  // a frame of another class (a status or link frame) ended the window
+};
+
+inline CommandReply command_reply_verdict(const uint8_t *tx, size_t tx_len, const uint8_t *reply, size_t reply_len) {
+  if (reply == nullptr || reply_len == 0)
+    return COMMAND_REPLY_NONE;
+  if (tx == nullptr || tx_len <= FRAME_CLASS_OFFSET + 1 || reply_len <= CMD_REPLY_ACK_OFFSET)
+    return COMMAND_REPLY_OTHER;
+  if (reply[FRAME_CLASS_OFFSET] != tx[FRAME_CLASS_OFFSET] ||
+      reply[FRAME_CLASS_OFFSET + 1] != tx[FRAME_CLASS_OFFSET + 1])
+    return COMMAND_REPLY_OTHER;
+  return reply[CMD_REPLY_ACK_OFFSET] == CMD_REPLY_ACK_VALUE ? COMMAND_REPLY_ACK : COMMAND_REPLY_NAK;
+}
+
 class BusScheduler {
  public:
   // `has_de`: true when this component drives DE itself (the hardware-validated path). False when
@@ -105,7 +146,7 @@ class BusScheduler {
   uint32_t command_resends() const { return this->command_resends_; }
   // Valid inside on_bus_command(): the frame just reported is going out again.
   bool command_resend_pending() const { return this->head_resend_; }
-  // What the reply to the last command frame says (CommandReply in hisense_map.h).
+  // What the reply to the last command frame says (a CommandReply).
   uint8_t command_reply() const { return this->command_reply_; }
   uint32_t link_losses() const { return this->link_losses_; }
   bool faults(AcFaults *out) const;

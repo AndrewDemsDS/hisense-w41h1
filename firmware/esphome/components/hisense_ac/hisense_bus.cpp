@@ -2,8 +2,6 @@
 
 #include <cstring>
 
-#include "hisense_map.h"
-
 // See hisense_bus.h for the transaction sequence and the polling cycle implemented here.
 
 namespace esphome::hisense_ac {
@@ -316,7 +314,7 @@ void BusScheduler::on_step_done_(size_t reply_len, uint32_t now) {
       if (!answered)
         this->unanswered_commands_++;
       // A frame with no reply at all goes out again, while the unit shows it is there by answering
-      // its status poll (see command_resend_allowed in hisense_map.h).
+      // its status poll (command_resend_allowed).
       this->head_resend_ =
           !answered && command_resend_allowed(this->head_sends_, this->status_seen_ && this->link_miss_ == 0);
       if (this->head_resend_) {
