@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """AmebaZ2 firmware image format: sub-image chain walk, verify, re-sign (issue #75).
 
-Single definition of the signing recipe, shared by firmware/scripts/dev.py
-(revert --backup / --repackage) and firmware/test/test_image_chain.py so the two cannot
-drift.
+Single definition of the signing recipe, shared by firmware/scripts/matter-convert.py (convert,
+backup), the clip writers in firmware/flasher/ and firmware/test/test_image_chain.py, so they
+cannot drift.
 
 An image is a 0xE0-byte manifest followed by a CHAIN of sub-images. boot_load checks
 three independent things and HANGS on any failure, with no fall-back to the other slot

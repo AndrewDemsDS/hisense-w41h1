@@ -2,7 +2,7 @@
 """AmebaZ2 image signing chain regression (#75).
 
 The bootloader verifies a manifest signature, one HMAC trailer PER SUB-IMAGE, and a
-byte-sum. `revert --repackage` used to recompute only sub-image 0's trailer; a stale
+byte-sum. The retired `revert --repackage` step recomputed only sub-image 0's trailer; a stale
 trailer anywhere hangs boot_load with no fall-back slot (the 2026-07-21 office brick).
 This locks the recipe down two ways:
 
@@ -70,7 +70,7 @@ def grade(path, strict):
         return
     for how, payload, trailer in found:
         # The byte-sum is an OTA TRANSPORT trailer. A transport artifact (bare payload, or a
-        # raw slot fetched by revert --backup) carries it; a slot carved out of a multi-slot
+        # raw slot fetched by `matter-convert.py backup`) carries it; a slot carved out of a multi-slot
         # flash image or dump may not, so there it is reported, not gated.
         gated = strict and how in ("bare", "@0x0")
         ok, lines = az.verify(payload, trailer if gated else None)

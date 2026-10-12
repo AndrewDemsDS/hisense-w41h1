@@ -975,9 +975,7 @@ ignored = {o: subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q", f"fi
 binaries = [o for o in outputs if not o.endswith(".o")]
 check(all(ignored[o] for o in binaries), f"every test binary run_tests.sh builds is in .gitignore ({len(binaries)} of them)")
 objects = [o for o in outputs if o.endswith(".o")]
-known_failure(all(ignored[o] for o in objects), "the object files run_tests.sh builds are in .gitignore",
-              f"run_tests.sh:26-31 builds {', '.join(objects)} in firmware/test/ and removes them after the link. "
-              "When the link fails `set -e` stops before the rm and they stay as untracked files that nothing ignores")
+check(objects and all(ignored[o] for o in objects), "the object files run_tests.sh builds are in .gitignore: they stay behind when the link fails")
 
 for layer in ("test_image_chain.py", "test_dev_release.py", "test_matter_convert.py", "test_flasher.py", "test_version_lint.py"):
     check(layer in run_tests, f"run_tests.sh runs {layer}")
