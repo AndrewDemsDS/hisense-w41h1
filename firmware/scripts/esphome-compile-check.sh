@@ -32,14 +32,19 @@ for config in "$@"; do
   echo "== $config"
   # PlatformIO puts a colour reset in front of its size lines, so they are not anchored.
   grep -a -E '(RAM|Flash): +\[|Successfully compiled' "$log" || true
-  # The SDKs warn about their own code. Ours has to build clean on every compiler.
-  if grep -a -E 'components/(hisense_ac|w41h1_module)/.*(warning|error)' "$log"; then
+  # The SDKs warn about their own code. Ours has to build clean on every compiler. What counts
+  # is a compiler diagnostic that names one of our files, `<path>:<line>[:<col>]: warning:`, with
+  # any colour codes removed first. A file that merely has "error" in its name is not one.
+  if sed 's/\x1b\[[0-9;]*[mK]//g' "$log" \
+      | grep -a -E 'components/(hisense_ac|w41h1_module)/[^: ]+:[0-9]+(:[0-9]+)?: +(warning|error|fatal error):'; then
     echo "::error::hisense_ac or w41h1_module does not compile cleanly for $config (see above)"
     exit 1
   fi
   # A board file takes packages/node.yaml and with it packages/version.yaml, the one place the
   # version is written. The files under tests/ take no package and carry none.
-  case "$config" in
+  rel="${config#"$PWD"/}"
+  while [ "${rel#./}" != "$rel" ]; do rel="${rel#./}"; done
+  case "$rel" in
     tests/*) ;;
     *)
       defines="$(dirname "$config")/.esphome/build/$name/src/esphome/core/defines.h"

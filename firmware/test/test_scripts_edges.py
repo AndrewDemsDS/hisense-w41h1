@@ -456,6 +456,7 @@ def wrapper(*args, **env):
                           cwd=R, env={**WRAP_ENV, **env})
 
 
+write(R / "README.md", "# a file that exists and is out of scope\n")
 r = wrapper("bogus")
 check(r.returncode == 2 and "cpp-lint.sh check" in r.stdout, "cpp-lint.sh with an unknown mode prints its usage and exits 2")
 r = wrapper("files")
@@ -473,9 +474,39 @@ r = wrapper("check", FAKE_FMT_VERSION="13.0.1")
 check(r.returncode == 3 and "clang-tidy 22.1.8 not found" in r.stderr, "without --no-tidy the pinned clang-tidy is required too")
 (BIN / "clang-format").unlink()
 r = wrapper("check", "--no-tidy", "firmware/test/t.cpp", CLANG_FORMAT=str(script(TMP / "any-format", FMT)), FAKE_FMT_VERSION="99")
-check(r.returncode == 0, "$CLANG_FORMAT is used as given: its version is not checked")
-r = wrapper("check", "--no-tidy", "firmware/test/typo.cpp", CLANG_FORMAT=str(TMP / "any-format"))
-check(r.returncode == 0 and "0 file(s) clean" in r.stderr, "a path that selects nothing passes as '0 file(s) clean'")
+check(r.returncode == 0 and "does not report clang-format 13.0.1" in r.stderr, "$CLANG_FORMAT is used as given, with a warning when it is another version")
+r = wrapper("check", "--no-tidy", "firmware/test/t.cpp", CLANG_FORMAT=str(TMP / "any-format"), FAKE_FMT_VERSION="13.0.1")
+check(r.returncode == 0 and "WARNING" not in r.stderr, "and without one when it is the pinned version")
+for mode in ("check", "fix", "files"):
+    r = wrapper(mode, "--no-tidy", "firmware/test/typo.cpp", "firmware/test/t.cpp", CLANG_FORMAT=str(TMP / "any-format"), FAKE_FMT_VERSION="13.0.1")
+    check(r.returncode == 2 and "no such file or directory: firmware/test/typo.cpp" in r.stderr and "clean" not in r.stderr,
+          f"cpp-lint.sh {mode} with a mistyped path is an error (exit 2), not '0 file(s) clean'")
+r = wrapper("check", "--no-tidy", "README.md", "firmware/test/vendor.cpp", CLANG_FORMAT=str(TMP / "any-format"), FAKE_FMT_VERSION="13.0.1")
+check(r.returncode == 0 and "0 file(s) clean" in r.stderr, "paths that exist and are out of scope still pass: the hook hands over the whole staged list")
+r = wrapper("check", "--no-tidy", CLANG_FORMAT=str(TMP / "any-format"), FAKE_FMT_VERSION="13.0.1")
+check("skipped, it carries a proprietary banner: firmware/test/vendor.cpp" in r.stderr and "late.cpp" not in r.stderr,
+      "a full run says which owned file it left out for its banner")
+
+# fix never writes to the frozen reference driver. The stand-in clang-format logs its arguments.
+write(R / "firmware/test/reference-driver/frozen.cpp", "int frozen;  \n")
+write(R / "firmware/test/loose.cpp", "int loose;  \n")
+git(R, "add", "-A")
+git(R, "commit", "-q", "-m", "a frozen file and a loose one, both with trailing spaces")
+(TMP / "fmt.log").unlink(missing_ok=True)
+r = wrapper("fix", "--no-tidy", CLANG_FORMAT=str(TMP / "any-format"), FAKE_FMT_VERSION="13.0.1")
+log = (TMP / "fmt.log").read_text().splitlines()
+check((R / "firmware/test/loose.cpp").read_text() == "int loose;\n", "fix rewrites a file of ours (trailing whitespace gone)")
+check((R / "firmware/test/reference-driver/frozen.cpp").read_text() == "int frozen;  \n", "fix leaves the frozen reference driver byte for byte")
+check(r.returncode == 1 and "firmware/test/reference-driver/frozen.cpp:1:" in r.stdout and "1 frozen file(s)" in r.stderr,
+      "and still reports the finding in it, with exit 1")
+check(not any(ln.startswith("-i ") and "reference-driver" in ln for ln in log) and any(ln.startswith("--dry-run") and "reference-driver" in ln for ln in log),
+      "clang-format -i is never run on the frozen files, only the dry run")
+check(all("reference-driver" in f for f in cpp.select_files([]) if cpp._match(f, cpp.FROZEN)) and cpp._match("firmware/test/reference-driver/hisense_rs485.cpp", cpp.FROZEN),
+      "the frozen set is firmware/test/reference-driver/")
+(R / "firmware/test/reference-driver/frozen.cpp").unlink()
+(R / "firmware/test/loose.cpp").unlink()
+git(R, "add", "-A")
+git(R, "commit", "-q", "-m", "back")
 r = subprocess.run([sys.executable, str(R / "firmware/scripts/cpp-lint.py"), "nonsense"], capture_output=True, text=True, env=WRAP_ENV)
 check(r.returncode == 2, "cpp-lint.py with an unknown mode exits 2")
 
@@ -523,14 +554,17 @@ for text in ("int a;  \r\nint b;", "\n", "", "int a;\n"):
 
 # The clang-tidy unit list says it mirrors run_tests.sh.
 run_tests = (ROOT / "firmware/test/run_tests.sh").read_text()
-check(all((ROOT / f).is_file() for f, _ in cpp.TIDY_UNITS), "every clang-tidy unit names a file that exists")
+check(all((ROOT / f).is_file() for f, _ in cpp.TIDY_UNITS + cpp.TIDY_PENDING), "every clang-tidy unit names a file that exists")
 compiled = sorted(set(re.findall(r"\b(test_\w+\.cpp)\b", run_tests)))
-tidy = {f for f, _ in cpp.TIDY_UNITS}
-missing = [t for t in compiled if f"firmware/test/{t}" not in tidy]
-known_failure(not missing, "every host test run_tests.sh compiles is a clang-tidy unit",
-              f"cpp-lint.py:284 TIDY_UNITS is a hand-kept copy of run_tests.sh's compile list and lacks {len(missing)} "
-              f"of {len(compiled)} tests ({', '.join(missing[:4])}{', ...' if len(missing) > 4 else ''}), and nothing "
-              "of w41h1_module: clang-tidy never sees them")
+listed = {f for f, _ in cpp.TIDY_UNITS + cpp.TIDY_PENDING}
+check(not [t for t in compiled if f"firmware/test/{t}" not in listed],
+      f"every host test run_tests.sh compiles ({len(compiled)}) is a clang-tidy unit, or is listed as pending with its finding")
+check("firmware/esphome/components/hisense_ac/hisense_map.h" in listed
+      and "firmware/esphome/components/w41h1_module/w41h1_uart_policy.h" in listed,
+      "the pure headers of both components are units of their own")
+known_failure(not cpp.TIDY_PENDING, "no host-compilable unit is waiting for a finding to be fixed",
+              f"cpp-lint.py TIDY_PENDING holds {len(cpp.TIDY_PENDING)} units, one clang-tidy finding each, in files owned by "
+              f"the test and component work: {', '.join(f.rsplit('/', 1)[1] for f, _ in cpp.TIDY_PENDING)}")
 
 # ================================================================================================
 print("== docs/guide/lint.py: broken links and the leak denylist ==")
@@ -841,16 +875,31 @@ code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace("hisense_a
 check(code == 1, "and one from w41h1_module")
 code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="src/esphome/components/wifi/wifi_component.cpp:1:1: warning: theirs")
 check(code == 0, "a warning from another component passes: only this repo's two are held clean")
-# The check is a text search for a component path and the word warning or error on one line.
-code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="Compiling .pioenvs/x/src/esphome/components/hisense_ac/error_codes.cpp.o")
-check(code == 1, "a source FILE named error_* in a component trips the gate with no warning at all (behaviour today)")
+code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace(": warning:", ": error:"))
+check(code == 1, "an error line that names a component file fails it too (a build that went on after one)")
+code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="\\033[01m\\033[Ksrc/esphome/components/hisense_ac/hisense_bus.cpp:10:5:\\033[m\\033[K "
+                               "\\033[01;35m\\033[Kwarning: \\033[m\\033[Kunused variable")
+check(code == 1, "a warning in the compiler's colours is still a warning")
+code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="src/esphome/components/hisense_ac/hisense_map.h:7: warning: no column")
+check(code == 1, "and so is one without a column number")
+# What counts is a compiler diagnostic that names one of the two components' files. It used to
+# be any line with a component path and the word warning or error in it.
+for line, why in (("Compiling .pioenvs/x/src/esphome/components/hisense_ac/error_codes.cpp.o", "a source file named error_*"),
+                  ("Compiling .pioenvs/x/src/esphome/components/w41h1_module/warning_led.cpp.o", "a source file named warning_*"),
+                  ("In file included from src/esphome/components/hisense_ac/hisense_ac.h:5,", "an include trace that ends in an SDK warning"),
+                  ("src/esphome/components/hisense_ac/hisense_ac.cpp:10:5: note: declared here", "a note"),
+                  ("Archiving .pioenvs/x/lib/libhisense_ac.a: 0 errors", "a line that only mentions errors")):
+    code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=line)
+    check(code == 0, f"not taken for a warning: {why}")
 code, out, log = compile_check("w41h1.yaml", FAKE_VERSION="3.1.3")
 check(code == 1 and "was built without firmware version 3.1.4" in out, "an image whose project version is not the version file's fails")
 code, out, log = compile_check("tests/build.esp32-idf.yaml")
 check(code == 0, "a file under tests/ carries no version and is not asked for one")
-code, out, log = compile_check("./tests/build.esp32-idf.yaml")
-check(code == 1 and "was built without firmware version" in out,
-      "the same file given as ./tests/... is asked for a version: the exemption is a prefix match on the argument")
+for form in ("./tests/build.esp32-idf.yaml", "././tests/build.esp32-idf.yaml", str(C / "firmware/esphome/tests/build.esp32-idf.yaml")):
+    code, out, log = compile_check(form)
+    check(code == 0, f"the same file given as {form.replace(str(C), '<repo>')} is the same file: no version is asked of it")
+code, out, log = compile_check("./w41h1.yaml", FAKE_VERSION="3.1.3")
+check(code == 1 and "was built without firmware version 3.1.4" in out, "and a board file given as ./w41h1.yaml is still asked for the version")
 
 # ================================================================================================
 print("== how the lists agree: workflows, run_tests.sh, the lint scope, .gitignore ==")
