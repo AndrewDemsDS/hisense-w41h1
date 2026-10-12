@@ -1,0 +1,19 @@
+# Properties the harnesses check only in a FUZZ_STRICT build, because the code under test does
+# not hold them today. One line each:
+#
+#   id | harness | reproducer (relative to this directory) | what is wrong and where
+#
+# run.sh --smoke replays every reproducer twice: against the default build (must pass, the
+# property is excluded there) and against the strict build (must FAIL). When a strict replay
+# passes, the defect was fixed: delete the line, delete the reproducer or keep it as a plain
+# regression input, and remove the matching STRICT exclusion in the harness so the property is
+# checked by default from then on.
+#
+# Reproducers are written by make_seeds.py, which documents each one byte by byte.
+
+bus-token-no-checksum | bus | bus/bus-token-no-checksum | hisense_bus.cpp LISTEN phase: devtype_from_reply() runs on a frame whose checksum nobody verified, so one flipped bit in the DevType reply is adopted as the link token and stamped into bytes 7/8 of every frame until the next handshake. Status, features and the 0x1E request bits are all checksum-gated; this path is not.
+asm-no-checksum | assembler | assembler/asm-no-checksum | hisense_protocol.cpp FrameAssembler::feed delivers any frame with good tags and LEN, whatever its checksum. By design (each consumer verifies), listed because the consumer above does not.
+devtype-overlaps-trailer | parsers | parsers/devtype-overlaps-trailer | hisense_protocol.cpp devtype_from_reply accepts n > 17. In a frame shorter than 22 bytes, bytes 16/17 are the checksum or the F4 FB tag, not payload. The reproducer is the 20 byte literal of test_codec.cpp ("#49 devtype from reply"), where 01 01 sits in the checksum position.
+single-field-offset | builders | builders/single-field-offset | hisense_protocol.cpp build_single_field accepts any offset below 50: 0..15 overwrite the header (offset 0 gives a frame that does not start F4 F5, offset 4 a wrong LEN, offset 13 another class) and 46..49 are silently overwritten by the checksum and tag. Only 17 and 35 are ever passed today.
+builder-enum-range | builders | builders/builder-enum-range | hisense_protocol.cpp build_command packs enum fields without a range check: mode 8 gives byte 18 = 0x10 (fan-only), fan 2..4 give command bytes no capture backs, hswing 2 sets byte 37 but not byte 32. Callers pass named values today.
+tx-f4-in-body | builders | builders/tx-f4-in-body | hisense_protocol.cpp stamp_link_token (and build_single_field with value 0xF4) write 0xF4 into the body without doubling it; only the two checksum bytes are doubled. A device type of F4 F4 reported by a unit would go out as two bare F4 bytes, which this project's own receive side would read as one.

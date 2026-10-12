@@ -1,0 +1,31 @@
+# de_pin configured as an input.
+# accepted: pins.gpio_output_pin_schema only makes output the default mode, an explicit
+# `mode: INPUT` gets through. The hub then writes to an input and the bus never transmits.
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin:
+    number: GPIO10
+    mode: INPUT

@@ -1,0 +1,27 @@
+# A UART that cannot send.
+# expect: hisense_ac requires uart referenced by uart_id to declare a tx_pin
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_bus
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: GPIO10

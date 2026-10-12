@@ -1,0 +1,29 @@
+# packages/status-pixel.yaml without hisense-ac.yaml: its lambda reads the hub's link state (ac_bus).
+# The message names the missing id, not the missing package.
+# expect: Couldn't find ID 'ac_bus'
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  status_pixel_pin: GPIO7
+
+packages:
+  status_pixel: !include ../../packages/status-pixel.yaml
+
+esphome:
+  name: ${name}
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: example-ssid
+  password: example-password
+
+globals:
+  - id: wifi_setup_active
+    type: bool
+    initial_value: "false"

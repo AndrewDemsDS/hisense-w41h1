@@ -1,0 +1,33 @@
+# A switch the component does not have (purify).
+# expect: \[purify\] is an invalid option for \[switch.hisense_ac\]
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: GPIO10
+
+switch:
+  - platform: hisense_ac
+    purify:
+      name: Purify

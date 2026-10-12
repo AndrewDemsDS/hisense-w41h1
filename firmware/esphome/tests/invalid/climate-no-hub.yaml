@@ -1,0 +1,27 @@
+# The climate platform with no hisense_ac: hub in the configuration.
+# expect: Component climate.hisense_ac requires component hisense_ac
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+climate:
+  - platform: hisense_ac
+    name: AC

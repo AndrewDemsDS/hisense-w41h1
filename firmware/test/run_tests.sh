@@ -53,6 +53,37 @@ g++ -std=c++17 -Wall -I../esphome/components/w41h1_module test_esphome_uart_poli
 ./test_esphome_uart_policy
 
 echo
+echo "== Layer 1j: ESPHome setup request edge cases (every ordering of the two request bits, the lockout, link loss) =="
+g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_setup_edges.cpp \
+    ../esphome/components/hisense_ac/hisense_bus.cpp ../esphome/components/hisense_ac/hisense_protocol.cpp \
+    -o test_esphome_setup_edges.bin
+./test_esphome_setup_edges.bin
+
+echo
+echo "== Layer 1k: ESPHome bus scheduler edge cases and stress (clock wrap, damaged replies, seeded random runs) =="
+g++ -std=c++17 -Wall -O1 -I../esphome/components/hisense_ac test_esphome_bus_stress.cpp \
+    ../esphome/components/hisense_ac/hisense_bus.cpp ../esphome/components/hisense_ac/hisense_protocol.cpp \
+    -o test_esphome_bus_stress.bin
+./test_esphome_bus_stress.bin
+
+echo
+echo "== Layer 1l: coverage and mutation gap tests (codec, map, serial port policy) =="
+g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_codec_gaps.cpp \
+    ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_codec_gaps.bin
+./test_esphome_codec_gaps.bin
+g++ -std=c++17 -Wall -I../esphome/components/hisense_ac -I../esphome/components/w41h1_module \
+    test_esphome_map_gaps.cpp ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_map_gaps.bin
+./test_esphome_map_gaps.bin
+
+echo
+echo "== Layer 1m: fuzz corpus replay, known failures, framing edge cases (ASan + UBSan) =="
+./fuzz/run.sh --smoke
+
+echo
+echo "== Layer 1n: ESPHome configuration matrix (skipped when esphome is not installed) =="
+python3 ./test_esphome_config_matrix.py
+
+echo
 echo "== Layer 2: virtual A/C <-> decoder round-trip =="
 python3 - <<'PY'
 import importlib.util, sys
@@ -97,6 +128,11 @@ echo
 echo "== Layer 5: the firmware version, the changelog and the ESPHome pin =="
 python3 ../scripts/version-lint.py
 python3 ./test_version_lint.py
+
+echo
+echo "== Layer 6: tooling edge cases (dev.py, the scripts, the hook, the lint lists) =="
+python3 ./test_dev_edges.py
+python3 ./test_scripts_edges.py
 
 echo
 echo "ALL QA LAYERS PASSED"

@@ -1,0 +1,45 @@
+# Two units on one board: two UARTs and two hubs. The hub is a single instance, so this is refused.
+# UNHELPFUL: the message does not say that the hub is a single instance, and the
+# component has no option for a second unit.
+# expect: expected a dictionary
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_a
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+  - id: uart_b
+    tx_pin: GPIO3
+    rx_pin: GPIO4
+    baud_rate: 9600
+
+hisense_ac:
+  - id: ac_a
+    uart_id: uart_a
+    de_pin: GPIO10
+  - id: ac_b
+    uart_id: uart_b
+    de_pin: GPIO7
+
+climate:
+  - platform: hisense_ac
+    hisense_ac_id: ac_a
+    name: AC a
+  - platform: hisense_ac
+    hisense_ac_id: ac_b
+    name: AC b

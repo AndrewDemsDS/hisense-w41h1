@@ -1,0 +1,34 @@
+# The sleep profiles are fixed by the bus. A configuration cannot set its own list.
+# expect: \[options\] is an invalid option for \[sleep_profile\]
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: GPIO10
+
+select:
+  - platform: hisense_ac
+    sleep_profile:
+      name: Sleep profile
+      options: [Off, On]

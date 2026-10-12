@@ -1,0 +1,22 @@
+# wifi_setup_timeout is a time.
+# expect: Unknown value 'soon', valid options are 'ns'
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  tx_pin: "5"
+  rx_pin: "6"
+  de_pin: "10"
+  w41h1_components:
+    type: local
+    path: ../../components
+  wifi_setup_timeout: soon
+
+packages:
+  node: !include ../../packages/node.yaml
+  ota: !include ../../packages/ota.yaml
+  hisense_ac: !include ../../packages/hisense-ac.yaml
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf

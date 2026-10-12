@@ -1,0 +1,43 @@
+# w41h1_module on an ESP32: it is for the stock module (rtl87xx) only.
+# expect: w41h1_module is only for the stock AEH-W41H1 module, which is built with the rtl87xx platform
+# expect: This configuration is for esp32
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac, w41h1_module]
+
+wifi:
+  ssid: example-ssid
+  password: example-password
+
+ota:
+  - platform: esphome
+    id: ota_server
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: GPIO10
+
+w41h1_module:
+  layout: factory
+  hisense_ac_id: ac_bus
+  uart_id: uart_bus
+  ota_id: ota_server

@@ -1,0 +1,30 @@
+# The status LED and the status pixel on the same pin (status-pixel.yaml: never both on one pin).
+# expect: Pin 8 is used in multiple places
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  tx_pin: "5"
+  rx_pin: "6"
+  de_pin: "10"
+  w41h1_components:
+    type: local
+    path: ../../components
+  status_led_pin: GPIO8
+  status_pixel_pin: GPIO8
+  status_pixel_strapping_ok: "true"
+
+packages:
+  node: !include ../../packages/node.yaml
+  ota: !include ../../packages/ota.yaml
+  hisense_ac: !include ../../packages/hisense-ac.yaml
+  status_led: !include ../../packages/status-led.yaml
+  status_pixel: !include ../../packages/status-pixel.yaml
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+status_led:
+  pin:
+    ignore_strapping_warning: true

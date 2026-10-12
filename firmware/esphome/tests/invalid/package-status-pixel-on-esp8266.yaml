@@ -1,0 +1,21 @@
+# packages/status-pixel.yaml on an ESP8266: the pixel needs the ESP32's RMT peripheral.
+# expect: Component light.esp32_rmt_led_strip requires component esp32
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  tx_pin: GPIO15
+  rx_pin: GPIO13
+  de_pin: GPIO12
+  w41h1_components:
+    type: local
+    path: ../../components
+  status_pixel_pin: GPIO2
+
+packages:
+  node: !include ../../packages/node.yaml
+  ota: !include ../../packages/ota.yaml
+  hisense_ac: !include ../../packages/hisense-ac.yaml
+  status_pixel: !include ../../packages/status-pixel.yaml
+
+esp8266:
+  board: d1_mini

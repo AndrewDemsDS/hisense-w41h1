@@ -1,0 +1,34 @@
+# min_temperature above max_temperature.
+# accepted: climate.py takes any two temperatures. The entity then offers a range no setpoint fits in.
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: GPIO10
+
+climate:
+  - platform: hisense_ac
+    name: AC
+    min_temperature: 30
+    max_temperature: 18

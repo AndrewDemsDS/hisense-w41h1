@@ -1,0 +1,21 @@
+# packages/node.yaml without hisense-ac.yaml: setup mode switches the panel's "77" through the hub.
+# The message names the missing action, not the missing package.
+# expect: Unable to find action with the name 'hisense_ac.set_setup_indicator'
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  tx_pin: "5"
+  rx_pin: "6"
+  de_pin: "10"
+  w41h1_components:
+    type: local
+    path: ../../components
+
+packages:
+  node: !include ../../packages/node.yaml
+  ota: !include ../../packages/ota.yaml
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
