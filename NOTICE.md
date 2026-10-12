@@ -14,7 +14,7 @@ Nothing third-party is vendored. The build fetches its tools on your machine.
 | **ESPHome** ([esphome/esphome](https://github.com/esphome/esphome)) | MIT (Python and tooling) / GPL-3.0 (C++ runtime), © ESPHome | Builds the firmware. `hisense_ac` is an external component in this repo. Version `2026.7.4` is pinned in `.github/workflows/qa.yaml` and `firmware/scripts/dev.py`. |
 | **ESP-IDF** ([espressif/esp-idf](https://github.com/espressif/esp-idf)) | Apache-2.0, © Espressif | Downloaded by ESPHome for ESP32 builds. Also the SDK of `firmware/esp32-recon/`. |
 | **LibreTiny** ([libretiny-eu/libretiny](https://github.com/libretiny-eu/libretiny)) and the **Realtek AmebaZ2 SDK** it wraps | MIT (LibreTiny). The Realtek SDK is proprietary, © Realtek Semiconductor | Downloaded by ESPHome for the stock-module builds. No Realtek source or binary is in this repository. |
-| **connectedhomeip** ([project-chip/connectedhomeip](https://github.com/project-chip/connectedhomeip)) | Apache-2.0, © Project CHIP Authors | Only its `ota_image_tool.py`, and only for `dev.py convert`, which wraps an image for a unit that still runs the retired Matter firmware. You point `OTA_TOOL` at your own checkout. |
+| **connectedhomeip** ([project-chip/connectedhomeip](https://github.com/project-chip/connectedhomeip)) | Apache-2.0, © Project CHIP Authors | Only its `ota_image_tool.py`, and only for `matter-convert.py convert`, which wraps an image for a unit that still runs the retired Matter firmware. You point `OTA_TOOL` at your own checkout. |
 
 A firmware image you build links ESPHome's GPL-3.0 runtime. That matters if you distribute the
 binary. This repository distributes source only.

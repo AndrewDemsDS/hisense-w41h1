@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The tooling around dev.py at its edges: the image format library, version-lint.py, cpp-lint,
 the docs linter, the shell scripts, the commit hook, and how the workflows, the test runner and
-the lint lists agree with each other.
+the lint lists agree with each other. The clip flasher has a test of its own, test_flasher.py.
 
 Each check documents what the tool does today. Where that is wrong the check is a KNOWN FAILURE:
 `known_failure()` passes while the defect is there and fails the day it is fixed, so the marker
@@ -38,6 +38,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "firmware" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import amebaz2_image as az  # noqa: E402
+from image_fixtures import chain, step  # noqa: E402
 
 ok = True
 known = 0
@@ -130,21 +131,6 @@ def new_repo(path):
 
 # ================================================================================================
 print("== amebaz2_image.py: malformed, truncated and oversized images ==")
-
-
-def chain(*subs, tail=b""):
-    """An UNSIGNED payload from (size, link) pairs: the 0xE0 manifest, then per sub-image a 0x60
-    header (size and link in its first 8 bytes), `size` body bytes and a 0x20 trailer."""
-    out = bytearray(az.HDR0)
-    for size, link in subs:
-        hdr = bytearray(az.HDR_LEN)
-        struct.pack_into("<II", hdr, 0, size, link)
-        out += hdr + bytes(size) + bytes(az.MAC_LEN)
-    return bytes(out) + tail
-
-
-def step(size):
-    return az.HDR_LEN + size + az.MAC_LEN        # the link value that reaches the next header
 
 
 END = az.LINK_END
@@ -299,14 +285,11 @@ check(r.returncode == 0 and r.stdout.strip() == "2.0.0-rc1", "--print prints wha
 
 # The changelog.
 for name, heading, wanted in (("lower", "## unreleased", 0), ("suffix", "## Unreleased changes", 0),
+                              ("bracket", "## [Unreleased]", 0), ("bracket-date", "## [Unreleased] - soon", 0),
+                              ("word", "## Unreleasedness", 1), ("other", "## [Released]", 1),
                               ("nospace", "##Unreleased", 1), ("h3", "### Unreleased", 1), ("h1", "# Unreleased", 1)):
     r = lint(tree(f"log-{name}", changelog=f"# Changelog\n\n{heading}\n\n- a change\n"))
     check(r.returncode == wanted, f"`{heading}` {'counts' if wanted == 0 else 'does not count'} as the Unreleased section")
-r = lint(tree("log-bracket", changelog="# Changelog\n\n## [Unreleased]\n\n- a change\n"))
-known_failure(r.returncode == 0, "`## [Unreleased]` counts as the Unreleased section",
-              "version-lint.py:111 check_basic(): the title must START with 'unreleased', so the Keep a Changelog "
-              "spelling is refused while `## [2.0.0]` is accepted for a release")
-
 released = tree("released", changelog="# Changelog\n\n## 2.0.0 - 2026-10-12\n\n- the release\n\n## 1.0.0\n\n- old\n- older\n", repo=True)
 r = lint(released, "--notes", "1.0.0")
 check(r.returncode == 0 and r.stdout == "- old\n- older\n", "--notes VERSION prints that section, and the last one runs to the end of the file")
@@ -320,9 +303,11 @@ r = lint(tree("bracketed", changelog="# Changelog\n\n## [2.0.0] - 2026-10-12\n\n
 check(r.returncode == 0, "a tag is accepted against a `## [2.0.0] - date` section")
 fenced = tree("fenced", changelog="# Changelog\n\n## 2.0.0\n\n- how to build:\n\n```bash\n## not a heading, a shell comment\nmake\n```\n\n- last entry\n")
 r = lint(fenced, "--notes")
-known_failure("- last entry" in r.stdout, "--notes keeps the whole section when it holds a code block with a `## ` line",
-              "version-lint.py:76 changelog_sections(): every line that starts with `## ` is a heading, code blocks "
-              "included, so the release text is cut short at that line with no error")
+check(r.returncode == 0 and "## not a heading, a shell comment" in r.stdout and r.stdout.rstrip().endswith("- last entry"),
+      "--notes keeps the whole section when it holds a code block with a `## ` line")
+tilde = tree("fenced-tilde", changelog="# Changelog\n\n## 2.0.0\n\n~~~\n## in a tilde block\n```\n## still inside: the other fence does not close it\n~~~\n\n## 1.0.0\n\n- old\n")
+check(lint(tilde, "--notes").stdout.count("## ") == 2 and lint(tilde, "--notes", "1.0.0").stdout == "- old\n",
+      "a fence closes only with its own kind, and the heading after it is a heading again")
 
 # Tags.
 tags = tree("tags", version="9.5.0", repo=True)
@@ -353,10 +338,8 @@ git(good, "checkout", "-q", "-b", "unicode", "main")
 write(good / "firmware/esphome/components/hisense_ac/caf\u00e9.cpp", "// new\n")
 git(good, "add", "-A")
 git(good, "commit", "-q", "-m", "a component file with a non-ASCII name")
-known_failure(lint(good, "--base", "main").returncode == 1,
-              "a new component file with a non-ASCII name needs a changelog entry",
-              "version-lint.py:147 check_base(): `git diff --name-only` quotes and escapes such a path, so it no "
-              "longer starts with the watched prefix. `-z` gives the plain names")
+r = lint(good, "--base", "main")
+check(r.returncode == 1 and "caf\u00e9.cpp" in r.stderr, "a new component file with a non-ASCII name needs a changelog entry, and is named as it is")
 git(good, "checkout", "-q", "main")
 
 # The ESPHome pin.
@@ -383,9 +366,7 @@ check(lint(pins).returncode == 0, "a pin file that is absent is skipped, not ref
 no_git = {**GIT_ENV, "PATH": str(TMP)}
 check(lint(good, env=no_git).returncode == 0, "with no git on PATH the basic checks still pass (no tags to compare with)")
 r = lint(good, "--base", "main", env=no_git)
-known_failure(r.returncode == 1 and "Traceback" not in r.stderr, "--base with no git on PATH fails with a message",
-              "version-lint.py:95 git(): FileNotFoundError is only caught around the tag listing, so check_base() "
-              "ends in a traceback")
+check(r.returncode == 1 and "Traceback" not in r.stderr and "cannot run git" in r.stderr, "--base with no git on PATH fails with a message")
 
 # ================================================================================================
 print("== cpp-lint.py: which files it takes, and its own rules ==")
@@ -477,6 +458,7 @@ def wrapper(*args, **env):
                           cwd=R, env={**WRAP_ENV, **env})
 
 
+write(R / "README.md", "# a file that exists and is out of scope\n")
 r = wrapper("bogus")
 check(r.returncode == 2 and "cpp-lint.sh check" in r.stdout, "cpp-lint.sh with an unknown mode prints its usage and exits 2")
 r = wrapper("files")
@@ -494,9 +476,39 @@ r = wrapper("check", FAKE_FMT_VERSION="13.0.1")
 check(r.returncode == 3 and "clang-tidy 22.1.8 not found" in r.stderr, "without --no-tidy the pinned clang-tidy is required too")
 (BIN / "clang-format").unlink()
 r = wrapper("check", "--no-tidy", "firmware/test/t.cpp", CLANG_FORMAT=str(script(TMP / "any-format", FMT)), FAKE_FMT_VERSION="99")
-check(r.returncode == 0, "$CLANG_FORMAT is used as given: its version is not checked")
-r = wrapper("check", "--no-tidy", "firmware/test/typo.cpp", CLANG_FORMAT=str(TMP / "any-format"))
-check(r.returncode == 0 and "0 file(s) clean" in r.stderr, "a path that selects nothing passes as '0 file(s) clean'")
+check(r.returncode == 0 and "does not report clang-format 13.0.1" in r.stderr, "$CLANG_FORMAT is used as given, with a warning when it is another version")
+r = wrapper("check", "--no-tidy", "firmware/test/t.cpp", CLANG_FORMAT=str(TMP / "any-format"), FAKE_FMT_VERSION="13.0.1")
+check(r.returncode == 0 and "WARNING" not in r.stderr, "and without one when it is the pinned version")
+for mode in ("check", "fix", "files"):
+    r = wrapper(mode, "--no-tidy", "firmware/test/typo.cpp", "firmware/test/t.cpp", CLANG_FORMAT=str(TMP / "any-format"), FAKE_FMT_VERSION="13.0.1")
+    check(r.returncode == 2 and "no such file or directory: firmware/test/typo.cpp" in r.stderr and "clean" not in r.stderr,
+          f"cpp-lint.sh {mode} with a mistyped path is an error (exit 2), not '0 file(s) clean'")
+r = wrapper("check", "--no-tidy", "README.md", "firmware/test/vendor.cpp", CLANG_FORMAT=str(TMP / "any-format"), FAKE_FMT_VERSION="13.0.1")
+check(r.returncode == 0 and "0 file(s) clean" in r.stderr, "paths that exist and are out of scope still pass: the hook hands over the whole staged list")
+r = wrapper("check", "--no-tidy", CLANG_FORMAT=str(TMP / "any-format"), FAKE_FMT_VERSION="13.0.1")
+check("skipped, it carries a proprietary banner: firmware/test/vendor.cpp" in r.stderr and "late.cpp" not in r.stderr,
+      "a full run says which owned file it left out for its banner")
+
+# fix never writes to the frozen reference driver. The stand-in clang-format logs its arguments.
+write(R / "firmware/test/reference-driver/frozen.cpp", "int frozen;  \n")
+write(R / "firmware/test/loose.cpp", "int loose;  \n")
+git(R, "add", "-A")
+git(R, "commit", "-q", "-m", "a frozen file and a loose one, both with trailing spaces")
+(TMP / "fmt.log").unlink(missing_ok=True)
+r = wrapper("fix", "--no-tidy", CLANG_FORMAT=str(TMP / "any-format"), FAKE_FMT_VERSION="13.0.1")
+log = (TMP / "fmt.log").read_text().splitlines()
+check((R / "firmware/test/loose.cpp").read_text() == "int loose;\n", "fix rewrites a file of ours (trailing whitespace gone)")
+check((R / "firmware/test/reference-driver/frozen.cpp").read_text() == "int frozen;  \n", "fix leaves the frozen reference driver byte for byte")
+check(r.returncode == 1 and "firmware/test/reference-driver/frozen.cpp:1:" in r.stdout and "1 frozen file(s)" in r.stderr,
+      "and still reports the finding in it, with exit 1")
+check(not any(ln.startswith("-i ") and "reference-driver" in ln for ln in log) and any(ln.startswith("--dry-run") and "reference-driver" in ln for ln in log),
+      "clang-format -i is never run on the frozen files, only the dry run")
+check(all("reference-driver" in f for f in cpp.select_files([]) if cpp._match(f, cpp.FROZEN)) and cpp._match("firmware/test/reference-driver/hisense_rs485.cpp", cpp.FROZEN),
+      "the frozen set is firmware/test/reference-driver/")
+(R / "firmware/test/reference-driver/frozen.cpp").unlink()
+(R / "firmware/test/loose.cpp").unlink()
+git(R, "add", "-A")
+git(R, "commit", "-q", "-m", "back")
 r = subprocess.run([sys.executable, str(R / "firmware/scripts/cpp-lint.py"), "nonsense"], capture_output=True, text=True, env=WRAP_ENV)
 check(r.returncode == 2, "cpp-lint.py with an unknown mode exits 2")
 
@@ -544,14 +556,17 @@ for text in ("int a;  \r\nint b;", "\n", "", "int a;\n"):
 
 # The clang-tidy unit list says it mirrors run_tests.sh.
 run_tests = (ROOT / "firmware/test/run_tests.sh").read_text()
-check(all((ROOT / f).is_file() for f, _ in cpp.TIDY_UNITS), "every clang-tidy unit names a file that exists")
+check(all((ROOT / f).is_file() for f, _ in cpp.TIDY_UNITS + cpp.TIDY_PENDING), "every clang-tidy unit names a file that exists")
 compiled = sorted(set(re.findall(r"\b(test_\w+\.cpp)\b", run_tests)))
-tidy = {f for f, _ in cpp.TIDY_UNITS}
-missing = [t for t in compiled if f"firmware/test/{t}" not in tidy]
-known_failure(not missing, "every host test run_tests.sh compiles is a clang-tidy unit",
-              f"cpp-lint.py:284 TIDY_UNITS is a hand-kept copy of run_tests.sh's compile list and lacks {len(missing)} "
-              f"of {len(compiled)} tests ({', '.join(missing[:4])}{', ...' if len(missing) > 4 else ''}), and nothing "
-              "of w41h1_module: clang-tidy never sees them")
+listed = {f for f, _ in cpp.TIDY_UNITS + cpp.TIDY_PENDING}
+check(not [t for t in compiled if f"firmware/test/{t}" not in listed],
+      f"every host test run_tests.sh compiles ({len(compiled)}) is a clang-tidy unit, or is listed as pending with its finding")
+check("firmware/esphome/components/hisense_ac/hisense_map.h" in listed
+      and "firmware/esphome/components/w41h1_module/w41h1_uart_policy.h" in listed,
+      "the pure headers of both components are units of their own")
+known_failure(not cpp.TIDY_PENDING, "no host-compilable unit is waiting for a finding to be fixed",
+              f"cpp-lint.py TIDY_PENDING holds {len(cpp.TIDY_PENDING)} units, one clang-tidy finding each, in files owned by "
+              f"the test and component work: {', '.join(f.rsplit('/', 1)[1] for f, _ in cpp.TIDY_PENDING)}")
 
 # ================================================================================================
 print("== docs/guide/lint.py: broken links and the leak denylist ==")
@@ -615,30 +630,32 @@ check(code == 0 and "no _Sidebar.md" in out, "no sidebar at all only warns")
 
 # The leak denylist.
 for body, why in (("See /home/alice/projects/x/ for it.", "a home path"), ("On node 14 it works.", "a node number below 20"),
+                  ("On node 80 it works.", "a node number of 20 or more"), ("Commission node 4660 again.", "a four-digit node number"),
+                  ("Reach it at 172.16.4.20.", "a 172.16.0.0/12 address"), ("Reach it at 172.31.255.1.", "the last 172.16.0.0/12 network"),
+                  ("Mail someone@gmail.com.", "a personal mail address"), ("`ssh me@10.0.0.5`", "an address in inline code: not exempt either"),
                   ("Reach it at 192.168.4.114.", "a private address outside the placeholder range"),
                   ("Reach it at 10.0.0.5.", "a 10.x address"), ("Open homeassistant.local.", "the Home Assistant host name"),
                   ("```\nssh you@192.168.10.149\n```", "an address inside a code block: code is not exempt from the leak rules")):
     code, errs = page_errors(body)
     check(code == 1 and any("public-ready leak" in e for e in errs), f"leak refused: {why}")
 for body, why in (("See /home/you/projects/x/ and /home/user/x/.", "the placeholder home paths"),
+                  ("Reach it at 172.15.0.1, 172.32.0.1 or 8.8.8.8.", "public addresses next to the private 172 range"),
+                  ("Use node <node>, the node id Home Assistant shows.", "a node placeholder"),
+                  ("Mail hello@example.com.", "an example.com mail address"),
+                  ("The node 2x faster.", "the word node before something that is not a number"),
                   ("Reach it at 192.168.1.50.", "the 192.168.1.x placeholder range"), ("Use your-ha-host.local.", "the placeholder host")):
     code, errs = page_errors(body)
     check(code == 0 and not errs, f"placeholder accepted: {why}")
-code, errs = page_errors("On node 80 it works.")
-known_failure(code == 1, "a node number of 20 or more is a leak",
-              "docs/guide/lint.py:44 LEAKS: the pattern is `node (?:[0-9]|1[0-9])`, so `node 80` (a real node of this "
-              "installation) passes")
-code, errs = page_errors("Reach it at 172.16.4.20.")
-known_failure(code == 1, "a 172.16.0.0/12 address is a private IP",
-              "docs/guide/lint.py:46 LEAKS: only 192.168.x and 10.x are matched")
-code, errs = page_errors("Reach it at fe80::1ff:fe23:4567 or mail someone@gmail.com.")
-check(code == 0, "IPv6 addresses and mail addresses are not on the denylist (behaviour today)")
+code, errs = page_errors("Reach it at fe80::1ff:fe23:4567.")
+check(code == 0, "IPv6 addresses are not on the denylist (behaviour today)")
 code, errs = page_errors("Firmware 10.3.50.1 is out.")
 check(code == 1, "a four-part version number that starts with 10. is taken for a private address (a false alarm)")
-code, errs = page_errors("Write a link as `[text](Page-Name)`.")
-known_failure(code == 0, "link syntax shown in inline code is not checked as a link",
-              "docs/guide/lint.py:177 check_file(): only fenced blocks are skipped, so a link example in backticks is "
-              "reported as a broken link")
+for body, why in (("Write a link as `[text](Page-Name)`.", "link syntax shown in inline code"),
+                  ("Use ``[a](Missing-Page)`` or `![d](images/none.png)`.", "the same in double backticks, and an image example")):
+    code, errs = page_errors(body)
+    check(code == 0 and not errs, f"accepted: {why} is an example, not a link")
+code, errs = page_errors("See `this` and [x](Missing-Page) and `that`.")
+check(code == 1 and any("Missing-Page" in e for e in errs), "a real link between two pieces of inline code is still checked")
 
 # What the linter covers. It reads the *.md files beside itself and nothing else.
 code, out = wiki({"Home.md": PAGE, "sub/Deep.md": "### bad \u2014 /home/alice/x/\n"})
@@ -650,8 +667,8 @@ r = subprocess.run([sys.executable, str(WIKI / "lint.py")], capture_output=True,
 check(r.returncode == 1 and "FAIL: 2 error(s)" in r.stdout, "and exits 1 when it found an error")
 workflows = "".join(p.read_text() for p in (ROOT / ".github/workflows").glob("*.yaml"))
 hooks = "".join(p.read_text() for p in (ROOT / "firmware/.githooks").iterdir())
-check("guide/lint.py" in workflows + hooks + run_tests,
-      "docs/guide/lint.py is run by a workflow, the commit hook or run_tests.sh")
+check("docs/guide/lint.py" in hooks, "the commit hook runs docs/guide/lint.py when a guide page is staged")
+check("guide/lint.py" in workflows, "and a workflow runs it, for a pull request from a clone without the hook")
 
 # ================================================================================================
 print("== stop-slop.sh and the pre-commit hook ==")
@@ -685,7 +702,9 @@ for name, text, wanted, why in (
         ("new.md", f"Pages 3{EN}5.\n", 0, "an en dash"),
         ("new.txt", f"x {EM} y\n", 0, "an em dash in a text file: only markdown is scanned"),
         ("new.py", f"# x {EM} y\n", 0, "an em dash in a code comment: only markdown is scanned"),
-        ("new.mdx", f"x {EM} y\n", 0, "an em dash in an .mdx file (the upstream docs page is one): not scanned"),
+        ("new.mdx", f"x {EM} y\n", 1, "the same in an .mdx file (the upstream docs page is one)"),
+        ("docs/NEW.Mdx", f"x {EM} y\n", 1, "the same in a file named .Mdx"),
+        ("new.mdx.txt", f"x {EM} y\n", 0, "a file that only has .mdx inside its name"),
         ("old.md", f"# Old\n\nA line with an em dash {EM} from before the rule.\n" + "filler line\n" * 30 + "A clean new line.\n", 0,
          "a clean line added to a file that already has an em dash"),
 ):
@@ -695,13 +714,15 @@ code, out = slop({"new.md": "clean\n"})
 check(code == 0 and out == "", "clean markdown passes without a word")
 
 code, out = slop({"renamed.md": (S / "old.md").read_text() + f"An added line {EM} with an em dash.\n"}, moves=[("old.md", "renamed.md")])
-known_failure(code == 1, "an em dash added to a markdown file renamed in the same commit is blocked",
-              "stop-slop.sh:9 lists staged files with --diff-filter=ACM, which leaves out renames (R), so a renamed "
-              "and edited file is not scanned. The hook's own C/C++ list uses ACMR")
-code, out = slop({"caf\u00e9.md": f"x {EM} y\n"})
-known_failure(code == 1, "an em dash in a markdown file with a non-ASCII name is blocked",
-              "stop-slop.sh:9 reads names from `git diff --name-only`, which quotes and escapes such a name, and the "
-              "quoted form matches no file in the second git diff. `-z` gives the plain names")
+check(code == 1 and "renamed.md" in out and "An added line" in out and "from before the rule" not in out,
+      "an em dash added to a markdown file renamed in the same commit is blocked, and only the added line is shown")
+code, out = slop({}, moves=[("old.md", "moved.md")])
+check(code == 0 and out == "", "a file that is only renamed passes: the em dash it already had is not new prose")
+code, out = slop({"notes.txt": (S / "old.md").read_text()}, moves=[("old.md", "notes.txt")])
+check(code == 0, "a markdown file renamed to something that is not markdown is not scanned")
+for name in ("caf\u00e9.md", "\u03b1\u03b2.md", 'a "quoted" name.md', "tab\there.md"):
+    code, out = slop({name: f"x {EM} y\n"})
+    check(code == 1 and name in out, f"an em dash in a markdown file named {name!r} is blocked")
 
 # The hook, run in a small repository that has stand-ins where it calls the real tools: each
 # stand-in leaves a file behind, which shows whether the hook called it.
@@ -713,6 +734,8 @@ script(H / "firmware/test/run_tests.sh", '#!/usr/bin/env bash\ntouch "$MARKS/tes
 script(H / "firmware/scripts/version-lint.py", "import os, pathlib, sys\n"
        "pathlib.Path(os.environ['MARKS'], 'version').touch()\nsys.exit(int(os.environ.get('VERSION_RC', '0')))\n")
 script(H / "firmware/scripts/cpp-lint.sh", '#!/usr/bin/env bash\necho "$@" > "$MARKS/cpp"\nexit "${CPP_RC:-0}"\n')
+script(H / "docs/guide/lint.py", "import os, pathlib, sys\n"
+       "pathlib.Path(os.environ['MARKS'], 'guide').touch()\nsys.exit(int(os.environ.get('GUIDE_RC', '0')))\n")
 shutil.copy(SLOP, H / "firmware/scripts/stop-slop.sh")
 write(H / "README.md", "# readme\n")
 git(H, "add", "-A")
@@ -738,21 +761,27 @@ for name, ran, why in (
         ("firmware/test/new_test.cpp", ["cpp", "tests"], "a host test: the tests and the C/C++ lint"),
         ("firmware/esphome/components/hisense_ac/x.py", ["tests"], "a component file: the tests"),
         ("firmware/scripts/dev.py", ["tests"], "dev.py: the tests"),
+        ("firmware/scripts/matter-convert.py", ["tests"], "matter-convert.py: the tests"),
+        ("firmware/scripts/cpp-lint.py", ["tests"], "the lint tool: the tests (test_scripts_edges.py covers it)"),
+        ("firmware/scripts/esphome-compile-check.sh", ["tests"], "CI's compile gate script: the tests"),
+        ("firmware/flasher/ch341common.py", ["tests"], "the clip flasher: the tests"),
+        ("firmware/.githooks/pre-commit", ["tests"], "the hook itself: the tests"),
+        ("reverse-engineering/tools/decode_ac_frames.py", ["tests"], "decode_ac_frames.py, which layer 2 and virtual_ac.py import: the tests"),
+        ("reverse-engineering/tools/sniff.py", [], "another reverse-engineering tool: nothing"),
         ("firmware/esphome/packages/node.yaml", ["version"], "a package: the version lint, not the tests"),
         ("CHANGELOG.md", ["version"], "the changelog: the version lint"),
         (".github/workflows/qa.yaml", ["version"], "a workflow: the version lint (it holds a pin)"),
         ("README.md", [], "a document: nothing but the prose gate"),
-        ("firmware/scripts/cpp-lint.py", [], "the lint tool itself: nothing"),
-        ("firmware/scripts/esphome-compile-check.sh", [], "CI's compile gate script: nothing"),
-        ("docs/guide/Home.md", [], "a guide page: nothing (docs/guide/lint.py is not called)"),
+        ("docs/guide/Home.md", ["guide"], "a guide page: the guide linter"),
+        ("docs/guide/images/x.md", [], "a file below the guide's own directory: nothing, the linter does not read it"),
         ("firmware/esp32-recon/main/x.c", ["cpp"], "the diagnostic tool: the C/C++ lint only"),
 ):
     code, out, marks = hook({name: "x\n"})
     check(code == 0 and marks == ran, f"staged {why}")
-code, out, marks = hook({"reverse-engineering/tools/decode_ac_frames.py": "x\n"})
-known_failure("tests" in marks, "staging decode_ac_frames.py runs the host tests",
-              "pre-commit:11 the trigger pattern does not name reverse-engineering/tools/decode_ac_frames.py, which "
-              "run_tests.sh (layer 2) and virtual_ac.py import")
+code, out, marks = hook({"docs/guide/lint.py": (H / "docs/guide/lint.py").read_text() + "# changed\n"})
+check(code == 0 and marks == ["guide", "tests"], "staged the guide linter: itself and the tests")
+code, out, marks = hook({"docs/guide/Home.md": "x\n"}, GUIDE_RC="1")
+check(code == 1 and "GUIDE LINT FAILED" in out, "a failing guide lint stops the commit")
 code, out, marks = hook({"firmware/test/x.cpp": "x\n"}, TESTS_RC="1")
 check(code == 1 and "HOST TESTS FAILED" in out and "cpp" not in marks, "failing host tests stop the commit before anything else runs")
 code, out, marks = hook({"CHANGELOG.md": "x\n"}, VERSION_RC="1")
@@ -775,17 +804,23 @@ code, out, marks = hook({"README.md": "x\n"}, GLOBAL_RC="1")
 check(code == 1, "and its failure stops the commit")
 chained.unlink()
 
-# A large commit. The hook decides with `git diff --cached --name-only | grep -qE ...` under
-# `set -o pipefail`. grep -q exits at the first match; when the list is longer than the pipe
-# holds, git is killed by SIGPIPE, pipefail turns that into a failed pipeline and the `if` is
-# false: the host tests are skipped, silently.
+# A large commit. The hook used to decide with `git diff --cached --name-only | grep -qE ...` under
+# `set -o pipefail`: grep -q exits at the first match, git is killed by SIGPIPE when the list is
+# longer than the pipe holds, pipefail turns that into a failed pipeline and the host tests were
+# skipped, silently. The list is read once now.
 bulk = {"firmware/test/a.cpp": "x\n"}
 bulk.update({f"zz/{'d' * 180}/{i:05d}.txt": "" for i in range(1500)})
 code, out, marks = hook(bulk)
-known_failure("tests" in marks, "a commit of 1500 files that includes a host test runs the host tests",
-              "pre-commit:10 and :22 `git diff ... | grep -qE` under `set -o pipefail`: with more than about 64 KB of "
-              "staged names git dies of SIGPIPE after grep's first match, the pipeline counts as failed and the gate "
-              "is skipped. `grep -E ... >/dev/null`, or reading the list into a variable first, has no early exit")
+check(code == 0 and marks == ["cpp", "tests"], "a commit of 1500 files that includes a host test runs the host tests")
+bulk = {f"aa/{'d' * 180}/{i:05d}.txt": "" for i in range(1500)}
+bulk["zz/last.cpp"] = "x\n"
+bulk["CHANGELOG.md"] = "x\n"
+code, out, marks = hook(bulk)
+check(code == 0 and marks == ["cpp", "version"] and (MARKS / "cpp").read_text().split() == ["check", "--no-tidy", "zz/last.cpp"],
+      "and one whose only C++ file and changelog come after 1500 others still gets the lints")
+code, out, marks = hook({"firmware/esphome/components/hisense_ac/caf\u00e9.cpp": "x\n"})
+check(code == 0 and marks == ["cpp", "tests"] and "caf\u00e9.cpp" in (MARKS / "cpp").read_text(),
+      "a staged source with a non-ASCII name reaches the lint under its real name")
 
 # ================================================================================================
 print("== esphome-compile-check.sh, with a stand-in for esphome ==")
@@ -802,6 +837,12 @@ echo "$name $config" >> "$FAKE_LOG"
 [ -f secrets.yaml ] || { echo "no secrets.yaml"; exit 9; }
 out="$(dirname "$config")/.esphome/build/$name/src/esphome/core"
 mkdir -p "$out"
+pio="$(dirname "$config")/.esphome/build/$name/.pioenvs/$name"
+mkdir -p "$pio"
+# The slot image is written unless the build cache is on and FAKE_NO_SLOT says it came back whole.
+if [ -n "${FAKE_SLOT:-}" ] && { [ -z "${FAKE_NO_SLOT:-}" ] || [ -z "${PLATFORMIO_BUILD_CACHE_DIR:-}" ]; }; then
+  touch "$pio/image_firmware_is.$FAKE_SLOT.bin"
+fi
 case "$config" in
   *tests/*) echo "#define ESPHOME_VERSION 1" > "$out/defines.h" ;;
   *) echo "#define ESPHOME_PROJECT_VERSION \\"${FAKE_VERSION:-3.1.4}\\"" > "$out/defines.h" ;;
@@ -842,120 +883,49 @@ code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace("hisense_a
 check(code == 1, "and one from w41h1_module")
 code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="src/esphome/components/wifi/wifi_component.cpp:1:1: warning: theirs")
 check(code == 0, "a warning from another component passes: only this repo's two are held clean")
-# The check is a text search for a component path and the word warning or error on one line.
-code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="Compiling .pioenvs/x/src/esphome/components/hisense_ac/error_codes.cpp.o")
-check(code == 1, "a source FILE named error_* in a component trips the gate with no warning at all (behaviour today)")
+code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace(": warning:", ": error:"))
+check(code == 1, "an error line that names a component file fails it too (a build that went on after one)")
+code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="\\033[01m\\033[Ksrc/esphome/components/hisense_ac/hisense_bus.cpp:10:5:\\033[m\\033[K "
+                               "\\033[01;35m\\033[Kwarning: \\033[m\\033[Kunused variable")
+check(code == 1, "a warning in the compiler's colours is still a warning")
+code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="src/esphome/components/hisense_ac/hisense_map.h:7: warning: no column")
+check(code == 1, "and so is one without a column number")
+# What counts is a compiler diagnostic that names one of the two components' files. It used to
+# be any line with a component path and the word warning or error in it.
+for line, why in (("Compiling .pioenvs/x/src/esphome/components/hisense_ac/error_codes.cpp.o", "a source file named error_*"),
+                  ("Compiling .pioenvs/x/src/esphome/components/w41h1_module/warning_led.cpp.o", "a source file named warning_*"),
+                  ("In file included from src/esphome/components/hisense_ac/hisense_ac.h:5,", "an include trace that ends in an SDK warning"),
+                  ("src/esphome/components/hisense_ac/hisense_ac.cpp:10:5: note: declared here", "a note"),
+                  ("Archiving .pioenvs/x/lib/libhisense_ac.a: 0 errors", "a line that only mentions errors")):
+    code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=line)
+    check(code == 0, f"not taken for a warning: {why}")
 code, out, log = compile_check("w41h1.yaml", FAKE_VERSION="3.1.3")
 check(code == 1 and "was built without firmware version 3.1.4" in out, "an image whose project version is not the version file's fails")
 code, out, log = compile_check("tests/build.esp32-idf.yaml")
 check(code == 0, "a file under tests/ carries no version and is not asked for one")
-code, out, log = compile_check("./tests/build.esp32-idf.yaml")
-check(code == 1 and "was built without firmware version" in out,
-      "the same file given as ./tests/... is asked for a version: the exemption is a prefix match on the argument")
+for form in ("./tests/build.esp32-idf.yaml", "././tests/build.esp32-idf.yaml", str(C / "firmware/esphome/tests/build.esp32-idf.yaml")):
+    code, out, log = compile_check(form)
+    check(code == 0, f"the same file given as {form.replace(str(C), '<repo>')} is the same file: no version is asked of it")
+code, out, log = compile_check("./w41h1.yaml", FAKE_VERSION="3.1.3")
+check(code == 1 and "was built without firmware version 3.1.4" in out, "and a board file given as ./w41h1.yaml is still asked for the version")
 
-# ================================================================================================
-print("== firmware/flasher: what the clip writer checks before it erases ==")
-
-# ch341common.py with a stand-in for pyusb and for the programmer, so flash_region() runs against
-# a chip that is a bytearray. No USB device is opened.
-usb = types.ModuleType("usb")
-usb.core = types.ModuleType("usb.core")
-usb.util = types.ModuleType("usb.util")
-usb.core.USBError = type("USBError", (Exception,), {})
-usb.util.release_interface = lambda dev, n: None
-sys.modules.update({"usb": usb, "usb.core": usb.core, "usb.util": usb.util})
-ch341 = load("ch341common", ROOT / "firmware/flasher/ch341common.py")
-SEC = 0x1000
-
-
-class FakeChip:
-    """A GD25Q32 as the writer sees it: read, sector erase, page program (bits only clear), QE."""
-    jedec_id = "c84016"       # GD25Q32, the id ch341common.py expects
-    size = 0x8000
-    dead = ()                 # sector addresses where programming does nothing
-    last = None
-
-    def __init__(self):
-        self.mem = bytearray(b"\x5a" * self.size)     # what was on the chip before
-        self.erased, self.qe, self.d = [], 0, None
-        FakeChip.last = self
-
-    def jedec(self):
-        return bytes.fromhex(self.jedec_id)
-
-    def read(self, addr, n):
-        return bytes(self.mem[addr:addr + n])
-
-    def sector_erase(self, addr):
-        self.erased.append(addr)
-        self.mem[addr:addr + SEC] = b"\xff" * SEC
-
-    def page_prog(self, addr, data):
-        if addr & ~(SEC - 1) not in self.dead:
-            self.mem[addr:addr + len(data)] = bytes(a & b for a, b in zip(self.mem[addr:addr + len(data)], data))
-
-    def set_qe(self):
-        self.qe = 1
-        return 1
-
-
-def flash(image, start, length, **chip):
-    """flash_region() of `image` on a fresh fake chip. Returns (how it ended, the chip)."""
-    path = TMP / "clip-image.bin"
-    path.write_bytes(image)
-    fake = type("Chip", (FakeChip,), chip)
-    ch341.CH341 = fake
-    how = None
-    with contextlib.redirect_stdout(io.StringIO()):
-        try:
-            ch341.flash_region(str(path), start, length)
-        except SystemExit as e:
-            how = str(e)
-    return how, FakeChip.last
-
-
-image = bytes((i * 7 + 3) & 0xFF for i in range(3 * SEC))
-how, chip = flash(image, 0, 3 * SEC)
-check(how is None and chip.mem[:3 * SEC] == image and chip.mem[3 * SEC:] == b"\x5a" * (chip.size - 3 * SEC) and chip.qe == 1,
-      "a region write puts the image there, leaves the rest of the chip alone and sets QE at the end")
-how, chip = flash(image, 0, 3 * SEC, jedec_id="c22016")
-check(how == "wrong chip id" and not chip.erased, "another chip id stops it before anything is erased")
-how, chip = flash(b"\x5a" * (3 * SEC), 0, 3 * SEC)
-check(how is None and not chip.erased, "a sector that already holds the image is not erased again")
-how, chip = flash(image, 0, 3 * SEC, dead=(SEC,))
-check(how == "SECTOR 0x1000 failed after retries" and chip.erased.count(SEC) == 4,
-      "a sector that will not verify is tried four times, then the run stops")
-check(chip.mem[:SEC] == image[:SEC] and chip.mem[2 * SEC:3 * SEC] == b"\x5a" * SEC and chip.qe == 0,
-      "and it stops with the chip half written and QE not set: the unit does not boot until the write is repeated")
-how, chip = flash(image + b"tail" * 100, 0, 3 * SEC)
-check(how is None and chip.mem[3 * SEC:4 * SEC] == b"\x5a" * SEC, "a file longer than the region is cut at the region's end, without a word")
-
-# The image is never looked at: any file of any size is written. A file shorter than the region
-# is padded with 0xFF, so the rest of the region is erased. For ch341flash-full.py the region is
-# the whole chip: its second firmware slot and the unit's own settings included.
-how, chip = flash(b"not a flash image", 0, chip.size)
-check(how is None and chip.mem[17:] == b"\xff" * (chip.size - 17) and len(chip.erased) == chip.size // SEC and chip.qe == 1,
-      "a 17-byte file is written over the whole region: everything after it is erased, and it reports success")
-known_failure(how is not None, "a whole-chip write refuses a file that is not the size of the chip",
-              "flasher/ch341common.py:60 flash_region(): no check of the file's size or content, and no question "
-              "before the first erase. ch341flash-full.py with the wrong file (a slot image, an .ota, a typo) wipes "
-              "the chip, per-unit data included; the only way back is the unit's own full dump")
-del sys.modules["usb"], sys.modules["usb.core"], sys.modules["usb.util"]
-
-# The two writers take their one argument unchecked.
-stubs = TMP / "usb-stub"
-write(stubs / "usb/__init__.py", "")
-write(stubs / "usb/core.py", "class USBError(Exception):\n    pass\n\n\ndef find(**kw):\n    return None\n")
-write(stubs / "usb/util.py", "")
-for tool in ("ch341flash.py", "ch341flash-full.py"):
-    r = subprocess.run([sys.executable, str(ROOT / "firmware/flasher" / tool)], capture_output=True, text=True,
-                       env={**os.environ, "PYTHONPATH": str(stubs), "PYTHONDONTWRITEBYTECODE": "1"})
-    known_failure(r.returncode != 0 and "Traceback" not in r.stderr, f"{tool} with no file name prints how to call it",
-                  f"flasher/{tool}: sys.argv[1] is read with no check, so a missing argument is an IndexError traceback "
-                  "(ch341dump.py does check)")
-r = subprocess.run([sys.executable, str(ROOT / "firmware/flasher/ch341dump.py")], capture_output=True, text=True,
-                   env={**os.environ, "PYTHONPATH": str(stubs), "PYTHONDONTWRITEBYTECODE": "1"})
-check(r.returncode == 1 and "usage: ch341dump.py <out.bin>" in r.stderr, "ch341dump.py with no file name prints its usage")
+# A stock-module board file names a flash layout, and its build has to leave that layout's slot image.
+write(C / "firmware/esphome/w41h1-amebaz2-factory.yaml", "substitutions:\n  name: hisense-ac\n  layout: factory\n")
+write(C / "firmware/esphome/components/w41h1_module/layout-factory.json", '{"flash": {"ota1": "0x010000+0x170000"}}')
+SLOT_DIR = C / "firmware/esphome/.esphome/build/ci-w41h1-amebaz2-factory/.pioenvs/ci-w41h1-amebaz2-factory"
+CACHE = {"PLATFORMIO_BUILD_CACHE_DIR": str(TMP / "pio-cache")}
+code, out, log = compile_check("w41h1-amebaz2-factory.yaml", FAKE_SLOT="0x010000", **CACHE)
+check(code == 0 and len(log) == 1 and "image_firmware_is.0x010000.bin" in out, "a stock-module file whose build leaves the slot image passes after one compile")
+shutil.rmtree(SLOT_DIR)
+code, out, log = compile_check("w41h1-amebaz2-factory.yaml", FAKE_SLOT="0x010000", FAKE_NO_SLOT="1", **CACHE)
+check(code == 0 and len(log) == 2 and "building w41h1-amebaz2-factory.yaml without the cache" in out,
+      "no slot image after a fully cached build: it builds once more without the build cache, and passes")
+shutil.rmtree(SLOT_DIR)
+code, out, log = compile_check("w41h1-amebaz2-factory.yaml", FAKE_SLOT="0x00C000", **CACHE)
+check(code == 1 and len(log) == 2 and "did not produce image_firmware_is.0x010000.bin" in out,
+      "an image named after another layout's address fails: the layout file was not applied")
+code, out, log = compile_check("w41h1.yaml", **CACHE)
+check(code == 0 and len(log) == 1 and "slot image" not in out, "a board file that names no layout is not asked for a slot image")
 
 # ================================================================================================
 print("== how the lists agree: workflows, run_tests.sh, the lint scope, .gitignore ==")
@@ -1005,11 +975,9 @@ ignored = {o: subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q", f"fi
 binaries = [o for o in outputs if not o.endswith(".o")]
 check(all(ignored[o] for o in binaries), f"every test binary run_tests.sh builds is in .gitignore ({len(binaries)} of them)")
 objects = [o for o in outputs if o.endswith(".o")]
-known_failure(all(ignored[o] for o in objects), "the object files run_tests.sh builds are in .gitignore",
-              f"run_tests.sh:26-31 builds {', '.join(objects)} in firmware/test/ and removes them after the link. "
-              "When the link fails `set -e` stops before the rm and they stay as untracked files that nothing ignores")
+check(objects and all(ignored[o] for o in objects), "the object files run_tests.sh builds are in .gitignore: they stay behind when the link fails")
 
-for layer in ("test_image_chain.py", "test_dev_release.py", "test_version_lint.py"):
+for layer in ("test_image_chain.py", "test_dev_release.py", "test_matter_convert.py", "test_flasher.py", "test_version_lint.py"):
     check(layer in run_tests, f"run_tests.sh runs {layer}")
 
 tmp_holder.cleanup()

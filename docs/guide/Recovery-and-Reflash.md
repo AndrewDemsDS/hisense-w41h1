@@ -65,12 +65,29 @@ bus. Lift the flash or hold the SoC in reset if you see `0xFF` or no device.
 
 | Script | Does |
 |---|---|
-| `ch341dump.py` | read the whole 4 MB chip to a file. Do it before every write |
-| `ch341_readverify.py` | read-only: spot-check that the chip matches an image at key offsets, and report QE |
+| `ch341dump.py <out.bin>` | read the whole 4 MB chip to a file, twice, and write it only when both reads agree. Do it before every write |
+| `ch341_readverify.py <dump.bin>` | read-only: spot-check that the chip matches a full dump on an even grid of points, and report QE |
 | `ch341_sr.py` | read the status registers. The **QE bit** (SR2 bit 1) is cleared when the bootloader rejected an image, set after a healthy boot |
 | `ch341_setqe.py` | set the QE bit again |
-| `ch341flash-full.py <image>` | write the whole chip, `0x0` to `0x400000`, and set QE at the end. For putting a full dump back |
-| `ch341flash.py <image>` | write `0x0` to `0x140000` only and leave the rest of the chip alone |
+| `ch341flash-full.py <dump.bin> --backup <dump.bin>` | write the whole chip, `0x0` to `0x400000`, and set QE at the end. For putting a unit's own full dump back |
+| `ch341flash.py <image.bin> --layout <layout> --slot <1 or 2> --backup <dump.bin>` | write one firmware slot and leave the rest of the chip alone. Not run on a module yet in this form |
+
+Both writers refuse before the first erase unless all of this holds:
+
+- The chip on the clip answers with the GD25Q32's id.
+- The file is what the tool writes. For the whole chip: exactly 4 MB, with a firmware image whose
+  signatures all verify, and with the module's system data at `0x1000` (a full-flash image from a
+  build has none and is refused). For a slot: an application image that verifies the way the
+  bootloader checks it and fits the slot, on a chip whose images sit at the slot addresses of
+  the layout you named.
+- `--backup` names a full dump (`ch341dump.py`). It is the way back if the write goes wrong.
+- You type the confirmation it asks for, which names the target and the size, for example
+  `chip-0x400000` or `factory-ota2-0x170000`. `--confirm <the same text>` is for a script.
+
+A write that is interrupted, or stops on a sector that will not verify, leaves the chip half
+written with the QE bit clear, and the module does not boot. Run the same command again: sectors
+that already hold the image are skipped. None of the tools can tell two modules apart, so whether
+a dump belongs to the unit on the clip is for you to know.
 
 `firmware/flasher/requirements.txt` pins `pyusb`. A stock Linux install needs no udev rule for the
 programmer.
@@ -78,7 +95,8 @@ programmer.
 ### Getting a module back
 
 The way back that has worked on hardware: write the unit's **own** full dump with
-`ch341flash-full.py`, then power-cycle. The unit comes up as it was when the dump was taken. If
+`ch341flash-full.py` (the guards above were added after that run, see the manual check in
+`firmware/flasher/ch341common.py`), then power-cycle. The unit comes up as it was when the dump was taken. If
 the dump was taken after custom firmware had run, replace the first firmware slot with the
 original vendor slot bytes and erase the second, as described in
 `firmware/docs/10-stock-module-boot-and-recovery.md`, section 5.

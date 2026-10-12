@@ -19,7 +19,7 @@ transceiver sits outside the shield next to the cable connector.
 ### Flash: GigaDevice GD25Q32(B)
 - 4 MB (32 Mbit) SPI NOR, SOIC-8, JEDEC ID `C8 40 16`.
 - Standard 25-series pinout: `1=CS 2=DO 3=WP 4=GND 5=DI 6=CLK 7=HOLD 8=VCC`.
-- Fully dumpable with a CH341A + SOIC-8 clip; see [`tools/dump_flash.sh`](../tools/dump_flash.sh).
+- Fully dumpable with a CH341A + SOIC-8 clip; see `firmware/flasher/ch341dump.py`.
 - Two firmware images (OTA1 + OTA2) + a KV/FTL config partition near the top of flash.
 
 ### RS-485 transceiver: Union Semiconductor UM3352E
@@ -31,11 +31,13 @@ transceiver sits outside the shield next to the cable connector.
 ## Dumping the flash (CH341A)
 
 1. Set the CH341A to **programmer mode** (it enumerates as USB `1a86:5512`; the
-   TTL/UART mode is `1a86:5523` and won't work with flashrom).
+   TTL/UART mode is `1a86:5523` and won't work).
 2. Clip the SOIC-8 onto the GD25Q32 (pin 1 = dot corner). In-circuit reads often fail
    because the SoC back-powers/contends the bus, desolder or lift the flash, or hold the
    SoC in reset, if you get `0xFF`/no-device.
-3. `flashrom -p ch341a_spi` should identify `GD25Q32(B)`. Then read twice and compare.
+3. `python3 firmware/flasher/ch341dump.py dump.bin` checks the chip id (`c84016`), reads the
+   chip twice and writes the file only when both reads agree. Do not use flashrom for writes
+   on this programmer (silent partial writes), and the project's tools for reads keep one path.
 
 > ⚠️ The common black CH341A drives the SPI lines at ~5 V even in "3.3 V" mode, a real
 > hazard for 3.3 V flash. Use a 3.3 V-modded board or a level adapter if you can.

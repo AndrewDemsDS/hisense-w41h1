@@ -117,9 +117,9 @@ esphome logs w41h1.yaml                   # logs only, later
 | `hisense_ac__encryption_key` | the API key Home Assistant adopts the node with. Make a new one, the example file says how |
 
 The older form, `esphome -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 run
-w41h1.yaml`, still works. It is what `dev.py --board c3` runs, and it builds the node of
-`w41h1-esp32c3.yaml` without the status LED. `dev.py --board c3-plus` builds
-`w41h1-esp32c3-plus.yaml`.
+w41h1.yaml`, still works. It builds the node of `w41h1-esp32c3.yaml` without the status LED, and
+it is what `dev.py --board c3` ran until 2026-10-12. `dev.py --board c3` now builds
+`w41h1-esp32c3.yaml` itself, and `--board c3-plus` builds `w41h1-esp32c3-plus.yaml`.
 
 Home Assistant discovers the node over mDNS and adopts it with the API key from `secrets.yaml`
 ([below](#adopt-it-in-home-assistant)).
@@ -252,7 +252,7 @@ place and then invalidates the running image, which leaves a unit only the clip 
 | `w41h1-amebaz2-native.yaml` | was written from scratch with LibreTiny's own partition table and bootloader |
 
 If you do not know the unit's history and it still runs the Matter firmware (1.3.9 or later), that
-firmware can tell you: `dev.py matter-backup <unit-ip>` prints the address of the inactive slot.
+firmware can tell you: `matter-convert.py backup <unit-ip>` prints the address of the inactive slot.
 `0x10000` or `0x190000` means factory, `0xC000` or `0x1B8000` means sdk. A clip dump shows it too
 (`firmware/docs/15-esphome-path.md`, "Which flash layout a unit has"). Once a unit runs ESPHome, its
 `Flash layout` diagnostic sensor reports whether the image matches the module, and an image that

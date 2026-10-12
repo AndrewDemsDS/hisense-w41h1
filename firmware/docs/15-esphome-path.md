@@ -580,7 +580,7 @@ To tell which layout a unit has:
 - **Its history.** Converted over the air from the vendor firmware and never clipped: factory.
   First written with this repo's clip image: sdk.
 - **Ask the Matter firmware** (1.3.9 or later) for the address of the inactive slot:
-  `dev.py matter-backup <unit-ip>` prints `addr=`. `0x10000` or `0x190000` is the
+  `matter-convert.py backup <unit-ip>` prints `addr=`. `0x10000` or `0x190000` is the
   factory layout, `0xC000` or `0x1B8000` is the sdk layout. The command only reads.
 - **A clip dump.** The second firmware image starts at `0x190000` (factory), `0x1B8000` (sdk) or
   `0x1BC000` (native).
@@ -638,7 +638,7 @@ has not run on the sdk or native layout, and a mismatch has not been provoked on
    SOIC-8 clip on the GD25Q32 or by UART download mode: UART2 (PA15 RX, PA16 TX), with PA0 held at
    3.3 V through reset and PA13 not pulled low. Whether PA0 and PA15 can be reached on the W41H1
    board is not known. A unit that runs this project's Matter firmware needs neither: the Matter
-   firmware installs the application image over the air (`dev.py convert`, the guide linked
+   firmware installs the application image over the air (`matter-convert.py convert`, the guide linked
    above). That is how the one tested module got it.
 5. **Calibration data.** Flash `0x1000..0x3FFF` holds per-module data, including the flash
    controller's calibration table at `0x1040` that the boot code reads. The full-flash image

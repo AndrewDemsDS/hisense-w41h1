@@ -44,17 +44,9 @@ firmware/scripts/ota-release.env
 /RELEASE.md
 # Editor settings — not part of the public deliverable
 /.vscode/
-# Session/scratch artifacts
-/.build*
-/.otaretry*
-/.finishbuild*
-/.corerec*
-/.flash*
-/.mon*
-/.watch-*
-/.otadbg*
-
-# compiled host-test binaries (build artifacts)
+# compiled host-test binaries (build artifacts), and the objects the parity layer links, which
+# stay behind when that link fails
+/firmware/test/*.o
 /firmware/test/test_codec
 /firmware/test/test_reference_map
 /firmware/test/test_esphome_map
@@ -67,7 +59,6 @@ firmware/scripts/ota-release.env
 # python lint cache
 .ruff_cache/
 _site_src/
-wiki-src/
 
 # ESPHome: generated build tree + the local secrets file (secrets.yaml.example is tracked)
 /firmware/esphome/.esphome/

@@ -13,7 +13,8 @@
 CLANG_FORMAT_VERSION=13.0.1
 CLANG_TIDY_VERSION=22.1.8
 #
-# Tool lookup, first hit wins: $CLANG_FORMAT/$CLANG_TIDY, a binary on PATH reporting the pinned
+# Tool lookup, first hit wins: $CLANG_FORMAT/$CLANG_TIDY (used as given, with a warning when it is
+# another version), a binary on PATH reporting the pinned
 # version, then a private venv under ~/.cache/hisense-w41h1/cpp-lint (created on first use with
 # uv or python3 -m venv; set CPP_LINT_NO_INSTALL=1 to forbid that). Exit 3 = pinned tool missing.
 set -euo pipefail
@@ -41,7 +42,11 @@ bootstrap_venv() {
 
 resolve() {  # resolve <tool> <version> <override-value>
   local tool=$1 ver=$2 override=$3
-  if [ -n "$override" ]; then echo "$override"; return 0; fi
+  if [ -n "$override" ]; then
+    has_version "$override" "$ver" ||
+      echo "[cpp-lint] WARNING: $override does not report $tool $ver, the pinned version: its findings may differ from CI's" >&2
+    echo "$override"; return 0
+  fi
   if has_version "$tool" "$ver"; then command -v "$tool"; return 0; fi
   if has_version "$VENV/bin/$tool" "$ver"; then echo "$VENV/bin/$tool"; return 0; fi
   return 1

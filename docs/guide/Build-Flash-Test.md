@@ -54,13 +54,19 @@ command:
 | `monitor esphome --port P` | serial logs only |
 | `bench esphome --port P --sim-port S` | firmware against `virtual_ac.py`, no A/C |
 | `next esphome` | the staged bring-up and its warnings |
-| `convert esphome --board amebaz2-factory [--stage]` | wrap the built ESPHome image as a Matter `.ota` that the retired Matter firmware on a stock module installs, see [Converting a Stock Module](Converting-a-Stock-Module-to-ESPHome) |
-| `matter-slots <ip>`, `matter-backup <ip> [out.bin]` | read-only probes of a unit that still runs that Matter firmware |
 
-`--board` defaults to `c3`. It picks the board and pin substitutions passed to `esphome -s`. With
-`--board amebaz2-factory`, `amebaz2-sdk` or `amebaz2-native` there is `test`, `build` and
-`convert`. There is no serial flash for the module through `dev.py`
+`--board` defaults to `c3`. Each value names one board file (`c3` is `w41h1-esp32c3.yaml`, `c3-plus`
+is `w41h1-esp32c3-plus.yaml`, `classic` is `w41h1.yaml`), so `dev.py` builds the same image as
+`esphome compile <that file>`. With
+`--board amebaz2-factory`, `amebaz2-sdk` or `amebaz2-native` there is `test` and `build`. There is
+no serial flash for the module through `dev.py`
 ([ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board)).
+
+A stock module that still runs the retired Matter firmware is moved to ESPHome with a script of
+its own, `firmware/scripts/matter-convert.py`: `convert --board amebaz2-factory [--stage]` wraps
+the built ESPHome image as a Matter `.ota` that firmware installs, and `slots <ip>` and
+`backup <ip> [out.bin]` are read-only probes of such a unit
+([Converting a Stock Module](Converting-a-Stock-Module-to-ESPHome)).
 
 ESPHome builds go through a PlatformIO build cache (`PLATFORMIO_BUILD_CACHE_DIR`, default
 `~/.cache/w41h1-dev/pio-build-cache`). It speeds up the boards PlatformIO compiles (the stock
@@ -76,10 +82,10 @@ python3 firmware/scripts/dev.py test esphome       # host QA + esphome config
 python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
 ```
 
-Fill in `firmware/esphome/secrets.yaml` (gitignored) before building. `w41h1.yaml` keeps the
-classic ESP32 defaults; `--board c3` overrides `board`, `tx_pin`, `rx_pin` and `de_pin` on the
-command line, so the YAML never needs editing to switch boards. `dev.py` uses the `esphome` on
-`PATH`; set `ESPHOME` to point at another install. Later updates go over the air with
+Fill in `firmware/esphome/secrets.yaml` (gitignored) before building. Each board has
+a file of its own with its pins in it, and `--board` picks the file, so no YAML needs editing to
+switch boards. `dev.py` uses the `esphome` on `PATH`; set `ESPHOME` to another install or to a
+command with arguments (`ESPHOME="uvx esphome"`). Later updates go over the air with
 `esphome run`, passing the same board overrides you flashed with: a C3 node given the classic
 defaults receives an image for the wrong chip. Both command lines are in
 [ESPHome Build](ESPHome-Build#updates).

@@ -10,7 +10,11 @@ Usable directly too:
     cpp-lint.py compdb OUT_DIR           write compile_commands.json for the host-compilable set
 
 PATH narrows the run to files or directories; out-of-scope paths are skipped silently, so the
-pre-commit hook can pass the whole staged list.
+pre-commit hook can pass the whole staged list. A PATH that does not exist is an error (exit 2):
+a mistyped name must not read as "0 files clean".
+
+`fix` never rewrites firmware/test/reference-driver/, the frozen parity reference: those files
+are checked and reported, and a finding there is for a human.
 
 The custom rules are the ones from ESPHome's script/ci-custom.py that make sense outside ESPHome
 (adapted, MIT licensed like the original): no integer-constant #define where constexpr works,
@@ -51,6 +55,10 @@ EXCLUDE = [
     "*/managed_components/*",
 ]
 
+# Checked, never rewritten: the original driver the ESPHome port is held equal to. A reformat
+# would make its diff against the tag it was frozen at unreadable.
+FROZEN = ["firmware/test/reference-driver/*"]
+
 # Safety net for a vendored file dropped into an owned tree: a proprietary banner means hands off.
 VENDOR_BANNER = re.compile(r"confidential", re.IGNORECASE)
 
@@ -83,14 +91,21 @@ def tracked_files() -> list[str]:
     return [f for f in out.split("\0") if f]
 
 
-def in_scope(rel: str) -> bool:
-    if not rel.endswith(CPP_EXT) or not _match(rel, INCLUDE) or _match(rel, EXCLUDE):
-        return False
+def owned(rel: str) -> bool:
+    return rel.endswith(CPP_EXT) and _match(rel, INCLUDE) and not _match(rel, EXCLUDE)
+
+
+def has_banner(rel: str) -> bool | None:
+    """True for a proprietary banner in the first 40 lines, None when the file cannot be read."""
     try:
         head = (ROOT / rel).read_text(errors="replace").splitlines()[:40]
     except OSError:
-        return False
-    return not VENDOR_BANNER.search("\n".join(head))
+        return None
+    return bool(VENDOR_BANNER.search("\n".join(head)))
+
+
+def in_scope(rel: str) -> bool:
+    return owned(rel) and has_banner(rel) is False
 
 
 def select_files(paths: list[str]) -> list[str]:
@@ -275,6 +290,7 @@ def fix_rules(content: str) -> str:
 
 C11 = ["-std=c++11", "-Ifirmware/test/stubinc", "-Ifirmware/test", "-Ifirmware/test/reference-driver"]
 C17_PORT = ["-std=c++17", "-Ifirmware/esphome/components/hisense_ac"]
+C17_MODULE = ["-std=c++17", "-Ifirmware/esphome/components/w41h1_module"]
 HDR = ["-x", "c++-header"]
 
 # (file, flags). Headers are listed as their own units so each is checked under the .clang-tidy
@@ -292,9 +308,27 @@ TIDY_UNITS = [
     ("firmware/test/test_esphome_map.cpp", C11),
     ("firmware/test/test_esphome_codec_parity.cpp", C11[1:] + C17_PORT),
     ("firmware/test/test_esphome_bus.cpp", C17_PORT),
+    ("firmware/test/test_esphome_bus_stress.cpp", C17_PORT),
+    ("firmware/test/test_esphome_codec_gaps.cpp", C17_PORT),
+    ("firmware/test/test_esphome_confirm.cpp", C17_PORT),
+    ("firmware/test/test_esphome_setup_edges.cpp", C17_PORT),
+    ("firmware/test/test_esphome_setup_request.cpp", C17_PORT),
+    ("firmware/test/test_esphome_uart_policy.cpp", C17_MODULE),
     ("firmware/esphome/components/hisense_ac/hisense_protocol.cpp", C17_PORT),
     ("firmware/esphome/components/hisense_ac/hisense_bus.cpp", C17_PORT),
+    ("firmware/esphome/components/hisense_ac/hisense_map.h", HDR + C17_PORT),
+    ("firmware/esphome/components/w41h1_module/w41h1_uart_policy.h", HDR + C17_MODULE),
 ]
+
+# Host-compilable units that are NOT checked yet, each with the one finding that keeps it out
+# (clang-tidy 22.1.8, 2026-10-12). Fix the line, move the entry up into TIDY_UNITS.
+TIDY_PENDING = [
+    # :375 misc-redundant-expression: `n == 9 && n <= H::FRAME_CLASS_OFFSET`
+    ("firmware/test/test_esphome_edge_cases.cpp", C17_PORT),
+    # :346 misc-redundant-expression: `i < 13 && i < H::PRESET_COUNT`
+    ("firmware/test/test_esphome_map_gaps.cpp", C17_PORT + C17_MODULE[1:]),
+]
+
 
 # Checks whose --fix is mechanical and cannot change behaviour. `fix` applies only these, and
 # only where the file's own .clang-tidy enables them; everything else is reported by `check`.
@@ -417,12 +451,23 @@ def main() -> int:
         print(write_compdb(out.resolve()))
         return 0
 
+    missing = [p for p in a.paths if not Path(p).exists()]
+    if missing:
+        print(f"[cpp-lint] no such file or directory: {', '.join(missing)}", file=sys.stderr)
+        return 2
     files = select_files(a.paths)
     if a.mode == "files":
         print("\n".join(files))
         return 0
+    if not a.paths:
+        for f in tracked_files():
+            if owned(f) and has_banner(f):
+                print(f"[cpp-lint] skipped, it carries a proprietary banner: {f}", file=sys.stderr)
 
     fix = a.mode == "fix"
+    # In fix mode the frozen files are checked like any other and never written to.
+    frozen = [f for f in files if fix and _match(f, FROZEN)]
+    writable = [f for f in files if f not in frozen]
     rc = 0
 
     # 1. custom rules (autofix the trivial whitespace ones first so clang-format sees clean input)
@@ -430,13 +475,13 @@ def main() -> int:
     for f in files:
         p = ROOT / f
         content = p.read_text()
-        if fix:
+        if f in writable and fix:
             fixed = fix_rules(content)
             if fixed != content:
                 p.write_text(fixed)
                 content = fixed
         for ln, col, msg in check_rules(f, content):
-            if fix and "(fixable)" in msg:
+            if f in writable and fix and "(fixable)" in msg:
                 continue
             print(f"{f}:{ln}:{col}: {msg}", flush=True)
             rule_errs += 1
@@ -447,11 +492,16 @@ def main() -> int:
     if not a.no_tidy:
         # In fix mode clang-tidy exits non-zero for every finding it just fixed; what is left is
         # for `check` to report, so only check mode takes its exit code.
-        tidy_rc = run_tidy(a.clang_tidy, files, fix)
+        tidy_rc = run_tidy(a.clang_tidy, writable, fix)
         rc |= 0 if fix else tidy_rc
+        rc |= run_tidy(a.clang_tidy, frozen, False)
     # 3. clang-format
     if not a.no_format:
-        rc |= run_format(a.clang_format, files, fix)
+        rc |= run_format(a.clang_format, writable, fix)
+        rc |= run_format(a.clang_format, frozen, False)
+    if frozen:
+        print(f"[cpp-lint] fix: {len(frozen)} frozen file(s) under firmware/test/reference-driver/ checked, not rewritten",
+              file=sys.stderr)
 
     n = len(files)
     if rc:

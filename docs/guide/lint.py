@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""Gitea-wiki linter for the hisense-w41h1 wiki.
+"""Linter for the guide, the pages in docs/guide/ that the docs site is built from.
 
-Catches the mistakes that generic markdown linters miss on a Gitea *wiki*:
-  - heading-level skips (H1->H3) that break the auto Table of Contents
-  - broken inter-wiki links  [text](Page-Name)  -> Page-Name.md must exist
-  - broken image embeds       ![alt](images/x)  -> file must exist
+The pages are written like a wiki (one flat directory, links by page name), and this catches
+what a generic markdown linter misses in such a set:
+  - heading-level skips (H1->H3) that break the table of contents
+  - broken links between pages  [text](Page-Name)  -> Page-Name.md must exist
+  - broken image embeds         ![alt](images/x)  -> file must exist
   - unbalanced ```mermaid fences (silently drop a diagram)
-  - repo-path links that won't resolve on the wiki (should be backticked)
+  - repo-path links that do not resolve from a page (should be backticked)
   - pages missing from _Sidebar.md
-  - public-ready leaks: absolute home paths, hard-coded node numbers, private IPs, HA hostname
+  - public-ready leaks: absolute home paths, hard-coded node numbers, private IPs, the HA
+    hostname, a personal mail address
   - stop-slop: em dashes (error) + throat-clearing / filler / X-not-Y (warn)
 
-Stdlib only. Run from the wiki repo root:  python3 lint.py
-Exit non-zero if any ERROR is found (WARN does not fail).
+It reads the *.md files beside itself and nothing else in the repo. Stdlib only:
+    python3 docs/guide/lint.py
+Exit non-zero if any ERROR is found (WARN does not fail). The pre-commit hook runs it when a
+guide page is staged.
 
 Complements (not replaces) generic tooling if you want it:
   markdownlint-cli2 '**/*.md'      # MD001 heading-increment, style
@@ -41,13 +45,22 @@ LEAKS = [
         r"/home/(?!you\b|user\b)[A-Za-z0-9_.-]+/",
         "absolute home path (use ~ or a placeholder)",
     ),
-    (r"\bnode (?:[0-9]|1[0-9])\b", "hard-coded node number (use a placeholder)"),
+    # Any number: a Matter node id of one installation is as much a leak at 80 as at 14.
+    (r"\bnode \d+\b", "hard-coded node number (use a placeholder such as <node>)"),
     (
-        r"\b192\.168\.(?!1\.)\d+\.\d+\b|\b10\.\d+\.\d+\.\d+\b",
+        # RFC 1918: 192.168/16 (but for the 192.168.1.x placeholder), 10/8 and 172.16/12.
+        r"\b192\.168\.(?!1\.)\d+\.\d+\b|\b10\.\d+\.\d+\.\d+\b"
+        r"|\b172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+\b",
         "private IP (use the 192.168.1.x placeholder)",
     ),
     (r"homeassistant\.local", "hard-coded HA hostname (use your-ha-host.local)"),
+    (
+        r"[\w.+-]+@(?:gmail|googlemail|outlook|hotmail|live|yahoo|icloud|proton(?:mail)?|gmx)\.[a-z.]+",
+        "personal mail address (use the project's public address, or an example.com one)",
+    ),
 ]
+# Inline code. Link syntax shown in it is an example, not a link.
+INLINE_CODE = re.compile(r"`+[^`]*`+")
 
 # stop-slop: AI-writing tells. Em dash is an ERROR (house style bans it);
 # the rest are WARN so they surface without blocking.
@@ -177,7 +190,7 @@ def check_file(fname):
     for ln, text, in_code in mapped:
         if in_code:
             continue
-        for bang, target in LINK_RE.findall(text):
+        for bang, target in LINK_RE.findall(INLINE_CODE.sub("", text)):
             t = target.strip()
             if t.startswith(("http://", "https://", "mailto:", "#")):
                 continue

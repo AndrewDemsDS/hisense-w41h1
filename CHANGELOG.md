@@ -120,6 +120,38 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   documents moved to `firmware/docs/10-stock-module-boot-and-recovery.md` and
   `firmware/docs/16-esp32-board-notes.md`.
 
+### Tooling: the scripts refuse more, and say why (2026-10-12)
+- **The Matter conversion left `dev.py`.** `dev.py convert esphome ...`, `dev.py matter-slots` and
+  `dev.py matter-backup` are now `firmware/scripts/matter-convert.py convert ...`, `slots` and
+  `backup`. The settings file is still `firmware/scripts/ota-release.env`.
+- **The clip writers check what they write** (`firmware/flasher/`). `ch341flash-full.py` took any
+  file of any size and wrote it over the whole chip. It now wants exactly 4 MB that hold a
+  verifying firmware image and the module's system data, a `--backup <dump>`, and a typed
+  confirmation that names the target and the size. `ch341flash.py` no longer writes
+  `0x0..0x140000` (the range of the retired Matter clip image): it writes one firmware slot,
+  `--layout <layout> --slot <1|2>`, after verifying the image the way the bootloader does.
+  `ch341dump.py` reads twice and compares. A chip that stays busy is no longer written to.
+- **The pre-commit hook** no longer skips the host tests on a commit with more than about 64 KB of
+  file names, runs them for any file under `firmware/scripts/`, `firmware/flasher/` and the hook
+  itself, and runs `docs/guide/lint.py` when a guide page is staged. `stop-slop.sh` also reads
+  renamed files, files with non-ASCII names and `.mdx`.
+- **`dev.py`**: `$ESPHOME` is split into words and never run by a shell, so `ESPHOME="uvx esphome"`
+  works and text after a `;` in it is no longer executed. Tool lookups need no bash. The command line
+  is `argparse` now: a wrong word gets a message that names it, each command has `--help`, and
+  the word `esphome` after the command is optional. The `ota`, `amebaz2` and `esp32` words no
+  longer answer with a pointer to `matter-final`. `dev.py erase` passes `--chip` for the
+  board, so esptool refuses a port that leads to another kind of ESP.
+- **`hil_esphome_actuation.py`** puts the unit back in a `finally` (a failed step, Ctrl-C and a new
+  hard timeout included), now also restores the fan, reads the unit back at the end and fails
+  when it is not as found, and does not touch a unit that is running unless `--allow-running` is
+  given. Its default `--secrets` is this checkout's file.
+- **Changes what `dev.py --board c3` builds:** it compiled `w41h1.yaml` with the C3 board and pins
+  as `-s` overrides, which is the node of `w41h1-esp32c3.yaml` without its status LED. Every
+  `--board` value now names one board file, so `--board c3` builds `w41h1-esp32c3.yaml` and the
+  node gains the status LED on GPIO8 (the SuperMini's blue LED: dark when healthy, blinking while
+  Wi-Fi, Home Assistant or the A/C bus is down). No entity changes. `--board classic` is
+  unchanged.
+
 ## Matter and ESPHome side by side - 2026-10-10
 
 Everything from July to 2026-10-10. It was never one release: the Matter firmwares had their own

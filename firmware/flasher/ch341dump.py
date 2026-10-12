@@ -1,53 +1,53 @@
-# Whole-chip 4MB read -> file: a pre-reflash safety backup of the GD25Q32.
-# Reads in 4KB chunks (fresh READ-DATA command per chunk, explicit address -- no
-# reliance on cross-call auto-increment). Verifies the JEDEC id first, same as the
-# write tools, so a mis-clipped chip aborts instead of dumping garbage.
-# Usage: python3 ch341dump.py <out.bin>
-# Transport: ch341common (NOT flashrom).
+#!/usr/bin/env python3
+"""Whole-chip 4 MB read -> file: the backup to take before any write to the GD25Q32.
+
+    ch341dump.py <out.bin>
+
+Reads the chip twice in 4 KB chunks (a fresh READ-DATA command per chunk, explicit address, no
+reliance on cross-call auto-increment) and writes the file only when the two reads agree and
+look like a dump: a clip that reads unreliably gives two different reads. Checks the JEDEC id
+first, same as the write tools, so a mis-clipped chip aborts instead of dumping garbage.
+Read-only. Transport: ch341common (NOT flashrom).
+"""
 import sys
-from ch341common import CH341, GD25Q32_JEDEC
 
-TOTAL = 0x400000  # 4 MB GD25Q32
-STEP = 0x1000  # 4 KB per read (matches the flasher's sector granularity)
+import ch341common as ch
 
 
-def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: ch341dump.py <out.bin>")
-    c = CH341()
-    jid = c.jedec().hex()
-    print("JEDEC:", jid, "OK" if jid == GD25Q32_JEDEC else "*** WRONG ***")
-    if jid != GD25Q32_JEDEC:
-        raise SystemExit("wrong chip id -- check the clip/orientation before dumping")
+def read_chip(c, label):
     out = bytearray()
-    a = 0
-    while a < TOTAL:
-        out += c.read(a, STEP)
-        a += STEP
-        if a % 0x40000 == 0 or a >= TOTAL:
-            print("  read 0x%06X/0x%06X" % (a, TOTAL), flush=True)
-    if len(out) != TOTAL:
-        raise SystemExit("short read: got %d of %d bytes" % (len(out), TOTAL))
+    for a in range(0, ch.CHIP_SIZE, ch.SEC):
+        out += c.read(a, ch.SEC)
+        if (a + ch.SEC) % 0x40000 == 0:
+            print("  %s read 0x%06X/0x%06X" % (label, a + ch.SEC, ch.CHIP_SIZE), flush=True)
+    return bytes(out)
 
-    # Sanity-check the CONTENT, not just the length. A marginal clip can pass the JEDEC probe
-    # (one short transaction) and then fail every bulk read, returning all-0xFF or echoing the
-    # id back. Both produce a full-size file that looks like a valid backup and is worthless --
-    # exactly what happened on 2026-08-19, and the kind of file someone restores to a unit one
-    # day. Refuse to write it instead.
-    blank = out.count(0xFF) * 100 // TOTAL
-    distinct = len(set(out))
-    id_echo = out[:64] == (bytes.fromhex(GD25Q32_JEDEC) + b"\x40") * (64 // 4)
-    if blank > 95 or distinct < 64 or id_echo:
+
+def main(argv):
+    if len(argv) != 1 or argv[0].startswith("-"):
+        raise SystemExit("usage: ch341dump.py <out.bin>")
+    c = ch.open_chip()
+    first = read_chip(c, "first")
+    if len(first) != ch.CHIP_SIZE:
+        raise SystemExit("short read: got %d of %d bytes" % (len(first), ch.CHIP_SIZE))
+    # Sanity-check the CONTENT, not just the length: the kind of file someone restores to a unit
+    # one day. Refuse to write it instead.
+    why = ch.bad_read(first)
+    if why:
         raise SystemExit(
-            "read looks INVALID, refusing to write (%d%% 0xFF, %d distinct byte values%s).\n"
+            "read looks INVALID, refusing to write (%s).\n"
             "The JEDEC probe passed but the bulk reads did not: re-seat the SOIC-8 clip, check\n"
-            "pin 1 orientation, and make sure nothing else is powering the module."
-            % (blank, distinct, ", id echo" if id_echo else ""))
-
-    with open(sys.argv[1], "wb") as f:
-        f.write(out)
-    print("=== dumped %d bytes -> %s ===" % (len(out), sys.argv[1]))
+            "pin 1 orientation, and make sure nothing else is powering the module." % why)
+    second = read_chip(c, "second")
+    if second != first:
+        differ = sum(1 for a in range(0, ch.CHIP_SIZE, ch.SEC) if first[a:a + ch.SEC] != second[a:a + ch.SEC])
+        raise SystemExit("the two reads differ in %d of %d sectors, refusing to write: the clip does not read "
+                         "reliably. Re-seat it and dump again." % (differ, ch.CHIP_SIZE // ch.SEC))
+    with open(argv[0], "wb") as f:
+        f.write(first)
+    print("=== dumped %d bytes -> %s (two reads, identical) ===" % (len(first), argv[0]))
+    c.close()
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

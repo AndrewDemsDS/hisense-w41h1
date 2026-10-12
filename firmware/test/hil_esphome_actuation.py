@@ -24,7 +24,13 @@ The panel itself is NOT verified here. The A/C reports no live display state, so
 photons changed is a human observation. This proves the command path and the absence of side
 effects; a person at the unit proves the panel.
 
-State is snapshotted at the start and restored at the end, so a real unit is left as found.
+State is snapshotted at the start and restored at the end, so a real unit is left as found. The
+restore is in a `finally`: it also runs when a step raises, when the run is interrupted with
+Ctrl-C and when the hard timeout (--timeout, default 25 minutes) ends it. After the restore the
+unit is read back and every field that is not as it was found is a failed check.
+
+A unit that is running when the test connects is taken to be in use and is left alone: nothing
+is sent. Pass --allow-running to test it as it is, or switch it off and pass --power-on.
 
 CONFIRM AND RETRY. The firmware re-sends a command the unit did not answer or did not apply, and
 holds the entity on the request while it does. A step that reads back during a re-send would pass
@@ -36,6 +42,8 @@ doing its job and are listed, a rise of `Failed commands` is a failed check.
 import argparse
 import asyncio
 import time
+import types
+from pathlib import Path
 
 from aioesphomeapi import APIClient
 
@@ -198,7 +206,23 @@ def phase(name: str) -> None:
           f"~{left // 60}m{left % 60:02d}s left", flush=True)
 
 
-async def run(host: str, key: str | None, power_on: bool) -> int:
+# Hard limit for the steps, in seconds. The run takes about 12 minutes.
+DEFAULT_TIMEOUT = 25 * 60
+# Hard limit for putting the unit back.
+RESTORE_TIMEOUT = 3 * 60
+# 4 s hold-off, plus up to ~1.7 s for the command to reach its slot in the 1 s bus cycle and
+# for the poll after it. 6 s left almost nothing over; 7 s leaves a full cycle.
+SETTLE = 7
+# A special-mode re-send waits out the 10 s pacing again, then its own 4 s check.
+SPECIAL_RETRY_EXTRA = 16
+
+
+def is_off(mode) -> bool:
+    return str(mode) in ("0", "ClimateMode.OFF")
+
+
+async def run(host: str, key: str | None, power_on: bool, allow_running: bool = False,
+              timeout: float = DEFAULT_TIMEOUT) -> int:
     client = APIClient(host, 6053, None, noise_psk=key)
     await client.connect(login=True)
     node = Node(client)
@@ -214,10 +238,16 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     print(f"switches: {base_switches}  sleep: {base_sleep}")
     # A powered-off A/C accepts a setpoint but ignores fan, quiet and sleep, so those steps
     # report a false failure. Say so up front rather than leaving it to be re-derived.
-    powered_off = str(baseline.get("mode")) in ("0", "ClimateMode.OFF")
+    powered_off = is_off(baseline.get("mode"))
     if powered_off:
         print("  NOTE: unit reads OFF. fan / quiet / sleep are expected to be no-ops;\n"
               "        rerun with the A/C running to exercise them.\n")
+    elif not allow_running:
+        # A running unit is somebody's air conditioning. This test retunes it for 12 minutes.
+        print(f"\n0 steps run: the unit is running (mode {baseline.get('mode')}), so it is taken to be in use.\n"
+              "Nothing was sent. Pass --allow-running to test it as it is, or switch it off and pass --power-on.")
+        await client.disconnect()
+        return 2
     else:
         print()
 
@@ -234,43 +264,78 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
             await client.disconnect()
             return 1
 
-    # 4 s hold-off, plus up to ~1.7 s for the command to reach its slot in the 1 s bus cycle and
-    # for the poll after it. 6 s left almost nothing over; 7 s leaves a full cycle.
-    settle = 7
+    counters_start = {n: node.counter(n) for n in (UNANSWERED, RETRIES, FAILED)}
+    if counters_start[RETRIES] is None or counters_start[FAILED] is None:
+        print("  NOTE: no 'Command retries' / 'Failed commands' sensors declared; a step read during a\n"
+              "        re-send cannot be told from a pass. Add them from w41h1.yaml.")
+
+    # Everything the restore needs is known BEFORE the first command is sent, so the unit can be
+    # put back from wherever the steps stop.
+    st = types.SimpleNamespace(
+        baseline=baseline, base_switches=base_switches, base_sleep=base_sleep,
+        base_preset=_preset_name(node.states.get(node.climate.key)), base_mode=node.mode(),
+        powered_off=powered_off, power_sent=False, powered_here=False, counters_start=counters_start)
+    try:
+        await asyncio.wait_for(exercise(node, client, st, power_on), timeout)
+    except asyncio.TimeoutError:
+        record("the steps finished inside the hard timeout", False, f"stopped after {timeout:.0f} s")
+    except Exception as e:  # noqa: BLE001 - whatever stopped the steps, the unit is put back
+        record("the steps ran to the end", False, f"{type(e).__name__}: {e}")
+    finally:
+        # Also reached on Ctrl-C (asyncio cancels this task once, and the awaits below still run).
+        try:
+            await asyncio.wait_for(restore(node, client, st), RESTORE_TIMEOUT)
+        except BaseException as e:  # noqa: BLE001 - say what the unit was like, then let it through
+            print(f"\nRESTORE DID NOT FINISH ({type(e).__name__}: {e}). The unit may be left changed.\n"
+                  f"It was found as: {st.baseline}\n  switches {st.base_switches}  sleep {st.base_sleep}  "
+                  f"preset {st.base_preset}{'  (this run switched it ON)' if st.powered_here else ''}")
+            record("the unit was put back as found", False, "the restore did not finish")
+            if not isinstance(e, Exception):
+                raise
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:  # noqa: BLE001 - the connection may be what failed
+                pass
+
+    passed = sum(1 for _, ok, _ in results if ok)
+    failed = len(results) - passed
+    print(f"\n{passed} passed, {failed} failed")
+    return 1 if failed else 0
+
+
+async def exercise(node: Node, client: APIClient, st, power_on: bool) -> None:
+    """The steps. May stop anywhere: run() puts the unit back."""
+    powered_off = st.powered_off
+    settle = SETTLE
     # A re-send restarts the 4 s check, a cycle after the verdict.
     retry_extra = 6
     # Eco / turbo / quiet / sleep go through the firmware's paced special-mode queue: each write
     # waits 10 s after the previous one (the A/C swallows faster ones), then ~4 s until its status
     # check, plus a cycle.
     special_settle = 16
-    # A special-mode re-send waits out the 10 s pacing again, then its own 4 s check.
-    special_retry_extra = 16
-
-    counters_start = {n: node.counter(n) for n in (UNANSWERED, RETRIES, FAILED)}
-    if counters_start[RETRIES] is None or counters_start[FAILED] is None:
-        print("  NOTE: no 'Command retries' / 'Failed commands' sensors declared; a step read during a\n"
-              "        re-send cannot be told from a pass. Add them from w41h1.yaml.")
+    special_retry_extra = SPECIAL_RETRY_EXTRA
 
     # --- 0. power on (opt-in) -----------------------------------------------------------
     # Off by default: this starts a real compressor. Also the only test of the power path,
     # and directly relevant to issue #7 (I17), where powering on a physically-off unit from
     # a cold state may not take. The unit's own mode readback is the evidence, not our echo.
-    powered_here = False
     if power_on and powered_off:
         print("[power on]")
+        st.power_sent = True
         client.climate_command(key=node.climate.key, mode=2)  # COOL
         await node.settle(12, retry_extra)
         after = node.climate_snapshot()
         got_on = str(after.get("mode")) not in ("0", "ClimateMode.OFF")
         record("power on takes (issue #7)", got_on, f"mode now {after.get('mode')}")
-        powered_here = got_on
-        powered_off = not got_on
+        st.powered_here = got_on
+        st.powered_off = powered_off = not got_on
 
     # Special modes pin the fan (quiet/sleep low, turbo high) and the firmware refuses other
     # speeds while they do, so start from no special mode. The baseline preset is put back at
     # the end through the climate entity, which is one ordered plan rather than switch writes.
     phase("prepare")
-    base_preset = _preset_name(node.states.get(node.climate.key))
+    base_preset = st.base_preset
     if base_preset not in ("", "none"):
         client.climate_command(key=node.climate.key, preset=0)
         await asyncio.sleep(35)
@@ -346,7 +411,7 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     phase("mode sweep")
     # A mode write powers the unit on. Without --power-on that must not happen, and the sweep
     # used to start the compressor on a unit found off and leave it running in auto.
-    base_mode = node.mode()
+    base_mode = st.base_mode
     sweep = () if powered_off else (("cool", 2), ("dry", 5), ("fan_only", 4), ("auto", 6))
     if powered_off:
         print("  SKIP mode sweep: unit is off (use --power-on to run it)")
@@ -449,8 +514,21 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
         got = _preset_name(node.states.get(node.climate.key))
         record(f"preset {name}", got == name, f"got {got}")
 
-    # --- restore ------------------------------------------------------------------------
+
+async def restore(node: Node, client: APIClient, st) -> None:
+    """Put the unit back as it was found, then read it back. Uses only what run() took down
+    before the first command, so it works from wherever the steps stopped."""
+    baseline, base_switches, base_sleep = st.baseline, st.base_switches, st.base_sleep
+    base_preset, base_mode, counters_start = st.base_preset, st.base_mode, st.counters_start
+    sleep_sel = node.selects.get("Sleep profile")
+    settle, special_retry_extra = SETTLE, SPECIAL_RETRY_EXTRA
     phase("restore")
+    # A unit that was found off is switched off again when a power-on was sent, even if the steps
+    # stopped before its readback, and when it reads on for any other reason: leaving a compressor
+    # running is the one outcome this must not have.
+    was_off = is_off(baseline.get("mode"))
+    powered_here = was_off and (st.power_sent or not is_off(node.climate_snapshot().get("mode")))
+    powered_off = was_off and not powered_here
     if powered_here:
         client.climate_command(key=node.climate.key, mode=0)  # back off, as found
         await asyncio.sleep(6)
@@ -485,7 +563,14 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     if not powered_off and not powered_here and base_mode not in (None, 0, 3) and node.mode() != base_mode:
         client.climate_command(key=node.climate.key, mode=base_mode)
         await asyncio.sleep(settle)
-    if baseline.get("target_temperature") and (powered_off or node.mode() in (2, 3)):
+    # The fan the steps walked through its whole ladder. A unit that is off ignores a fan command,
+    # so it goes back only on a unit that was found running.
+    fan = baseline.get("custom_fan_mode") or {str(v): k for k, v in FAN_ENUM.items()}.get(str(baseline.get("fan_mode")))
+    if fan and not was_off:
+        client.climate_command(key=node.climate.key, custom_fan_mode=fan)
+        await asyncio.sleep(settle)
+    # A unit that is off takes a setpoint, so this also covers the run that switched it on.
+    if baseline.get("target_temperature") and (was_off or node.mode() in (2, 3)):
         client.climate_command(key=node.climate.key,
                                target_temperature=float(baseline["target_temperature"]))
         await asyncio.sleep(3)
@@ -495,7 +580,8 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     # What the firmware had to do to get there. Retries are listed, not failed: a re-send that
     # lands is the fix working. A command the unit never took is a failure even if every readback
     # above happened to pass.
-    await asyncio.sleep(special_retry_extra)  # let the restore finish its own checks
+    # Let the restore finish its own checks. A preset plan is up to three writes 10 s apart.
+    await asyncio.sleep(35 if base_preset not in ("", "none") else special_retry_extra)
     counters_end = {n: node.counter(n) for n in counters_start}
     delta = {n: (None if counters_start[n] is None or counters_end[n] is None
                  else counters_end[n] - counters_start[n]) for n in counters_start}
@@ -504,14 +590,17 @@ async def run(host: str, key: str | None, power_on: bool) -> int:
     if delta[FAILED] is not None:
         record("no command was given up on", delta[FAILED] == 0,
                f"'Failed commands' rose by {delta[FAILED]} (see the node's WARN log for which)")
-    print("  restored to baseline (verify on the unit)")
-
-    await client.disconnect()
-
-    passed = sum(1 for _, ok, _ in results if ok)
-    failed = len(results) - passed
-    print(f"\n{passed} passed, {failed} failed")
-    return 1 if failed else 0
+    # The final state, read back. Every field that is not as it was found is a failed check.
+    after = node.climate_snapshot()
+    # The fan of a unit that is off could not be put back (above), so it is not held against it.
+    fields = [f for f in CLIMATE_FIELDS if not (was_off and f in ("fan_mode", "custom_fan_mode"))]
+    left = [f"{f}: {baseline.get(f)} -> {after.get(f)}" for f in fields if baseline.get(f) != after.get(f)]
+    left += [f"{n}: {was} -> {node.switch_state(n)}" for n, was in base_switches.items()
+             if was is not None and node.switch_state(n) != was]
+    if base_sleep and node.select_state("Sleep profile") != base_sleep:
+        left.append(f"Sleep profile: {base_sleep} -> {node.select_state('Sleep profile')}")
+    record("the unit is as it was found", not left, "; ".join(left))
+    print("  restored to baseline (verify on the unit)" if not left else "  NOT as found: see the line above, and check the unit")
 
 
 def _preset_name(state) -> str:
@@ -533,7 +622,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("host")
     ap.add_argument("--key", default=None, help="API encryption key (noise_psk)")
-    ap.add_argument("--secrets", default="/repo/firmware/esphome/secrets.yaml")
+    ap.add_argument("--secrets", default=str(Path(__file__).resolve().parents[1] / "esphome" / "secrets.yaml"),
+                    help="where the API key is read from when --key is not given (default: this checkout's "
+                         "firmware/esphome/secrets.yaml)")
+    ap.add_argument("--allow-running", action="store_true",
+                    help="test a unit that is running when the test connects. Without it such a unit is "
+                         "taken to be in use and nothing is sent.")
+    ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
+                    help="hard limit for the steps in seconds, after which the unit is put back (default %(default)s)")
     ap.add_argument("--power-on", action="store_true",
                     help="power the A/C on for the run if it is off, then restore. Starts a real "
                          "compressor; also the only test of the power path (issue #7).")
@@ -548,7 +644,7 @@ def main() -> None:
         except OSError:
             pass
 
-    raise SystemExit(asyncio.run(run(args.host, key, args.power_on)))
+    raise SystemExit(asyncio.run(run(args.host, key, args.power_on, args.allow_running, args.timeout)))
 
 
 if __name__ == "__main__":

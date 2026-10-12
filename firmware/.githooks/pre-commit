@@ -1,14 +1,29 @@
 #!/usr/bin/env bash
-# Firmware safety gate: when the host tests, the reference driver, dev.py or the ESPHome
-# components are staged, run the host test suite (firmware/test/run_tests.sh), so a codec or
-# scheduler regression cannot be committed.
+# Firmware safety gate: when the host tests, the reference driver, the scripts, the clip flasher
+# or the ESPHome components are staged, run the host test suite (firmware/test/run_tests.sh), so
+# a codec, scheduler or tooling regression cannot be committed.
 set -euo pipefail
 REPO="$(git rev-parse --show-toplevel)"
+
+# The staged file names, read once. Every decision below looks at this list. It used to be
+# `git diff --cached --name-only | grep -q ...` per decision: grep -q leaves at its first match,
+# git dies of SIGPIPE when the list is longer than the pipe holds (about 64 KB of names), and
+# under pipefail that counted as "no match", so a very large commit skipped the host tests.
+# NUL-separated, because git quotes and escapes a name with a non-ASCII letter otherwise.
+mapfile -d '' -t staged < <(git diff --cached --name-only -z)
+staged_match() {  # true when a staged path matches the extended regular expression $1
+  local f
+  for f in "${staged[@]}"; do
+    [[ $f =~ $1 ]] && return 0
+  done
+  return 1
+}
+
 # The ESPHome component's codec port is covered too: its parity test (layer 1d) is what keeps it
 # equal to the reference driver, and an edit to the component alone must not skip it.
+# decode_ac_frames.py is here because layer 2 and virtual_ac.py import it.
 ran_tests=0
-if git diff --cached --name-only \
-    | grep -qE '^firmware/test/|^firmware/scripts/(dev|amebaz2_image|version-lint)\.py$|^firmware/esphome/components/'; then
+if staged_match '^firmware/(test|scripts|flasher|\.githooks)/|^firmware/esphome/components/|^reverse-engineering/tools/decode_ac_frames\.py$|^docs/guide/lint\.py$'; then
   echo "[pre-commit] firmware changed -> firmware/test/run_tests.sh"
   bash "$REPO/firmware/test/run_tests.sh" >/dev/null || {
     echo "[pre-commit] HOST TESTS FAILED (run firmware/test/run_tests.sh). Fix, or bypass with: git commit --no-verify"; exit 1; }
@@ -19,19 +34,28 @@ fi
 # is staged. run_tests.sh ends with the same check, so it is skipped when that already ran. The
 # rule that a component or package change needs a changelog entry is per pull request, not per
 # commit, and CI checks it (the `version` job of qa.yaml).
-if [ "$ran_tests" = 0 ] && git diff --cached --name-only \
-    | grep -qE '^firmware/esphome/packages/|^CHANGELOG\.md$|^\.github/workflows/|^firmware/scripts/esphome-upstream-check\.sh$'; then
+if [ "$ran_tests" = 0 ] && staged_match '^firmware/esphome/packages/|^CHANGELOG\.md$|^\.github/workflows/'; then
   echo "[pre-commit] version, changelog or a pin changed -> firmware/scripts/version-lint.py"
   python3 "$REPO/firmware/scripts/version-lint.py" || {
     echo "[pre-commit] VERSION LINT FAILED (see above). Fix, or bypass with: git commit --no-verify"; exit 1; }
+fi
+
+# The guide: broken links, heading levels and the leak denylist (hostnames, private addresses,
+# home paths), when a guide page or the linter is staged. It reads the working tree.
+if staged_match '^docs/guide/[^/]+\.md$|^docs/guide/lint\.py$'; then
+  echo "[pre-commit] guide changed -> docs/guide/lint.py"
+  python3 "$REPO/docs/guide/lint.py" || {
+    echo "[pre-commit] GUIDE LINT FAILED (see above). Fix, or bypass with: git commit --no-verify"; exit 1; }
 fi
 
 # C/C++ lint on the staged sources (cpp-lint.py owns the scope, so the whole staged list can be
 # passed). clang-format + the custom rules only, to stay fast; CPP_LINT_TIDY=1
 # adds clang-tidy, and CI always runs it. It reads the working tree, not the index. A missing
 # pinned clang-format warns instead of blocking: `cpp-lint.sh fix` installs it on first use.
-mapfile -t cpp_staged < <(git diff --cached --name-only --diff-filter=ACMR \
-  | grep -E '\.(c|cc|cpp|h|hpp|tcc)$' || true)
+cpp_staged=()
+while IFS= read -r -d '' f; do
+  [[ $f =~ \.(c|cc|cpp|h|hpp|tcc)$ ]] && cpp_staged+=("$f")
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
 if [ ${#cpp_staged[@]} -gt 0 ]; then
   tidy_flag=--no-tidy
   [ "${CPP_LINT_TIDY:-0}" = 1 ] && tidy_flag=""
@@ -47,7 +71,7 @@ if [ ${#cpp_staged[@]} -gt 0 ]; then
   fi
 fi
 
-# Prose slop gate: block em dashes in newly-added markdown (no-op when no .md is staged).
+# Prose slop gate: block em dashes in newly-added markdown (no-op when no markdown is staged).
 # This is the portable gate every contributor gets.
 bash "$REPO/firmware/scripts/stop-slop.sh" || exit 1
 

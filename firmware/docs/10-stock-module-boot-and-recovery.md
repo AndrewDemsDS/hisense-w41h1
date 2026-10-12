@@ -32,7 +32,7 @@ it: no "last written" flag, no application version.
   the second slot on hardware (2026-07-27). Never add a "this image must live in slot 1" rule to
   a tool.
 
-`dev.py convert` re-signs an ESPHome image with a serial in the Matter numbering for exactly this
+`matter-convert.py convert` re-signs an ESPHome image with a serial in the Matter numbering for exactly this
 reason: the Matter firmware writes it to the inactive slot and the bootloader then prefers it
 (`docs/guide/Converting-a-Stock-Module-to-ESPHome.md`).
 
@@ -103,7 +103,7 @@ What settles it, cheapest first:
    `amebaz2_image.py`. A valid chain in the slot with the higher serial plus QE set means the
    firmware is fine and the problem is elsewhere.
 3. On a unit that still runs the retired Matter firmware, its break-glass listener:
-   `dev.py matter-slots <ip>` prints `ok: fw1_sn=<n> fw2_sn=<n> cur=<slot>`. An answer proves the
+   `matter-convert.py slots <ip>` prints `ok: fw1_sn=<n> fw2_sn=<n> cur=<slot>`. An answer proves the
    unit is alive. No answer proves nothing.
 
 ## 5. Recovery with the clip
@@ -114,7 +114,7 @@ The clip procedure, the wiring and the warnings (3.3 V, never flashrom, the A/C 
 - **Dump the whole chip before the first write, twice, and compare.** That dump holds the unit's
   own calibration data, keys and vendor image. It is the only complete way back.
 - The recipe that has worked: write the unit's own dump with slot 1 replaced by the original
-  vendor slot bytes (factory signature, from a `matter-backup` capture or the first dump) and
+  vendor slot bytes (factory signature, from a `matter-convert.py backup` capture or the first dump) and
   slot 2 erased to `0xFF`. `ch341flash-full.py` sets QE again at the end. The unit boots the
   vendor firmware and rejoins its cloud.
 - Flash `0x1000..0x3FFF` holds the module's calibration data and must survive. A full-flash image
@@ -123,7 +123,7 @@ The clip procedure, the wiring and the warnings (3.3 V, never flashrom, the A/C 
   another was left wedged even though every byte matched what the donor had. Let the running
   firmware format its own storage.
 - Before a second firmware ever overwrites it, save the vendor image from the inactive slot. On
-  the retired Matter firmware (1.3.9 or later) `dev.py matter-backup <ip>` streams it out and
+  the retired Matter firmware (1.3.9 or later) `matter-convert.py backup <ip>` streams it out and
   verifies it. Otherwise it is in your first clip dump.
 
 ## 6. Dead ends, so nobody repeats them

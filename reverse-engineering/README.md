@@ -36,7 +36,7 @@ Full detail: [`docs/01-hardware.md`](docs/01-hardware.md).
 
 ```
 docs/     protocol + hardware + Matter + cloud/firewall + ESP32 command map
-tools/    sniff.py, flash dump + Matter-code extractors, protocol disassembler, QR gen
+tools/    sniff.py, Matter-code extractor, protocol disassembler, QR gen (the flash dump tool is firmware/flasher/ch341dump.py)
 esphome/  ready-to-flash ESP32 replacement config
 hardware/ pinouts, the Matter QR image
 ```
