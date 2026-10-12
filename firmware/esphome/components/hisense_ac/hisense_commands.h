@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "hisense_bus.h"
 #include "hisense_map.h"
 #include "hisense_protocol.h"
 
@@ -39,17 +40,19 @@ enum class CommandEvent : uint8_t {
   SHADOW_SETPOINT_KEPT,        // fields = the status setpoint (as uint8_t) outside the command range
 };
 
-// Where the tracker's frames go. Each send returns whether the frame was queued for the bus.
+// Where the tracker's frames go. Each send returns the scheduler's ticket for the frame
+// (BusScheduler::enqueue), or BUS_TICKET_NONE when it was not queued. The ticket comes back in
+// on_command_done(), which is how the tracker knows which of its commands a finished frame was.
 class CommandSink {
  public:
   virtual ~CommandSink() = default;
   // The combined 0x65 frame built from `cmd`.
-  virtual bool send_combined(const AcCommand &cmd) = 0;
+  virtual BusTicket send_combined(const AcCommand &cmd) = 0;
   // The literal power frames.
-  virtual bool send_power(bool on) = 0;
+  virtual BusTicket send_power(bool on) = 0;
   // The single-field mute and sleep frames.
-  virtual bool send_mute(bool on) = 0;
-  virtual bool send_sleep(uint8_t profile) = 0;
+  virtual BusTicket send_mute(bool on) = 0;
+  virtual BusTicket send_sleep(uint8_t profile) = 0;
   virtual void on_command_event(CommandEvent event, uint16_t fields, uint16_t count) {}
 };
 
@@ -96,13 +99,7 @@ class CommandTracker {
   // ---- Sending ----------------------------------------------------------------------------------
   /// The combined frame from the current shadow, unchecked. For frames that only carry something
   /// the status does not report (the display preference).
-  bool send_combined() {
-    if (!combined_frame_allowed(this->last_.valid)) {
-      this->event_(CommandEvent::COMBINED_REFUSED_NO_STATUS);
-      return false;
-    }
-    return this->sink_->send_combined(this->cmd_);
-  }
+  bool send_combined() { return this->send_combined_() != BUS_TICKET_NONE; }
 
   /// A user write of `fields` (CONFIRM_* bits), already placed in the shadow. Sends the combined
   /// frame, with the power-on bits in it when `power_on`, and keeps the request until the unit's
@@ -110,10 +107,11 @@ class CommandTracker {
   void send_user_command(uint16_t fields, bool power_on, uint32_t now) {
     // Power and mode in one frame, as the stock module sends them: the unit takes both or neither.
     this->cmd_.power_on = power_on;
-    const bool sent = this->send_combined();
+    const BusTicket ticket = this->send_combined_();
     this->cmd_.power_on = false;  // one frame only, never part of the shadow
-    if (!sent)
+    if (ticket == BUS_TICKET_NONE)
       return;
+    this->main_ticket_ = ticket;
     if (power_on) {
       power_intent_sent(&this->power_intent_, true);
       fields |= CONFIRM_POWER;
@@ -123,8 +121,11 @@ class CommandTracker {
 
   /// Switch the unit off, checked and re-sent the same way.
   void send_user_power_off(uint32_t now) {
-    if (this->send_power_(false))
-      this->track_(intent_power_off(), now);
+    const BusTicket ticket = this->send_power_(false);
+    if (ticket == BUS_TICKET_NONE)
+      return;
+    this->main_ticket_ = ticket;
+    this->track_(intent_power_off(), now);
   }
 
   // ---- Special modes ----------------------------------------------------------------------------
@@ -167,28 +168,37 @@ class CommandTracker {
     for (uint8_t i = 1; i < this->special_len_; i++)
       this->special_queue_[i - 1] = this->special_queue_[i];
     this->special_len_--;
-    const bool sent = this->execute_special_(op);
+    const BusTicket ticket = this->execute_special_(op);
     special_apply(&this->projected_, op);
     this->last_special_ms_ = now;
     this->special_sent_ = true;
     this->note_user_command(now);
-    if (sent) {
+    if (ticket != BUS_TICKET_NONE) {
+      this->special_ticket_ = ticket;
       pending_begin(&this->special_pending_, intent_from_special(op), unit_view_from_status(this->last_), now);
       this->special_pending_.resends = this->special_resends_;
     }
   }
 
   // ---- From the bus -----------------------------------------------------------------------------
-  /// A command frame finished its transaction, answered or not. The frame left the wire now,
-  /// whichever way it ended: the unit's settle time, the hold-off and the special-mode pacing all
-  /// count from here and not from the moment it was queued.
-  void on_command_done(bool answered, uint32_t now) {
-    if (this->main_pending_.active || this->special_pending_.active)
+  /// The command frame with this ticket finished its transaction, answered or not. The frame left
+  /// the wire now, whichever way it ended: the unit's settle time and the hold-off count from here
+  /// and not from the moment it was queued, and so does the special-mode pacing for a frame that
+  /// got no answer. Only the command the frame belongs to is touched: a frame of another command,
+  /// or one nobody tracks (the display preference), says nothing about the ones still waiting.
+  void on_command_done(BusTicket ticket, bool answered, uint32_t now) {
+    if (ticket == BUS_TICKET_NONE)
+      return;
+    if (this->main_pending_.active && ticket == this->main_ticket_) {
+      pending_on_wire(&this->main_pending_, now);
       this->note_user_command(now);
-    pending_on_wire(&this->main_pending_, now);
-    pending_on_wire(&this->special_pending_, now);
-    if (!answered && this->special_pending_.active)
-      this->last_special_ms_ = now;
+    }
+    if (this->special_pending_.active && ticket == this->special_ticket_) {
+      pending_on_wire(&this->special_pending_, now);
+      this->note_user_command(now);
+      if (!answered)
+        this->last_special_ms_ = now;
+    }
   }
 
   /// The link dropped. Nothing is re-sent into a dead bus, and nothing still waiting is sent when
@@ -259,11 +269,44 @@ class CommandTracker {
     this->sink_->on_command_event(event, fields, count);
   }
 
-  bool send_power_(bool on) {
-    if (!this->sink_->send_power(on))
-      return false;
-    power_intent_sent(&this->power_intent_, on);
-    return true;
+  BusTicket send_combined_() {
+    if (!combined_frame_allowed(this->last_.valid)) {
+      this->event_(CommandEvent::COMBINED_REFUSED_NO_STATUS);
+      return BUS_TICKET_NONE;
+    }
+    return this->sink_->send_combined(this->cmd_);
+  }
+
+  BusTicket send_power_(bool on) {
+    const BusTicket ticket = this->sink_->send_power(on);
+    if (ticket != BUS_TICKET_NONE)
+      power_intent_sent(&this->power_intent_, on);
+    return ticket;
+  }
+
+  // The frames of a re-send. The settle time counts from the last one that was queued.
+  void resend_main_(ResendFrames frames) {
+    BusTicket first = BUS_TICKET_NONE;
+    BusTicket last = BUS_TICKET_NONE;
+    switch (frames) {
+      case RESEND_POWER_OFF:
+        last = this->send_power_(false);
+        break;
+      case RESEND_POWER_ON_ALONE:
+        last = this->send_power_(true);
+        break;
+      case RESEND_POWER_ON_PAIR:
+        first = this->send_power_(true);
+        last = this->send_combined_();
+        break;
+      case RESEND_COMBINED:
+        last = this->send_combined_();
+        break;
+    }
+    if (last == BUS_TICKET_NONE)
+      last = first;
+    if (last != BUS_TICKET_NONE)
+      this->main_ticket_ = last;
   }
 
   void track_(const CommandIntent &intent, uint32_t now) {
@@ -299,21 +342,7 @@ class CommandTracker {
     this->command_retries_++;
     this->event_(CommandEvent::MAIN_RESENT, unmet, p.resends);
     intent_to_command(p.intent, panel_f, &this->cmd_);
-    switch (resend_frames(p.intent, unmet)) {
-      case RESEND_POWER_OFF:
-        this->send_power_(false);
-        break;
-      case RESEND_POWER_ON_ALONE:
-        this->send_power_(true);
-        break;
-      case RESEND_POWER_ON_PAIR:
-        this->send_power_(true);
-        this->send_combined();
-        break;
-      case RESEND_COMBINED:
-        this->send_combined();
-        break;
-    }
+    this->resend_main_(resend_frames(p.intent, unmet));
     p.sent_ms = now;
     this->note_user_command(now);
   }
@@ -368,21 +397,21 @@ class CommandTracker {
     this->note_user_command(now);
   }
 
-  bool execute_special_(const SpecialOp &op) {
+  BusTicket execute_special_(const SpecialOp &op) {
     this->event_(CommandEvent::SPECIAL_SENDING, op.kind, op.value);
     switch (op.kind) {
       case SPECIAL_OP_FEATURE: {
         this->cmd_.feature = static_cast<Feature>(op.value);
-        const bool sent = this->send_combined();
+        const BusTicket ticket = this->send_combined_();
         this->cmd_.feature = feature_after_send(this->cmd_.feature);  // ECO_OFF is one-shot
-        return sent;
+        return ticket;
       }
       case SPECIAL_OP_MUTE:
         return this->sink_->send_mute(op.value != 0);
       case SPECIAL_OP_SLEEP:
         return this->sink_->send_sleep(op.value);
       default:
-        return false;
+        return BUS_TICKET_NONE;
     }
   }
 
@@ -392,6 +421,10 @@ class CommandTracker {
   PowerIntent power_intent_{};
   PendingCommand main_pending_{};
   PendingCommand special_pending_{};
+  // The scheduler's ticket for the newest frame of each, so a finished frame is credited to the
+  // command it belongs to and to no other.
+  BusTicket main_ticket_{BUS_TICKET_NONE};
+  BusTicket special_ticket_{BUS_TICKET_NONE};
   uint8_t special_resends_{0};
   uint32_t command_retries_{0};
   uint32_t failed_commands_{0};

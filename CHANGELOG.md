@@ -14,6 +14,11 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 This becomes 2.0.0, the first release of the ESPHome firmware under a version number of its own.
 The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 
+### The hub, the mapping and the entities (2026-10-13)
+- **A finished frame is credited to the command it belongs to.** A display-preference frame or a
+  special-mode write no longer restarts the wait of another command, so a lost command is sent
+  again after about 4 s where an unrelated frame used to push that to 7 s.
+
 ### Board files, the stock-module component and CI (2026-10-12)
 - **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air
   Conditioner`), and the board files no longer repeat the two lines. A file that sets them keeps

@@ -664,6 +664,7 @@ struct Rig {
   // Enqueue a command frame carrying a tag in bytes 44/45. Those are body bytes no builder writes
   // (zero in every frame of hisense_protocol.cpp) and the scheduler never reads; the tag is how the
   // test follows one frame from the queue to the wire. stamp_link_token() redoes the checksum.
+  H::BusTicket last_ticket = H::BUS_TICKET_NONE;  // of the newest frame send() queued
   bool send(const uint8_t *frame, size_t len, uint16_t *tag_out = nullptr) {
     begin();
     uint8_t tagged[H::CMD_FRAME_MAX];
@@ -672,7 +673,10 @@ struct Rig {
     f[44] = static_cast<uint8_t>(tag >> 8);
     f[45] = static_cast<uint8_t>(tag);
     size_t n = H::stamp_link_token(f.data(), f.size(), f[7], f[8], tagged, sizeof(tagged));
-    if (n == 0 || !bus.enqueue(tagged, n))
+    if (n == 0)
+      return false;
+    last_ticket = bus.enqueue(tagged, n);
+    if (last_ticket == H::BUS_TICKET_NONE)
       return false;
     next_tag++;
     tags[tag].frame.assign(tagged, tagged + n);
@@ -1831,16 +1835,17 @@ struct MiniHub : H::CommandSink {
       link_up = up;
       link_dirty = true;
     };
-    r.rec.command_hook = [this](bool answered) { t.on_command_done(answered, g_now); };
+    r.rec.command_hook = [this](bool answered) { t.on_command_done(r.bus.command_ticket(), answered, g_now); };
   }
-  bool send_combined(const H::AcCommand &c) override { return r.send_cmd(c); }
-  bool send_power(bool on) override {
+  H::BusTicket ticket(bool queued) const { return queued ? r.last_ticket : H::BUS_TICKET_NONE; }
+  H::BusTicket send_combined(const H::AcCommand &c) override { return ticket(r.send_cmd(c)); }
+  H::BusTicket send_power(bool on) override {
     uint8_t f[H::CMD_FRAME_MAX];
     size_t n = H::build_power_frame(on, f, sizeof(f));
-    return r.send(f, n);
+    return ticket(r.send(f, n));
   }
-  bool send_mute(bool) override { return false; }
-  bool send_sleep(uint8_t) override { return false; }
+  H::BusTicket send_mute(bool) override { return H::BUS_TICKET_NONE; }
+  H::BusTicket send_sleep(uint8_t) override { return H::BUS_TICKET_NONE; }
   void on_command_event(H::CommandEvent event, uint16_t, uint16_t count) override {
     if (event == H::CommandEvent::MAIN_CONFIRMED || event == H::CommandEvent::MAIN_YIELDED)
       done++;

@@ -125,10 +125,10 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
   void on_bus_setup_request(uint8_t request) override;
 
   // CommandSink: the tracker's frames, built and handed to the scheduler.
-  bool send_combined(const AcCommand &cmd) override;
-  bool send_power(bool on) override;
-  bool send_mute(bool on) override;
-  bool send_sleep(uint8_t profile) override;
+  BusTicket send_combined(const AcCommand &cmd) override;
+  BusTicket send_power(bool on) override;
+  BusTicket send_mute(bool on) override;
+  BusTicket send_sleep(uint8_t profile) override;
   void on_command_event(CommandEvent event, uint16_t fields, uint16_t count) override;
 
   // BusIO, over uart::UARTDevice and the DE pin.
@@ -169,7 +169,7 @@ class HisenseAC : public Component, public uart::UARTDevice, public BusIO, publi
 #endif
 
  protected:
-  bool send_frame_(const uint8_t *frame, size_t len);
+  BusTicket send_frame_(const uint8_t *frame, size_t len);
 
   void process_status_(const AcState &state);
   void publish_telemetry_(const AcState &state);

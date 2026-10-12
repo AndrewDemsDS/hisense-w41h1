@@ -79,7 +79,7 @@ void HisenseAC::on_bus_command(bool answered, uint8_t reply_class) {
   } else {
     ESP_LOGW(TAG, "Command frame got no reply from the unit, not sent again");
   }
-  this->commands_.on_command_done(answered, millis());
+  this->commands_.on_command_done(this->bus_.command_ticket(), answered, millis());
 }
 
 void HisenseAC::on_bus_link(bool up) {
@@ -308,16 +308,16 @@ void HisenseAC::publish_diagnostics_() {
 }
 
 // ---- Commands ---------------------------------------------------------------------------------
-bool HisenseAC::send_frame_(const uint8_t *frame, size_t len) {
+BusTicket HisenseAC::send_frame_(const uint8_t *frame, size_t len) {
   // Builders write the buzzer bit set, as the stock module does by default.
   if (this->beeper_)
-    return this->bus_.enqueue(frame, len) != BUS_TICKET_NONE;
+    return this->bus_.enqueue(frame, len);
   uint8_t quiet[CMD_FRAME_MAX];
   size_t n = stamp_beep(frame, len, false, quiet, sizeof(quiet));
-  return n != 0 && this->bus_.enqueue(quiet, n) != BUS_TICKET_NONE;
+  return n != 0 ? this->bus_.enqueue(quiet, n) : BUS_TICKET_NONE;
 }
 
-bool HisenseAC::send_combined(const AcCommand &cmd) {
+BusTicket HisenseAC::send_combined(const AcCommand &cmd) {
   uint8_t frame[CMD_FRAME_MAX];
   ESP_LOGD(TAG, "TX combined: power_on=%d mode=%d setpoint=%d fan=0x%02X vswing=%d hswing=%d feature=%d", cmd.power_on,
            (int) cmd.mode, (int) cmd.setpoint, (unsigned) cmd.fan, (int) cmd.vswing, (int) cmd.hswing,
@@ -329,24 +329,25 @@ bool HisenseAC::send_combined(const AcCommand &cmd) {
   size_t len = build_command(stamped, frame, sizeof(frame));
   if (len == 0) {
     ESP_LOGW(TAG, "Command frame could not be built");
-    return false;
+    return BUS_TICKET_NONE;
   }
-  if (!this->send_frame_(frame, len)) {
+  const BusTicket ticket = this->send_frame_(frame, len);
+  if (ticket == BUS_TICKET_NONE) {
     ESP_LOGW(TAG, "Command frame dropped: TX queue full");
-    return false;
   }
-  return true;
+  return ticket;
 }
 
-bool HisenseAC::send_power(bool on) {
+BusTicket HisenseAC::send_power(bool on) {
   uint8_t frame[CMD_FRAME_MAX];
   size_t len = build_power_frame(on, frame, sizeof(frame));
-  if (len == 0 || !this->send_frame_(frame, len)) {
+  const BusTicket ticket = len != 0 ? this->send_frame_(frame, len) : BUS_TICKET_NONE;
+  if (ticket == BUS_TICKET_NONE) {
     ESP_LOGW(TAG, "Power %s frame not sent", on ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
-    return false;
+  } else {
+    ESP_LOGD(TAG, "TX power %s", on ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
   }
-  ESP_LOGD(TAG, "TX power %s", on ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
-  return true;
+  return ticket;
 }
 
 /* Mute and sleep use the MINIMAL single-field frame, which is what the vendor module's generic
@@ -359,24 +360,24 @@ bool HisenseAC::send_power(bool on) {
  *
  * The minimal frame is preferable to patching the combined one, because it leaves mode,
  * setpoint, fan and swing alone instead of re-asserting the shadow on every mute or sleep. */
-bool HisenseAC::send_mute(bool on) {
+BusTicket HisenseAC::send_mute(bool on) {
   uint8_t frame[CMD_FRAME_MAX];
   size_t len = build_mute_frame(on, frame, sizeof(frame));
-  if (len == 0 || !this->send_frame_(frame, len)) {
+  const BusTicket ticket = len != 0 ? this->send_frame_(frame, len) : BUS_TICKET_NONE;
+  if (ticket == BUS_TICKET_NONE) {
     ESP_LOGW(TAG, "Mute frame not sent");
-    return false;
   }
-  return true;
+  return ticket;
 }
 
-bool HisenseAC::send_sleep(uint8_t profile) {
+BusTicket HisenseAC::send_sleep(uint8_t profile) {
   uint8_t frame[CMD_FRAME_MAX];
   size_t len = build_sleep_frame(profile, frame, sizeof(frame));
-  if (len == 0 || !this->send_frame_(frame, len)) {
+  const BusTicket ticket = len != 0 ? this->send_frame_(frame, len) : BUS_TICKET_NONE;
+  if (ticket == BUS_TICKET_NONE) {
     ESP_LOGW(TAG, "Sleep frame not sent");
-    return false;
   }
-  return true;
+  return ticket;
 }
 
 // ---- What the command tracker did ---------------------------------------------------------------

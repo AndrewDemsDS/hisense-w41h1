@@ -628,15 +628,22 @@ struct Rig : H::CommandSink {
     shown = u->report();
     t.on_status(status_of(shown), now);
   }
-  bool tx(FrameKind kind, const H::AcCommand &c, uint8_t value) {
+  // The scheduler's part, as far as the tracker sees it: a ticket per frame, and with `wire_ms`
+  // set, the report that the frame's transaction ended that much later.
+  uint32_t wire_ms = 0;
+  H::BusTicket next_ticket = 0;
+  std::vector<std::pair<H::BusTicket, uint32_t>> flying;
+  H::BusTicket tx(FrameKind kind, const H::AcCommand &c, uint8_t value) {
     if (link_up)
       unit->receive({now, kind, c, value});
-    return true;
+    if (wire_ms != 0)
+      flying.emplace_back(next_ticket + 1, now + wire_ms);
+    return ++next_ticket;
   }
-  bool send_combined(const H::AcCommand &c) override { return tx(F_COMBINED, c, 0); }
-  bool send_power(bool on) override { return tx(on ? F_POWER_ON : F_POWER_OFF, cmd, 0); }
-  bool send_mute(bool on) override { return tx(F_MUTE, cmd, on ? 1 : 0); }
-  bool send_sleep(uint8_t profile) override { return tx(F_SLEEP, cmd, profile); }
+  H::BusTicket send_combined(const H::AcCommand &c) override { return tx(F_COMBINED, c, 0); }
+  H::BusTicket send_power(bool on) override { return tx(on ? F_POWER_ON : F_POWER_OFF, cmd, 0); }
+  H::BusTicket send_mute(bool on) override { return tx(F_MUTE, cmd, on ? 1 : 0); }
+  H::BusTicket send_sleep(uint8_t profile) override { return tx(F_SLEEP, cmd, profile); }
 
   bool holdoff() const { return t.in_holdoff(now); }
   bool busy() const { return t.special_busy(); }
@@ -666,6 +673,14 @@ struct Rig : H::CommandSink {
   void run(uint32_t ms) {
     for (uint32_t i = 0; i < ms; i += 100) {
       now += 100;
+      for (size_t f = 0; f < flying.size();) {
+        if (flying[f].second == now) {
+          t.on_command_done(flying[f].first, true, now);
+          flying.erase(flying.begin() + (long) f);
+        } else {
+          f++;
+        }
+      }
       t.drain_special_queue(now);
       if (now % 1000 == 0)
         status();
@@ -898,6 +913,21 @@ static void test_scenarios() {
     h.user(H::CONFIRM_MODE | H::CONFIRM_FAN, false);
     h.run(20000);
     CHECK(u.heard.size() == 1 && h.retries() == 0 && h.failed() == 0, "fan under quiet reads 0x02: not a lost command");
+  }
+  {  // A finished frame is credited to the command it belongs to, and to no other.
+    Unit u = running();
+    Rig h(&u);
+    h.wire_ms = 100;
+    u.lose = 1;
+    h.cmd.setpoint = 26;
+    h.user(H::CONFIRM_SETPOINT, false);
+    h.run(2500);
+    h.send_mute(false);  // a frame the tracker does not track, ending 2.6 s after the command
+    h.run(20000);
+    CHECK(u.heard.size() == 3 && u.heard[2].kind == F_COMBINED && u.v.setpoint_c == 26, "lost once, sent again, taken");
+    CHECK(u.heard.size() == 3 && u.heard[2].t - u.heard[0].t <= 5000,
+          "an unrelated frame does not restart the wait: the re-send is %u ms after the first",
+          u.heard.size() == 3 ? (unsigned) (u.heard[2].t - u.heard[0].t) : 0);
   }
 }
 
