@@ -1,0 +1,32 @@
+# Repo-only harness: the hub with no platform at all. A config may use hisense_ac for its trigger
+# and action alone, or add entity platforms one at a time, so the hub has to build without
+# climate, switch, select, sensor, binary_sensor and text_sensor in the image. CI validates this
+# file with the others and compiles it in the esphome-esp32 job.
+esphome:
+  name: hisense-ac-hub-only
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [hisense_ac]
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: GPIO10
+  on_setup_request:
+    - hisense_ac.set_setup_indicator: true

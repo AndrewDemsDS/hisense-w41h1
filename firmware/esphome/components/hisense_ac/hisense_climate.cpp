@@ -1,6 +1,8 @@
 #include "hisense_climate.h"
 #include "esphome/core/log.h"
 
+#ifdef USE_CLIMATE
+
 namespace esphome::hisense_ac {
 
 static const char *const TAG = "hisense_ac.climate";
@@ -340,3 +342,5 @@ void HisenseClimate::publish_preset_index(uint8_t idx) {
 void HisenseClimate::dump_config() { LOG_CLIMATE("", "Hisense A/C climate", this); }
 
 }  // namespace esphome::hisense_ac
+
+#endif  // USE_CLIMATE
