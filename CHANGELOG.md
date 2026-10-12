@@ -24,6 +24,9 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   three ESP32 files is `packages/esp32.yaml`. No entity, id or generated line of code changes.
 - **`w41h1_module` listed twice** is refused with a message that says so, where ESPHome's own
   said "expected a dictionary".
+- **`w41h1_module` tidied, same behaviour:** the port is looked at from `loop()` once a second
+  where a scheduler lambda did it, the hub is the component's parent (`Parented`), a missing
+  update server is logged and no longer dereferenced, and `W41h1UartWatch` is `W41H1UartWatch`.
 
 ### The firmware has a version, releases are tags, and CI compiles the ESP32 boards (2026-10-12)
 - **The version is written once**, in `firmware/esphome/packages/version.yaml`: semver, starting

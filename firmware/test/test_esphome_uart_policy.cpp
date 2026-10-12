@@ -24,7 +24,7 @@ static int g_checks = 0;
 
 // Looks once a second from `from` to `to` (exclusive) with the link in one state. Returns the
 // number of restarts asked for and stores when the first one came.
-static int look(W41h1UartWatch *w, bool up, uint32_t from, uint32_t to, uint32_t *first) {
+static int look(W41H1UartWatch *w, bool up, uint32_t from, uint32_t to, uint32_t *first) {
   int n = 0;
   for (uint32_t t = from; t != to; t += 1000) {
     if (w41h1_uart_restart_due(w, up, false, t)) {
@@ -41,7 +41,7 @@ int main() {
 
   // A healthy bus: up from the first frame, never restarted.
   {
-    W41h1UartWatch w;
+    W41H1UartWatch w;
     CHECK(look(&w, false, 0, 3000, nullptr) == 0, "the seconds before the first frame cause no restart");
     CHECK(look(&w, true, 3000, 3600000, nullptr) == 0, "an hour of link up causes no restart");
     CHECK(w.restarts == 0, "counter stays at 0");
@@ -49,7 +49,7 @@ int main() {
 
   // The fault: link up, then lost. Restart at once, then every retry period while it stays down.
   {
-    W41h1UartWatch w;
+    W41H1UartWatch w;
     look(&w, true, 0, 60000, nullptr);
     CHECK(w41h1_uart_restart_due(&w, false, false, 60000), "the look that finds the link lost restarts the port");
     CHECK(w.restarts == 1, "and counts it");
@@ -66,7 +66,7 @@ int main() {
   // The first-boot case: the receiver never delivers a frame. First restart one period after the
   // first look, so a boot that is merely slow is left alone.
   {
-    W41h1UartWatch w;
+    W41H1UartWatch w;
     uint32_t first = 0;
     CHECK(look(&w, false, 5000, 60000, &first) == 3, "a link that never came up is restarted every period");
     CHECK(first == 5000 + W41H1_UART_RETRY_MS, "first at one period after the first look (got %u)", (unsigned) first);
@@ -74,7 +74,7 @@ int main() {
 
   // millis() wraps after 49.7 days: the retry period spans the wrap.
   {
-    W41h1UartWatch w;
+    W41H1UartWatch w;
     const uint32_t near_wrap = 0xFFFFFFFFu - 4999;  // 5 s before the wrap
     w41h1_uart_restart_due(&w, true, false, near_wrap - 1000);
     CHECK(w41h1_uart_restart_due(&w, false, false, near_wrap), "loss just before the wrap restarts at once");
@@ -85,7 +85,7 @@ int main() {
   // The hub is transmitting (DE high) at the look that would restart: closing the port then would
   // put a break on the pair inside our own frame. The restart waits for the next look.
   {
-    W41h1UartWatch w;
+    W41H1UartWatch w;
     look(&w, true, 0, 60000, nullptr);
     CHECK(!w41h1_uart_restart_due(&w, false, true, 60000), "link lost but DE is high: no restart at this look");
     CHECK(w.restarts == 0, "and nothing counted");
@@ -101,7 +101,7 @@ int main() {
 
   // Never up, and transmitting at the first look: the retry clock starts at the first idle look.
   {
-    W41h1UartWatch w;
+    W41H1UartWatch w;
     CHECK(!w41h1_uart_restart_due(&w, false, true, 1000), "boot, DE high: nothing");
     CHECK(!w41h1_uart_restart_due(&w, false, false, 2000), "first idle look starts the clock");
     CHECK(!w41h1_uart_restart_due(&w, false, false, 16000), "14 s later: not yet");

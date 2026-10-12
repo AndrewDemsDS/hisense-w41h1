@@ -13,6 +13,7 @@
 #ifdef USE_LIBRETINY
 
 #include "esphome/core/component.h"
+#include "esphome/core/helpers.h"
 #include "esphome/components/hisense_ac/hisense_ac.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
@@ -22,31 +23,33 @@
 
 namespace esphome::w41h1_module {
 
-class W41H1Module : public PollingComponent {
+// The parent is the hub whose link state decides when the port is restarted.
+class W41H1Module : public PollingComponent, public Parented<hisense_ac::HisenseAC> {
  public:
   void setup() override;
+  // The port is looked at here, about once a second.
+  void loop() override;
+  // The two diagnostic entities are published here, every update_interval.
   void update() override;
   void dump_config() override;
   // After everything else, the update server included: the layout check switches that one off,
   // and the port is only watched once the hub and the UART are up.
   float get_setup_priority() const override { return -100.0f; }
 
-  void set_hub(hisense_ac::HisenseAC *hub) { this->hub_ = hub; }
   void set_uart(uart::LibreTinyUARTComponent *uart) { this->uart_ = uart; }
   void set_ota(Component *ota) { this->ota_ = ota; }
   void set_serial_port_restarts_sensor(sensor::Sensor *sensor) { this->serial_port_restarts_sensor_ = sensor; }
   void set_flash_layout_text_sensor(text_sensor::TextSensor *sensor) { this->flash_layout_text_sensor_ = sensor; }
 
  protected:
-  void watch_serial_port_();
   void restart_serial_port_();
 
-  hisense_ac::HisenseAC *hub_{nullptr};
   uart::LibreTinyUARTComponent *uart_{nullptr};
   Component *ota_{nullptr};
   sensor::Sensor *serial_port_restarts_sensor_{nullptr};
   text_sensor::TextSensor *flash_layout_text_sensor_{nullptr};
-  W41h1UartWatch uart_watch_;
+  W41H1UartWatch uart_watch_;
+  uint32_t last_look_ms_{0};
 };
 
 }  // namespace esphome::w41h1_module
