@@ -178,36 +178,45 @@ static size_t stuff_checksum(const uint8_t *frame, size_t len, uint8_t *out, siz
   return o;
 }
 
+// Both stamps take a finished frame, as a builder returned it, and may get one back that already
+// went through the other stamp. Such a frame can be one byte longer than LEN + 9 says, because a
+// 0xF4 checksum low byte is doubled. The high byte never is: the sum of a transmit frame cannot
+// reach 0xF400, which is what lets a stamp take the first LEN + 9 bytes and rewrite the trailer.
+static_assert(TX_FRAME_MAX * 255 < 0xF400, "a transmit frame's checksum high byte must not be able to reach 0xF4");
+
+// The first LEN + 9 bytes of `in` into `frame` (TX_FRAME_MAX bytes). Returns that length, at
+// least FRAME_STAMP_MIN_LEN, or 0 when `in` is not a frame a stamp can work on.
+static constexpr size_t FRAME_STAMP_MIN_LEN = 13;  // the envelope up to the class byte
+static size_t copy_for_stamp(const uint8_t *in, size_t len, uint8_t *frame) {
+  if (in == nullptr || len < FRAME_STAMP_MIN_LEN || in[0] != FRAME_STX1 || in[1] != FRAME_STX2)
+    return 0;
+  const size_t unstuffed = static_cast<size_t>(in[4]) + FRAME_LEN_OVERHEAD;
+  if (unstuffed < FRAME_STAMP_MIN_LEN || unstuffed > len || unstuffed > TX_FRAME_MAX)
+    return 0;
+  std::memcpy(frame, in, unstuffed);
+  return unstuffed;
+}
+
 // The vendor module writes envelope bytes 7/8 before the checksum, and the checksum covers them, so
-// a re-stamp is re-finalised. The unstuffed length comes from LEN + 9.
+// a re-stamp is re-finalised.
 size_t stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8_t lo, uint8_t *out, size_t out_cap) {
-  if (in == nullptr || out == nullptr || len < 13)
-    return 0;
-  if (in[0] != FRAME_STX1 || in[1] != FRAME_STX2)
-    return 0;
-  size_t unstuffed = static_cast<size_t>(in[4]) + FRAME_LEN_OVERHEAD;
-  if (unstuffed < 13 || unstuffed > len || unstuffed > TX_FRAME_MAX)
-    return 0;
   uint8_t f[TX_FRAME_MAX];
-  std::memcpy(f, in, unstuffed);
+  const size_t unstuffed = copy_for_stamp(in, len, f);
+  if (unstuffed == 0 || out == nullptr)
+    return 0;
   f[7] = hi;
   f[8] = lo;
   finalize_frame(f, unstuffed - 4, unstuffed - 2);
   return stuff_checksum(f, unstuffed, out, out_cap);
 }
 
-// ---- Builders ----------------------------------------------------------------------------------
 size_t stamp_beep(const uint8_t *in, size_t len, bool beep, uint8_t *out, size_t out_cap) {
-  if (in == nullptr || out == nullptr || len < 13)
-    return 0;
-  if (in[0] != FRAME_STX1 || in[1] != FRAME_STX2)
-    return 0;
-  size_t unstuffed = static_cast<size_t>(in[4]) + FRAME_LEN_OVERHEAD;
-  if (unstuffed < 13 || unstuffed > len || unstuffed > TX_FRAME_MAX)
-    return 0;
   uint8_t f[TX_FRAME_MAX];
-  std::memcpy(f, in, unstuffed);
-  if (f[13] == 0x65 && unstuffed >= CMD_FRAME_LEN) {
+  const size_t unstuffed = copy_for_stamp(in, len, f);
+  if (unstuffed == 0 || out == nullptr)
+    return 0;
+  // The length first: a frame of 13 bytes has no byte 13 to look at.
+  if (unstuffed >= CMD_FRAME_LEN && f[FRAME_CLASS_OFFSET] == CLASS_COMMAND) {
     if (beep) {
       f[CMD_BEEP_BYTE] |= CMD_BEEP_BIT;
     } else {
@@ -217,6 +226,8 @@ size_t stamp_beep(const uint8_t *in, size_t len, bool beep, uint8_t *out, size_t
   }
   return stuff_checksum(f, unstuffed, out, out_cap);
 }
+
+// ---- Builders ----------------------------------------------------------------------------------
 
 size_t build_producttype_request(uint8_t *out, size_t out_cap) {
   if (out == nullptr || out_cap < STATUS_REQUEST_LEN)
