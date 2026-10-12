@@ -46,13 +46,16 @@ node of `w41h1-esp32c3.yaml` without its status LED. `--board c3-plus` builds
 | `w41h1-esp8266.yaml` | ESP8266 D1 mini | GPIO15 / GPIO13 / GPIO5 | example, compiles, never run | 513 KB, 49 % |
 | `w41h1-rp2040.yaml` | Raspberry Pi Pico W | GPIO4 / GPIO5 / GPIO6 | example, compiles, never run | 596 KB, 57 % |
 
-Every board file is three things: the node's name, the pins, and the platform block. Everything
-else comes from packages that all of them include, so the entity names and object ids are the
-same on every chip:
+Every board file says three things: which chip, which pins, and which extras (a status LED, the
+stock module's flash layout). Everything else comes from packages that all of them include, so the
+entity names and object ids are the same on every chip:
 
 - `packages/version.yaml`: the firmware version, and nothing else. `node.yaml` includes it
   ([Version and releases](#version-and-releases)).
-- `packages/node.yaml`: logger, API, Wi-Fi, the setup hotspot and
+- `packages/esp32.yaml`: the `esp32:` platform block on ESP-IDF, for the board the file names in
+  its `board` substitution. The three ESP32 files include it.
+- `packages/node.yaml`: the node's name (`name` and `friendly_name`, by default `hisense-ac` and
+  `Air Conditioner`: set both in the board file for a second node), logger, API, Wi-Fi, the setup hotspot and
   [setup mode](#wi-fi-setup-mode-and-the-77-gesture), and three diagnostics every
   board has (`Uptime`, `WiFi signal`, `Reset reason`). Wi-Fi power saving is
   off (`power_save_mode: none`): on an ESP32-C3 with a weak signal ESPHome's default, `light`,
@@ -60,12 +63,15 @@ same on every chip:
   `wifi_power_save` substitution (`-s wifi_power_save light`).
 - `packages/hisense-ac.yaml`: the UART, the `hisense_ac` hub and every entity.
 - `packages/ota.yaml`: ESPHome's update server. The AmebaZ2 files take theirs from
-  `packages/amebaz2.yaml` instead, with an id, so `w41h1_module` can switch it off.
+  `packages/amebaz2.yaml` instead, with an id, so `w41h1_module` can switch it off. That package
+  also holds the chip, the board definition and the module's three pins, which are fixed, so an
+  AmebaZ2 board file names only its flash layout.
 - `packages/status-led.yaml` and `packages/status-pixel.yaml`: optional, for a board with a plain
   LED or an addressable RGB pixel on a GPIO ([Status LED](#status-led)). Only the two ESP32-C3
   files include one.
 
-To add a board, copy the nearest file, change the platform block and the three pins, and add what
+To add a board, copy the nearest file, change the platform (the `board` substitution for an
+ESP32, the platform block otherwise) and the three pins, and add what
 that platform needs on top (the ESP8266 file moves the logger off the bus UART, the AmebaZ2
 files add a package of their own). The files sit next to `components/` and not in a directory of their own
 because ESPHome resolves the local component path and `secrets.yaml` against the directory of the

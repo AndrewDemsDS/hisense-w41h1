@@ -374,10 +374,20 @@ def valid_cases() -> list[Case]:
             ),
             full_only=layout != "native",
         )
-    # node.yaml names the node (hisense-ac, Air Conditioner), so a file may leave the name out.
+    # What the packages default: node.yaml names the node (hisense-ac, Air Conditioner) and
+    # amebaz2.yaml gives the stock module's fixed pins, so a file may leave both out.
     add(
         "packages-default-name",
         re.sub(r"^  (name|friendly_name): .*\n", "", packaged(c3, "unused", common, {}), flags=re.M),
+    )
+    add(
+        "packages-amebaz2-default-pins",
+        re.sub(
+            r"^  (tx_pin|rx_pin|de_pin): .*\n",
+            "",
+            packaged("rtl87xx", "pkg-default-pins", ["node", "hisense-ac", "amebaz2"], {"layout": "factory"}),
+            flags=re.M,
+        ).replace(PLATFORMS["rtl87xx"][0], ""),
     )
     # One run per single entity: a platform holding just that one.
     for domain, keys in (("switch", SWITCHES), ("sensor", SENSORS), ("binary_sensor", BINARY_SENSORS)):

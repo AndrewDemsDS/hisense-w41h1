@@ -19,6 +19,9 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   Conditioner`), and the board files no longer repeat the two lines. A file that sets them keeps
   its names. A file that includes the package and sets no `name` now builds as `hisense-ac` where
   it was refused before.
+- **Board files hold the chip, the pins and the extras, nothing else.** The stock module's fixed
+  pins (PA14 / PA13 / PA17) are defaults in `packages/amebaz2.yaml`, and the `esp32:` block of the
+  three ESP32 files is `packages/esp32.yaml`. No entity, id or generated line of code changes.
 
 ### The firmware has a version, releases are tags, and CI compiles the ESP32 boards (2026-10-12)
 - **The version is written once**, in `firmware/esphome/packages/version.yaml`: semver, starting

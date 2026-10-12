@@ -27,14 +27,10 @@ substitutions:
   status_pixel_strapping_ok: "true"
 
 packages:
+  esp32: !include packages/esp32.yaml
   node: !include packages/node.yaml
   ota: !include packages/ota.yaml
   hisense_ac: !include packages/hisense-ac.yaml
   status_pixel: !include packages/status-pixel.yaml
-
-esp32:
-  board: ${board}
-  framework:
-    type: esp-idf
 
 # A weak 3.3 V supply: see the note at the end of w41h1-esp32c3.yaml.

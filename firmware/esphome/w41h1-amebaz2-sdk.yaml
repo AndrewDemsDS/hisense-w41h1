@@ -12,14 +12,12 @@
 #
 #   build:   esphome compile firmware/esphome/w41h1-amebaz2-sdk.yaml
 
+# The chip, the board definition and the module's fixed pins (UART0 on PA14 / PA13, DE on PA17)
+# are in packages/amebaz2.yaml. The layout is all this file adds.
 substitutions:
   # name and friendly_name default to hisense-ac / Air Conditioner (packages/node.yaml). Set
   # both here for a second node on the same network.
   layout: sdk
-  # The module's own wiring: UART0 to the RS-485 transceiver, DE on PA17. Not a choice.
-  tx_pin: PA14
-  rx_pin: PA13
-  de_pin: PA17
 
 packages:
   node: !include packages/node.yaml

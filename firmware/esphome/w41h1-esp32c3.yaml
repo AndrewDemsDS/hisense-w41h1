@@ -19,15 +19,11 @@ substitutions:
   status_led_inverted: "true"
 
 packages:
+  esp32: !include packages/esp32.yaml
   node: !include packages/node.yaml
   ota: !include packages/ota.yaml
   hisense_ac: !include packages/hisense-ac.yaml
   status_led: !include packages/status-led.yaml
-
-esp32:
-  board: ${board}
-  framework:
-    type: esp-idf
 
 # GPIO8 is a strapping pin, which is why the bus pins stay off it. The LED is the one thing it is
 # safe for: the chip reads the pin only at reset, when the firmware is not driving it yet and the
