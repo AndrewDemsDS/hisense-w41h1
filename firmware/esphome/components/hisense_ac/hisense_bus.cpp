@@ -18,14 +18,17 @@ void BusScheduler::setup(BusIO *io, BusListener *listener, bool has_de) {
   this->phase_ = Phase::IDLE;
 }
 
-bool BusScheduler::enqueue(const uint8_t *frame, size_t len) {
+BusTicket BusScheduler::enqueue(const uint8_t *frame, size_t len) {
   if (frame == nullptr || len == 0 || len > TX_FRAME_MAX || this->queue_len_ >= BUS_TX_QUEUE_LEN)
-    return false;
-  size_t slot = (this->queue_head_ + this->queue_len_) % BUS_TX_QUEUE_LEN;
+    return BUS_TICKET_NONE;
+  const size_t slot = (this->queue_head_ + this->queue_len_) % BUS_TX_QUEUE_LEN;
   std::memcpy(this->queue_[slot], frame, len);
   this->queue_lens_[slot] = static_cast<uint8_t>(len);
+  if (++this->last_ticket_ == BUS_TICKET_NONE)
+    this->last_ticket_++;
+  this->queue_tickets_[slot] = this->last_ticket_;
   this->queue_len_++;
-  return true;
+  return this->last_ticket_;
 }
 
 bool BusScheduler::link_token(uint8_t *hi, uint8_t *lo) const {
@@ -337,6 +340,7 @@ void BusScheduler::heartbeat_done_(size_t reply_len, uint32_t now) {
 void BusScheduler::command_done_(size_t reply_len, uint32_t now) {
   const bool answered = reply_len > 0;
   this->command_reply_ = command_reply_verdict(this->tx_, this->tx_len_, this->rx_.data(), reply_len);
+  this->command_ticket_ = this->queue_tickets_[this->queue_head_];
   if (!answered)
     this->unanswered_commands_++;
   // A frame with no reply at all goes out again, while the unit shows it is there by answering

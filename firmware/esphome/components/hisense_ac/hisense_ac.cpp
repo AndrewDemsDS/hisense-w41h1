@@ -348,10 +348,10 @@ void HisenseAC::publish_diagnostics_() {
 bool HisenseAC::send_frame_(const uint8_t *frame, size_t len) {
   // Builders write the buzzer bit set, as the stock module does by default.
   if (this->beeper_)
-    return this->bus_.enqueue(frame, len);
+    return this->bus_.enqueue(frame, len) != BUS_TICKET_NONE;
   uint8_t quiet[CMD_FRAME_MAX];
   size_t n = stamp_beep(frame, len, false, quiet, sizeof(quiet));
-  return n != 0 && this->bus_.enqueue(quiet, n);
+  return n != 0 && this->bus_.enqueue(quiet, n) != BUS_TICKET_NONE;
 }
 
 bool HisenseAC::send_command() {

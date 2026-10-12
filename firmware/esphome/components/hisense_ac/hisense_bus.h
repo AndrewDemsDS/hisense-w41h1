@@ -60,12 +60,19 @@ class BusListener {
   // A queued command frame finished one transaction. `answered` is false when the reply window
   // closed with nothing from the A/C; command_resend_pending() then says whether the scheduler
   // sends the frame again. `reply_class` is the class of the frame that ended the window, 0 when
-  // there was none, and command_reply() is what that frame says.
+  // there was none, and command_reply() is what that frame says. command_ticket() is the ticket
+  // enqueue() returned for the frame, so the owner can tell which of its frames this is about.
   virtual void on_bus_command(bool answered, uint8_t reply_class) {}
   // The remote's "77" gesture, debounced: once per accepted request. `request` is the request bits
   // of the A/C's 0x1E reply (LINK_REQ_* in hisense_protocol.h).
   virtual void on_bus_setup_request(uint8_t request) {}
 };
+
+// What enqueue() hands back for an accepted frame: never 0, different for every frame in the
+// queue at one time (it counts up and wraps past 0). on_bus_command() reports on one frame, and
+// command_ticket() says which.
+using BusTicket = uint16_t;
+static constexpr BusTicket BUS_TICKET_NONE = 0;
 
 // Timing, from the vendor module's byte-writer and transaction primitive.
 static constexpr uint32_t BUS_DE_SETTLE_MS = 5;  // DE high before the first byte
@@ -90,6 +97,15 @@ inline uint32_t bus_tx_time_ms(size_t len) {
 // behind it, so a newer command can never be overtaken by an older one. Three sends in all. Only
 // while the unit is answering its status poll: a unit that answers nothing is a dead bus, and frames
 // re-sent into it would pile up and all land when it comes back.
+//
+// There is a second retry above this one: the hub sends a command again when the status a few
+// seconds later does not show it (COMMAND_RESEND_MAX in hisense_map.h, two more sends). The two
+// answer different failures, a frame nobody heard and a frame that was heard and not applied, and
+// they are left separate on purpose. They multiply only when both fail every time, which is a unit
+// that answers its status poll and never a command: it gets 3 x 3 = 9 frames over about 20 s
+// before the hub gives up (pinned in test_esphome_bus_stress.cpp, "never acknowledged"). Commands
+// state absolute values, so the repeats cannot add up to anything, and folding the two layers
+// into one would take either the lost frame or the ignored one out of what is retried.
 static constexpr uint8_t COMMAND_SENDS_MAX = 3;
 
 inline bool command_resend_allowed(uint8_t sends, bool unit_answering) {
@@ -145,9 +161,10 @@ class BusScheduler {
   void setup(BusIO *io, BusListener *listener, bool has_de);
   // Advance as far as `now_ms` allows. Call every loop.
   void poll(uint32_t now_ms);
-  // Queue a finished frame (from the builders) for the next cycle's command slot. False when the
-  // queue is full or the frame is empty or too long.
-  bool enqueue(const uint8_t *frame, size_t len);
+  // Queue a finished frame (from the builders) for the command slot. Returns the frame's ticket,
+  // or BUS_TICKET_NONE (0, so the result still reads as a bool) when the queue is full or the
+  // frame is empty or too long.
+  BusTicket enqueue(const uint8_t *frame, size_t len);
   // True while DE timing is running, so the hub can ask ESPHome for a tight loop. Always false
   // when the UART peripheral owns DE: there is no timing to keep then.
   bool wants_fast_loop() const { return this->phase_ == Phase::TX_SETTLE || this->phase_ == Phase::TX_DRAIN; }
@@ -167,6 +184,8 @@ class BusScheduler {
   uint32_t command_resends() const { return this->command_resends_; }
   // Valid inside on_bus_command(): the frame just reported is going out again.
   bool command_resend_pending() const { return this->head_resend_; }
+  // Valid inside on_bus_command(): the ticket enqueue() gave for the frame just reported.
+  BusTicket command_ticket() const { return this->command_ticket_; }
   // What the reply to the last command frame says (a CommandReply).
   uint8_t command_reply() const { return this->command_reply_; }
   uint32_t link_losses() const { return this->link_losses_; }
@@ -245,6 +264,9 @@ class BusScheduler {
 
   uint8_t queue_[BUS_TX_QUEUE_LEN][TX_FRAME_MAX]{};
   uint8_t queue_lens_[BUS_TX_QUEUE_LEN]{};
+  BusTicket queue_tickets_[BUS_TX_QUEUE_LEN]{};
+  BusTicket last_ticket_{BUS_TICKET_NONE};
+  BusTicket command_ticket_{BUS_TICKET_NONE};
   size_t queue_head_{0};
   size_t queue_len_{0};
   // Sends of the frame at the head of the queue so far, and whether it is waiting for another.

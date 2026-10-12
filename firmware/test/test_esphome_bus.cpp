@@ -226,9 +226,11 @@ class Recorder : public H::BusListener {
   // Set to read, per report, whether the scheduler said it would send the frame again.
   H::BusScheduler *bus = nullptr;
   std::vector<bool> resends;
+  std::vector<H::BusTicket> tickets;
   void on_bus_command(bool answered, uint8_t reply_class) override {
     commands.push_back({answered, reply_class});
     resends.push_back(bus != nullptr && bus->command_resend_pending());
+    tickets.push_back(bus != nullptr ? bus->command_ticket() : H::BUS_TICKET_NONE);
   }
 };
 
@@ -585,6 +587,60 @@ static void test_return_between_probe_and_poll() {
       heard = heard || (cls(ac.writes[i]) == 0x1E && ac.writes[i].bytes[16] == 0xB0);
     CHECK(heard, "the extra probe does not put the heartbeat back to not-heard");
   }
+}
+
+// enqueue() gives every accepted frame a ticket, and on_bus_command() says which frame it is about.
+struct TicketProbe : H::BusScheduler {
+  void set_last_ticket(H::BusTicket t) { this->last_ticket_ = t; }
+};
+
+static void test_command_tickets() {
+  printf("-- tickets: which frame a command report is about\n");
+  SimAC ac;
+  Recorder rec;
+  TicketProbe bus;
+  rec.bus = &bus;
+  bus.setup(&ac, &rec, true);
+  run(bus, 2500);
+  uint8_t cmd[64];
+  size_t n = H::build_command(H::AcCommand{}, cmd, sizeof(cmd));
+  CHECK(bus.command_ticket() == H::BUS_TICKET_NONE, "no report yet: no ticket");
+  H::BusTicket a = bus.enqueue(cmd, n), b = bus.enqueue(cmd, n), c = bus.enqueue(cmd, n);
+  CHECK(a != H::BUS_TICKET_NONE && b == a + 1 && c == b + 1, "three frames, three tickets in a row (%u %u %u)", a, b,
+        c);
+  CHECK(bus.enqueue(cmd, 0) == H::BUS_TICKET_NONE && bus.enqueue(nullptr, n) == H::BUS_TICKET_NONE &&
+            bus.enqueue(cmd, H::TX_FRAME_MAX + 1) == H::BUS_TICKET_NONE,
+        "a refused frame gets none");
+  H::BusTicket d = bus.enqueue(cmd, n);
+  CHECK(d == c + 1, "and uses none up (%u)", d);
+  // The second frame is missed once by the unit: its report comes twice, with the same ticket.
+  ac.deaf_commands_left = 0;
+  run(bus, 1);
+  size_t sent_before = rec.tickets.size();
+  while (rec.tickets.size() == sent_before)
+    run(bus, 1);
+  ac.deaf_commands_left = 1;
+  run(bus, 4000);
+  std::vector<H::BusTicket> want = {a, b, b, c, d};
+  CHECK(rec.tickets == want, "reports carry the tickets in queue order, the re-sent frame twice (%zu reports)",
+        rec.tickets.size());
+  CHECK(rec.commands.size() == 5 && rec.commands[0].first && !rec.commands[1].first && rec.resends[1] &&
+            rec.commands[2].first,
+        "the repeated ticket is the unanswered send and its re-send");
+  // Full queue: the ninth frame gets no ticket.
+  for (int i = 0; i < 8; i++)
+    CHECK(bus.enqueue(cmd, n) == (H::BusTicket)(d + 1 + i), "frame %d of a full queue", i);
+  CHECK(bus.enqueue(cmd, n) == H::BUS_TICKET_NONE && !bus.enqueue(cmd, n), "the ninth is refused, and reads as false");
+  run(bus, 4000);
+  // The counter wraps past 0, which stays "refused".
+  bus.set_last_ticket(0xFFFE);
+  H::BusTicket x = bus.enqueue(cmd, n), y = bus.enqueue(cmd, n), z = bus.enqueue(cmd, n);
+  CHECK(x == 0xFFFF && y == 1 && z == 2, "after 0xFFFF comes 1 (%u %u %u)", x, y, z);
+  size_t mark = rec.tickets.size();
+  run(bus, 3000);
+  CHECK(rec.tickets.size() == mark + 3 && rec.tickets[mark] == 0xFFFF && rec.tickets[mark + 1] == 1 &&
+            rec.tickets[mark + 2] == 2,
+        "and the reports follow");
 }
 
 static void test_boot_retries() {
@@ -1018,6 +1074,7 @@ int main() {
   test_boot_retries();
   test_damaged_frames_are_not_believed();
   test_return_between_probe_and_poll();
+  test_command_tickets();
   test_peripheral_de();
   test_command_fate();
   test_stale_frame_in_command_window();
