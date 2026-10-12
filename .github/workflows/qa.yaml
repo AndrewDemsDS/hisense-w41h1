@@ -108,10 +108,10 @@ jobs:
   # per flash layout a unit can have). These are the board files nobody builds on the way to an
   # ESP32, and the one platform whose toolchain is small enough for a hosted runner (about 800 MB,
   # kept in the cache), so they get a real compile and not only `config`. All three layouts are
-  # built because each one is checked at compile time: amebaz2/w41h1_slots.h fails the build when
-  # the image's slot addresses are not those of the layout the file names. Compile-only: the
-  # images carry the placeholder secrets and are thrown away. They say nothing about a module,
-  # which needs the hardware test.
+  # built because each one is checked at compile time: w41h1_slots.h in the w41h1_module
+  # component fails the build when the image's slot addresses are not those of the layout the
+  # file names. Compile-only: the images carry the placeholder secrets and are thrown away. They
+  # say nothing about a module, which needs the hardware test.
   esphome-amebaz2:
     if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
@@ -154,8 +154,8 @@ jobs:
             grep -a -E '^(RAM|Flash):|Successfully compiled' build.log
             # The SDK and the platform warn about their own code. Ours has to build clean here
             # too: this is the only target with a different compiler and integer widths.
-            if grep -a -E 'components/hisense_ac/.*(warning|error)' build.log; then
-              echo "::error::hisense_ac does not compile cleanly for AmebaZ2 (see above)"
+            if grep -a -E 'components/(hisense_ac|w41h1_module)/.*(warning|error)' build.log; then
+              echo "::error::hisense_ac or w41h1_module does not compile cleanly for AmebaZ2 (see above)"
               exit 1
             fi
             # The reboot workaround points lt_reboot() at the SDK's sys_reset with two linker

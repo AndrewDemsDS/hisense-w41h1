@@ -55,7 +55,7 @@ same on every chip:
   `wifi_power_save` substitution (`-s wifi_power_save light`).
 - `packages/hisense-ac.yaml`: the UART, the `hisense_ac` hub and every entity.
 - `packages/ota.yaml`: ESPHome's update server. The AmebaZ2 files take theirs from
-  `packages/amebaz2.yaml` instead, which can switch it off.
+  `packages/amebaz2.yaml` instead, with an id, so `w41h1_module` can switch it off.
 - `packages/status-led.yaml` and `packages/status-pixel.yaml`: optional, for a board with a plain
   LED or an addressable RGB pixel on a GPIO ([Status LED](#status-led)). Only the two ESP32-C3
   files include one.
@@ -91,16 +91,36 @@ update. There is no default.
 | `w41h1-amebaz2-native.yaml` | was written from scratch with LibreTiny's own partition table and bootloader |
 
 [Which flash layout a unit has](../docs/15-esphome-path.md#which-flash-layout-a-unit-has) says how
-to find out. The layouts are the JSON files in `amebaz2/`. `amebaz2/w41h1_slots.h` fails the
-build if the image does not have the addresses of the layout it names, and at run time compares
-them with the bootloader's partition table: the result is the `Flash layout` diagnostic sensor,
-and on a mismatch the image switches its own update server off.
+to find out.
+
+A board file only names its layout. What the module needs in code is the `w41h1_module`
+component (`components/w41h1_module/`), which `packages/amebaz2.yaml` configures:
+
+```yaml
+w41h1_module:
+  layout: factory          # required, no default: factory, sdk or native
+  hisense_ac_id: ac_bus
+  serial_port_restarts:
+    name: Serial port restarts
+  flash_layout:
+    name: Flash layout
+```
+
+The layouts are the `layout-*.json` files in the component's directory. Its codegen hands the
+one named to PlatformIO as the board override and adds the reboot workaround's linker flags. Its
+`w41h1_slots.h` fails the build if the image does not have the addresses of the layout it names,
+and at run time compares them with the bootloader's partition table: the result is the
+`Flash layout` diagnostic sensor, and on a mismatch the image switches its own update server
+off. The component validates only on `rtl87xx`. On any other chip `esphome config` rejects it
+with a message that says so. It uses nothing outside its own directory, so it also works from a
+git source (`external_components` with `path: firmware/esphome/components` and both
+`hisense_ac` and `w41h1_module` listed).
 
 One fault showed up on hardware and is fixed. The receive side of the bus port stopped twice and
 stayed stopped until a power cycle, while commands still reached the unit. LibreTiny's receive
-buffer loses count of a byte when its interrupt lands inside a read, so the component reads with
-interrupts masked on this platform. Reopening the port also clears it, so
-`packages/amebaz2.yaml` still restarts the port when the hub reports the link lost and every 15 s
+buffer loses count of a byte when its interrupt lands inside a read, so `hisense_ac` reads with
+interrupts masked on this platform. Reopening the port also clears it, so `w41h1_module` still
+restarts the port when the hub reports the link lost and every 15 s
 while it stays down, as a fallback. It logs a warning each time and counts the restarts in a
 `Serial port restarts` diagnostic sensor. On a unit that answers, that sensor stays at 0. A
 second converted module went silent on the bus for a reason outside the chip that is still open
@@ -110,7 +130,7 @@ The other open risks, in short:
 
 - LibreTiny rates this chip family 2 out of 5 for stability.
 - A restart or an OTA can leave the chip dark until a 30 second power cut (LibreTiny issue 396).
-  The board file carries the workaround from that issue. With it, two updates and a mains power
+  `w41h1_module` carries the workaround from that issue. With it, two updates and a mains power
   cycle came back clean on the tested module.
 - Nothing rolls a bad update back. An image that does not boot needs the clip.
 - A first flash with the clip or UART download mode must leave flash `0x1000..0x3FFF` (the
@@ -249,12 +269,13 @@ safe mode ([`../docs/15-esphome-path.md`](../docs/15-esphome-path.md#which-flash
 |---|---|
 | `w41h1.yaml` | the classic ESP32 board file and the original entry point; board and pins are substitutions |
 | `w41h1-*.yaml` | one file per other board (see [Boards](#boards)) |
-| `packages/` | what the board files include: `node.yaml`, `hisense-ac.yaml`, `ota.yaml`, the optional `status-led.yaml` and `status-pixel.yaml`, and `amebaz2.yaml` for the stock module |
-| `amebaz2/` | the stock module's flash layouts (`layout-*.json`), the layout guard (`w41h1_slots.h`) and the serial port recovery (`w41h1_uart.h`, with its timing rule in `w41h1_uart_policy.h`) |
+| `packages/` | what the board files include: `node.yaml`, `hisense-ac.yaml`, `ota.yaml`, the optional `status-led.yaml` and `status-pixel.yaml`, and `amebaz2.yaml` for the stock module (configuration only) |
 | `components/hisense_ac/` | the custom component: hub, climate, switches, select, sensors |
+| `components/w41h1_module/` | the stock module's own component, `rtl87xx` only: its flash layouts (`layout-*.json`), the layout guard (`w41h1_slots.h`), the reboot workaround, and the serial port recovery (`w41h1_module.cpp`, with its timing rule in `w41h1_uart_policy.h`) |
 | `tests/components/hisense_ac/` | every option of every platform, at the path and in the shape ESPHome's own `tests/components/<name>/` uses, so it moves upstream unchanged |
+| `tests/components/w41h1_module/` | every option of `w41h1_module`, in the same shape, for the one platform it validates on |
 | `tests/test_build_components/` | stand-ins for ESPHome's shared UART test packages, so the relative include in the test resolves here too |
-| `tests/build.*.yaml` | repo-only harness so `esphome config` and `esphome compile` can run those tests (CI runs `config`). `build.rtl87xx-ard.yaml` does the same for AmebaZ2, which has no upstream-shaped test |
+| `tests/build.*.yaml` | repo-only harness so `esphome config` and `esphome compile` can run those tests (CI runs `config`). `build.rtl87xx-ard.yaml` builds the `w41h1_module` test and, with it, every option of `hisense_ac` on AmebaZ2, for which `hisense_ac` has no upstream-shaped test |
 | `secrets.yaml.example` | template for the gitignored `secrets.yaml` |
 
 Every file in the component passes ESPHome's own gates as of their `dev` branch in September 2026:

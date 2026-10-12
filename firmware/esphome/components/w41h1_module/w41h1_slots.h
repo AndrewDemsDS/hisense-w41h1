@@ -6,12 +6,14 @@
 // invalidates the image that is running. The unit then needs the clip.
 //
 // Two checks, so that cannot happen quietly:
-//   1. at build time, the offsets in this image are exactly those of the layout the board file
+//   1. at build time, the offsets in this image are exactly those of the layout the configuration
 //      names (so a layout file that was not applied fails the build), and
 //   2. at run time, w41h1_layout_ok() compares them with what the bootloader's partition table
 //      says, through the Realtek SDK's own slot helpers.
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 // sys_api.c in the Realtek SDK, linked into every LibreTiny AmebaZ2 image. They read the slot
 // addresses from the partition table in flash, not from build-time offsets.
@@ -22,7 +24,8 @@ uint32_t sys_update_ota_get_fw2_sn(void);
 uint32_t sys_update_ota_prepare_addr(void);
 }
 
-// The board file passes -DW41H1_LAYOUT_<name>=1. Each layout is one of the files next to this one.
+// The codegen passes -DW41H1_LAYOUT_<name>=1 from the layout option (__init__.py). Each layout is
+// one of the layout-*.json files next to this one.
 #if defined(W41H1_LAYOUT_factory)
 // A unit converted over the air from the factory firmware: it keeps the factory partition table.
 #define W41H1_LAYOUT_NAME "factory"
@@ -42,7 +45,7 @@ static_assert(FLASH_OTA1_OFFSET == 0x010000 && FLASH_OTA1_LENGTH == 0x1AC000, "n
 static_assert(FLASH_OTA2_OFFSET == 0x1BC000 && FLASH_OTA2_LENGTH == 0x1AC000, "native layout: FW2");
 static_assert(FLASH_KVS_OFFSET == 0x3F8000, "native layout: settings area");
 #else
-#error "No flash layout chosen. Build one of w41h1-amebaz2-factory.yaml, -sdk.yaml or -native.yaml."
+#error "No flash layout chosen. w41h1_module sets it from its layout option (factory, sdk or native)."
 #endif
 
 // The bootloader's address for the next update is one of the two slots this image was built for.

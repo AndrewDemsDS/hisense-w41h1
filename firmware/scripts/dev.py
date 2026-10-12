@@ -104,7 +104,7 @@ ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2-* has test, build and convert. 
                         "air from the Matter firmware), the clip or UART download mode, and later updates are "
                         "`esphome upload` (firmware/docs/15-esphome-path.md)")
 # First slot address (LibreTiny names the app image after it) and slot length, per layout. The
-# host test holds this equal to firmware/esphome/amebaz2/layout-*.json.
+# host test holds this equal to firmware/esphome/components/w41h1_module/layout-*.json.
 ESPHOME_AMEBAZ2_SLOTS = {"amebaz2-factory": (0x010000, 0x170000), "amebaz2-sdk": (0x00C000, 0x1AC000),
                          "amebaz2-native": (0x010000, 0x1AC000)}
 # Layouts a unit running the Matter firmware can have. native is absent: it has LibreTiny's
