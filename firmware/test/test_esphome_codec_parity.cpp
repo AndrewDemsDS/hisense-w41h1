@@ -134,7 +134,7 @@ static void random_frame(uint8_t *f, size_t len, uint8_t cls, uint8_t sub) {
 
 static void test_constants() {
   CHECK(H::CMD_FRAME_LEN == HISENSE_CMD_FRAME_LEN && H::CMD_HEADER_LEN == HISENSE_CMD_HEADER_LEN &&
-            H::CMD_CHK_OFFSET == HISENSE_CMD_CHK_OFFSET && H::CMD_END_OFFSET == HISENSE_CMD_END_OFFSET,
+            H::CMD_CHK_OFFSET == HISENSE_CMD_CHK_OFFSET && H::CMD_CHK_OFFSET + 2 == (size_t) HISENSE_CMD_END_OFFSET,
         "command frame geometry");
   CHECK(same_bytes(H::CMD_HEADER, H::CMD_HEADER_LEN, HISENSE_CMD_HEADER, HISENSE_CMD_HEADER_LEN), "command header");
   CHECK(same_bytes(H::STATUS_REQUEST, H::STATUS_REQUEST_LEN, HISENSE_STATUS_REQUEST, HISENSE_STATUS_REQUEST_LEN),
@@ -259,12 +259,13 @@ static void test_link_heartbeat() {
   // The original builder is static; its "heard" output is exactly the captured template, which
   // carries B0 at byte 16 and a valid checksum.
   uint8_t b[64];
-  size_t nb = H::build_link_heartbeat(true, b, sizeof(b));
+  size_t nb = H::build_link_heartbeat(true, false, b, sizeof(b));
   CHECK(same_bytes(b, nb, HISENSE_LINK_HEARTBEAT, HISENSE_LINK_HEARTBEAT_LEN), "heartbeat (heard) == capture");
-  nb = H::build_link_heartbeat(false, b, sizeof(b));
+  nb = H::build_link_heartbeat(false, false, b, sizeof(b));
   CHECK(nb == HISENSE_LINK_HEARTBEAT_LEN && b[16] == 0xF0 && hisense_status_checksum_ok(b, nb),
         "heartbeat (not heard): byte16 0xF0, checksum valid");
-  CHECK(H::build_link_heartbeat(true, b, HISENSE_LINK_HEARTBEAT_LEN + 1) == 0, "heartbeat refuses a short buffer");
+  CHECK(H::build_link_heartbeat(true, false, b, HISENSE_LINK_HEARTBEAT_LEN + 1) == 0,
+        "heartbeat refuses a short buffer");
 }
 
 static void test_stamp_link_token() {
@@ -461,15 +462,44 @@ static void test_parsers() {
   }
 }
 
+// The original's feature struct as the port's, field by field. The port has no decoder for the
+// packed bitmap (nothing in the firmware reads one back), so the original's is used to make inputs.
+static H::AcFeatures to_port(const HisenseFeatures &o) {
+  H::AcFeatures n;
+  n.valid = o.valid;
+  n.cool_heat = o.cool_heat;
+  n.ai = o.ai;
+  n.infinite_fan = o.infinite_fan;
+  n.power_save = o.power_save;
+  n.fan_mute = o.fan_mute;
+  n.swing_dir_8 = o.swing_dir_8;
+  n.swing_follow = o.swing_follow;
+  n.power_display = o.power_display;
+  n.demand_resp = o.demand_resp;
+  n.humidity = o.humidity;
+  n.heat_8c = o.heat_8c;
+  n.purify = o.purify;
+  n.ext_valid = o.ext_valid;
+  n.q_display = o.q_display;
+  n.enable_8heat = o.enable_8heat;
+  n.trans_102_64 = o.trans_102_64;
+  n.reply_len = o.reply_len;
+  return n;
+}
+
 static void test_bitmaps() {
   for (int i = 0; i < 20000; i++) {
     uint32_t w = rnd();
     HisenseFeatures o;
     memset(&o, 0, sizeof(o));
     hisense_features_from_bitmap32(w, &o);
-    H::AcFeatures n = H::features_from_bitmap32(w);
-    CHECK(same_features(o, n), "features_from_bitmap32 0x%08X", (unsigned) w);
+    H::AcFeatures n = to_port(o);
     CHECK(hisense_features_to_bitmap32(&o) == H::features_to_bitmap32(n), "features_to_bitmap32 0x%08X", (unsigned) w);
+    // And without the ext tier, where the original's encoder and the port's both drop three bits.
+    o.ext_valid = false;
+    n.ext_valid = false;
+    CHECK(hisense_features_to_bitmap32(&o) == H::features_to_bitmap32(n), "features_to_bitmap32, no ext tier, 0x%08X",
+          (unsigned) w);
 
     HisenseFaults fo;
     memset(&fo, 0, sizeof(fo));
@@ -528,12 +558,19 @@ static void test_temperatures() {
 
 static void test_map() {
   for (int m = 0; m < 16; m++) {
-    HisenseMode om = (HisenseMode) 99;
-    H::Mode nm = (H::Mode) 99;
+    // Never read unless the call succeeds, and 0 is a value of both enums. (99 is not one of the
+    // original's C enum, whose range is 0..7: storing it there is undefined behaviour.)
+    HisenseMode om = HISENSE_MODE_FAN;
+    H::Mode nm = H::MODE_FAN;
     bool ro = esphome_mode_to_hisense((uint8_t) m, &om);
     bool rn = H::climate_mode_to_hisense((uint8_t) m, &nm);
     CHECK(ro == rn && (!ro || (int) om == (int) nm), "climate mode %d", m);
-    CHECK(hisense_mode_to_esphome((HisenseMode) m) == H::hisense_mode_to_climate((H::Mode) m), "hisense mode %d", m);
+    // The original's HisenseMode is a C enum with the range 0..7. Loading 8..15 into it is
+    // undefined behaviour in this test (clang's UBSan reports it), so the two are compared over
+    // the values the original can hold. The port's enum is a byte: its answer for 8..255 is pinned
+    // in test_esphome_map_gaps.cpp.
+    if (m < 8)
+      CHECK(hisense_mode_to_esphome((HisenseMode) m) == H::hisense_mode_to_climate((H::Mode) m), "hisense mode %d", m);
   }
   for (int p = 0; p < 2; p++)
     for (int m = 0; m < 8; m++)
@@ -567,7 +604,9 @@ static void test_map() {
     for (int t = 0; t < 2; t++)
       CHECK((int) hisense_feature_from_status(e != 0, t != 0) == (int) H::feature_from_status(e != 0, t != 0),
             "feature_from_status %d %d", e, t);
-  for (int f = 0; f < 6; f++)
+  // The original's HisenseFeature is a C enum with the values 0..3: 4 and 5 cannot be loaded into
+  // it without undefined behaviour (the same report the mode loop above had, hidden behind it).
+  for (int f = 0; f < 4; f++)
     CHECK((int) esphome_feature_after_send((HisenseFeature) f) == (int) H::feature_after_send((H::Feature) f),
           "feature_after_send %d", f);
 }

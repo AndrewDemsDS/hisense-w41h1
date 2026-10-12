@@ -142,10 +142,10 @@ static void test_heartbeat() {
         continue;
       CHECK(plain[i] == prov[i], "heard=%d: byte %u is the same in both", heard, (unsigned) i);
     }
-    // The three-argument builder, which the bus used before, is the frame without the flag.
-    uint8_t old_form[H::LINK_HEARTBEAT_LEN + 2];
-    const size_t n_old = H::build_link_heartbeat(heard != 0, old_form, sizeof(old_form));
-    CHECK(n_old == n_plain && memcmp(old_form, plain, n_plain) == 0, "heard=%d: old builder unchanged", heard);
+    // Without the flag, heard, it is the captured frame byte for byte.
+    if (heard != 0)
+      CHECK(n_plain == H::LINK_HEARTBEAT_LEN && memcmp(plain, H::LINK_HEARTBEAT, n_plain) == 0,
+            "heard, no flag: the captured heartbeat");
   }
   // The frame the original driver sends while a commissioning window is open, byte for byte: the
   // captured heartbeat with byte 17 = 0x88, so the checksum moves from 0x0302 to 0x030A.
@@ -211,7 +211,32 @@ static void test_parse() {
   CHECK(!H::link_request_bits(f.data(), f.size(), &bits), "another class is not a link reply");
   f = link_reply(0x20);
   CHECK(!H::link_request_bits(f.data(), 17, &bits), "a frame that ends before byte 17 is refused");
-  CHECK(!H::link_request_bits(f.data(), 21, &bits), "and one too short to hold a checksum after it");
+  // Too short to hold a checksum behind byte 17. Passing 21 for the 28-byte frame above would
+  // fail on the end tag and prove nothing about the length, so this is a well-formed 21-byte
+  // frame: LEN 12, a good checksum, the end tag. Its byte 17 is the checksum's high byte, and the
+  // filler makes that 0x0B, which carries bit 3 (bytes 2 to 16 sum to 0x0B60 with 0xFF in the
+  // free ones). Without the length guard it would read as a request.
+  {
+    std::vector<uint8_t> s21(21, 0xFF);
+    s21[0] = 0xF4;
+    s21[1] = 0xF5;
+    s21[2] = 0x01;
+    s21[3] = 0x40;
+    s21[4] = 21 - 9;
+    s21[13] = 0x1E;
+    const uint16_t sum21 = H::checksum_range(s21.data(), 2, 17);
+    s21[17] = (uint8_t) (sum21 >> 8);
+    s21[18] = (uint8_t) sum21;
+    s21[19] = 0xF4;
+    s21[20] = 0xFB;
+    bits = 0xEE;
+    CHECK(H::status_checksum_ok(s21.data(), s21.size()) && (s21[17] & RECONFIG) != 0,
+          "(a whole 21-byte 0x1E frame whose byte 17, a checksum byte, has bit 3 set: 0x%02X)", s21[17]);
+    CHECK(!H::link_request_bits(s21.data(), s21.size(), &bits) && bits == 0xEE,
+          "and one too short to hold a checksum after it is refused although it is well formed");
+    std::vector<uint8_t> s22 = link_reply(0x08);
+    CHECK(H::link_request_bits(s22.data(), s22.size(), &bits) && bits == RECONFIG, "(a whole reply is read)");
+  }
   CHECK(!H::link_request_bits(nullptr, 28, &bits) && !H::link_request_bits(f.data(), 28, nullptr), "null arguments");
 }
 

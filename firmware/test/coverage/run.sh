@@ -75,13 +75,18 @@ build_and_run test_esphome_setup_request -I"$comp" \
   "$test_dir/test_esphome_setup_request.cpp" "$comp/hisense_bus.cpp" "$comp/hisense_protocol.cpp"
 build_and_run test_esphome_uart_policy -I"$module" "$test_dir/test_esphome_uart_policy.cpp"
 if [ "$baseline" -eq 0 ]; then
+  # The scheduler's own edge-case tests, so that the figures for hisense_bus.* mean something.
+  build_and_run test_esphome_setup_edges -I"$comp" \
+    "$test_dir/test_esphome_setup_edges.cpp" "$comp/hisense_bus.cpp" "$comp/hisense_protocol.cpp"
+  build_and_run test_esphome_bus_stress -I"$comp" \
+    "$test_dir/test_esphome_bus_stress.cpp" "$comp/hisense_bus.cpp" "$comp/hisense_protocol.cpp"
   build_and_run test_esphome_codec_gaps -I"$comp" \
     "$test_dir/test_esphome_codec_gaps.cpp" "$comp/hisense_protocol.cpp"
   build_and_run test_esphome_map_gaps -I"$comp" -I"$module" \
     "$test_dir/test_esphome_map_gaps.cpp" "$comp/hisense_protocol.cpp"
 fi
 
-# Product files only. hisense_bus.* is measured for the report; its tests live elsewhere.
+# Product files only.
 filters=(
   --filter "$comp/hisense_protocol\.cpp" --filter "$comp/hisense_protocol\.h"
   --filter "$comp/hisense_map\.h" --filter "$comp/hisense_bus\.cpp" --filter "$comp/hisense_bus\.h"

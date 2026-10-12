@@ -334,15 +334,16 @@ static void test_builder_arguments() {
         "single field: checksum 01 D4, end tag");
 
   // build_link_heartbeat (line 347): 28 bytes plus room for two stuffed ones.
-  CHECK(H::build_link_heartbeat(true, nullptr, sizeof(out)) == 0, "heartbeat: no buffer");
-  CHECK(H::build_link_heartbeat(true, out, 29) == 0 && H::build_link_heartbeat(true, true, out, 29) == 0,
+  CHECK(H::build_link_heartbeat(true, false, nullptr, sizeof(out)) == 0, "heartbeat: no buffer");
+  CHECK(H::build_link_heartbeat(true, false, out, 29) == 0 && H::build_link_heartbeat(true, true, out, 29) == 0,
         "heartbeat: 29 bytes");
-  CHECK(H::build_link_heartbeat(true, out, 27) == 0 && H::build_link_heartbeat(true, out, 0) == 0, "heartbeat: less");
+  CHECK(H::build_link_heartbeat(true, false, out, 27) == 0 && H::build_link_heartbeat(true, false, out, 0) == 0,
+        "heartbeat: less");
   std::memset(out, 0xEE, sizeof(out));
-  CHECK(H::build_link_heartbeat(true, out, 30) == 28, "heartbeat: 30 bytes");
+  CHECK(H::build_link_heartbeat(true, false, out, 30) == 28, "heartbeat: 30 bytes");
   CHECK(std::memcmp(out, H::LINK_HEARTBEAT, 28) == 0 && out[28] == 0xEE, "heard, not provisioning: the captured frame");
   // Not heard: byte 16 is 0xF0 (header), checksum 0x0302 + 0x40. Provisioning: byte 17 bit 3.
-  CHECK(H::build_link_heartbeat(false, out, 30) == 28 && out[16] == 0xF0 && out[17] == 0x80 && out[24] == 0x03 &&
+  CHECK(H::build_link_heartbeat(false, false, out, 30) == 28 && out[16] == 0xF0 && out[17] == 0x80 && out[24] == 0x03 &&
             out[25] == 0x42 && out[26] == 0xF4 && out[27] == 0xFB,
         "not heard: F0, checksum 03 42");
   CHECK(H::build_link_heartbeat(true, true, out, 30) == 28 && out[16] == 0xB0 && out[17] == 0x88 && out[24] == 0x03 &&
@@ -1052,6 +1053,43 @@ static void test_parse_features_and_faults() {
           f[13]);
   }
 
+  // devtype_reply_usable: what may be stamped into bytes 7/8 of every later frame. The checksum
+  // verdict comes from the caller, which has judged the frame once already.
+  Bytes du = frame(24, 0x0A);
+  du[16] = 0x36;
+  du[17] = 0x05;
+  seal(&du);
+  hi = lo = 0xEE;
+  CHECK(H::devtype_reply_usable(true, du.data(), du.size(), &hi, &lo) && hi == 0x36 && lo == 0x05,
+        "a whole DevType reply: usable");
+  CHECK(H::devtype_reply_usable(true, du.data(), du.size(), nullptr, nullptr), "usable: both outputs optional");
+  hi = lo = 0xEE;
+  CHECK(H::devtype_reply_usable(true, du.data(), du.size(), &hi, nullptr) && hi == 0x36 &&
+            H::devtype_reply_usable(true, du.data(), du.size(), nullptr, &lo) && lo == 0x05,
+        "usable: each output alone");
+  hi = lo = 0xEE;
+  CHECK(!H::devtype_reply_usable(false, du.data(), du.size(), &hi, &lo) && hi == 0xEE && lo == 0xEE,
+        "a failed checksum: not usable, outputs untouched");
+  CHECK(!H::devtype_reply_usable(true, du.data(), 21, &hi, &lo) && hi == 0xEE,
+        "too short for bytes 16/17 to be payload: not usable");
+  Bytes other = du;
+  other[13] = 0x66;
+  CHECK(!H::devtype_reply_usable(true, other.data(), other.size(), &hi, &lo) && hi == 0xEE,
+        "another class: not usable");
+  // 00 00 is "not linked yet" to the stock module. Either byte alone non-zero is a type.
+  struct {
+    uint8_t type, sub;
+    bool usable;
+  } pairs[] = {{0x00, 0x00, false}, {0x00, 0x01, true}, {0x01, 0x00, true}, {0x01, 0x01, true}, {0xFF, 0xFF, true}};
+  for (const auto &pr : pairs) {
+    du[16] = pr.type;
+    du[17] = pr.sub;
+    hi = lo = 0xEE;
+    bool ok = H::devtype_reply_usable(true, du.data(), du.size(), &hi, &lo);
+    CHECK(ok == pr.usable && hi == (ok ? pr.type : 0xEE) && lo == (ok ? pr.sub : 0xEE), "device type %02X %02X is %s",
+          pr.type, pr.sub, pr.usable ? "adopted" : "never adopted");
+  }
+
   // Bitmaps: one fault at a time lands on its FAULT1_ bit (binary_sensor.py reads these).
   bool H::AcFaults::*fault_fields[] = {
       &H::AcFaults::in_temp,      &H::AcFaults::in_coil_temp, &H::AcFaults::in_humidity,   &H::AcFaults::water_full,
@@ -1089,21 +1127,26 @@ static void test_parse_features_and_faults() {
   f = H::AcFeatures{};
   f.reply_len = 0xFF;
   CHECK(H::features_to_bitmap32(f) == 0, "reply_len is not in the bitmap");
-  H::AcFeatures back = H::features_from_bitmap32(0xFFFFFFFFu);
-  CHECK(back.valid && back.ext_valid && back.power_display == 3 && back.demand_resp == 3 && back.reply_len == 0 &&
-            back.cool_heat && back.purify && back.trans_102_64,
-        "all bits set decode to every feature, reply_len 0");
-  back = H::features_from_bitmap32(0);
-  CHECK(!back.valid && !back.ext_valid && back.power_display == 0 && back.demand_resp == 0 && !back.cool_heat,
-        "no bits set decode to none");
-  for (int bit = 0; bit < 32; bit++) {
-    uint32_t b = 1u << bit;
-    // Bits 10..12 need bit 30 to come back; 13..15 and 20..29 are not used.
-    const bool used = bit <= 9 || (bit >= 16 && bit <= 19) || bit >= 30;
-    if (used)
-      CHECK(H::features_to_bitmap32(H::features_from_bitmap32(b)) == b, "feature bit %d survives decode and encode",
-            bit);
+  // Every field alone lands on its own bit, and no bit outside the documented ones is ever set.
+  // (binary_sensor.py reads these indices.)
+  bool H::AcFeatures::*flag_fields[] = {
+      &H::AcFeatures::cool_heat, &H::AcFeatures::ai,          &H::AcFeatures::infinite_fan, &H::AcFeatures::power_save,
+      &H::AcFeatures::fan_mute,  &H::AcFeatures::swing_dir_8, &H::AcFeatures::swing_follow, &H::AcFeatures::humidity,
+      &H::AcFeatures::heat_8c,   &H::AcFeatures::purify};
+  for (int bit = 0; bit < 10; bit++) {
+    H::AcFeatures one;
+    one.*(flag_fields[bit]) = true;
+    CHECK(H::features_to_bitmap32(one) == (1u << bit), "feature field %d alone is bit %d", bit, bit);
   }
+  H::AcFeatures all;
+  for (auto field : flag_fields)
+    all.*field = true;
+  all.valid = all.ext_valid = all.q_display = all.enable_8heat = all.trans_102_64 = true;
+  all.power_display = 0xFF;
+  all.demand_resp = 0xFF;
+  all.reply_len = 0xFF;
+  CHECK(H::features_to_bitmap32(all) == 0xC00F1FFFu, "everything set: bits 0-12, 16-19, 30, 31 (got 0x%08X)",
+        (unsigned) H::features_to_bitmap32(all));
 }
 
 // ---- Setup request ("77") ----------------------------------------------------------------------

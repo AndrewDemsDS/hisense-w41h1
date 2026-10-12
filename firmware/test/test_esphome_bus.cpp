@@ -643,6 +643,72 @@ static void test_command_tickets() {
         "and the reports follow");
 }
 
+// The small things around the cycle: the accessors the hub reads, a poll before setup, the
+// ProductType poll coming round again, and a unit whose DevType reply says 00 00.
+static void test_accessors_and_corners() {
+  printf("-- accessors, a poll before setup, ProductType every 60 cycles, device type 00 00\n");
+  {
+    H::BusScheduler idle;
+    for (uint32_t t = 0; t < 3000; t += 7)
+      idle.poll(t);  // no I/O set: nothing to do, and nothing to crash on
+    H::AcFaults fl;
+    H::AcFeatures ft;
+    uint8_t hi = 0, lo = 0;
+    CHECK(!idle.faults(&fl) && !idle.features(&ft) && !idle.link_token(&hi, &lo) && hi == 0x01 && lo == 0x01 &&
+              idle.queued() == 0 && !idle.transmitting() && !idle.wants_fast_loop(),
+          "a scheduler that was never set up does nothing and knows nothing");
+  }
+  SimAC ac;
+  Recorder rec;
+  H::BusScheduler bus;
+  bus.setup(&ac, &rec, true);
+  H::AcFaults fl;
+  H::AcFeatures ft;
+  CHECK(!bus.faults(&fl) && !bus.features(&ft), "before the first replies: no faults, no capabilities");
+  run(bus, 5000);
+  CHECK(bus.faults(&fl) && fl.valid && !fl.any, "faults() after a status frame: valid, none");
+  CHECK(bus.features(&ft) && ft.valid && ft.cool_heat && rec.features == 1, "features() after the ProductType reply");
+  // Switching the indication to what it already is changes nothing, the lockout included.
+  bus.set_setup_indicator(false, g_now);
+  CHECK(!bus.setup_indicator(), "off stays off");
+  bus.set_setup_indicator(true, g_now);
+  bus.set_setup_indicator(true, g_now + 5);
+  CHECK(bus.setup_indicator(), "on stays on");
+  bus.set_setup_indicator(false, g_now);
+  // The ProductType poll: once on the first heard cycle, then every BUS_PRODUCTTYPE_CYCLES.
+  size_t polls = 0;
+  for (auto &w : ac.writes)
+    polls += cls(w) == 0x66 && w.bytes[14] == 0x40 ? 1 : 0;
+  CHECK(polls == 1, "one ProductType poll in the first 5 s (%zu)", polls);
+  run(bus, 125000);
+  std::vector<uint32_t> at;
+  for (auto &w : ac.writes)
+    if (cls(w) == 0x66 && w.bytes[14] == 0x40)
+      at.push_back(w.t);
+  CHECK(at.size() == 3, "three ProductType polls in 130 s (%zu)", at.size());
+  if (at.size() == 3)
+    CHECK(at[1] - at[0] == 60000 && at[2] - at[1] == 60000, "60 cycles apart (%u, %u ms)", (unsigned) (at[1] - at[0]),
+          (unsigned) (at[2] - at[1]));
+  CHECK(rec.features == 3 && rec.timeouts == 0, "each answered");
+  {
+    // 00 00 in a whole DevType reply is "not linked yet" to the stock module: the handshake is
+    // answered, the pair is not adopted, the seeded 01 01 stays.
+    SimAC zero;
+    zero.devtype_hi = 0x00;
+    zero.devtype_lo = 0x00;
+    Recorder r2;
+    H::BusScheduler b2;
+    b2.setup(&zero, &r2, true);
+    run(b2, 3000);
+    uint8_t hi = 0xEE, lo = 0xEE;
+    CHECK(!b2.link_token(&hi, &lo) && hi == 0x01 && lo == 0x01, "00 00 is not adopted (%02X %02X)", hi, lo);
+    CHECK(cls(zero.writes[0]) == 0x0A && cls(zero.writes[1]) == 0x07 && zero.writes[1].bytes[7] == 0x01 &&
+              zero.writes[1].bytes[8] == 0x01,
+          "one probe, then 0x07 with the seed");
+    CHECK(r2.statuses >= 1 && bus.checksum_mismatches() == 0, "and the link comes up");
+  }
+}
+
 static void test_boot_retries() {
   printf("-- boot retries against a silent A/C\n");
   SimAC ac;
@@ -1075,6 +1141,7 @@ int main() {
   test_damaged_frames_are_not_believed();
   test_return_between_probe_and_poll();
   test_command_tickets();
+  test_accessors_and_corners();
   test_peripheral_de();
   test_command_fate();
   test_stale_frame_in_command_window();

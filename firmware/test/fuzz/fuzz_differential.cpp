@@ -23,6 +23,8 @@
 //    delivers is one the reference takes as the same frame when it is sent alone (the port accepts
 //    nothing the reference would reject); on a stream of whole frames with noise between them
 //    (no stray 0xF4), both deliver every frame, the same bytes, on the same byte of the stream.
+//  - The port has no features_from_bitmap32 and no three-argument heartbeat builder: nothing in
+//    the firmware used either. The encoder is compared on inputs the reference's decoder makes.
 //  - AcCommand.power_on has no counterpart: the reference never ORs the run field into byte 18.
 //    Checked here as a relation instead: same frame, byte 18 | 0x0C, checksum redone.
 //  - build_single_field refuses an offset outside the body (16 to 45); the reference's static
@@ -75,6 +77,31 @@ static bool same_faults(const HisenseFaults &o, const H::AcFaults &n) {
          o.in_display == n.in_display && o.in_keys == n.in_keys && o.in_wifi == n.in_wifi && o.in_ele == n.in_ele &&
          o.in_eeprom == n.in_eeprom && o.out_eeprom == n.out_eeprom && o.out_coil_temp == n.out_coil_temp &&
          o.out_gas_temp == n.out_gas_temp && o.out_temp == n.out_temp && o.over_temp == n.over_temp;
+}
+
+// The original's feature struct as the port's, field by field. The port has no decoder for the
+// packed bitmap (nothing in the firmware reads one back), so the original's is used to make inputs.
+static H::AcFeatures to_port(const HisenseFeatures &o) {
+  H::AcFeatures n;
+  n.valid = o.valid;
+  n.cool_heat = o.cool_heat;
+  n.ai = o.ai;
+  n.infinite_fan = o.infinite_fan;
+  n.power_save = o.power_save;
+  n.fan_mute = o.fan_mute;
+  n.swing_dir_8 = o.swing_dir_8;
+  n.swing_follow = o.swing_follow;
+  n.power_display = o.power_display;
+  n.demand_resp = o.demand_resp;
+  n.humidity = o.humidity;
+  n.heat_8c = o.heat_8c;
+  n.purify = o.purify;
+  n.ext_valid = o.ext_valid;
+  n.q_display = o.q_display;
+  n.enable_8heat = o.enable_8heat;
+  n.trans_102_64 = o.trans_102_64;
+  n.reply_len = o.reply_len;
+  return n;
 }
 
 // ---- group 0: the two reassemblers on one stream -------------------------------------------------
@@ -364,9 +391,8 @@ static void diff_helpers(Reader &r) {
   HisenseFeatures of;
   memset(&of, 0, sizeof(of));
   hisense_features_from_bitmap32(w, &of);
-  H::AcFeatures nf = H::features_from_bitmap32(w);
-  FUZZ_CHECK(same_features(of, nf), "features_from_bitmap32(%08X)", w);
-  FUZZ_CHECK(hisense_features_to_bitmap32(&of) == H::features_to_bitmap32(nf), "features_to_bitmap32");
+  H::AcFeatures nf = to_port(of);
+  FUZZ_CHECK(hisense_features_to_bitmap32(&of) == H::features_to_bitmap32(nf), "features_to_bitmap32(%08X)", w);
 }
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {

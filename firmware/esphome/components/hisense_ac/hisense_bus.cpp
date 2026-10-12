@@ -170,12 +170,13 @@ bool BusScheduler::advance_(uint32_t now) {
       return this->listen_(now);
 
     case Phase::WAIT:
-      if (!reached(now, this->phase_until_))
-        return false;
-      this->phase_ = Phase::IDLE;
-      return true;
+      break;
   }
-  return false;
+  // WAIT: the pause after a failed boot try, or the rest of the cycle.
+  if (!reached(now, this->phase_until_))
+    return false;
+  this->phase_ = Phase::IDLE;
+  return true;
 }
 
 // Read what has arrived. True when the reply window closed, with a frame or by running out.

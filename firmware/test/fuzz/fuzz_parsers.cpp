@@ -9,7 +9,7 @@
 //  - parse_status accepts only a frame that passes the model's length, tag and checksum rules,
 //    and leaves the output alone when it refuses.
 //  - parse_features accepts only class 0x66 subtype 0x40 with byte 35 in front of the trailer, and
-//    its result survives the bitmap round trip.
+//    its result packs into the documented bitmap.
 //  - parse_faults: true exactly when byte 39 is payload; a refusal leaves a cleared, invalid
 //    struct; `any` is the OR of the raw bytes (bit 7 of the protection byte excluded).
 //  - devtype_from_reply accepts only class 0x0A long enough for bytes 16/17 to be payload (22
@@ -67,14 +67,18 @@ static void one_length(const uint8_t *src, size_t len) {
     FUZZ_CHECK(ft.valid && ft.ext_valid == payload(len, 39), "features valid / ext_valid");
     FUZZ_CHECK(ft.power_display <= 3 && ft.demand_resp <= 3, "two-bit fields");
     FUZZ_CHECK(ft.reply_len == (len > 255 ? 255 : len), "reply_len");
-    uint32_t bm = H::features_to_bitmap32(ft);
-    H::AcFeatures back = H::features_from_bitmap32(bm);
-    FUZZ_CHECK(H::features_to_bitmap32(back) == bm, "feature bitmap does not round trip");
-    FUZZ_CHECK(back.cool_heat == ft.cool_heat && back.purify == ft.purify && back.q_display == ft.q_display &&
-                   back.enable_8heat == ft.enable_8heat && back.trans_102_64 == ft.trans_102_64 &&
-                   back.power_display == ft.power_display && back.demand_resp == ft.demand_resp &&
-                   back.ext_valid == ft.ext_valid && back.valid,
-               "feature fields do not survive the bitmap");
+    // The packed form, bit by bit as hisense_protocol.h lists the FEAT1_ indices (binary_sensor.py
+    // reads the same numbers): the three ext bits only with the ext tier.
+    uint32_t want = (ft.cool_heat ? 1u << 0 : 0) | (ft.ai ? 1u << 1 : 0) | (ft.infinite_fan ? 1u << 2 : 0) |
+                    (ft.power_save ? 1u << 3 : 0) | (ft.fan_mute ? 1u << 4 : 0) | (ft.swing_dir_8 ? 1u << 5 : 0) |
+                    (ft.swing_follow ? 1u << 6 : 0) | (ft.humidity ? 1u << 7 : 0) | (ft.heat_8c ? 1u << 8 : 0) |
+                    (ft.purify ? 1u << 9 : 0) | (static_cast<uint32_t>(ft.power_display) << 16) |
+                    (static_cast<uint32_t>(ft.demand_resp) << 18) | (1u << 31);
+    if (ft.ext_valid)
+      want |= (1u << 30) | (ft.q_display ? 1u << 10 : 0) | (ft.enable_8heat ? 1u << 11 : 0) |
+              (ft.trans_102_64 ? 1u << 12 : 0);
+    FUZZ_CHECK(H::features_to_bitmap32(ft) == want, "feature bitmap %08X, the fields say %08X",
+               H::features_to_bitmap32(ft), want);
   } else {
     FUZZ_CHECK(!ft.valid, "parse_features refused the frame but set valid");
   }

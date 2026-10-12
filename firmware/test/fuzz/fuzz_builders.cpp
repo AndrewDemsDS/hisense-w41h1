@@ -162,11 +162,6 @@ static void op_fixed(Reader &r, size_t cap, uint8_t which) {
       for (size_t i = 0; i < 24; i++)
         if (i != 16 && i != 17)
           FUZZ_CHECK(f[i] == H::LINK_HEARTBEAT[i], "heartbeat byte %zu differs from the captured template", i);
-      if (!prov) {
-        Exact out2(cap);
-        size_t n2 = H::build_link_heartbeat(heard, out2.data(), cap);
-        FUZZ_CHECK(n2 == n && memcmp(out.data(), out2.data(), n) == 0, "the three-argument overload differs");
-      }
       return;
     }
   }

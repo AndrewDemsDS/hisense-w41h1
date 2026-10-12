@@ -49,18 +49,18 @@ static constexpr uint8_t CLASS_ANY = 0x00;
 static constexpr size_t CMD_FRAME_LEN = 50;
 static constexpr size_t CMD_HEADER_LEN = 16;
 static constexpr size_t CMD_CHK_OFFSET = 46;
-static constexpr size_t CMD_END_OFFSET = 48;
 // A builder's output can grow by up to two bytes: each 0xF4 checksum byte is doubled on the wire.
 static constexpr size_t CMD_FRAME_MAX = CMD_FRAME_LEN + 2;
 
 // CTRL (frame[3]) = 0x40 selects a 2-byte big-endian checksum in the vendor module's parser;
 // frame[4] = 0x29 is the 8-bit LEN; frame[13] = 0x65.
-static constexpr uint8_t CMD_HEADER[CMD_HEADER_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01,
+// The frame templates are `inline constexpr`: one copy in the image, however many files use them.
+inline constexpr uint8_t CMD_HEADER[CMD_HEADER_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01,
                                                        0x01, 0xFE, 0x01, 0x00, 0x00, 0x65, 0x00, 0x00};
 
 // Status poll (0x66/00).
 static constexpr size_t STATUS_REQUEST_LEN = 21;
-static constexpr uint8_t STATUS_REQUEST[STATUS_REQUEST_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00, 0x00,
+inline constexpr uint8_t STATUS_REQUEST[STATUS_REQUEST_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00, 0x00,
                                                                0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x66,
                                                                0x00, 0x00, 0x00, 0x01, 0xB3, 0xF4, 0xFB};
 
@@ -68,13 +68,13 @@ static constexpr uint8_t STATUS_REQUEST[STATUS_REQUEST_LEN] = {0xF4, 0xF5, 0x00,
 // ignores the status poll until it has seen 0x0A and 0x07 once, then a 0x1E heartbeat at about
 // 1 Hz.
 static constexpr size_t LINK_INIT_0A_LEN = 20;
-static constexpr uint8_t LINK_INIT_0A[LINK_INIT_0A_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x00, 0x00, 0xFE,
+inline constexpr uint8_t LINK_INIT_0A[LINK_INIT_0A_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x00, 0x00, 0xFE,
                                                            0x01, 0x00, 0x00, 0x0A, 0x04, 0x00, 0x01, 0x58, 0xF4, 0xFB};
 static constexpr size_t LINK_INIT_07_LEN = 20;
-static constexpr uint8_t LINK_INIT_07[LINK_INIT_07_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x01, 0x01, 0xFE,
+inline constexpr uint8_t LINK_INIT_07[LINK_INIT_07_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0B, 0x00, 0x00, 0x01, 0x01, 0xFE,
                                                            0x01, 0x00, 0x00, 0x07, 0x01, 0x00, 0x01, 0x54, 0xF4, 0xFB};
 static constexpr size_t LINK_HEARTBEAT_LEN = 28;
-static constexpr uint8_t LINK_HEARTBEAT[LINK_HEARTBEAT_LEN] = {
+inline constexpr uint8_t LINK_HEARTBEAT[LINK_HEARTBEAT_LEN] = {
     0xF4, 0xF5, 0x00, 0x40, 0x13, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x1E,
     0x00, 0x00, 0xB0, 0x80, 0x20, 0x00, 0x00, 0x00, 0x40, 0x00, 0x03, 0x02, 0xF4, 0xFB};
 
@@ -282,7 +282,6 @@ static constexpr uint8_t FAULT1_ANY = 30;
 static constexpr uint8_t FAULT1_VALID = 31;
 
 uint32_t features_to_bitmap32(const AcFeatures &f);
-AcFeatures features_from_bitmap32(uint32_t b);
 uint32_t faults_to_bitmap32(const AcFaults &f);
 
 // ---- Temperature helpers -----------------------------------------------------------------------
@@ -323,9 +322,8 @@ size_t build_mute_frame(bool on, uint8_t *out, size_t out_cap);           // byt
 size_t build_sleep_frame(uint8_t profile, uint8_t *out, size_t out_cap);  // byte 17: profile*2+1
 size_t build_producttype_request(uint8_t *out, size_t out_cap);
 // 0x1E heartbeat. Byte 16 = 0xB0 once the A/C's own 0x1E has been heard, 0xF0 before.
-size_t build_link_heartbeat(bool heard_ac, uint8_t *out, size_t out_cap);
-// The same heartbeat with the module's provisioning flag (byte 17 bit 3) set or clear. While it is
-// set the panel shows "77".
+// `provisioning` sets the module's provisioning flag (byte 17 bit 3): while it is set the panel
+// shows "77".
 size_t build_link_heartbeat(bool heard_ac, bool provisioning, uint8_t *out, size_t out_cap);
 // Re-stamp a finished frame's envelope bytes 7/8 with the A/C's device type and fix the checksum.
 // 0 when the envelope is not recognised.

@@ -46,10 +46,12 @@ class BusListener {
  public:
   virtual ~BusListener() = default;
   virtual void on_bus_status(const AcState &state) = 0;
-  virtual void on_bus_features(const AcFeatures &features) = 0;
   virtual void on_bus_link(bool up) = 0;
-  // Diagnostics, all optional. They exist so the owner of the bus can log at the level it likes;
+  // The rest is optional. Most of it exists so the owner of the bus can log at the level it likes;
   // the scheduler itself has no logger, which keeps it buildable without ESPHome.
+  // A 0x66/40 ProductType reply was parsed. BusScheduler::features() holds the same from then on,
+  // which is what the hub reads.
+  virtual void on_bus_features(const AcFeatures &features) {}
   // Every complete frame received, of any class, before its checksum is judged.
   virtual void on_bus_frame(const uint8_t *frame, size_t len) {}
   // A complete frame, of any class, whose checksum did not match. It is counted and nothing is
@@ -173,7 +175,10 @@ class BusScheduler {
   // 9600 baud. Code that touches the serial port from outside has to leave it alone meanwhile.
   bool transmitting() const { return this->transmitting_; }
 
-  bool link_token(uint8_t *hi, uint8_t *lo) const;  // false until a DevType reply supplied it
+  // The pair stamped into bytes 7/8 of every frame: the A/C's device type and sub-type from its
+  // DevType reply ("link token" is the older name for the same two bytes). False while it is
+  // still the seeded 01 01, i.e. until a DevType reply supplied it.
+  bool link_token(uint8_t *hi, uint8_t *lo) const;
   // Complete frames received with a bad checksum, of any class, since boot.
   uint32_t checksum_mismatches() const { return this->chk_mismatch_; }
   // Counters since boot, for diagnostics. A reply window that closed empty, of any kind; a queued
