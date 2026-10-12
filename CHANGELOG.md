@@ -106,6 +106,10 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   that stayed up, and once more after a lost link. It now fires once per unbroken run of replies
   that ask. A unit that sends one pulse per gesture, as the one on the bench does, behaves as
   before.
+- **Commands no longer hold up the heartbeat and the status poll.** Queued command frames went
+  out back to back until the queue was empty, however long that took. A cycle now carries the
+  frames that start within its first 600 ms (about four) and the rest follow in the next cycle,
+  in order.
 
 ### The Matter firmwares are retired, ESPHome is the only firmware (2026-10-12, #182)
 - **Removed** the AmebaZ2 Matter build (the SDK setup scripts, `patches/`, `versions.env`, the

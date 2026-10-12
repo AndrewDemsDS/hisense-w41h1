@@ -9,8 +9,9 @@
 //
 // Boot: DevType (0x0A) handshake, up to 10 tries 500 ms apart, then 0x07.
 // Each ~1 s cycle: a DevType re-handshake if 5 status polls in a row went unanswered, the 0x1E
-// heartbeat, every queued command, the 0x66 status poll (the link-liveness signal), and the
-// 0x66/40 ProductType poll on the first heard cycle and every 60th after.
+// heartbeat, the queued commands that fit (command_slot_open below), the 0x66 status poll (the
+// link-liveness signal), and the 0x66/40 ProductType poll on the first heard cycle and every 60th
+// after.
 //
 // A command frame that gets no reply is sent again in the next cycle's command slot, ahead of
 // everything queued behind it, up to COMMAND_SENDS_MAX sends and only while the unit answers its
@@ -94,6 +95,20 @@ inline bool command_resend_allowed(uint8_t sends, bool unit_answering) {
   return unit_answering && sends < COMMAND_SENDS_MAX;
 }
 
+// How long into a cycle a queued command may still start. The command slot sits between the
+// heartbeat and the status poll, and it used to run until the queue was empty: a queue refilled as
+// fast as it drained (about seven frames a second) kept the unit without its 1 Hz heartbeat and
+// Home Assistant without status for as long as that lasted. Past this point what is still queued
+// waits for the next cycle. 600 ms leaves the status poll and its 160-byte reply (about 260 ms)
+// room inside the 1000 ms cycle after a command that started at the last moment, and lets the
+// three or four frames through that fit a cycle anyway. The first command of a cycle always
+// goes, however late the heartbeat ended, so the queue cannot stall.
+static constexpr uint32_t BUS_COMMAND_SLOT_MS = 600;
+
+inline bool command_slot_open(uint8_t sent_this_cycle, uint32_t cycle_elapsed_ms) {
+  return sent_this_cycle == 0 || cycle_elapsed_ms < BUS_COMMAND_SLOT_MS;
+}
+
 // What the reply to a command frame says. The stock transaction primitive accepts a reply as verified
 // when its payload repeats the first two payload bytes of the command and carries 1 in the third
 // (RE docs/10 section 4.2 step 6). Payload byte N is frame byte 13 + N, so that is frame bytes 13
@@ -173,7 +188,7 @@ class BusScheduler {
     CYCLE_BEGIN,   // sends nothing: notes the time and picks RECOVER or HEARTBEAT
     RECOVER,       // DevType probe, only while the link is lost
     HEARTBEAT,     // 0x1E
-    COMMANDS,      // the queue, one frame per transaction
+    COMMANDS,      // the queue, one frame per transaction, while command_slot_open()
     STATUS,        // 0x66 poll
     PRODUCT,       // 0x66/40 poll, on the first heard cycle and every BUS_PRODUCTTYPE_CYCLES
     PACE,          // sends nothing: waits out the rest of BUS_CYCLE_MS
@@ -223,6 +238,8 @@ class BusScheduler {
   // Sends of the frame at the head of the queue so far, and whether it is waiting for another.
   uint8_t head_sends_{0};
   bool head_resend_{false};
+  // Command frames started in the current cycle, for command_slot_open().
+  uint8_t cycle_commands_{0};
   uint8_t command_reply_{0};
 
   // Outbound envelope bytes 7/8 = the A/C's device type from its DevType reply. Seeded to the

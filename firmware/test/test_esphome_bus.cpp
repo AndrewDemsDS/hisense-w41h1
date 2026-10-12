@@ -314,19 +314,54 @@ static void test_queue() {
   CHECK(!bus.enqueue(cmd, 0) && !bus.enqueue(cmd, 65), "empty and oversize frames refused");
   size_t before = ac.writes.size();
   run(bus, 3000);
-  // Find the first cycle after the enqueue: heartbeat, 8 commands, status.
+  // The queue goes out in the command slot, between the heartbeat and the status poll, as many
+  // frames per cycle as start within BUS_COMMAND_SLOT_MS of the cycle's start. Eight do not fit
+  // one cycle: the rest follow in the next, and the heartbeat and the status poll keep their pace.
   size_t hb = before;
   while (hb < ac.writes.size() && cls(ac.writes[hb]) != 0x1E)
     hb++;
-  CHECK(hb + 9 < ac.writes.size(), "cycle present");
-  for (int i = 1; i <= 8; i++) {
-    const auto &w = ac.writes[hb + i];
-    CHECK(cls(w) == 0x65 && w.bytes[7] == 0x01 && w.bytes[8] == 0x02 &&
-              H::status_checksum_ok(w.bytes.data(), w.bytes.size()),
-          "queued command %d sent in the command slot, stamped", i);
+  int sent = 0, cycles_used = 0;
+  bool order_ok = true, slot_ok = true;
+  uint32_t cycle_at = 0;
+  for (size_t i = hb; i < ac.writes.size() && sent < 8; i++) {
+    const auto &w = ac.writes[i];
+    if (cls(w) == 0x1E) {
+      // Every cycle that carries commands: heartbeat, commands, status poll.
+      if (cycle_at != 0)
+        CHECK(w.t - cycle_at == 1000, "the next heartbeat is 1000 ms after the last (%u)", (unsigned) (w.t - cycle_at));
+      cycle_at = w.t;
+      cycles_used++;
+      continue;
+    }
+    if (cls(w) != 0x65) {
+      order_ok = order_ok && cls(w) == 0x66 && cls(ac.writes[i - 1]) != 0x1E;
+      continue;
+    }
+    sent++;
+    CHECK(w.bytes[7] == 0x01 && w.bytes[8] == 0x02 && H::status_checksum_ok(w.bytes.data(), w.bytes.size()),
+          "queued command %d stamped", sent);
+    slot_ok = slot_ok && (cls(ac.writes[i - 1]) == 0x1E || w.t - cycle_at < H::BUS_COMMAND_SLOT_MS + 5);
+    order_ok = order_ok && (cls(ac.writes[i - 1]) == 0x1E || cls(ac.writes[i - 1]) == 0x65);
   }
-  CHECK(cls(ac.writes[hb + 9]) == 0x66, "status poll after the drained queue");
-  CHECK(bus.queued() == 0, "queue empty");
+  CHECK(sent == 8 && bus.queued() == 0, "all eight sent, queue empty (%d)", sent);
+  CHECK(order_ok, "commands only between the heartbeat and the status poll");
+  CHECK(slot_ok, "no command starts later than BUS_COMMAND_SLOT_MS into its cycle");
+  CHECK(cycles_used == 2, "eight frames take two cycles (%d)", cycles_used);
+  CHECK(rec.timeouts == 0 && rec.links.empty(), "and nothing else is disturbed");
+
+  // The rule itself. The first command of a cycle always goes; after that the slot closes at
+  // BUS_COMMAND_SLOT_MS.
+  CHECK(H::BUS_COMMAND_SLOT_MS == 600, "the slot is 600 ms");
+  CHECK(H::command_slot_open(0, 0) && H::command_slot_open(0, 599) && H::command_slot_open(0, 600) &&
+            H::command_slot_open(0, 5000) && H::command_slot_open(0, 0xFFFFFFFFu),
+        "first command of a cycle: always");
+  for (int n : {1, 2, 7, 255}) {
+    CHECK(H::command_slot_open((uint8_t) n, 0) && H::command_slot_open((uint8_t) n, 599), "command %d before 600 ms",
+          n + 1);
+    CHECK(!H::command_slot_open((uint8_t) n, 600) && !H::command_slot_open((uint8_t) n, 601) &&
+              !H::command_slot_open((uint8_t) n, 0xFFFFFFFFu),
+          "command %d at or after 600 ms waits for the next cycle", n + 1);
+  }
 }
 
 static void test_link_loss_and_recovery() {

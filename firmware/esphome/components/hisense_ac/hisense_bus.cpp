@@ -230,6 +230,7 @@ void BusScheduler::start_step_(uint32_t now) {
       return;
     case Step::CYCLE_BEGIN:
       this->cycle_start_ = now;
+      this->cycle_commands_ = 0;
       // Cooperative link recovery: one DevType handshake per cycle while the A/C is silent.
       this->step_ = this->link_miss_ >= BUS_LINK_LOST_POLLS ? Step::RECOVER : Step::HEARTBEAT;
       this->start_step_(now);
@@ -249,7 +250,9 @@ void BusScheduler::start_step_(uint32_t now) {
       return;
     }
     case Step::COMMANDS: {
-      if (this->queue_len_ == 0) {
+      // What does not fit this cycle waits for the next: the heartbeat and the status poll keep
+      // their pace however many commands are queued.
+      if (this->queue_len_ == 0 || !command_slot_open(this->cycle_commands_, now - this->cycle_start_)) {
         this->step_ = Step::STATUS;
         this->start_step_(now);
         return;
@@ -259,6 +262,8 @@ void BusScheduler::start_step_(uint32_t now) {
       // accepted: the A/C may answer with a status frame.
       const size_t slot = this->queue_head_;
       this->head_sends_++;
+      if (this->cycle_commands_ < 0xFF)
+        this->cycle_commands_++;
       this->begin_transaction_(this->queue_[slot], this->queue_lens_[slot], CLASS_ANY, &BusScheduler::command_done_,
                                now);
       return;
@@ -338,7 +343,8 @@ void BusScheduler::command_done_(size_t reply_len, uint32_t now) {
   if (answered)
     this->consume_(reply_len);
   // The re-send waits for the next cycle's command slot: a unit that missed a frame is not asked
-  // again within the same second. Otherwise the step stays COMMANDS until the queue is empty.
+  // again within the same second. Otherwise the step stays COMMANDS until the queue is empty or
+  // the slot closes.
   if (this->head_resend_)
     this->step_ = Step::STATUS;
 }

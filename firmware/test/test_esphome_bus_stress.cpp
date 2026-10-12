@@ -1169,18 +1169,31 @@ static void script_gap(Rig &r) {
         (unsigned) g_gap);
   CHECK(r.bus.link_miss() <= 255, "miss counter saturates");
   size_t writes = r.ac.writes.size();
+  // A silent unit gets one command per cycle (the slot closes behind the heartbeat's empty reply
+  // window), so the second one may still be waiting when the unit returns after a short silence.
+  const int during_sent = r.tags[during].sends;
   r.ac.silent = false;
   r.run(4000);
   CHECK(r.rec.links.size() == (lost ? 2u : 0u) && r.bus.link_losses() == (lost ? 1u : 0u), "restored once (%zu edges)",
         r.rec.links.size());
   CHECK(r.rec.statuses >= statuses + 2, "status flows again");
-  // Neither command is sent once the unit is back: each went out into the silence, once, and was
-  // reported unanswered. The hub's "commands unconfirmed when the link dropped" path counts on it.
-  CHECK(r.count(0x65, writes) == 0, "no command sent after the unit came back");
-  CHECK(r.tags[before].sends >= 1 && r.tags[during].sends == 1, "both went out while it was silent");
+  // A command that went out into the silence is not sent again once the unit is back: it went out
+  // once and was reported unanswered. The hub's "commands unconfirmed when the link dropped" path
+  // counts on it. One that was still queued when the unit returned goes out then, once, and is
+  // answered.
+  CHECK(r.tags[before].sends >= 1 && r.tags[during].sends == 1, "each accepted command was sent");
+  CHECK(during_sent == 1 || g_gap < 6000, "a silence long enough to lose the link carries both commands (%u ms)",
+        (unsigned) g_gap);
+  CHECK(r.count(0x65, writes) == (during_sent == 1 ? 0u : 1u), "after the unit came back: only what was still queued");
+  size_t unanswered = 0;
   for (auto &c : r.rec.commands)
-    CHECK(!c.answered, "reported unanswered");
-  CHECK(r.ac.heard_commands == 0 && r.ac.setpoint == 22, "the unit heard neither");
+    unanswered += c.answered ? 0 : 1;
+  CHECK(r.rec.commands.size() - unanswered == (during_sent == 1 ? 0u : 1u), "what went into the silence is unanswered");
+  if (during_sent == 1) {
+    CHECK(r.ac.heard_commands == 0 && r.ac.setpoint == 22, "the unit heard neither");
+  } else {
+    CHECK(r.ac.heard_commands == 1 && r.ac.setpoint == 29, "the unit heard the one that waited");
+  }
   r.audit_commands();
 }
 
@@ -1533,11 +1546,10 @@ static void script_burst(Rig &r) {
   r.audit_commands();
 }
 
-// WEAKNESS (reported): the command slot empties the whole queue before the status poll, and a queue
-// that is refilled as fast as it drains never empties. While that lasts no heartbeat and no status
-// poll is sent: the scheduler keeps working through commands, while the unit goes without its 1 Hz
-// keepalive and Home Assistant without status. Nothing in the hub sustains that rate today (user commands arrive
-// one at a time, special modes are paced 10 s apart), so this pins the behaviour and does not fail.
+// Was a weakness: the command slot emptied the whole queue before the status poll, and a queue
+// that is refilled as fast as it drains never empties. While that lasted no heartbeat and no status
+// poll was sent. The slot now closes BUS_COMMAND_SLOT_MS into the cycle and what is still queued
+// waits for the next one.
 static void script_starvation(Rig &r) {
   r.run(2600);
   size_t from = r.ac.writes.size();
@@ -1548,11 +1560,13 @@ static void script_starvation(Rig &r) {
     r.step();
   }
   size_t heartbeats = r.count(0x1E, from), polls = r.count(0x66, from);
-  XFAIL(heartbeats >= 8 && polls >= 8,
+  CHECK(heartbeats >= 9 && polls >= 9,
         "heartbeat and status poll keep their cycle under a steady stream of commands "
         "(%zu heartbeats, %zu polls in 10 s)",
         heartbeats, polls);
-  CHECK(r.count(0x65, from) > 50, "commands flowed the whole time (%zu)", r.count(0x65, from));
+  CHECK(r.rec.statuses - statuses >= 9, "and status is delivered every cycle (%u)",
+        (unsigned) (r.rec.statuses - statuses));
+  CHECK(r.count(0x65, from) >= 30, "commands flowed the whole time, three or more a cycle (%zu)", r.count(0x65, from));
   CHECK(r.rec.links.empty(), "no link edge either: nothing counts the polls that were never sent");
   r.run(3000);
   CHECK(r.rec.statuses > statuses, "status resumes when the stream stops");
@@ -1591,7 +1605,7 @@ static void script_power_and_mode(Rig &r) {
 static void script_queue_ring(Rig &r) {
   r.run(2600);
   Rng rng(3);
-  for (int round = 0; round < 12; round++) {
+  for (int round = 0; round < 24; round++) {
     size_t room = H::BUS_TX_QUEUE_LEN - r.bus.queued();
     for (size_t i = 0; i < room; i++)
       CHECK(r.send_setpoint(static_cast<int8_t>(16 + rng.below(17))), "round %d: slot %zu taken", round, i);
@@ -1603,7 +1617,7 @@ static void script_queue_ring(Rig &r) {
     r.run(300 + rng.below(1500));
   }
   r.run(12000);
-  CHECK(r.next_tag > 30, "%u frames went through", (unsigned) (r.next_tag - 1));
+  CHECK(r.next_tag > 30 && r.bus.queued() == 0, "%u frames went through", (unsigned) (r.next_tag - 1));
   r.audit_commands();
   uint8_t f[H::TX_FRAME_MAX + 1] = {0xF4, 0xF5};
   CHECK(!r.bus.enqueue(f, 0) && !r.bus.enqueue(f, H::TX_FRAME_MAX + 1) && !r.bus.enqueue(nullptr, 20),
@@ -2306,7 +2320,7 @@ int main(int argc, char **argv) {
 
   // Commands.
   everywhere("command burst, one every 20 ms", script_burst);
-  everywhere("WEAKNESS: command stream starves heartbeat and status", script_starvation);
+  everywhere("a steady command stream does not starve heartbeat and status", script_starvation);
   everywhere("power and mode in one frame", script_power_and_mode);
   everywhere("queue ring: fill, overflow, drain, re-send", script_queue_ring);
   everywhere("0xF4 in a stamped checksum", script_stuffed_checksum);
