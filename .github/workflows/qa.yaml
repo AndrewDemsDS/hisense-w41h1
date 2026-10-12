@@ -38,6 +38,7 @@ jobs:
         run: |
           shellcheck --version
           shellcheck --severity=warning firmware/scripts/*.sh firmware/test/*.sh \
+            firmware/test/fuzz/*.sh firmware/test/coverage/*.sh \
             firmware/.githooks/pre-commit firmware/.githooks/prepare-commit-msg
 
       - name: Python lint (ruff)
@@ -57,6 +58,11 @@ jobs:
 
       - name: Host QA
         run: bash firmware/test/run_tests.sh
+
+      # Every C++ host test again, built with the address and undefined-behaviour sanitizers under
+      # both compilers. A test file missing from the script's table fails the run.
+      - name: Sanitizers (ASan + UBSan, g++ and clang++)
+        run: bash firmware/test/sanitize.sh
 
       # The ESPHome variant has no other gate: its component is Python + C++ that the host tests
       # only reach through esphome_aircon_map.h, so a broken schema or a renamed option would
