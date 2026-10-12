@@ -403,9 +403,31 @@ void setup_request_lockout(SetupRequestTracker *tracker, uint32_t now_ms);
 uint8_t setup_request_step(SetupRequestTracker *tracker, uint8_t req_bits, bool indicating, uint32_t now_ms);
 
 // ---- Receive-side frame assembler --------------------------------------------------------------
-// Feeds one byte at a time. Accepts only A/C -> module frames (frame[2] == 0x01, which also drops
-// any echo of our own frames), un-stuffs doubled 0xF4, sizes the frame from its LEN byte, and
-// checks the F4 FB end tag.
+// Direction byte (frame[2]) of a frame from the A/C. Our own frames carry 0x00 there, which is how
+// an echo of them is told apart (RX gate in the vendor module's parser, RE docs/10 section 3.2).
+static constexpr uint8_t FRAME_DIR_FROM_AC = 0x01;
+
+// What the newest byte made of a frame that is being received.
+enum FrameProgress : uint8_t {
+  FRAME_PROGRESS_MORE = 0,      // nothing wrong so far, not finished
+  FRAME_PROGRESS_COMPLETE = 1,  // LEN + 9 bytes, ending F4 FB
+  FRAME_PROGRESS_BROKEN = 2,    // not a frame from the A/C
+};
+// Judge the first `n` un-stuffed bytes of a possible frame (n >= 2) by its newest byte only: F5
+// at byte 1, the A/C's direction at byte 2, a LEN at byte 4 that fits RX_FRAME_MAX, the F4 FB tag
+// at the end. `*expected` is 0 until byte 4 has been judged, then LEN + 9. Call it for every
+// length in turn.
+FrameProgress frame_progress(const uint8_t *frame, size_t n, size_t *expected);
+
+// Feeds one byte at a time. Accepts only A/C -> module frames (which also drops any echo of our
+// own frames), un-stuffs doubled 0xF4, sizes the frame from its LEN byte, and checks the F4 FB end
+// tag. The checksum is NOT judged here: whoever takes the frame calls status_checksum_ok().
+//
+// Resynchronisation. A byte that breaks a frame is looked at again as a possible start byte. And
+// while a frame is being received, the newest F4 F5 inside it is followed as a second candidate:
+// if the frame in front turns out not to be one (cut short, or a start tag that noise produced),
+// the candidate carries on from the bytes already received instead of being lost with it. A frame
+// in front that completes always wins, so a stream of whole frames is read exactly as before.
 class FrameAssembler {
  public:
   // Returns the length of a complete frame, now readable through data(); 0 otherwise.
@@ -414,10 +436,15 @@ class FrameAssembler {
   void reset();
 
  protected:
+  void start_(uint8_t b);
+  size_t deliver_(size_t start);
+
   uint8_t buf_[RX_FRAME_MAX]{};
-  size_t len_{0};
-  size_t expected_{0};
-  bool in_message_{false};
+  size_t len_{0};       // un-stuffed bytes held; 0 = between frames
+  size_t expected_{0};  // LEN + 9 of the frame in front, 0 until its byte 4 is in
+  // Where in buf_ the second candidate starts (never 0, which means there is none), and its LEN + 9.
+  size_t later_{0};
+  size_t later_expected_{0};
   bool prev_was_f4_{false};
 };
 

@@ -1359,6 +1359,184 @@ static void test_assembler() {
   }
 }
 
+// frame_progress(): the one rule set the assembler applies to the frame in front and to the
+// candidate behind it.
+static void test_frame_progress() {
+  printf("-- frame_progress: each header byte, the LEN limit, the end tag\n");
+  size_t expected = 0;
+  uint8_t f[200] = {0xF4, 0xF5, 0x01, 0x40, 0x00};
+  for (int second = 0; second < 256; second++) {
+    f[1] = (uint8_t) second;
+    CHECK(H::frame_progress(f, 2, &expected) == (second == 0xF5 ? H::FRAME_PROGRESS_MORE : H::FRAME_PROGRESS_BROKEN),
+          "byte 1 = 0x%02X", second);
+  }
+  f[1] = 0xF5;
+  for (int dir = 0; dir < 256; dir++) {
+    f[2] = (uint8_t) dir;
+    CHECK(H::frame_progress(f, 3, &expected) == (dir == 0x01 ? H::FRAME_PROGRESS_MORE : H::FRAME_PROGRESS_BROKEN),
+          "direction 0x%02X (0x00 is our own echo)", dir);
+  }
+  f[2] = 0x01;
+  CHECK(H::FRAME_DIR_FROM_AC == 0x01 && expected == 0, "nothing sets the length before byte 4");
+  for (int ctrl = 0; ctrl < 256; ctrl++) {
+    f[3] = (uint8_t) ctrl;
+    CHECK(H::frame_progress(f, 4, &expected) == H::FRAME_PROGRESS_MORE && expected == 0, "CTRL 0x%02X is not judged",
+          ctrl);
+  }
+  for (int len = 0; len < 256; len++) {
+    f[4] = (uint8_t) len;
+    expected = 0;
+    H::FrameProgress p = H::frame_progress(f, 5, &expected);
+    CHECK(expected == (size_t) len + 9, "LEN %d sets %zu", len, expected);
+    CHECK(p == (len <= 191 ? H::FRAME_PROGRESS_MORE : H::FRAME_PROGRESS_BROKEN), "LEN %d: 200 bytes is the most", len);
+  }
+  // Walk a whole frame of every length: MORE up to the last byte, COMPLETE on it.
+  for (size_t n = 9; n <= 200; n++) {
+    Bytes g = frame(n, 0x66);
+    expected = 0;
+    bool ok = true;
+    for (size_t k = 2; k < n; k++)
+      ok = ok && H::frame_progress(g.data(), k, &expected) == H::FRAME_PROGRESS_MORE;
+    CHECK(ok && H::frame_progress(g.data(), n, &expected) == H::FRAME_PROGRESS_COMPLETE && expected == n,
+          "a whole %zu-byte frame", n);
+    for (size_t at : {n - 2, n - 1}) {
+      for (int delta : {-1, 1}) {
+        Bytes bad = g;
+        bad[at] = (uint8_t) (bad[at] + delta);
+        size_t e = n;
+        CHECK(H::frame_progress(bad.data(), n, &e) == H::FRAME_PROGRESS_BROKEN, "%zu bytes, end tag byte %zu off by %d",
+              n, at, delta);
+      }
+    }
+  }
+}
+
+// What the assembler makes of a stream in which a frame is damaged, cut short or preceded by a
+// start tag that noise produced. Every case used to cost the frame behind the damage.
+static void test_assembler_resync() {
+  printf("-- frame assembler: a false start or a cut frame does not cost the frame behind it\n");
+  Bytes got;
+  const Bytes link = frame(28, 0x1E);
+  const Bytes status = frame(160, 0x66);
+  const Bytes ok20 = frame(20, 0x66);
+  // Stubs of a header, 2 to 4 bytes, directly ahead of a frame. The byte that breaks the stub is
+  // the frame's own F4 (as byte 2, or as a LEN that claims 253 bytes).
+  for (size_t stub = 2; stub <= 4; stub++) {
+    H::FrameAssembler fa;
+    Bytes head(status.begin(), status.begin() + (long) stub);
+    CHECK(feed_all(&fa, cat({head, link}), &got) == 1 && got == link, "a %zu-byte stub, then a frame", stub);
+    CHECK(feed_all(&fa, status, &got) == 1 && got == status, "and the frame after it");
+  }
+  // Longer stubs have a LEN: the assembler is inside a frame when the next one starts.
+  for (size_t cut = 5; cut < 159; cut++) {
+    H::FrameAssembler fa;
+    Bytes head(status.begin(), status.begin() + (long) cut);
+    if (cut == 160 - 28) {
+      // The one length at which the cut frame's own count ends on the reply's end tag: the frame
+      // in front completes, and it is the one delivered (132 bytes of status and the reply,
+      // which no checksum will pass). The frame after it is read as usual.
+      CHECK(feed_all(&fa, cat({head, link}), &got) == 1 && got.size() == 160 &&
+                !H::status_checksum_ok(got.data(), got.size()),
+            "status cut at %zu: the reply's end tag completes the cut frame", cut);
+      CHECK(feed_all(&fa, status, &got) == 1 && got == status, "status cut at %zu: clean afterwards", cut);
+      continue;
+    }
+    // A short frame behind a long cut one: it is delivered on its own last byte, long before
+    // the cut frame's 160 bytes are in.
+    Bytes s = cat({head, link});
+    int frames = 0;
+    for (size_t i = 0; i < s.size(); i++) {
+      size_t n = fa.feed(s[i]);
+      if (n != 0) {
+        frames++;
+        CHECK(i + 1 == s.size() && n == 28 && std::memcmp(fa.data(), link.data(), 28) == 0,
+              "status cut at %zu: the 0x1E reply behind it is delivered on its last byte (byte %zu)", cut, i);
+      }
+    }
+    CHECK(frames == 1, "status cut at %zu, then a 0x1E reply: %d frame(s)", cut, frames);
+    CHECK(feed_all(&fa, status, &got) == 1 && got == status, "status cut at %zu: clean afterwards", cut);
+  }
+  {
+    // Cut frame, then a whole one of the same length: the cut frame's count runs out inside the
+    // second, which then takes its place with the bytes already received.
+    H::FrameAssembler fa;
+    Bytes head(status.begin(), status.begin() + 60);
+    CHECK(feed_all(&fa, cat({head, status}), &got) == 1 && got == status, "cut status, then a whole status");
+  }
+  {
+    // A header that claims 200 bytes, then seven 28-byte frames: all seven.
+    H::FrameAssembler fa;
+    Bytes greedy = {0xF4, 0xF5, 0x01, 0x40, 0xBF};
+    Bytes s = greedy;
+    for (int i = 0; i < 7; i++)
+      s.insert(s.end(), link.begin(), link.end());
+    CHECK(feed_all(&fa, s, &got) == 7 && got == link, "seven frames behind a header that claims 200 bytes");
+  }
+  {
+    // Two cut frames, then a whole one: the newest start is the one followed.
+    H::FrameAssembler fa;
+    Bytes a(status.begin(), status.begin() + 60);
+    Bytes b(status.begin(), status.begin() + 30);
+    CHECK(feed_all(&fa, cat({a, b, link}), &got) == 1 && got == link, "two cut frames, then a whole one");
+  }
+  {
+    // A candidate that turns out not to be a frame from the unit is dropped again, and the frame
+    // in front completes as if nothing had been there. The frame in front is sent by a sender
+    // that doubles only its checksum (as this project's builders do), so the F4 inside is bare.
+    for (int third : {0x00, 0x02}) {
+      H::FrameAssembler fa;
+      Bytes f = frame(40, 0x66);
+      f[20] = 0xF4;
+      f[21] = 0xF5;
+      f[22] = (uint8_t) third;
+      seal(&f);
+      CHECK(feed_all(&fa, f, &got) == 1 && got == f, "F4 F5 %02X as data inside a frame: the frame is whole", third);
+    }
+    // The same with a candidate that looks right for longer: it is still the frame in front that
+    // completes first, and it wins.
+    H::FrameAssembler fa;
+    Bytes f = frame(40, 0x66);
+    f[20] = 0xF4;
+    f[21] = 0xF5;
+    f[22] = 0x01;
+    f[24] = 0x40;  // the candidate's LEN: 73 bytes, more than the frame in front has left
+    seal(&f);
+    CHECK(feed_all(&fa, f, &got) == 1 && got == f, "F4 F5 01 as data inside a frame: the frame is whole");
+    CHECK(feed_all(&fa, link, &got) == 1 && got == link, "and nothing of the candidate is left behind");
+  }
+  {
+    // Both end on the same byte: the frame in front is the one delivered.
+    H::FrameAssembler fa;
+    Bytes f = frame(40, 0x66);
+    const uint8_t inner[] = {0xF4, 0xF5, 0x01, 0x40, 0x00, 0x00, 0x41};  // 9 bytes with the tag of the outer frame
+    std::memcpy(&f[31], inner, sizeof(inner));
+    f[38] = 0xF4;
+    f[39] = 0xFB;
+    CHECK(feed_all(&fa, f, &got) == 1 && got.size() == 40 && got == f, "two candidates ending together: the outer one");
+  }
+  {
+    // The limit of the scheme, stated: a whole frame inside a longer one that is sent with bare
+    // 0xF4 bytes is delivered first, and the outer one is lost. A unit that doubles its data
+    // bytes cannot produce this, and the checksum of the outer frame would be judged otherwise.
+    H::FrameAssembler fa;
+    Bytes f = frame(40, 0x66);
+    const uint8_t inner[] = {0xF4, 0xF5, 0x01, 0x40, 0x00, 0x00, 0x41, 0xF4, 0xFB};
+    std::memcpy(&f[16], inner, sizeof(inner));
+    seal(&f);
+    Bytes want(inner, inner + sizeof(inner));
+    CHECK(feed_all(&fa, f, &got) == 1 && got == want, "a whole 9-byte frame inside an un-doubled one is taken first");
+    CHECK(feed_all(&fa, link, &got) == 1 && got == link, "and the stream is read on from there");
+  }
+  {
+    // The one cut point that still costs the next frame: between the F4 and the FB of the end
+    // tag. The next frame's F4 is the second of a pair, which is one escaped data byte.
+    H::FrameAssembler fa;
+    Bytes head(ok20.begin(), ok20.begin() + 19);
+    CHECK(feed_all(&fa, cat({head, link}), &got) == 0, "cut inside the end tag: the next frame's start is not seen");
+    CHECK(feed_all(&fa, link, &got) == 1 && got == link, "the one after it is");
+  }
+}
+
 int main() {
   printf("== ESPHome codec: coverage and mutation gaps ==\n");
   test_defaults();
@@ -1372,6 +1550,8 @@ int main() {
   test_parse_features_and_faults();
   test_setup_request();
   test_assembler();
+  test_frame_progress();
+  test_assembler_resync();
   printf("  %d checks, %d failed\n", g_checks, g_fail);
   printf(g_fail ? "== CODEC GAPS FAILED ==\n" : "== CODEC GAPS OK ==\n");
   return g_fail ? 1 : 0;

@@ -97,6 +97,10 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   probe goes out again 500 ms later), and it no longer counts as "heard the unit" in the
   heartbeat. The "Checksum errors" sensor counts every damaged frame, of any class, where it
   counted status frames only.
+- **Noise ahead of a reply no longer costs the reply.** A stray `F4 F5` in front of a frame, or a
+  frame cut short, made the receiver miss the frame that followed (one "Reply timeouts" count and
+  a missed status poll each time). It now looks again at the byte that broke a frame and follows
+  a later start tag as a second candidate.
 
 ### The Matter firmwares are retired, ESPHome is the only firmware (2026-10-12, #182)
 - **Removed** the AmebaZ2 Matter build (the SDK setup scripts, `patches/`, `versions.env`, the

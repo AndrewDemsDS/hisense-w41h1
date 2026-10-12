@@ -123,6 +123,10 @@ a["noise_then_frame"] = b"\x00" + bytes([0x00, 0xFB, 0x12, 0xF4, 0xFB]) + stuff(
 a["oversize_len"] = b"\x00" + bytes([0xF4, 0xF5, 0x01, 0x40, 0xFF]) + stuff(link_reply(0x00))
 a["max_len_header"] = b"\x00" + bytes([0xF4, 0xF5, 0x01, 0x40, 0xBF])
 a["cut_status"] = b"\x01" + stuff(STATUS_COOL)[:70]
+a["false_start"] = b"\x00" + bytes([0xF4, 0xF5]) + stuff(link_reply(0x20))
+a["cut_then_short_frame"] = b"\x00" + stuff(STATUS_COOL)[:60] + stuff(link_reply(0x08))
+a["cut_inside_end_tag"] = b"\x01" + stuff(STATUS_COOL)[:159]
+a["greedy_header_twice"] = b"\x00" + bytes([0xF4, 0xF5, 0x01, 0x40, 0xBF]) * 2 + stuff(link_reply(0x00))[:11]
 a["tiny_frame"] = b"\x02" + bytes([0xF4, 0xF5, 0x01, 0x40, 0x00, 0x00, 0x41, 0xF4, 0xFB])
 
 # ---- parsers: the bytes are the frame ------------------------------------------------------------
@@ -191,8 +195,15 @@ r["devtype_24"] = bytes([3, 24 - 22, 0, 0]) + devtype_reply()
 
 # ---- differential: [group] + group input ---------------------------------------------------------
 d = seeds["differential"]
-d["stream_status"] = b"\x00" + stuff(STATUS_STUFFED) + stuff(link_reply(0x20))
-d["stream_echo"] = b"\x00" + STATUS_REQUEST + LINK_HEARTBEAT + bytes([0xF4, 0xF5, 0x01, 0x40, 0xFF])
+# Group 0, byte 1: 0 = arbitrary stream, 1 = whole frames ([pick, ...]: odd pick = pick >> 4 noise
+# bytes, even pick = [length - 9, frame bytes]).
+d["stream_status"] = b"\x00\x00" + stuff(STATUS_STUFFED) + stuff(link_reply(0x20))
+d["stream_echo"] = b"\x00\x00" + STATUS_REQUEST + LINK_HEARTBEAT + bytes([0xF4, 0xF5, 0x01, 0x40, 0xFF])
+d["stream_false_start"] = b"\x00\x00" + bytes([0xF4, 0xF5]) + stuff(link_reply(0x20))
+d["stream_cut_then_whole"] = b"\x00\x00" + stuff(STATUS_COOL)[:60] + stuff(link_reply(0x08)) + stuff(STATUS_COOL)
+d["stream_greedy_header"] = b"\x00\x00" + bytes([0xF4, 0xF5, 0x01, 0x40, 0xBF]) + stuff(link_reply(0x00)) * 3
+d["clean_frames"] = (b"\x00\x01" + bytes([0x00, 28 - 9]) + link_reply(0x28) + bytes([0x31, 0x00, 0xFB, 0x12])
+                     + bytes([0x00, 160 - 9]) + STATUS_STUFFED + bytes([0x00, 0]) + bytes(9))
 d["parse_status"] = b"\x01" + STATUS_AUTO
 d["parse_features"] = b"\x01" + FEATURES
 d["parse_devtype_20"] = b"\x01" + DEVTYPE_20

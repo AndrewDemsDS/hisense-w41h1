@@ -11,7 +11,7 @@
 //  2. Every emitted frame obeys the framing rules: length is LEN + 9 and at most RX_FRAME_MAX,
 //     F4 F5 start, direction 0x01, F4 FB end.
 //  3. Resynchronisation: after ANY stream, with no reset, a run of back-to-back good frames is
-//     picked up again within a bounded number of frames, and from the first good one on every
+//     picked up again by the third frame at the latest, and from the first good one on every
 //     frame is delivered.
 //  4. reset() clears the state: the next good frame is delivered whatever came before.
 //  STRICT only (KNOWN_FAILURES: asm-no-checksum): an emitted frame also passes its checksum.
@@ -72,10 +72,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
       check_emitted(fa, n);
   }
 
-  // 3. The stream can leave the assembler inside a frame that claims up to RX_FRAME_MAX bytes,
-  // and those bytes are taken from whatever follows. So the bound is "enough good frames to fill
-  // the largest claim, plus the one cut in half, plus one".
-  const int bound = static_cast<int>(H::RX_FRAME_MAX / good_len) + 3;
+  // 3. The stream can leave the assembler inside a frame that claims up to RX_FRAME_MAX bytes.
+  // The start of a good frame behind it is followed as a second candidate, so the first good
+  // frame is delivered. Two things can still cost a frame each. The stream ended in an F4, so the
+  // first good frame's own F4 is read as its double and the start tag is not seen. And the claim
+  // of the frame in front can end, tag and all, exactly where a good frame ends: it is then the
+  // one delivered. Neither can happen twice, so the third good frame is delivered at the latest.
+  const int bound = 3;
   int first_good = -1;
   for (int i = 0; i < bound + 3; i++) {
     bool exact = feed_good(fa, good, good_len);

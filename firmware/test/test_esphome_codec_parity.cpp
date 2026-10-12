@@ -17,6 +17,11 @@
 //     and devtype_from_reply that is exactly the original's answer for a frame 4 bytes shorter
 //     (ref_len below); for parse_status it is "refused below 49 bytes, and the three optional tail
 //     fields each need 4 more bytes". Real frames (160, 45 and at least 22 bytes) decode the same.
+//  2. Assembler resynchronisation. The port looks again at a byte that broke a frame and follows a
+//     later F4 F5 as a second candidate, so on a damaged stream it delivers frames the original
+//     loses. Whole frames are read the same, which test_frame_assembler checks on hand-built
+//     streams; fuzz/fuzz_differential.cpp (group 0) runs the original's static reassembler beside
+//     the port and checks that the port never delivers a frame the original would not take.
 
 #include <cmath>
 #include <cstdint>

@@ -598,22 +598,54 @@ bool devtype_reply_usable(bool checksum_ok, const uint8_t *reply, size_t n, uint
 }
 
 // ---- FrameAssembler ----------------------------------------------------------------------------
+FrameProgress frame_progress(const uint8_t *frame, size_t n, size_t *expected) {
+  switch (n) {
+    case 2:
+      return frame[1] == FRAME_STX2 ? FRAME_PROGRESS_MORE : FRAME_PROGRESS_BROKEN;
+    case 3:
+      return frame[2] == FRAME_DIR_FROM_AC ? FRAME_PROGRESS_MORE : FRAME_PROGRESS_BROKEN;
+    case 5:
+      *expected = static_cast<size_t>(frame[4]) + FRAME_LEN_OVERHEAD;
+      return *expected <= RX_FRAME_MAX ? FRAME_PROGRESS_MORE : FRAME_PROGRESS_BROKEN;
+    default:
+      break;
+  }
+  // LEN + 9 is at least 9, so the frame cannot end on one of the header bytes judged above.
+  if (*expected == 0 || n < *expected)
+    return FRAME_PROGRESS_MORE;
+  return frame[n - 2] == FRAME_ETX1 && frame[n - 1] == FRAME_ETX2 ? FRAME_PROGRESS_COMPLETE : FRAME_PROGRESS_BROKEN;
+}
+
 void FrameAssembler::reset() {
-  this->in_message_ = false;
   this->len_ = 0;
-  this->prev_was_f4_ = false;
   this->expected_ = 0;
+  this->later_ = 0;
+  this->later_expected_ = 0;
+  this->prev_was_f4_ = false;
+}
+
+// Outside a frame every byte but the start byte is skipped.
+void FrameAssembler::start_(uint8_t b) {
+  this->reset();
+  if (b != FRAME_STX1)
+    return;
+  this->buf_[0] = b;
+  this->len_ = 1;
+  this->prev_was_f4_ = true;
+}
+
+// Hand out the frame that begins at `start` in the buffer and forget everything else.
+size_t FrameAssembler::deliver_(size_t start) {
+  const size_t n = this->len_ - start;
+  if (start != 0)
+    std::memmove(this->buf_, this->buf_ + start, n);
+  this->reset();
+  return n;
 }
 
 size_t FrameAssembler::feed(uint8_t b) {
-  if (!this->in_message_) {
-    if (b == FRAME_STX1) {
-      this->buf_[0] = b;
-      this->len_ = 1;
-      this->in_message_ = true;
-      this->prev_was_f4_ = true;
-      this->expected_ = 0;
-    }
+  if (this->len_ == 0) {
+    this->start_(b);
     return 0;
   }
   // A doubled F4 is an escaped data byte: drop the second one.
@@ -621,36 +653,46 @@ size_t FrameAssembler::feed(uint8_t b) {
     this->prev_was_f4_ = false;
     return 0;
   }
+  const bool after_bare_f4 = this->prev_was_f4_;
   this->prev_was_f4_ = b == FRAME_STX1;
-
-  if (this->len_ >= RX_FRAME_MAX) {
-    this->reset();
-    return 0;
-  }
+  // No overflow: the frame in front is judged on every byte and ends at `expected_`, at most
+  // RX_FRAME_MAX, and until byte 4 has set `expected_` it holds fewer than 5 bytes.
   this->buf_[this->len_++] = b;
-  size_t idx = this->len_ - 1;
 
-  if (idx == 1 && this->buf_[1] != FRAME_STX2) {
-    this->reset();
+  const FrameProgress front = frame_progress(this->buf_, this->len_, &this->expected_);
+  if (front == FRAME_PROGRESS_COMPLETE)
+    return this->deliver_(0);
+
+  if (this->later_ != 0) {
+    const FrameProgress later =
+        frame_progress(this->buf_ + this->later_, this->len_ - this->later_, &this->later_expected_);
+    if (later == FRAME_PROGRESS_COMPLETE)
+      return this->deliver_(this->later_);
+    if (later == FRAME_PROGRESS_BROKEN)
+      this->later_ = 0;
+  }
+  // An F4 that is not doubled, followed by F5, inside the frame: from a sender that doubles its
+  // data bytes this can only be the start of another frame, so the one in front was cut short.
+  // It is remembered and not acted on, in case the frame in front completes after all. The newest
+  // one wins: whatever an older one was, it is cut short too.
+  if (after_bare_f4 && b == FRAME_STX2 && this->len_ > 2) {
+    this->later_ = this->len_ - 2;
+    this->later_expected_ = 0;
+  }
+
+  if (front != FRAME_PROGRESS_BROKEN)
+    return 0;
+  if (this->later_ == 0) {
+    // The byte that broke the frame may itself open the next one.
+    this->start_(b);
     return 0;
   }
-  if (idx == 2 && this->buf_[2] != 0x01) {  // A/C -> module only
-    this->reset();
-    return 0;
-  }
-  if (idx == 4) {
-    this->expected_ = static_cast<size_t>(this->buf_[4]) + FRAME_LEN_OVERHEAD;
-    if (this->expected_ < 6 || this->expected_ > RX_FRAME_MAX) {
-      this->reset();
-      return 0;
-    }
-  }
-  if (this->expected_ > 0 && idx == this->expected_ - 1) {
-    size_t n = this->len_;
-    bool tagged = this->buf_[n - 2] == FRAME_ETX1 && this->buf_[n - 1] == FRAME_ETX2;
-    this->reset();
-    return tagged ? n : 0;
-  }
+  // The frame in front was not one. The later start takes its place with what it has so far.
+  this->len_ -= this->later_;
+  std::memmove(this->buf_, this->buf_ + this->later_, this->len_);
+  this->expected_ = this->later_expected_;
+  this->later_ = 0;
+  this->later_expected_ = 0;
   return 0;
 }
 

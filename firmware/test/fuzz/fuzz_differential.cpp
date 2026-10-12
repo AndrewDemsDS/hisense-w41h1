@@ -16,6 +16,13 @@
 //    trailer, the reference when `len > offset`. parse_faults, parse_features and
 //    devtype_from_reply are compared with the reference's answer for a frame 4 bytes shorter;
 //    parse_status with "refused below 49 bytes, the three optional tail fields need 4 more".
+//  - Resynchronisation of the frame assembler. The port looks again at the byte that broke a
+//    frame and follows a later F4 F5 as a second candidate; the reference drops both. So on a
+//    damaged stream the port delivers frames the reference loses, and group 0 no longer compares
+//    byte for byte. It checks two things instead: on an arbitrary stream, every frame the port
+//    delivers is one the reference takes as the same frame when it is sent alone (the port accepts
+//    nothing the reference would reject); on a stream of whole frames with noise between them
+//    (no stray 0xF4), both deliver every frame, the same bytes, on the same byte of the stream.
 //  - AcCommand.power_on has no counterpart: the reference never ORs the run field into byte 18.
 //    Checked here as a relation instead: same frame, byte 18 | 0x0C, checksum redone.
 //  - build_single_field refuses offset >= 50; the reference's static helper has no guard (its
@@ -68,20 +75,81 @@ static bool same_faults(const HisenseFaults &o, const H::AcFaults &n) {
 }
 
 // ---- group 0: the two reassemblers on one stream -------------------------------------------------
-static void diff_assembler(Reader &r) {
+// The reference, from idle, takes `frame` (un-stuffed, as the port delivered it) as that frame.
+static void reference_accepts(const uint8_t *frame, size_t n, size_t pos) {
+  uint8_t copy[H::RX_FRAME_MAX];
+  uint8_t wire[2 * H::RX_FRAME_MAX];
+  FUZZ_CHECK(n >= 9 && n <= H::RX_FRAME_MAX, "stream byte %zu: port delivered %zu bytes", pos, n);
+  memcpy(copy, frame, n);
+  size_t w = model_stuff(copy, n, 2, wire);
+  hisense_reset_rx();
+  size_t got = 0;
+  for (size_t i = 0; i < w; i++) {
+    got = hisense_rx_feed(wire[i]);
+    FUZZ_CHECK(got == 0 || i + 1 == w, "stream byte %zu: the reference ends the port's frame early", pos);
+  }
+  FUZZ_CHECK(got == n && memcmp(s_msg_buf, copy, n) == 0,
+             "stream byte %zu: the port delivered %zu bytes the reference does not take as a frame", pos, n);
+}
+
+// Arbitrary bytes. The port may deliver more than the reference, never something it would reject.
+static void diff_assembler_damaged(Reader &r) {
+  H::FrameAssembler *fa = new H::FrameAssembler();
+  size_t pos = 0;
+  while (!r.empty()) {
+    size_t n = fa->feed(r.u8());
+    if (n != 0)
+      reference_accepts(fa->data(), n, pos);
+    pos++;
+  }
+  delete fa;
+}
+
+// Whole frames as a sender that doubles every 0xF4 puts them on the wire, with noise that holds no
+// 0xF4 between them. Here the two must agree on every byte.
+static void diff_assembler_clean(Reader &r) {
   hisense_reset_rx();
   H::FrameAssembler *fa = new H::FrameAssembler();
   size_t pos = 0;
   while (!r.empty()) {
-    uint8_t b = r.u8();
-    size_t no = hisense_rx_feed(b);
-    size_t nn = fa->feed(b);
-    FUZZ_CHECK(no == nn, "stream byte %zu (%02X): reference returned %zu, port %zu", pos, b, no, nn);
-    if (no != 0)
-      FUZZ_CHECK(memcmp(s_msg_buf, fa->data(), no) == 0, "stream byte %zu: the two delivered frames differ", pos);
-    pos++;
+    uint8_t pick = r.u8();
+    uint8_t frame[H::RX_FRAME_MAX];
+    uint8_t wire[2 * H::RX_FRAME_MAX];
+    size_t n = 0, w = 0;
+    if ((pick & 1) != 0) {
+      w = r.take(wire, pick >> 4);
+      for (size_t i = 0; i < w; i++)
+        if (wire[i] == 0xF4)
+          wire[i] = 0x4F;
+    } else {
+      n = 9 + r.u8() % (H::RX_FRAME_MAX - 8);
+      for (size_t i = 0; i < n; i++)
+        frame[i] = r.u8();
+      frame[2] = 0x01;  // A/C -> module
+      model_seal(frame, n);
+      w = model_stuff(frame, n, 2, wire);
+    }
+    for (size_t i = 0; i < w; i++) {
+      size_t no = hisense_rx_feed(wire[i]);
+      size_t nn = fa->feed(wire[i]);
+      FUZZ_CHECK(no == nn, "stream byte %zu (%02X): reference returned %zu, port %zu", pos, wire[i], no, nn);
+      FUZZ_CHECK(nn == (n != 0 && i + 1 == w ? n : 0), "stream byte %zu: %zu returned inside a %zu byte frame", pos, nn,
+                 n);
+      if (nn != 0)
+        FUZZ_CHECK(memcmp(s_msg_buf, fa->data(), nn) == 0 && memcmp(frame, fa->data(), nn) == 0,
+                   "stream byte %zu: the delivered frames differ", pos);
+      pos++;
+    }
   }
   delete fa;
+}
+
+static void diff_assembler(Reader &r) {
+  if ((r.u8() & 1) != 0) {
+    diff_assembler_clean(r);
+  } else {
+    diff_assembler_damaged(r);
+  }
 }
 
 // The length at which the reference gives the port's answer (trailer-aware lengths, above).

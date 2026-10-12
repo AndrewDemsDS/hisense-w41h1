@@ -345,18 +345,18 @@ static void test_frame_stream() {
           "bad checksum is framed but not parsed");
   }
   {
-    // A frame cut short takes the frame after it down too: the assembler is still counting bytes
-    // for the first. The scheduler resets the assembler at every transaction, which bounds the
-    // loss to that one reply window (test_esphome_bus.cpp covers the recovery).
+    // A frame cut short used to take the frame after it down too, because the assembler went on
+    // counting bytes for the first. Now the start tag of the second is followed as a candidate,
+    // and it takes over when the first turns out not to end in F4 FB.
     H::FrameAssembler fa;
     std::vector<uint8_t> s(good.begin(), good.begin() + 60);
     s.insert(s.end(), good.begin(), good.end());
     int frames = 0;
-    feed_all(fa, s, &frames);
-    CHECK(frames == 0, "truncated frame swallows its successor (%d)", frames);
-    fa.reset();
+    size_t n = feed_all(fa, s, &frames);
+    CHECK(frames == 1 && n == 160 && std::memcmp(fa.data(), good.data(), 160) == 0,
+          "the frame behind a truncated one is delivered whole (%d)", frames);
     frames = 0;
-    CHECK(feed_all(fa, good, &frames) == 160 && frames == 1, "and a reset recovers");
+    CHECK(feed_all(fa, good, &frames) == 160 && frames == 1, "and the one after it, with no reset");
   }
   {  // Lengths at and past the buffer.
     H::FrameAssembler fa;

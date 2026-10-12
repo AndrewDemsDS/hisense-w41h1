@@ -1463,9 +1463,9 @@ static void script_devtype_bad_checksum(Rig &r) {
   CHECK(r.bus.checksum_mismatches() == 1, "the damaged reply is counted (%u)", (unsigned) r.bus.checksum_mismatches());
 }
 
-// A frame start that goes nowhere (F4 F5) directly ahead of a reply takes the reply with it: the
-// assembler drops the false start on its third byte and does not look at that byte again as a
-// possible start. One poll is lost. Pinned as it is today, see the report.
+// A frame start that goes nowhere (F4 F5) directly ahead of a reply used to take the reply with it:
+// the assembler dropped the false start on its third byte and did not look at that byte again as a
+// possible start, and one poll was lost. The byte is looked at again now.
 static void script_stx_pair(Rig &r) {
   r.run(2600);
   int left = 1;
@@ -1477,9 +1477,9 @@ static void script_stx_pair(Rig &r) {
     return FaultSpec{FAULT_NONE, 0};
   };
   r.run(4000);
-  XFAIL(r.rec.timeouts == 0, "a false start ahead of a reply does not cost the reply (%u timeouts)",
+  CHECK(r.rec.timeouts == 0, "a false start ahead of a reply does not cost the reply (%u timeouts)",
         (unsigned) r.rec.timeouts);
-  CHECK(r.rec.timeouts <= 1 && r.rec.links.empty(), "and costs no more than that one poll");
+  CHECK(r.rec.links.empty(), "and no link edge");
 }
 
 // Frames the unit sends unasked, in the wait between two cycles, are flushed and change nothing.
