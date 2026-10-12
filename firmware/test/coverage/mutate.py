@@ -4,7 +4,8 @@
     firmware/test/coverage/mutate.py [--target NAME ...] [--sample N] [--seed S]
                                      [--baseline] [--jobs J] [--out DIR]
 
-Targets: protocol_cpp, protocol_h, map_h, uart_h (default: all four).
+Targets: protocol_cpp, protocol_h, mapping_h, special_h, confirm_h, telemetry_h, commands_h, uart_h
+(default: all of them). hisense_map.h only includes the four parts, so it is not a target.
 
 For each target the mutants come from universalmutator (`uvx --from universalmutator mutate`).
 Each mutant then goes through three stages:
@@ -56,6 +57,10 @@ PRODUCT = {
     "hisense_protocol.cpp": COMP / "hisense_protocol.cpp",
     "hisense_protocol.h": COMP / "hisense_protocol.h",
     "hisense_map.h": COMP / "hisense_map.h",
+    "hisense_mapping.h": COMP / "hisense_mapping.h",
+    "hisense_special.h": COMP / "hisense_special.h",
+    "hisense_confirm.h": COMP / "hisense_confirm.h",
+    "hisense_telemetry.h": COMP / "hisense_telemetry.h",
     "hisense_commands.h": COMP / "hisense_commands.h",
     "hisense_bus.cpp": COMP / "hisense_bus.cpp",
     "hisense_bus.h": COMP / "hisense_bus.h",
@@ -64,13 +69,17 @@ PRODUCT = {
 TARGETS = {
     "protocol_cpp": "hisense_protocol.cpp",
     "protocol_h": "hisense_protocol.h",
-    "map_h": "hisense_map.h",
+    "mapping_h": "hisense_mapping.h",
+    "special_h": "hisense_special.h",
+    "confirm_h": "hisense_confirm.h",
+    "telemetry_h": "hisense_telemetry.h",
     "commands_h": "hisense_commands.h",
     "uart_h": "w41h1_uart_policy.h",
 }
 
 P_H = "hisense_protocol.h"
-M_H = "hisense_map.h"
+# hisense_map.h and the four headers it includes: who reads one reads them all.
+M_H = ("hisense_map.h", "hisense_mapping.h", "hisense_special.h", "hisense_confirm.h", "hisense_telemetry.h")
 C_H = "hisense_commands.h"
 B_H = "hisense_bus.h"
 U_H = "w41h1_uart_policy.h"
@@ -80,15 +89,15 @@ REF_INC = [f"-I{TEST_DIR / 'stubinc'}", f"-I{TEST_DIR}", f"-I{REF}"]
 # product name is taken from the work directory, so the mutant is what gets compiled.
 UNITS = {
     "protocol.o": ("hisense_protocol.cpp", {"hisense_protocol.cpp", P_H}, []),
-    "bus.o": ("hisense_bus.cpp", {"hisense_bus.cpp", B_H, P_H, M_H}, []),
-    "t_parity.o": (TEST_DIR / "test_esphome_codec_parity.cpp", {P_H, M_H}, REF_INC),
-    "t_bus.o": (TEST_DIR / "test_esphome_bus.cpp", {P_H, M_H, B_H}, []),
-    "t_edge.o": (TEST_DIR / "test_esphome_edge_cases.cpp", {P_H, M_H}, []),
-    "t_confirm.o": (TEST_DIR / "test_esphome_confirm.cpp", {P_H, M_H, C_H}, []),
+    "bus.o": ("hisense_bus.cpp", {"hisense_bus.cpp", B_H, P_H}, []),
+    "t_parity.o": (TEST_DIR / "test_esphome_codec_parity.cpp", {P_H, *M_H}, REF_INC),
+    "t_bus.o": (TEST_DIR / "test_esphome_bus.cpp", {P_H, *M_H, B_H}, []),
+    "t_edge.o": (TEST_DIR / "test_esphome_edge_cases.cpp", {P_H, *M_H}, []),
+    "t_confirm.o": (TEST_DIR / "test_esphome_confirm.cpp", {P_H, *M_H, C_H}, []),
     "t_setup.o": (TEST_DIR / "test_esphome_setup_request.cpp", {P_H, B_H}, []),
     "t_uart.o": (TEST_DIR / "test_esphome_uart_policy.cpp", {U_H}, []),
     "t_codec_gaps.o": (TEST_DIR / "test_esphome_codec_gaps.cpp", {P_H}, []),
-    "t_map_gaps.o": (TEST_DIR / "test_esphome_map_gaps.cpp", {P_H, M_H, U_H}, []),
+    "t_map_gaps.o": (TEST_DIR / "test_esphome_map_gaps.cpp", {P_H, *M_H, U_H}, []),
 }
 # Tests: name -> objects linked. Order is the order they run in: quick and broad first.
 TESTS = {

@@ -4,7 +4,8 @@
 // It holds the command shadow, the last user write to power, mode, setpoint, fan or swing until the
 // unit's status confirms it, the same for the last special-mode write, the paced special-mode queue,
 // the special-mode state the unit is expected to reach, the power intent, the hold-off and the
-// counters. Every decision it takes is a function in hisense_map.h. Frames leave through
+// counters. Every decision it takes is a function in hisense_confirm.h, hisense_special.h or
+// hisense_mapping.h. Frames leave through
 // CommandSink, which the hub implements over the bus scheduler and a host test implements over a
 // model of the unit, so the scenarios in firmware/test/test_esphome_confirm.cpp run this code and
 // not a copy of it.
@@ -15,8 +16,10 @@
 #include <cstdint>
 
 #include "hisense_bus.h"
-#include "hisense_map.h"
+#include "hisense_confirm.h"
+#include "hisense_mapping.h"
 #include "hisense_protocol.h"
+#include "hisense_special.h"
 
 namespace esphome::hisense_ac {
 
