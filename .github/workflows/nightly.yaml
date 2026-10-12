@@ -1,0 +1,218 @@
+name: Nightly
+
+# What is too slow, too big or too far from a pull request to run on each one:
+#
+#   fuzz                  every libFuzzer harness of firmware/test/fuzz/ for ten minutes, the corpus
+#                         kept between nights. Pull requests get the smoke replay, in run_tests.sh.
+#   boards                the board files no pull request compiles (ESP8266, RP2040). Without this
+#                         their first compile would be at release time.
+#   esphome-upstream-dev  ESPHome's own gates against their dev branch. Informational: it shows
+#                         what an upstream pull request would have to change. It installs whatever
+#                         their branch requires that day, which is why it is not in qa.yaml.
+#   esp32-recon           the bus diagnostic tool builds with ESP-IDF. The image with the
+#                         toolchain is several GB, too much for every pull request.
+#
+# A pull request that changes this workflow, or what one of its jobs builds, runs it too, with one
+# minute of fuzzing per harness, so a change here is tested before it is merged.
+on:
+  schedule:
+    - cron: "17 2 * * *"   # 02:17 UTC, off the hour
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/nightly.yaml
+      - .github/scripts/board-groups.sh
+      - .github/ci/esphome/**
+      - firmware/esp32-recon/**
+      - firmware/test/reference-driver/**   # esp32-recon builds the reference driver
+      - firmware/test/fuzz/**
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+# Nothing here writes. Every job repeats what it needs.
+permissions:
+  contents: read
+
+jobs:
+  # The fuzz harnesses, from the files, and how long each one runs.
+  plan:
+    # GitHub-only: the Gitea mirror reads this directory too and has no hosted runner. The other
+    # jobs need this one or carry the same condition.
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      harnesses: ${{ steps.plan.outputs.harnesses }}
+      seconds: ${{ steps.plan.outputs.seconds }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Harnesses and duration
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          # One harness per fuzz_<name>.cpp, as firmware/test/fuzz/run.sh has them.
+          list=""
+          for f in firmware/test/fuzz/fuzz_*.cpp; do
+            name="$(basename "$f" .cpp)"
+            list="$list,\"${name#fuzz_}\""
+          done
+          echo "harnesses=[${list#,}]" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = pull_request ]; then seconds=60; else seconds=600; fi
+          echo "seconds=$seconds" >> "$GITHUB_OUTPUT"
+          echo "harnesses: [${list#,}], $seconds s each"
+
+  # One job per harness, so each gets a runner to itself for the whole time. clang and libFuzzer
+  # are on the runner image (sanitize.sh in the QA workflow builds with the same clang).
+  fuzz:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: ${{ fromJSON(needs.plan.outputs.harnesses) }}
+    env:
+      HARNESS: ${{ matrix.harness }}
+      FUZZ_SECONDS: ${{ needs.plan.outputs.seconds }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # What earlier nights found, on top of the corpus in the tree. The newest entry is taken.
+      - name: Restore the corpus
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: firmware/test/fuzz/build/corpus/${{ matrix.harness }}
+          key: fuzz-corpus-${{ matrix.harness }}-none
+          restore-keys: |
+            fuzz-corpus-${{ matrix.harness }}-
+
+      - name: Fuzz
+        run: |
+          clang++ --version | head -n 1
+          cd firmware/test/fuzz
+          status=0
+          bash run.sh "$FUZZ_SECONDS" "$HARNESS" || status=$?
+          {
+            echo "### $HARNESS, $FUZZ_SECONDS s"
+            echo '```'
+            grep -E '^stat::|^Done ' "build/fuzz-$HARNESS.log" || true
+            echo "corpus: $(find "build/corpus/$HARNESS" -type f | wc -l) inputs"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" != 0 ]; then
+            tail -n 80 "build/fuzz-$HARNESS.log"
+            echo "::error::the $HARNESS harness stopped on a crash, a failed property or a timeout: the reproducer is in this run's artifacts"
+          fi
+          exit "$status"
+
+      # The reproducer and the log. To look at one: firmware/test/fuzz/run.sh, "Minimise with".
+      - name: Upload the reproducer
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-${{ matrix.harness }}
+          path: |
+            firmware/test/fuzz/build/artifacts/${{ matrix.harness }}/
+            firmware/test/fuzz/build/fuzz-${{ matrix.harness }}.log
+          retention-days: 30
+          if-no-files-found: warn
+
+      # The key is the content of the corpus, so a night that found nothing new saves nothing.
+      # Not from a pull request: its entry would be visible to that pull request only. Also
+      # after a crash, since the inputs found on the way to it are worth keeping.
+      - name: Save the corpus
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: firmware/test/fuzz/build/corpus/${{ matrix.harness }}
+          key: fuzz-corpus-${{ matrix.harness }}-${{ hashFiles(format('firmware/test/fuzz/build/corpus/{0}/**', matrix.harness)) }}
+
+  # The board files outside the two groups the QA workflow compiles, whatever they are that day
+  # (.github/scripts/board-groups.sh). PlatformIO downloads each platform every night: no cache,
+  # because two more toolchains would take a fifth of the cache quota to save minutes nobody waits for.
+  boards:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compile the board files no pull request compiles
+        run: |
+          pipx install "$(grep -oE '^esphome==[0-9.]+' .github/ci/esphome/requirements.txt)"
+          configs="$(bash .github/scripts/board-groups.sh other)"
+          if [ -z "$configs" ]; then
+            echo "every board file is compiled by the QA workflow: nothing to do"
+            exit 0
+          fi
+          # Word splitting is wanted: a list of file names.
+          # shellcheck disable=SC2086
+          bash firmware/scripts/esphome-compile-check.sh $configs
+
+  # A failure is a warning annotation and a line in the summary, and the job passes: their rules
+  # move ahead of the release this repo builds with, so a red night would say nothing about this
+  # tree. The pinned-release run in qa.yaml is the one that has to pass.
+  esphome-upstream-dev:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ESPHome upstream gates (their dev branch)
+        run: |
+          if ESPHOME_UPSTREAM_REF=dev bash firmware/scripts/esphome-upstream-check.sh; then
+            echo "The component passes ESPHome's dev-branch gates." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=ESPHome dev gates::The component does not pass ESPHome's dev-branch gates. See this job's log. Informational, not blocking."
+            echo "The component does NOT pass ESPHome's dev-branch gates (informational). See the log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # firmware/esp32-recon/ (the RS-485 bus diagnostic tool) builds for the classic ESP32 with
+  # ESP-IDF v5.5.5, the release it was last built with by hand. Espressif's image has that release
+  # and its toolchain. The digest is the linux/amd64 image of the tag, so the tag cannot move
+  # under the job.
+  esp32-recon:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    container:
+      image: espressif/idf:v5.5.5@sha256:6e2800a69f1c6521a5651da524f811e237d13e34cad369687916d0ad0bc4ef89
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build esp32-recon
+        shell: bash
+        run: |
+          # The checkout belongs to another user than the one in the container.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # shellcheck disable=SC1091
+          . "$IDF_PATH/export.sh" > /dev/null
+          cd firmware/esp32-recon
+          idf.py set-target esp32 > set-target.log 2>&1 || { tail -n 60 set-target.log; exit 1; }
+          idf.py build > build.log 2>&1 || { tail -n 200 build.log; exit 1; }
+          grep -a -E 'esp32_recon\.bin binary size|Project build complete' build.log
+          # Not a gate: the tool has known warnings of its own (missing field initializers in
+          # recon_console.c). The count is shown so a jump is seen.
+          warnings="$(grep -a -c -E '(esp32-recon|reference-driver)/.*warning:' build.log || true)"
+          echo "esp32-recon builds with ESP-IDF $(cat "$IDF_PATH/version.txt" 2>/dev/null || echo v5.5.5): $(stat -c %s build/esp32_recon.bin) bytes, $warnings compiler warnings in its own sources." | tee -a "$GITHUB_STEP_SUMMARY"
