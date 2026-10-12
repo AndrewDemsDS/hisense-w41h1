@@ -47,7 +47,7 @@ into Home Assistant. On the Matter path that transport costs, today:
 | `ElectricalPowerMeasurementDelegate.{h,cpp}` | CHIP delegate so EPM reads route correctly | three `sensor:` declarations |
 | `integrations/hisense-unified-ac` (separate repo, submodule) + `test_diag_contract.py` | Matter cannot render a manufacturer cluster in HA without two upstream PRs, see [`14-diagnostics-ha-exposure.md`](14-diagnostics-ha-exposure.md) | native entities, no bitmap, no cross-repo contract |
 | Test attestation, VID `0xFFF1`/PID `0x8001`, the uncertified-device caveat | Matter requires credentials | none |
-| Commissioning, BLE, fabric management, the "77" recommission flow | Matter onboarding | Wi-Fi credentials in the YAML, or the AP fallback |
+| Commissioning, BLE, fabric management, the "77" recommission flow | Matter onboarding | Wi-Fi credentials in the YAML, the AP fallback, and "77" as a way to open that hotspot on demand |
 
 That is about 3700 lines of ESP32-specific firmware and tooling (`app_main.cpp`, `diag_console.cpp`,
 the EPM delegate, and the two scripts), plus a second repository, in service of transport. The
@@ -120,7 +120,7 @@ refer to `firmware/esp32-matter/main/app_main.cpp`.
 | `:2323` `bootreason` | diagnostic `text_sensor` | `esp_reset_reason()` |
 | `:2323` `poll`, `watch`, `raw` | `logger:` at DEBUG, entity history in HA | driver callbacks |
 | `:2323` `decode`, `tx`, `selftest` | optional `api:` user services, debug YAML only | `hisense_build_command_override()` |
-| Identify=77 recommission (#69) | `on_recommission:` automation trigger, plus `wifi:` AP fallback | `hisense_set_recommission_cb()` |
+| Identify=77 recommission (#69) | `on_setup_request:` automation trigger and `hisense_ac.set_setup_indicator`, bound in `packages/node.yaml` to Wi-Fi setup mode | `hisense_set_recommission_cb()`, ported into the component's codec |
 | Identify=88 HTTPS-OTA break-glass (#61, #104) | native `ota:` plus `safe_mode` | dropped |
 
 Two entries change character rather than disappearing, and both should be called out in the README
@@ -132,9 +132,10 @@ so nobody reads parity as identity:
   a user does not declare the entities their unit does not have, and the capability
   `text_sensor` tells them which those are. Same outcome, no firmware state machine. The component
   should still log a warning when a declared entity contradicts the reported capability.
-- **The "77" flow** loses its Matter meaning (there is no fabric to swap). It stays wired as an
-  automation trigger so a user can bind it to whatever they want, and the driver still clears the
-  request with `hisense_send_exit_77()` so the A/C does not sit in the mode (#69).
+- **The "77" flow** loses its Matter meaning (there is no fabric to swap). It is an automation
+  trigger, `on_setup_request`, that a user can bind to whatever they want, and the shipped
+  configuration binds it to Wi-Fi setup mode (below, "Setup mode and the 77 gesture"). The panel
+  shows "77" only while the configuration asks for it, so the A/C does not sit in the mode (#69).
 
 ## Architecture
 
@@ -264,6 +265,48 @@ once a minute, and commands that did not reach the unit. With `none`: 100 of 100
 command taken in 0.5 s (2026-10-10). The esp-matter build forces the radio on for the same reason
 (`firmware/esp32-matter/main/app_main.cpp`). The setting is a substitution, `wifi_power_save`, for
 a board whose supply cannot carry the extra current.
+
+**Setup mode and the 77 gesture. IMPLEMENTED, not yet on hardware.** The remote's gesture
+(horizontal airflow six times) opens the node's Wi-Fi hotspot and captive portal and puts "77" on
+the panel. Use, limits and the LED patterns are in
+[`../esphome/README.md`](../esphome/README.md#recovery-and-indication). The design notes:
+
+- *The codec.* The request is a bit in byte 17 of the unit's `0x1E` reply
+  ([`03-rs485-ac-protocol.md`](../../reverse-engineering/docs/03-rs485-ac-protocol.md), "Recommission
+  (77)"). The component's codec carries a port of the shared driver's debounce and lockout:
+  `0x20` alone is taken from one reply (the bench unit sends exactly one per gesture), anything
+  with `0x08` needs three in a row, and `0x20` is ignored for 10 s after a request and after the
+  indication goes off (#69). The port is stricter in four places, because here the request is a
+  toggle that takes the node off the network and not an idempotent "open a window". The reply's
+  checksum must be good. `0x08` is ignored while the node's own provisioning flag (the same bit,
+  outbound) is on the wire, and afterwards until one reply comes without it. `0x08` already set
+  at boot is ignored, or a unit that keeps asking would reopen setup after every restart. The
+  lockout also starts at boot and is kept as elapsed time, so it cannot come back to life when
+  the 32 bit millisecond clock wraps. Tests: `firmware/test/test_esphome_setup_request.cpp`,
+  which also runs the cases `test_codec.cpp` has for the original.
+- *The hub* parks a request during the bus poll and runs the automations from `loop()`.
+  `set_setup_indicator()` only changes what the next heartbeat carries.
+- *Opening the hotspot on demand.* ESPHome 2026.7 has no call for it: `setup_ap_config_()` is
+  protected, and `loop()` opens the hotspot only when no network has been connected for
+  `ap_timeout`. Setup mode gets there with public calls only: `disable()`, `set_ap_timeout(1)`,
+  `enable()`, then `set_sta()` with a network that does not exist, all in memory. That is the
+  state ESPHome's fallback is written for (configured network out of reach), so the portal, its
+  scan and the retry pacing are stock behaviour. `disable()`, `set_sta()`, `enable()` is also
+  the sequence ESPHome's own `wifi.configure` action uses. Two designs were turned down.
+  Persisting a flag and clearing the station list before Wi-Fi starts makes the portal save
+  under a preference key the next normal boot does not read (`start()` derives the key from
+  `has_sta()`). Reaching into the component for the protected call would break on an update.
+- *Leaving is a restart,* by timeout, by a second gesture, or once a network entered in the
+  portal has connected. The Wi-Fi component never clears its "hotspot was set up" flag, so
+  within one boot the hotspot opens once. A restart also restores the station list and the
+  timeout from the build and from flash, with nothing to undo by hand.
+- *What cannot strand a node.* Nothing is written on the way in. The portal writes what the
+  user enters. If that has not connected when the mode ends, the previous SSID and password are
+  written back first. If the hotspot does not open within 30 s the node restarts.
+
+Still to be seen on a unit: which bit each unit raises, that "77" lights and clears, that the
+hotspot opens on ESP-IDF and on LibreTiny after `disable()` and `enable()`, and that a restart on
+the stock module out of setup mode comes back (LibreTiny issue 396, see below).
 
 **Phase 6, special modes as climate presets. IMPLEMENTED, awaiting hardware validation.** A
 climate group syncs only `climate` attributes, so eco, quiet, turbo and sleep were invisible to it
