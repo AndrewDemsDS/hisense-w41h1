@@ -11,7 +11,7 @@ These inverter splits almost never carry a revenue-grade meter. The cloud number
   control), or
 - **(b)** a **model**: power estimated from compressor frequency + mode.
 
-Our telemetry map (see `INTEGRATION.md §telemetry`, mapped 2026-07-07) suggests this unit
+Our telemetry map (see `reverse-engineering/docs/03-rs485-ac-protocol.md`, the telemetry byte map, mapped 2026-07-07) suggests this unit
 **does sense both voltage and current**, so we can do real `P = V·I` rather than a pure model.
 Either way the figure is an **estimate**; one calibration pass against a plug-in meter makes it
 trustworthy (§4). The cloud's is an estimate too, ours can be at least as good, and local.
@@ -52,30 +52,15 @@ this is what most community inverter-A/C energy integrations use.
 **Shipped:** Path A only (`power_estimate.h`, §4a). Path B was never implemented; there is no
 frequency-based sanity clamp on the current reading.
 
-## 3. Matter exposure: shipped
+## 3. Exposure
 
-`ElectricalPowerMeasurement (0x0090)` ships on **ep1** (both AmebaZ2 and ESP32). The "hang it on
-ep1" fallback considered below is what got built, because a new device-type endpoint carries the
-same endpoint-add build risk already navigated for ep4-7. Feature set is `kAlternatingCurrent`
-only (single-phase); optional attributes are `Ranges`, `Voltage`, `ActiveCurrent`.
-`ActivePower`/`Voltage`/`ActiveCurrent` are fed from `power_estimate.h` each status poll, in the
-cluster's native mW/mV/mA units, and read 0 while the unit is off (not used as a liveness signal).
-kWh comes from HA Riemann-summing the power sensor (§5), the acceptable alternative this doc
-already flagged. `ElectricalEnergyMeasurement` (0x0091, `CumulativeEnergyImported`) was never
-added.
+The ESPHome firmware publishes **Power**, **Voltage** and **Current** sensors from the model
+below on every status poll, and `total_daily_energy` (a stock ESPHome platform) turns Power into
+**Energy today** for the Home Assistant Energy dashboard. They read 0 while the unit is off.
 
-**Delegate/Instance mechanics (found 2026-07-07, still true):** `ElectricalPowerMeasurement` is a
-**Delegate/Instance-based** cluster, not plain ember-RAM: the server reads `Accuracy`,
-`NumberOfMeasurementTypes`, and the values through a C++ `Delegate`, so exposure is not the
-`.zap`-attr + `emberAfWriteAttribute` pattern used for ep3-7. The shipped delegate lives at
-`firmware/src/sdk-edits/ElectricalPowerMeasurementDelegate.{h,cpp}` (adapted from CHIP's
-energy-management-app reference) and is shared as-is by the ESP32 build
-(`#include <ElectricalPowerMeasurementDelegate.h>` in `app_main.cpp`).
-
-Outdoor and coil temp now have a standard cluster too: `TemperatureMeasurement` on ep2 (outdoor)
-and ep8 (coil), see `docs/01`/`docs/07`. Compressor Hz remains without a standard cluster. It reads
-live today through the mfg-cluster raw attribute path, and the `hisense-unified-ac` HACS integration
-renders it as `sensor.*_compressor_frequency` (see `docs/01`/`docs/14`).
+The retired Matter builds carried the same three values on `ElectricalPowerMeasurement` (ep1) and
+left energy to a Riemann-sum helper in Home Assistant. That cluster is delegate-based in
+connectedhomeip, which made it the most awkward endpoint of those builds.
 
 ## 4. Calibration procedure: **clamp meter**
 
@@ -127,26 +112,23 @@ reads ~6 % low, minor, since current dominates).
 
 ## 4b. Compute location: **firmware**
 
-The driver computes P and publishes it via the standard `ElectricalPowerMeasurement` cluster (§3).
-HA reads it as-is, Energy-Dashboard-native. The calc lives in a **pure, host-testable**
-`power_estimate.h` (mirrors `matter_aircon_map.h`) so the model is unit-tested without hardware.
+The firmware computes P and publishes it (§3). The calculation is a pure function: in the ESPHome
+component it lives in `hisense_map.h`, and the reference it is compared against is
+`firmware/test/reference-driver/power_estimate.h`, so the model is unit-tested without hardware
+(`test_reference_map.cpp`, `test_esphome_codec_parity.cpp`).
 
-## 5. Energy accumulation (kWh): HA Riemann sum, not firmware
+## 5. Energy accumulation (kWh)
 
-kWh is derived in HA from the power sensor via a Riemann-sum helper; HA's long-term stats hold the
-history. No firmware integrator is wired up. `power_estimate.h` carries a pure, host-tested
-energy-integrator pair (`hisense_energy_add`/`hisense_energy_mwh`, `test/test_matter_map.cpp:
-166-167`), but nothing calls it: there's no `ElectricalEnergyMeasurement` cluster to publish
-`CumulativeEnergyImported` to (§3), and a live version would still need NVS persistence to survive
-a reboot.
+On the ESPHome firmware, `total_daily_energy` integrates Power on the node and resets at midnight.
+HA's long-term statistics hold the history. The reference `power_estimate.h` also carries a pure,
+host-tested integrator pair (`hisense_energy_add`/`hisense_energy_mwh`) that nothing calls: a
+lifetime counter would need persistence to survive a reboot.
 
 ## 6. Implementation phases
 
 - **P1: Calibrate.** Done, §4a: meter + 4-point capture, quadratic fit `P ≈ 4.15·@55²`.
-- **P2: Firmware compute.** Done: `power_estimate.h`, pure and host-tested like
-  `matter_aircon_map.h`.
-- **P3: Matter wire.** Done, on ep1 rather than a new endpoint (§3): `ElectricalPowerMeasurement`
-  only, fed each downlink. No `ElectricalEnergyMeasurement` (§5).
+- **P2: Firmware compute.** Done: a pure, host-tested function.
+- **P3: Exposure.** Done (§3).
 - **P4: HA.** Power sensor confirmed live; Energy Dashboard wiring is a per-installation HA step,
   not tracked here.
 - **P5: Validate.** Open: no recorded comparison against the cloud app's numbers.

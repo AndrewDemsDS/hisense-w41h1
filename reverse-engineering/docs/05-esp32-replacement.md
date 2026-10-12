@@ -74,9 +74,9 @@ The W41H1 firmware's status fields line up with the above (confirms the unit sup
 
 Don't hand-roll the frame builder, and don't reach for a community component either: this repo
 now ships its own, over the codec that was validated against this bus. Flash
-[`../../firmware/esphome/`](../../firmware/esphome/) (ESPHome, Home Assistant only) or
-[`../../firmware/esp32-matter/`](../../firmware/esp32-matter/) (Matter). Both compile the same
-`firmware/src/rs485-driver/`, so a protocol fix reaches both.
+[`../../firmware/esphome/`](../../firmware/esphome/) (ESPHome, Home Assistant only). The Matter
+firmware that used to sit beside it is retired (tag `matter-final`). The driver both were derived
+from is kept as a test reference in `firmware/test/reference-driver/`.
 
 The third-party components this doc used to recommend (`pslawinski/esphome_airconintl`,
 `akrabi/hisense_ac_esphome`) speak the same bus and remain useful reading, but their payload byte

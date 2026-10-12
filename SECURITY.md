@@ -1,19 +1,18 @@
 # Security Policy
 
 This is a community reverse-engineering / firmware project maintained in personal time. It runs on
-hardware **you own** and physically flash; it is **not a certified product** and ships Matter
-**test** credentials for development use only (see [`NOTICE.md`](NOTICE.md)).
+hardware **you own** and physically flash. It is **not a certified product** (see
+[`NOTICE.md`](NOTICE.md)).
 
 ## Supported versions
 
-Only the **latest release** of each firmware target is supported:
+Only the ESPHome firmware on the current `main` branch is supported. Build from the newest commit
+before reporting.
 
-| Target | Tag prefix |
-|--------|------------|
-| AmebaZ2 (RTL8710C) module firmware | `amebaz2-vX.Y.Z` |
-| ESP32 fallback bridge | `esp32-vX.Y.Z` |
-
-Older tags receive no fixes, update to the newest release before reporting.
+The two Matter firmwares (tags `amebaz2-v*`, `esp32-v*`, and the tree at `matter-final`) are
+retired and receive no fixes, security fixes included. Known properties of those builds: Matter
+test credentials, and in debug images an unauthenticated console on port 2323 that can drive the
+A/C bus.
 
 ## Reporting a vulnerability
 
@@ -32,20 +31,21 @@ initial assessment within ~30 days.
 
 In scope, defects in this repo's **own** code:
 
-- the RS-485 driver, Matter mapping, and firmware glue (`firmware/src/`)
-- build/OTA scripts (`firmware/scripts/`) and the recon tools (`reverse-engineering/tools/`)
+- the ESPHome component and its board files (`firmware/esphome/`)
+- the build and flash scripts (`firmware/scripts/`, `firmware/flasher/`) and the recon tools
+  (`firmware/esp32-recon/`, `reverse-engineering/tools/`)
 - the CI workflows (`.github/workflows/`)
 
 Out of scope:
 
-- the upstream **Realtek AmebaZ2 SDK**, **Espressif ESP-IDF / esp-matter**, and
-  **connectedhomeip**: report those to their respective projects
+- **ESPHome**, **LibreTiny**, **Espressif ESP-IDF** and the **Realtek AmebaZ2 SDK**: report those
+  to their respective projects
 - the **Hisense stock firmware / ConnectLife cloud**: that's the *subject* of the
   reverse-engineering, not software maintained here
 - anything requiring the attacker to already have **physical flash access**: that is the threat
   model this project operates under, by design
-- the use of Matter **test** DAC/PAI/CD credentials: a documented, intentional property (the
-  device is uncertified and not for sale), not a vulnerability
+- the reference configuration's lack of an OTA password: documented, and yours to set
+  (`docs/guide/ESPHome-Build.md`, "Updates")
 
 ## A note on secrets
 

@@ -18,7 +18,7 @@ and `reverse-engineering/hardware/pinouts.md`.
 
 | Part | Detail |
 |---|---|
-| Wi-Fi SoC | Realtek **RTL8710C (AmebaZ2)**, ARM Cortex-M, FreeRTOS. Secure boot **OFF**. Runs Wi-Fi + BLE (Matter commissioning) + the Matter stack + the RS-485 driver. |
+| Wi-Fi SoC | Realtek **RTL8710C (AmebaZ2)**, ARM Cortex-M, FreeRTOS. Secure boot **OFF**. Wi-Fi and BLE. ESPHome runs on it through the LibreTiny platform. |
 | Flash | GigaDevice **GD25Q32(B)**: 4 MB SPI NOR, SOIC-8, JEDEC ID `C8 40 16`. Two firmware slots (OTA1 + OTA2) + a KV/FTL config partition near the top of flash. |
 | RS-485 transceiver | Union Semiconductor **UM3352E**, MAX485-compatible, 8-pin SOIC. The A/C communication path. |
 
@@ -36,7 +36,7 @@ and `reverse-engineering/hardware/pinouts.md`.
 
 Carries **5 V · GND · RS-485 A · RS-485 B**. Power comes from the A/C; a bench supply tends to brown
 out the radio, so power the module from the unit. This is where an **ESP32** replacement connects
-(see [ESP32 Replacement Build](ESP32-Replacement-Build)).
+(see [ESP32 Replacement Board](ESP32-Replacement-Build)).
 
 ![A/C connector pinout](images/ac-connector-pinout.png)
 
@@ -47,8 +47,8 @@ anything.
 
 ## Replacing the module with an ESP32
 
-The ESPHome build (recommended) and the ESP32 Matter build both drop the W41H1 entirely and plug an
-ESP32 into the same 4-pin port. Parts, about €5 in total:
+The recommended build drops the W41H1 entirely and plugs an ESP32 into the same 4-pin port. Parts,
+about €5 in total:
 
 | Part | Pick | Notes |
 |---|---|---|
@@ -63,17 +63,16 @@ ESP32 into the same 4-pin port. Parts, about €5 in total:
 DE 10.*
 
 Full pin tables for both boards, and the GPIO pins you must avoid, are in
-[ESP32 Replacement Build](ESP32-Replacement-Build#bom-5--wiring). Two rules protect the hardware
+[ESP32 Replacement Board](ESP32-Replacement-Build#bom-5--wiring). Two rules protect the hardware
 while you work:
 
 - **While the board is on USB, connect only A and B** to the A/C. Joining the A/C's mains-earthed
   GND to a laptop-earthed board browns it out. GND and 5 V go on once the laptop is unplugged.
 - Bench-test with no A/C first: [Build, Flash & Test](Build-Flash-Test#bench-stage-no-ac).
 
-## Flash access (AmebaZ2 first flash / recovery)
+## Flash access (stock module recovery)
 
-The GD25Q32 is fully dumpable and writable with a **CH341A programmer + SOIC-8 clip**. After the
-first CH341A flash, everything else is wireless (OTA). Clip wiring, the in-circuit read problem and
+The GD25Q32 is fully dumpable and writable with a **CH341A programmer + SOIC-8 clip**. Clip wiring, the in-circuit read problem and
 the CH341A voltage warning are in [Recovery & Reflash](Recovery-and-Reflash#use-the-clip-tooling-not-flashrom).
 
 ![Module label](images/module-internal-back.png)
@@ -82,7 +81,7 @@ the CH341A voltage warning are in [Recovery & Reflash](Recovery-and-Reflash#use-
 
 ## Ready to flash?
 
-- **ESP32 board wired up:** follow the [User Guide](User-Guide), which starts with the ESPHome build.
-- **Keeping the stock module:** once you can see the flash chip and have the clip wired, follow
-  [Installing the Custom Firmware](Installing-Custom-Firmware). After that first write, updates go
-  over Matter OTA.
+- **ESP32 board wired up:** follow the [User Guide](User-Guide).
+- **Keeping the stock module:** read
+  [ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board) and its risk list,
+  and take a full dump with the clip before anything else ([Recovery & Reflash](Recovery-and-Reflash)).

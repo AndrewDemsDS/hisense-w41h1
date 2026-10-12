@@ -1,71 +1,42 @@
-# W41H1 Matter Firmware: full-feature + fixed attestation
+# firmware/
 
-Custom firmware for the Hisense **AEH-W41H1** A/C Wi-Fi module (Realtek **RTL8710C /
-AmebaZ2**) that fixes the two defects in the stock firmware:
+The ESPHome firmware for the Hisense **AEH-W41H1** A/C module's bus, its tests and its tools.
 
-1. **Only a bare Thermostat is exposed over Matter** (LocalTemperature + heat/cool
-   setpoints + mode; verified from the binary, no FanControl, no swing, no humidity, no
-   eco/purify/etc.). Goal: expose the **full** A/C control surface.
-2. **Broken attestation certs** (VID/PID don't cross-reference the CD → `err 604`), so
-   stock Matter controllers (Home Assistant) refuse to commission it. Goal: **self-
-   consistent certs** so any controller accepts it with no bypass.
+| Path | What |
+|---|---|
+| [`esphome/`](esphome/) | the firmware: the `hisense_ac` component, board files and shared packages. Start at its README |
+| [`test/`](test/) | host tests (`run_tests.sh`), the virtual A/C, the hardware actuation check, and the frozen [`reference-driver/`](test/reference-driver/) the component's codec is tested against |
+| [`scripts/`](scripts/) | `dev.py`, the one entry point, and the lint scripts |
+| [`flasher/`](flasher/) | CH341A clip tools for the stock module's SPI flash |
+| [`esp32-recon/`](esp32-recon/) | a console on the A/C bus for diagnostics and reverse engineering (ESP-IDF, no Home Assistant) |
+| [`docs/`](docs/) | design notes and hardware reference |
 
-The module already reads/writes every A/C function over RS-485 (`ac_cool_heat`,
-`ac_humidity`, `ac_fan_*`, `ac_swing_*`, `ac_power_save`, `ac_purify`, `ac_8heat`,
-`ac_q_display`, …). This project only adds the Matter clusters and wires the existing
-RS-485 driver to them.
+## Quick start
 
-## Base SDK
+From the repository root:
 
-The build is driven from the **AmebaZ2 base SDK**, not from `ameba-rtos-matter` alone,
-`ameba-rtos-matter` is a *component* that plugs into it. Three repos, laid out under
-`sdk` (`→ ~/ameba-dev`) exactly as upstream's `docs/amebaz2_general_build.md` requires:
-
-```text
-sdk/                                      (~/ameba-dev)
-├── ameba-rtos-z2/                        Ameba-AIoT/ameba-rtos-z2  — base SDK, build runs here
-│   ├── component/common/application/matter/   ← Ameba-AIoT/ameba-rtos-matter @ release/v1.4.2
-│   └── third_party/connectedhomeip       → symlink to ../../connectedhomeip (made by matter_setup.sh)
-└── connectedhomeip/                      project-chip/connectedhomeip @ v1.4.2-branch (recursive)
+```
+python3 firmware/scripts/dev.py walk esphome
 ```
 
-- **`ameba-rtos-z2`** (`main`), the RTL8710C SDK; `make` targets live in
-  `project/realtek_amebaz2_v0_example/GCC-RELEASE`.
-- **`ameba-rtos-matter`** (`release/v1.4.2`), Realtek's Matter porting layer (provides the
-  `room_air_conditioner_port` Room A/C app that this project extends).
-- **`connectedhomeip`** (`v1.4.2-branch`, matches the stock firmware's Matter version),
-  the Matter SDK: **ZAP** (cluster editor), **chip-cert** (DAC/PAI/CD generator), build env.
+The guide starts at [`docs/guide/User-Guide.md`](../docs/guide/User-Guide.md).
 
-`ameba-rtos-z2/matter_setup.sh amebaz2` wires the symlink, selects the Matter version, and
-flips `ENABLE_MATTER=1`. Build target for this device: **`make room_air_conditioner_port`** then
-**`make is_matter`** (Room A/C, not the bare `thermostat_port`).
+## Reference docs here
 
-## Status
+| Doc | What |
+|---|---|
+| [`docs/15-esphome-path.md`](docs/15-esphome-path.md) | design and phase log of the ESPHome firmware, the stock module through LibreTiny, flash layouts |
+| [`docs/13-path-comparison.md`](docs/13-path-comparison.md) | ESP32 board or stock module |
+| [`docs/10-stock-module-boot-and-recovery.md`](docs/10-stock-module-boot-and-recovery.md) | slot selection by FWHS serial, image signing, what a rejected image looks like, clip recovery |
+| [`docs/16-esp32-board-notes.md`](docs/16-esp32-board-notes.md) | the reasons behind the ESP32 wiring rules |
+| [`docs/04-qa-strategy.md`](docs/04-qa-strategy.md) | test strategy |
+| [`docs/07-stock-parity-gaps.md`](docs/07-stock-parity-gaps.md) | what the vendor firmware does that this one does not |
+| [`docs/09-energy-monitoring.md`](docs/09-energy-monitoring.md) | the power estimate and its calibration |
+| [`docs/03-ac-uart-pins.md`](docs/03-ac-uart-pins.md) | the stock module's bus UART pins, as found in the vendor firmware |
 
-**Matter firmware implemented and shipping**: all three original phases are done, core control,
-fan+swing+setpoints, and the manufacturer cluster (eco/turbo/mute/sleep). **v23 is running on two
-units**, including one converted straight from stock **over the air** (no CH341A) via the stock
-Matter OTA Requestor. The remote-triggered **"77" recommission** flow is bench-validated: it
-reopens the commissioning window and swaps fabrics without wiping the device. The original
-six-step phased plan (all done) is preserved in git history; live status, open issues, and the
-fleet-OTA plan for the remaining units live in the **GitHub issue tracker**.
+## Matter firmware (retired)
 
-## Flashing a unit
-
-A **stock** `AEH-W41H1` is flashed with this firmware over an SPI clip:
-
-**CH341A SPI flash.** Clip the GD25Q32 and write the app region:
-`python3 flasher/ch341flash.py built-images/flash_rac-integrated-vNN.bin` (region `0x0–0x140000`,
-preserves the commissioning KV at `0x2FF000+` → power-cycle, no re-commission). Whole-chip
-restore: `ch341flash-full.py`; back up first with `ch341dump.py`. See
-**[docs/10](docs/10-firmware-ota-procedure.md)** (clip-image + recovery details). ⚠️ Handle gently, **repeated clip cycles can ESD-kill
-the module's RF** (this is how the living-room unit died).
-
-Once on our firmware, version-to-version updates are ordinary **Matter OTA**
-([docs/10](docs/10-firmware-ota-procedure.md)), no physical access at all.
-
-## Setup
-
-`./setup.sh [sdk-root]` clones all three repos into the correct layout (default
-`~/ameba-dev`, the `sdk` symlink target), wires them with `matter_setup.sh`, and
-bootstraps the connectedhomeip build env. See it for the exact toolchain / host packages.
+This directory used to hold a Matter firmware for the stock module (`src/sdk-edits/`, built on
+Realtek's SDK) and one for the ESP32 (`esp32-matter/`). Both are retired (issue #182) and live on
+under the tag `matter-final`. See
+[`docs/guide/Matter-Firmware-Retired.md`](../docs/guide/Matter-Firmware-Retired.md).

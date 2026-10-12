@@ -9,6 +9,12 @@ The design goal is **simplicity**, measured concretely: fewer moving parts betwe
 their HA dashboard, and less project-specific machinery to maintain. Parity with the existing
 feature set is a hard constraint, not a goal to trade away.
 
+> **The Matter firmwares this plan compares against are retired** (tag `matter-final`, issue
+> #182), and ESPHome is the project's only firmware. Paths under `firmware/esp32-matter/` and
+> `firmware/src/` below refer to the tree at that tag. The shared driver the plan mentions is now
+> the frozen reference under `firmware/test/reference-driver/`, and every `dev.py ota ...` command
+> below is gone from `main`.
+>
 > **Status, October 2026.** This is the original design. Two of its decisions were later reversed
 > so the component can go to upstream ESPHome, which cannot depend on files outside the component.
 > The component now carries its own port of the codec (held equal to the shared driver by
@@ -45,7 +51,7 @@ into Home Assistant. On the Matter path that transport costs, today:
 | `scripts/dev.py ota esp32` release steps | delta-OTA base archiving (#82), version int discipline (#77), staged provider push | `esphome run` |
 | `scripts/esp32-lint.sh` | keeps `PROJECT_VER` and `sdkconfig` in sync | not applicable |
 | `ElectricalPowerMeasurementDelegate.{h,cpp}` | CHIP delegate so EPM reads route correctly | three `sensor:` declarations |
-| `integrations/hisense-unified-ac` (separate repo, submodule) + `test_diag_contract.py` | Matter cannot render a manufacturer cluster in HA without two upstream PRs, see [`14-diagnostics-ha-exposure.md`](14-diagnostics-ha-exposure.md) | native entities, no bitmap, no cross-repo contract |
+| `integrations/hisense-unified-ac` (separate repo, submodule) + `test_diag_contract.py` | Matter cannot render a manufacturer cluster in HA without two upstream PRs, see `14-diagnostics-ha-exposure.md` at the `matter-final` tag | native entities, no bitmap, no cross-repo contract |
 | Test attestation, VID `0xFFF1`/PID `0x8001`, the uncertified-device caveat | Matter requires credentials | none |
 | Commissioning, BLE, fabric management, the "77" recommission flow | Matter onboarding | Wi-Fi credentials in the YAML, or the AP fallback |
 
@@ -506,7 +512,7 @@ To tell which layout a unit has:
 - **Its history.** Converted over the air from the vendor firmware and never clipped: factory.
   First written with this repo's clip image: sdk.
 - **Ask the Matter firmware** (1.3.9 or later) for the address of the inactive slot:
-  `dev.py ota amebaz2 revert --backup <unit-ip>` prints `addr=`. `0x10000` or `0x190000` is the
+  `dev.py matter-backup <unit-ip>` prints `addr=`. `0x10000` or `0x190000` is the
   factory layout, `0xC000` or `0x1B8000` is the sdk layout. The command only reads.
 - **A clip dump.** The second firmware image starts at `0x190000` (factory), `0x1B8000` (sdk) or
   `0x1BC000` (native).

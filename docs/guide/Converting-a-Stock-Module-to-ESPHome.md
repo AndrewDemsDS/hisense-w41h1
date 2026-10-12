@@ -4,6 +4,11 @@ How to move a stock AEH-W41H1 module that runs this project's Matter firmware ov
 firmware, over the air, with the module left in the A/C. The Matter firmware installs the ESPHome
 image itself, as if it were its own next version.
 
+> The Matter firmware is retired ([Matter Firmware (Retired)](Matter-Firmware-Retired)). This page
+> is for a unit that still runs it. The tools it uses (`dev.py convert`, `matter-slots`,
+> `matter-backup`) are kept on `main` for that purpose. Anything about building or releasing the
+> Matter firmware itself is in the tree at the tag `matter-final`.
+
 **Status: done once.** One module with the factory flash layout was converted this way on
 2026-10-10, inside an A/C, and has taken two ESPHome updates over the air since. The sdk layout has
 not been converted, the way back to Matter has not been tried, and nothing has run for longer than
@@ -25,7 +30,7 @@ default key. Two things are missing for the Matter firmware to accept it:
   million on the day of the test). That would boot, since it is far above anything the Matter
   build uses, but it puts the unit out of step with the Matter numbering. The image is re-signed
   with the next serial in the Matter scheme instead (`SERIAL_BASE` plus the version number, the
-  rule `dev.py ota amebaz2 build` follows). Changing the serial invalidates the manifest
+  rule the Matter build followed). Changing the serial invalidates the manifest
   signature and the first sub-image trailer, so all of them are recomputed.
 - **The wrapper.** A Matter `.ota` header and a provider manifest, at a software version one
   above what the unit runs.
@@ -77,7 +82,7 @@ power cut during an update, and the return to the Matter firmware.
   fit the slot. Do not edit the files it produces.
 - **The way back is the clip.** A full dump taken before the module ever ran custom firmware, or
   the Matter clip image, written with the SOIC-8 clip
-  ([Recovery & Reflash](Recovery-and-Reflash#amebaz2-module-ch341a-clip)). Returning over the air
+  ([Recovery & Reflash](Recovery-and-Reflash#stock-module-ch341a-clip)). Returning over the air
   has not been tried.
 - **One of two converted units stopped answering on the bus,** for a reason that is not known
   and that the firmware cannot work around. Be ready to go back with the clip.
@@ -93,19 +98,20 @@ power cut during an update, and the return to the Matter firmware.
    slots. The command only reads:
 
    ```
-   python3 firmware/scripts/dev.py ota amebaz2 revert --slots <unit-ip>
+   python3 firmware/scripts/dev.py matter-slots <unit-ip>
    ```
 
    The answer is `ok: fw1_sn=<n> fw2_sn=<n> cur=<slot>`. Note the running slot and both serials.
    The serial of the image you install has to be above both.
-2. Find the flash layout. `revert --backup <unit-ip>` prints `addr=`, the address of the slot the
+2. Find the flash layout. `dev.py matter-backup <unit-ip>` prints `addr=`, the address of the slot the
    unit is not running from: `0x10000` or `0x190000` is the factory layout, `0xC000` or `0x1B8000`
    is the sdk layout. It also reads only. The longer account is in
    `firmware/docs/15-esphome-path.md`, "Which flash layout a unit has".
 3. `firmware/esphome/secrets.yaml` holds the Wi-Fi credentials of the network the unit is on now,
    and an API key. Check both twice. A typo here is the no-rollback case above.
-4. `firmware/scripts/ota-release.env` is filled in as for a Matter release (`OTA_TOOL`, `VID`,
-   `PID`, `SERIAL_BASE`, and the provider host if you want `--stage`).
+4. `firmware/scripts/ota-release.env` is filled in from `ota-release.env.example`: `OTA_TOOL`
+   (connectedhomeip's `ota_image_tool.py`, from any checkout of that project), `VID`, `PID`,
+   `SERIAL_BASE`, the break-glass token and port, and the provider host if you want `--stage`.
 5. The A/C is idle, and you can get at the module with the clip if it goes wrong.
 
 ## Procedure
@@ -128,10 +134,10 @@ python3 firmware/scripts/dev.py convert esphome --board amebaz2-factory --name <
 This reads the slot image from the build tree, re-signs it and writes three files to
 `firmware/built-images/`: `rac-v<version>-esphome.bin` (the re-signed image), `.ota` (the same
 with a Matter header) and `.json` (the provider manifest). By default the software version is one
-above the newest Matter version this checkout knows, and the serial is `SERIAL_BASE` plus that
+above the last Matter release (1.3.50, so 1.3.51), and the serial is `SERIAL_BASE` plus that
 version. Compare the serial it prints with the two from step 1 of the checks. If it is not above
 both, pass a higher one with `--serial <n>`, and a higher version with `--software-version <n>`
-if the unit already runs a newer Matter build than the checkout.
+if the unit runs a Matter build you numbered higher yourself.
 
 `--stage` copies the `.ota` and the manifest to the provider directory on your Home Assistant host
 and restarts matter-server, the same step a Matter release uses. It also archives the other
@@ -140,9 +146,9 @@ Without `--stage`, copy the two files yourself and restart matter-server.
 
 **3. Install it.** Start the update for this one unit: the firmware update entity the Matter
 integration shows for it in Home Assistant, or matter-server's `update_node` for its node id.
-`dev.py ota amebaz2 flash` is the wrong tool here. It waits for the node to report the new Matter
-version, and this node never reports on Matter again. Matter updates often fail on the first
-attempt ([OTA Updates](OTA-Updates#ota-is-flaky-by-design-retry)); try again.
+The node never reports on Matter again, so do not wait for a new Matter version to show. Matter
+updates often fail on the first attempt, because the provider loses a discovery race. Try again
+three to five times, about 15 seconds apart.
 
 **4. Confirm the node came up as ESPHome.** It reboots by itself when the image is written. Within
 a minute or two it should answer at `<hostname>.local` and appear in Home Assistant as a
@@ -182,5 +188,5 @@ running slot change.
   repo has a serial far below that and would not be chosen by the bootloader.
 - Outdoor and coil temperature read "unknown" for a while after mains power returns. The unit
   sends a placeholder until it has real readings, and the ESPHome build no longer publishes it
-  ([Entities, Endpoints and Diagnostics](Entities-and-Diagnostics)).
+  ([Entities and Diagnostics](Entities-and-Diagnostics)).
 - Watch the bus counters and `Serial port restarts` for a few days.

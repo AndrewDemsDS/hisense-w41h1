@@ -1,102 +1,97 @@
-# Hisense AEH-W41H1 de-cloud with custom Matter firmware
+# Hisense AEH-W41H1: local A/C control with ESPHome
 
-Replace the ConnectLife cloud on a Hisense **`AEH-W41H1`** A/C Wi-Fi module (Realtek
-**RTL8710C / AmebaZ2**) with custom **Matter** firmware, for local control from Home
-Assistant, **zero cloud**.
+Replace the ConnectLife cloud on a Hisense **`AEH-W41H1`** A/C Wi-Fi module with an ESPHome
+firmware that speaks the A/C's internal RS-485 bus, for local control from Home Assistant with
+**zero cloud**.
 
-> Not affiliated with, endorsed by, or supported by Hisense, Realtek, or the CSA. Uses Matter
-> **test** credentials → development/personal use only, **not a certified Matter product**, **not
-> for sale**. See [`NOTICE.md`](NOTICE.md). Reverse-engineering of hardware you own, for
-> interoperability. Do this at your own risk, a bad flash can brick the module (recoverable with
-> the stock dump).
+> Not affiliated with, endorsed by, or supported by Hisense, Realtek or ESPHome. See
+> [`NOTICE.md`](NOTICE.md). Reverse-engineering of hardware you own, for interoperability. Do this
+> at your own risk: a bad flash can brick the stock module (recoverable with a dump you took
+> first).
 
-**📖 Documentation: [andrewdemsds.github.io/hisense-w41h1](https://andrewdemsds.github.io/hisense-w41h1/)**,
-wiring, flashing, commissioning, everyday control, OTA, recovery, building from source, and the
-reverse-engineering write-ups, all searchable in one place. The site is generated from
+**📖 Documentation: [andrewdemsds.github.io/hisense-w41h1](https://andrewdemsds.github.io/hisense-w41h1/)**:
+wiring, flashing, everyday control, recovery, building from source, and the reverse-engineering
+write-ups, all searchable in one place. The site is generated from
 [`docs/guide/`](docs/guide/), [`firmware/docs/`](firmware/docs/) and
 [`reverse-engineering/docs/`](reverse-engineering/docs/); this README only points into it.
 
 ## What you get
 
-- **Local Matter control**: the A/C commissions into `python-matter-server` / Home Assistant; no
-  ConnectLife, no `hijuconn` cloud.
+- **A native Home Assistant climate device** over the ESPHome API: no ConnectLife, no pairing
+  code, no extra integration.
 - **Full control surface**: HVAC mode (incl. Auto), setpoint (16–32 °C), fan (6 speeds), vertical
-  swing, Eco / Quiet / Turbo / Sleep special modes, the panel display and the command beeper.
+  swing, Eco / Quiet / Turbo / Sleep special modes as presets and switches, the panel display and
+  the command beeper.
+- **Commands that are confirmed**: the node checks each command against the unit's status and
+  sends it again when the unit missed it.
 - **Bus diagnostics**: link state, error and timeout counters, per-fault and capability flags.
-- **Energy monitoring**: live power (W) + voltage, derived from the bus current proxy.
-- **OTA updates over Wi-Fi**: after the first CH341 flash, everything else is wireless.
-- **Three firmwares, one driver**, in order of preference: an ESP32 board running ESPHome (Home
-  Assistant only), the same ESP32 running Matter, or the stock AmebaZ2 module running Matter.
-- **One script for all of it**: `python3 firmware/scripts/dev.py` checks tools, fetches SDKs,
-  tests, builds, flashes and ships OTA updates for every target.
+- **Energy monitoring**: live power, voltage and current, and energy per day.
+- **Updates over Wi-Fi** with ESPHome's own OTA.
+- **One script**: `python3 firmware/scripts/dev.py` checks the tools, tests, builds and flashes.
 
-## How it works
+## One firmware, three kinds of hardware
+
+| Hardware | Status |
+|---|---|
+| **An ESP32 board** (ESP32-C3 SuperMini or classic ESP32) with a 3.3 V RS-485 transceiver, in place of the module | recommended. On live units since 2026-08 |
+| **The stock module itself** (Realtek RTL8710C) through ESPHome's LibreTiny platform | first run in an A/C on 2026-10-10. No rollback, and a SOIC-8 clip is the only recovery |
+| **Other ESPHome chips** (ESP8266, RP2040) | example configs that compile. Never run |
 
 ```
-Home Assistant ─┬─ python-matter-server ── Matter/Wi-Fi ──► RTL8710C module
-                                                             (custom AmebaZ2 Matter firmware)
-                                                                    │ RS-485 (9600 8N1)
-                                                                    ▼
-                                                             A/C mainboard
+Home Assistant ── ESPHome native API over Wi-Fi ──► ESP32 board or stock module
+                                                    (hisense_ac ESPHome component)
+                                                           │ RS-485 (9600 8N1)
+                                                           ▼
+                                                    A/C mainboard
 ```
 
-The module runs the Realtek AmebaZ2 Matter `room_air_conditioner` example with **our RS-485
-driver** bridging Matter attributes ↔ the A/C's internal RS-485 bus (protocol
-reverse-engineered + sniff-validated, see [`reverse-engineering/docs/03`](reverse-engineering/docs/03-rs485-ac-protocol.md)).
-
-## State of the project
-
-As of 2026-10-10 the three firmwares expose the same controls and diagnostics. Only the ESPHome
-build confirms a command and sends it again when the unit missed it.
-[Issue #182](https://github.com/AndrewDemsDS/hisense-w41h1/issues/182) proposes retiring the two
-Matter builds and keeping ESPHome as the only firmware. It is open and undecided: ESPHome on the
-stock module's own MCU has run on one unit through LibreTiny since 2026-10-10, with no long run
-behind it yet. Both Matter builds
-stay supported until that issue is settled.
+The protocol is reverse-engineered and sniff-validated on a real unit, see
+[`reverse-engineering/docs/03`](reverse-engineering/docs/03-rs485-ac-protocol.md).
 
 ## Get started
 
 ```
-python3 firmware/scripts/dev.py walk esphome   # or esp32, or amebaz2; asks before every step
+python3 firmware/scripts/dev.py walk esphome   # asks before every step
 ```
 
 | I want to | Read |
 |---|---|
-| pick a firmware and go from clone to running node | [User Guide](docs/guide/User-Guide.md) |
+| go from clone to running node | [User Guide](docs/guide/User-Guide.md) |
 | know the hardware and the 4-pin port | [Hardware & Wiring](docs/guide/Hardware-and-Wiring.md) |
-| set up the ESP32 build tools on a clean machine (ESPHome or ESP-IDF + esp-matter) | [ESP32 Build Environment](docs/guide/ESP32-Build-Environment.md) |
-| 1. run ESPHome on an ESP32 (recommended, Home Assistant only) | [ESPHome Build](docs/guide/ESPHome-Build.md) |
-| 2. run Matter on an ESP32 | [ESP32 Replacement Build](docs/guide/ESP32-Replacement-Build.md) |
-| 3. flash a stock AmebaZ2 module (CH341A clip, once) | [Installing the Firmware](docs/guide/Installing-Custom-Firmware.md), prebuilt images on [Releases](https://github.com/AndrewDemsDS/hisense-w41h1/releases) |
-| commission a Matter build into Home Assistant | [Commissioning & HA Setup](docs/guide/Commissioning-and-HA-Setup.md) |
-| see what each firmware exposes and read the bus counters | [Entities, Endpoints and Diagnostics](docs/guide/Entities-and-Diagnostics.md) |
-| update over the air | [OTA Updates](docs/guide/OTA-Updates.md) (`dev.py ota <target> release`) |
-| move an ESP32 node from Matter to ESPHome over the air | [Migrating an ESP32 Node](docs/guide/Migrating-ESP32-Matter-to-ESPHome.md) |
-| un-brick or go back to stock | [Recovery & Reflash](docs/guide/Recovery-and-Reflash.md) |
+| set up the build tools on a clean machine | [Build Environment](docs/guide/ESP32-Build-Environment.md) |
+| know what the firmware gives me, adopt it and update it | [ESPHome Build](docs/guide/ESPHome-Build.md) |
+| wire an ESP32 board | [ESP32 Replacement Board](docs/guide/ESP32-Replacement-Build.md) |
+| see every entity and read the bus counters | [Entities and Diagnostics](docs/guide/Entities-and-Diagnostics.md) |
+| un-brick a board or a module | [Recovery & Reflash](docs/guide/Recovery-and-Reflash.md) |
 | the detail behind each `dev.py` step | [Build, Flash & Test](docs/guide/Build-Flash-Test.md) |
-| find my way around the repo and the SDK overlay model | [Repo Map & Build Pipeline](docs/guide/Repo-Map-and-Build-Pipeline.md) |
+| find my way around the repo | [Repo Map & Build Pipeline](docs/guide/Repo-Map-and-Build-Pipeline.md) |
 
-> **⚠️ No remote way back to stock (yet).** Once a module runs this firmware, the only supported
-> return to stock ConnectLife firmware is a whole-chip CH341A write, which needs a dump of the stock
-> flash taken **before** you first flashed. Take that dump. Remote revert is tracked in the
-> [issues](https://github.com/AndrewDemsDS/hisense-w41h1/issues).
+> **⚠️ Stock module: dump it first.** The only complete way back to what a module had on it is a
+> whole-chip CH341A write of a dump taken **before** the first flash.
 
-## Releases & CI
+## Matter firmware (retired)
 
-A host-only QA gate runs on every push and PR. Pushing a signed `amebaz2-vX.Y.Z` or `esp32-vX.Y.Z`
-tag builds and publishes a GitHub Release with the firmware and `SHA256SUMS` attached. Details:
-[Repo Map & Build Pipeline](docs/guide/Repo-Map-and-Build-Pipeline.md#continuous-integration--releases-github-actions).
+Until 2026-10 this repository also shipped two Matter firmwares: one for the stock module on
+Realtek's AmebaZ2 SDK and one for the ESP32 board on esp-matter. Both are retired
+([issue #182](https://github.com/AndrewDemsDS/hisense-w41h1/issues/182)). The last tree that has
+them is the signed tag [`matter-final`](https://github.com/AndrewDemsDS/hisense-w41h1/tree/matter-final).
+A unit that runs one keeps working, and can be moved to ESPHome over the air:
+[Matter Firmware (Retired)](docs/guide/Matter-Firmware-Retired.md).
 
-## Attestation & credentials
+Apple Home, Google Home and Alexa are reached through Home Assistant's own Matter or HomeKit
+bridge.
 
-CSA **test** creds (VID `0xFFF1`/PID `0x8001`), dev-only, uncertified. Details: [`NOTICE.md`](NOTICE.md#matter-credentials).
+## CI
+
+A hardware-free gate runs on every push and pull request: lints, the host test suite,
+`esphome config` on every board file, a real compile for the stock module, and ESPHome's own CI
+checks against the component. Details:
+[Repo Map & Build Pipeline](docs/guide/Repo-Map-and-Build-Pipeline.md#continuous-integration-github-actions).
 
 ## De-clouding your whole home
 
-Once local control works, block the module's WAN egress (deny `*.hijuconn.com` + the OTA host), see
-[`reverse-engineering/docs/04`](reverse-engineering/docs/04-cloud-and-firewall.md). Research on
-flashing the **other** units over the air (via the stock firmware's dormant Matter stack, no CH341) is
-tracked in the [issues](https://github.com/AndrewDemsDS/hisense-w41h1/issues) (Fleet-OTA).
+Once local control works, block the module's WAN egress (deny `*.hijuconn.com` and the OTA host),
+see [`reverse-engineering/docs/04`](reverse-engineering/docs/04-cloud-and-firewall.md).
 
 ## AI assistance
 
@@ -105,5 +100,5 @@ I built this with AI assistance across the code, reverse-engineering, and docs. 
 
 ## License
 
-Original code and docs: **MIT** ([`LICENSE`](LICENSE)). Third-party components (Realtek SDKs,
-proprietary, not vendored; connectedhomeip, Apache-2.0) and the credential caveat: [`NOTICE.md`](NOTICE.md).
+Original code and docs: **MIT** ([`LICENSE`](LICENSE)). Third-party tools the build fetches and
+what was adapted from them: [`NOTICE.md`](NOTICE.md).

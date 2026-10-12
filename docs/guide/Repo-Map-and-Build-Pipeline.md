@@ -1,251 +1,117 @@
 # Repo Map and Build Pipeline
 
-The mental model a new developer needs before touching this repo. What lives where,
-why the SDK is *outside* the tree, why editing a source file can have zero build
-effect, and the one command that ships a firmware.
+Where the code lives, how it is tested and built, and what CI checks.
 
 ← back to [Home](Home) · siblings: [Protocol Overview](Protocol-Overview) ·
-[Testing and QA](Testing-and-QA) · [ESP32 Replacement Build](ESP32-Replacement-Build)
+[Testing and QA](Testing-and-QA) · [Build, Flash & Test](Build-Flash-Test)
 
 ---
 
 ## Repository layout
 
-The repo is **original MIT sources + patches** that overlay onto two large third-party
-SDKs you fetch yourself. It does **not** contain the SDKs.
-
 | Path | What |
 |---|---|
-| `firmware/src/rs485-driver/` | The A/C bus driver: `hisense_rs485.{h,cpp}`, the pure host-testable `matter_aircon_map.h`, `power_estimate.h`, and `INTEGRATION.md` (design ref + provenance). **Our code (MIT).** |
-| `firmware/src/sdk-edits/` | Capture of the Matter integration: `matter_drivers.cpp` glue, the `.zap`, the `0xFFF1FC00` mfg-cluster XML, and a `README.md` documenting every in-place SDK edit. |
-| `firmware/scripts/` | `dev.py` (the build/flash/test entry point for all three targets and the release engine for both Matter targets, see [Build, Flash and Test](Build-Flash-Test)), `ota_guards.py`, `sync-files.sh`, `gen-creds.sh`, Matter helpers. |
-| `firmware/flasher/` | pyusb CH341A flasher (per-sector verify + retry; use this, **not** flashrom). See [Installing the Custom Firmware](Installing-Custom-Firmware) for the two install paths (CH341A clip vs. OTA). |
-| `firmware/test/` | No-hardware QA: host codec + Matter-map tests + `virtual_ac.py`. See [Testing and QA](Testing-and-QA). |
-| `firmware/docs/` | Wiring plan, attestation, QA strategy, energy monitoring, and the canonical OTA/build procedure (`10-firmware-ota-procedure.md`). |
-| `firmware/esp32-matter/` | The ESP32 esp-matter replacement track; see [ESP32 Replacement Build](ESP32-Replacement-Build). |
-| `firmware/esphome/` | The ESPHome firmware for that same ESP32 board: custom `hisense_ac` component plus a reference YAML, no Matter stack. See [ESPHome Build](ESPHome-Build). |
-| `reverse-engineering/` | Protocol / hardware / cloud / OTA RE + `tools/` (sniffer, decoders). |
-| `patches/` | Your delta to the two SDKs, `git apply`-able; base commits pinned in `versions.env`. |
-| `dumps/` | ⚠️ **local-only, gitignored**: raw flash (Wi-Fi creds + device RSA key + vendor blob). Never published. |
+| `firmware/esphome/` | **the firmware**: board files (`w41h1*.yaml`), shared `packages/`, the `hisense_ac` component under `components/`, the stock-module board support, upstream-shaped tests under `tests/` |
+| `firmware/test/` | host tests, `virtual_ac.py`, the hardware actuation check, and `reference-driver/` |
+| `firmware/test/reference-driver/` | the project's first bus driver, frozen. The component's codec is tested against it |
+| `firmware/scripts/` | `dev.py` (the one entry point), `amebaz2_image.py` (stock-module image format), the lint scripts |
+| `firmware/flasher/` | CH341A clip tools for the stock module's SPI flash: dump, write, status register |
+| `firmware/esp32-recon/` | a small ESP-IDF diagnostic tool: a console on the A/C bus, built on the reference driver |
+| `firmware/docs/` | design notes and hardware reference, published under "Firmware" on the docs site |
+| `reverse-engineering/` | the protocol and stock-firmware analysis, capture tools, hardware notes |
+| `docs/guide/` | this guide |
+| `docs-site/` | the docs site's landing pages and theme config |
+| `dumps/` | local only and gitignored: raw flash dumps hold Wi-Fi credentials and device keys |
 
-## The SDK is outside the repo
+Nothing third-party is vendored. ESPHome and the toolchains it downloads are fetched on the
+build machine (`NOTICE.md`).
 
-The build runs from the **AmebaZ2 base SDK**, not the Matter component alone.
-`ameba-rtos-matter` is a *component* that plugs into `ameba-rtos-z2`. Three repos live
-under the SDK checkout (symlinked `./sdk`, ~15 GB, **gitignored**):
-
-```text
-sdk/                              (the SDK checkout)
-├── ameba-rtos-z2/                base RTL8710C SDK; the build runs here
-│   ├── component/common/application/matter/   ← ameba-rtos-matter @ release/v1.4.2
-│   └── third_party/connectedhomeip → ../../connectedhomeip
-└── connectedhomeip/              project-chip/connectedhomeip @ v1.4.2-branch
-```
-
-Two setup steps fetch and wire it (see `firmware/README.md`):
-
-```bash
-firmware/setup.sh    # fetch the 3 SDKs into the SDK checkout + check out the pinned commits
-scripts/setup.sh     # apply patches/ + the Matter-overlay edits, copy our source in
-```
-
-The Realtek SDKs are **proprietary and not redistributable**. The repo links and pins them,
-never vendors them. **The Matter integration edits live in the SDK tree**, not in this repo. When
-you change the wiring you edit the SDK, then re-capture into `sdk-edits/`. Don't move
-the SDK; it breaks the build.
-
-**Upstream pins** are the single source of truth in `versions.env` (sourced by `setup.sh`),
-with full provenance + licensing in `UPSTREAM.md` and `NOTICE.md`.
-
-## The MIRROR model (why editing a file can do nothing)
-
-`firmware/src/rs485-driver/` and `firmware/src/sdk-edits/` are **mirrors**. The real build
-consumes copies inside the SDK example dir. At build time, `dev.py ota amebaz2 build`
-copies the mirror files into
-`ameba-rtos-z2/.../examples/room_air_conditioner/`. **Editing a mirror alone has no build
-effect until you sync it.**
-
-The exact file set is defined **once**, in `sync-files.sh`,
-and shared by both `dev.py ota amebaz2 build` (build time) and `scripts/setup.sh` (the
-initial copy loop) so the two can never drift. (It exists because `matter_aircon_map.h`
-once went missing from `ota-release`, and mapping edits never reached a rebuild.)
-`REQUIRED` files hard-fail the build if absent; `OPTIONAL` are copied only if present.
-
-## Build + ship: use the script
-
-The entry point for every target is `python3 firmware/scripts/dev.py` (see the
-[User Guide](User-Guide)). For AmebaZ2 it is also the release engine
-(`dev.py test|build amebaz2`, `dev.py ota amebaz2 <stage>`), whose env comes from
-`ota-release.env` (gitignored; copy `.env.example`), which keeps real hostnames and paths out of
-git. The engine's stages:
+## One component, three kinds of hardware
 
 ```
-dev.py ota amebaz2 lint                        # host tests + .zap contiguity + version check (the git hook)
-dev.py ota amebaz2 build [--bump] [--debug]    # sync mirror→SDK, full-clean, build, verify serial+endpoints
-dev.py ota amebaz2 package                     # pad clip image + create .ota + manifest
-dev.py ota amebaz2 stage                       # scp to the matter-server host + restart matter-server
-dev.py ota amebaz2 flash                       # update_node (retries) + verify device booted new version
-dev.py ota amebaz2 release [--bump] [--flash]  # build + package + stage (+ flash)
+Home Assistant -- ESPHome native API over Wi-Fi -- MCU -- RS-485 9600 8N1 -- A/C mainboard
 ```
 
-The one command, day to day:
-
-```
-python3 firmware/scripts/dev.py ota amebaz2 release --bump --flash
-```
-
-## Build flavours: release and debug
-
-Every tagged release publishes **two** images, and they differ only in diagnostics:
-
-| flavour | contains | use it for |
+| Layer | Files | Testable |
 |---|---|---|
-| **release** (default) | no diagnostic console, no bring-up logging | anything you deploy |
-| **debug** (`build --debug`) | the `:2323` console (`features`, `poll`, `version`) plus verbose logging | bench work, and answering what your own A/C reports |
+| Codec | `components/hisense_ac/hisense_protocol.{h,cpp}` | host, compared with the reference driver |
+| Mapping and decisions | `components/hisense_ac/hisense_map.h` | host, pure functions |
+| Bus scheduler | `components/hisense_ac/hisense_bus.{h,cpp}` | host, against a simulated A/C |
+| ESPHome glue | `hisense_ac.cpp`, `hisense_climate.cpp`, the switch and select platforms, the `*.py` schemas | not on the host: `esphome config`, a compile, and hardware |
 
-The flavour lives in the **filename**, never in the version, because the version int stays unified
-across both:
+The component uses ESPHome's `uart:` component and nothing from a chip SDK, so the same sources
+build for the ESP32 boards, the stock module (LibreTiny) and the example ESP8266 and RP2040 files.
+What differs per board is one YAML file: the node name, three pins and the platform block.
+
+**Standing rule:** a glue *decision* (is this write my own echo, should the shadow sync, is this
+command confirmed) belongs as a pure function in `hisense_map.h` with a host test, not in the glue.
+
+## Build: use the script
 
 ```
-flash_rac-integrated-v10213.bin        rac-v10213.ota          <- release
-flash_rac-integrated-v10213-debug.bin  rac-v10213-debug.ota    <- debug
-hisense_ac_matter.bin                  hisense_ac_matter-debug.bin
+python3 firmware/scripts/dev.py test  esphome                  # host tests + esphome config
+python3 firmware/scripts/dev.py build esphome --board c3       # esphome compile
+python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
 ```
 
-**Why release is the default.** The `:2323` console has **no authentication**, is reachable by
-anyone on the same L2, and can read state, decode frames and drive the A/C bus. That is fine on a
-bench and wrong on a deployed appliance controller, so you have to ask for it explicitly.
+`dev.py` wraps `esphome` and prints each command, so everything can also be run by hand from
+`firmware/esphome/` ([Build Environment](ESP32-Build-Environment#by-hand)). There is no version
+file to bump and no release image to package: a node is built from the tree and updated over the
+air with `esphome run` ([ESPHome Build](ESPHome-Build#updates)).
 
-Three things to keep straight:
+`firmware/esphome/secrets.yaml` is gitignored. `secrets.yaml.example` holds placeholders, and CI
+builds with those.
 
-- A debug and a release image at the **same version are different binaries**. Never use one as the
-  other's delta-OTA base or recovery image.
-- `package` takes the flavour from the environment but the content from whatever `build/` holds, so
-  it **verifies the binary against the claimed flavour** and hard-fails on a mismatch. If you see
-  that error, you packaged after the wrong build.
-- The Matter OTA provider serves **one image per softwareVersion**, so publishing both does not mean
-  both can be staged at once. Pick one to serve.
+### The stock module
+
+Three board files, one per flash layout a module can have (`w41h1-amebaz2-*.yaml`). The image must
+be built for the layout the unit has, and the build fails when the image's slot addresses are not
+those of the layout the file names. What `dev.py` adds for the module:
+
+- `build esphome --board amebaz2-<layout>` compiles it and makes sure the slot image exists.
+- `convert esphome --board amebaz2-<layout>` re-signs that image for a unit that still runs the
+  retired Matter firmware ([Converting a Stock Module](Converting-a-Stock-Module-to-ESPHome)).
+- `matter-slots` and `matter-backup` read such a unit's slot state.
+
+`convert` and the two probes read their settings from `firmware/scripts/ota-release.env`
+(gitignored, copy `ota-release.env.example`). `firmware/built-images/` is where their output goes,
+also gitignored.
+
+How the module boots and what its bootloader accepts:
+`firmware/docs/10-stock-module-boot-and-recovery.md`.
 
 ## Hooks
 
 Hooks are opt-in per clone: `git config core.hooksPath firmware/.githooks`. The **pre-commit hook**
-runs `dev.py ota amebaz2 lint` when `firmware/src`, `firmware/test`, or the `.zap` is staged,
-`esp32-lint.sh` when `firmware/esp32-matter/` is staged, `cpp-lint.sh check --no-tidy` on staged
-C/C++ files, and `stop-slop.sh` on staged markdown (bypass: `--no-verify`).
+runs `firmware/test/run_tests.sh` when the host tests, `dev.py` or the component's protocol sources
+are staged, `cpp-lint.sh check --no-tidy` on staged C/C++ files, and `stop-slop.sh` on staged
+markdown (bypass: `--no-verify`).
 
-## Continuous integration & releases (GitHub Actions)
+## Continuous integration (GitHub Actions)
 
-`.github/workflows/` mirrors the local gate and automates release builds:
+`.github/workflows/` mirrors the local gate:
 
-- **`qa.yaml`** runs on every push/PR: shellcheck, ruff, `cpp-lint.sh check` (clang-format,
-  custom rules and clang-tidy on the C/C++ we own), `esp32-lint.sh` (ESP32 version consistency), `dev.py ota amebaz2 lint` (host codec/map tests, `.zap` contiguity, version sanity),
-  `esphome config` on every board file in `firmware/esphome/` and a compile of the AmebaZ2 one, and a check that `firmware/src/version.txt` strictly increases
-  when firmware changed. It is hardware-free, so it runs on a GitHub-hosted runner, using the same
-  commands as the pre-commit hook so CI and local never drift.
-- **`esp32-release.yaml`** builds the ESP32 firmware on an `esp32-vX.Y.Z` tag and attaches the
-  images to a GitHub Release. It runs on the same **self-hosted** `sdk-builder` runner and reuses
-  that host's installed ESP-IDF + esp-matter (via `IDF_EXPORT` / `ESP_MATTER_EXPORT` in the runner
-  env), which is faster and more reliable than a cold esp-matter bootstrap in a hosted container.
-- **`amebaz2-release.yaml`** builds on the **self-hosted** `sdk-builder` runner (it holds the
-  proprietary Realtek SDK) on an `amebaz2-vX.Y.Z` tag, and attaches
-  `flash_rac-integrated-v<int>.bin` + `rac-v<int>.ota` + the manifest to the Release.
+- **`qa.yaml`** runs on every push and pull request, on GitHub-hosted runners:
+  - `host-qa`: shellcheck, ruff, `cpp-lint.sh check` (clang-format, custom rules and clang-tidy on
+    the C/C++ we own), `firmware/test/run_tests.sh`, and `esphome config` on every board file and
+    on the upstream-shaped component tests.
+  - `esphome-amebaz2`: a real compile of all three stock-module layouts.
+  - `esphome-upstream`: ESPHome's own CI gates against the component, on the pinned release
+    (required) and on their development branch (informational).
+- **`pages.yaml`** builds and publishes the docs site when a doc changes.
 
-Both release builds are tag-push only, so fork pull requests never reach the runner, and neither
-hardcodes the repo owner (a fork's own tagged builds run on the fork's own runner). Release binaries
-are built with `-ffile-prefix-map` so they carry no builder home path. Cut a release by pushing a tag
-whose version matches the tree: `amebaz2-v$(cat firmware/src/version.txt)` or `esp32-v<PROJECT_VER>`.
-`stage`/`flash` stay manual.
+There is no release workflow and no self-hosted runner. Dependabot proposes updates for the GitHub
+Actions and the pinned Python requirements.
 
-A tag pushed while the `sdk-builder` runner is offline does not fail. It sits in `queued` until the
-runner starts. `dev.py ota amebaz2 tag` and `dev.py ota esp32 tag` create the tag locally and then ask the
-GitHub API (`gh api repos/<owner>/<repo>/actions/runners`) whether a runner with that label is
-online. If none is, they warn before printing the push command: start the self-hosted runner
-(`run.sh` in its install dir) first. The check only warns, and it is skipped with a note when `gh` is
-missing, not logged in, or lacks admin access to the repo (listing runners needs it).
+## Docs site
 
-### SDK pins: the weekly build and the patch check
+`python3 .github/scripts/assemble_docs_site.py` assembles `_site_src` from `docs/guide/`,
+`firmware/docs/` and `reverse-engineering/docs/` at build time. Nothing is duplicated in git: edit
+the source docs, never a copy under `_site_src`. `python3 docs/guide/lint.py` checks the guide's
+links, headings, sidebar and a leak denylist.
 
-`sdk-pins.yaml` guards the AmebaZ2 pins in `versions.env` with two jobs:
+## The retired Matter builds
 
-- **`patch-check`** runs on a GitHub-hosted runner for any PR or push that touches `versions.env`
-  or `patches/`. It fetches only the files our patches touch from the pinned `connectedhomeip` and
-  `ameba-rtos-z2` commits and runs `git apply --check`. A pin bump that breaks a patch fails here in
-  under a minute, with no SDK install.
-- **`sdk-build`** is the full AmebaZ2 build on the `sdk-builder` runner. It starts only from
-  `workflow_dispatch`, never from a pull request, so a fork cannot reach the runner. It first runs
-  `dev.py doctor amebaz2`, which fails when the SDK installed on the runner is not at the pins the
-  tree asks for. After a pin bump merges, re-pin that SDK (`dev.py fetch amebaz2`) before expecting
-  a green build.
-
-The runner is normally off, and a cron trigger would leave a job in `queued` whenever its host is
-powered down. So the schedule lives on the runner host: a weekly systemd user timer dispatches the
-workflow and then runs the runner for one job.
-
-```ini
-# ~/.config/systemd/user/w41h1-sdk-weekly.service
-[Unit]
-Description=Weekly AmebaZ2 SDK build (dispatch the workflow, run the runner for one job)
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=oneshot
-TimeoutStartSec=3h
-ExecStart=/bin/sh -c 'gh workflow run sdk-pins.yaml --repo <owner>/<repo> --ref main && cd /home/you/actions-runner && ./run.sh --once'
-
-# ~/.config/systemd/user/w41h1-sdk-weekly.timer
-[Timer]
-OnCalendar=Mon 10:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-`Persistent=true` runs a missed week at the next login. Enable it with
-`systemctl --user enable --now w41h1-sdk-weekly.timer`. The build syncs `main` into the SDK and does
-the usual full clean, so it replaces whatever build output the SDK held.
-
-## The three build traps (summary: docs/10 is canonical)
-
-Three failure modes each **ship a broken or rolling-back image with no error**. Full analysis,
-addresses, and the guards are in the canonical procedure,
-**`firmware/docs/10-firmware-ota-procedure.md`**.
-Do not restate it; the summary:
-
-1. **Stale build cache.** The SDK reuses a stale core (`libCHIP.a`) + main lib and links an
-   inconsistent image. A mandatory FULL clean precedes every build (the plain `clean_matter*`
-   targets leave the copied bsp libs + gn out dir; remove those too). Judge a build by
-   **activity, not wall-clock**: a genuine full build shows ninja compiling the core (hundreds
-   of `[N/353] c++ …` lines) and rebuilds `libCHIP.a` fresh. The ameba make now runs
-   `-j$(nproc)`, so a genuine full build is ~110 s; the old "under 2 min = fake" rule is retired
-   (it false-flags good parallel builds). `dev.py ota amebaz2 build` cleans correctly.
-2. **OTA serial.** The bootloader selects the slot by `FWHS.header.serial`, not
-   `softwareVersion`; `build` sets and verifies it. See
-   [OTA Updates](OTA-Updates#the-ota-serial-trap-the-script-handles-it).
-3. **Non-contiguous endpoints.** Endpoints should stay `{0,1,2,…}` with no gaps (treated as
-   a zero-cost precaution; whether the gap is a proven crash cause is *unconfirmed*, it was
-   confounded with the serial bug). To remove an endpoint, **renumber** to close the hole.
-   `lint` blocks a non-contiguous `.zap`.
-
-### Versioning (get it wrong → the provider won't serve)
-
-The source of truth is the semver in `firmware/src/version.txt`; the Matter int is
-`MAJOR*10000 + MINOR*100 + PATCH`, and ESP32 mirrors the scheme from `PROJECT_VER`. The serving
-rules (strictly greater, never reuse a rolled-back number, what `--bump` and `lint` do) are in
-[OTA Updates](OTA-Updates#version-rule-get-this-wrong--the-provider-wont-serve); the full detail is
-docs/10 §1 and §9.
-
-## Editing the data model
-
-The `.zap` is the **only** data-model source. `endpoint_config.h`, `.matter`, and
-everything under `build/chip/codegen/` are **generated outputs**; never hand-edit them. Edit
-with `firmware/scripts/zap_edit.py` (attributes, defaults, appended endpoints; its `check` runs the
-build's generation on a scratch copy) or via the ZAP GUI, then re-capture the `.zap` into
-`sdk-edits/`. A **new manufacturer cluster**
-additionally needs minimal `zzz_generated` edits (`ClusterId.h` + callback decls/defs). Full
-recipe + the ZAP GUI invocation: `firmware/src/sdk-edits/README.md`.
-**Never** run `scripts/tools/zap_regen_all.py` for routine changes. It whole-tree-regenerates
-and clobbers the hand-made HisenseAircon edits.
-
-Current status and open work live in the project's issue tracker.
+`main` used to carry two Matter firmwares, their SDK setup, patches, release tooling and
+workflows. They were removed on 2026-10-12 and live on under the tag `matter-final`
+([Matter Firmware (Retired)](Matter-Firmware-Retired)).

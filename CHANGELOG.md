@@ -1,11 +1,27 @@
 # Changelog
 
 Notable changes to this project. The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
-Firmware versions use the unified semver → softwareVersion-int scheme (see
-[`firmware/src/version.txt`](firmware/src/version.txt) and
-[`firmware/esp32-matter/CMakeLists.txt`](firmware/esp32-matter/CMakeLists.txt)).
+Entries up to 2026-10-10 also cover the two Matter firmwares, which are retired: version numbers
+such as "AmebaZ2 1.3.50" or "ESP32 1.1.19" and paths under `firmware/src/` and
+`firmware/esp32-matter/` refer to the tree at the tag `matter-final`.
 
 ## Unreleased
+
+### The Matter firmwares are retired, ESPHome is the only firmware (2026-10-12, #182)
+- **Removed** the AmebaZ2 Matter build (the SDK setup scripts, `patches/`, `versions.env`, the
+  `.zap` and `firmware/src/sdk-edits/`, `firmware/src/version.txt` and its CI rule), the ESP32
+  Matter build (`firmware/esp32-matter/`), the Matter release steps of `dev.py` (`dev.py ota ...`),
+  the matter-server helper scripts, the release and SDK-pin workflows, the Renovate config and the
+  `hisense-unified-ac` submodule. The last tree with all of it is the signed tag `matter-final`.
+- **Kept, moved:** the old bus driver is now a frozen test reference under
+  `firmware/test/reference-driver/`, and the codec parity test still compares the ESPHome
+  component with it. `firmware/esp32-recon/` builds from it and owns its ESP-IDF HAL.
+- **`dev.py` is ESPHome-only.** `convert` stays for a stock module that still runs the Matter
+  firmware. The two read-only probes of such a unit are now `dev.py matter-slots <ip>` and
+  `dev.py matter-backup <ip>` (they were `ota amebaz2 revert --slots` and `--backup`).
+- **Docs** describe one firmware on three kinds of hardware. Hardware facts from the Matter
+  documents moved to `firmware/docs/10-stock-module-boot-and-recovery.md` and
+  `firmware/docs/16-esp32-board-notes.md`.
 
 ### ESPHome on the stock module: the receiver stall has a cause and a fix (2026-10-10)
 - **Fixed: the bus receiver stops on the stock module.** LibreTiny keeps received bytes in the

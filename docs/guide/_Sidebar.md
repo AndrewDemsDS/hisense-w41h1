@@ -3,19 +3,19 @@
 **Operator**
 - [User Guide](User-Guide)
 - [Hardware & Wiring](Hardware-and-Wiring)
-- [ESP32 Build Environment](ESP32-Build-Environment)
+- [Build Environment](ESP32-Build-Environment)
 - [ESPHome Build](ESPHome-Build)
-- [ESP32 Matter Build](ESP32-Replacement-Build)
-- [Installing on the AmebaZ2 Module](Installing-Custom-Firmware)
-- [Commissioning & HA Setup](Commissioning-and-HA-Setup)
+- [ESP32 Replacement Board](ESP32-Replacement-Build)
 - [Everyday Control](Everyday-Control)
 - [Entities & Diagnostics](Entities-and-Diagnostics)
 - [Climate Groups](Climate-Groups)
-- [OTA Updates](OTA-Updates)
-- [Migrating ESP32 Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome)
-- [Converting a Stock Module to ESPHome](Converting-a-Stock-Module-to-ESPHome)
 - [Recovery & Reflash](Recovery-and-Reflash)
 - [FAQ & Gotchas](FAQ-Gotchas)
+
+**From the retired Matter firmware**
+- [Matter Firmware (Retired)](Matter-Firmware-Retired)
+- [Migrating ESP32 Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome)
+- [Converting a Stock Module to ESPHome](Converting-a-Stock-Module-to-ESPHome)
 
 **Developer**
 - [Build, Flash & Test](Build-Flash-Test)
