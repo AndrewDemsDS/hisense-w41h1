@@ -1,5 +1,10 @@
 # Pinouts
 
+The three pinouts needed to read the module's flash, tap its bus, or wire a replacement board.
+The chip pinouts are the standard ones of the parts. The connector's pin order was measured on a
+W41H1 on the bench. The parts themselves are described in
+[`../docs/01-hardware.md`](../docs/01-hardware.md).
+
 ## GD25Q32(B) SPI NOR flash (SOIC-8)
 
 ```
@@ -8,27 +13,32 @@
  3 WP   │   │  6 CLK
  4 GND  └───┘  5 DI
 ```
-Pin 1 = dot/dimple corner. For a CH341A read, wire to the programmer's 25-series
-socket/clip in this order (VCC=3.3 V ideally).
 
-## UM3352E RS-485 transceiver (SOIC-8, MAX485-compatible)
+Pin 1 is the corner with the dot. For a read with a CH341A, the clip goes on in this order, at
+3.3 V.
+
+## UM3352E RS-485 transceiver (SOIC-8, MAX485 compatible)
 
 ```
- 1 RO   ┌───┐  8 VCC (5 V from A/C)
+ 1 RO   ┌───┐  8 VCC (5 V from the A/C)
  2 /RE  │   │  7 B   (bus)
  3 DE   │   │  6 A   (bus)
  4 DI   └───┘  5 GND
 ```
-- **A (6) / B (7)** → A/C mainboard RS-485 bus.
-- **RO (1)** = received bytes, logic-level UART (A/C → dongle). Sniff point.
-- **DI (4)** = transmitted bytes, logic-level UART (dongle → A/C). Sniff point.
-- Logic likely 5 V (VCC from the A/C) → level-shift to 3.3 V before a 3.3 V-only adapter.
 
-## A/C 4-pin port
+- Pins 6 and 7 (A and B) go to the A/C mainboard's RS-485 bus.
+- Pin 1 (RO) carries the bytes the A/C sends, as logic-level UART. A point to tap.
+- Pin 4 (DI) carries the bytes the module sends. The other point to tap.
+- Pin 3 (DE) is driven by the SoC's `PA_17`: high while the module sends.
+- The logic level is probably 5 V, because VCC comes from the A/C. It was not measured. Bring it
+  down to 3.3 V before an adapter that takes 3.3 V only.
 
-Carries **5 V, GND, RS-485 A, RS-485 B**. This is where an ESP32 replacement connects.
+## The A/C's 4-pin port
 
-Bench-confirmed pin order (W41H1; the board silkscreen numbers the pins 4-3-2-1, left to right):
+It carries 5 V, ground, and RS-485 A and B. A replacement board connects here.
+
+The pin order measured on a W41H1. The board's silkscreen numbers the pins 4, 3, 2, 1 from left
+to right:
 
 ```
  pin:   4      3       2       1
@@ -36,6 +46,10 @@ Bench-confirmed pin order (W41H1; the board silkscreen numbers the pins 4-3-2-1,
  sig:   GND    A / B   A / B   5 V
 ```
 
-Pins 2 and 3 are the RS-485 differential pair. A and B are interchangeable at wiring time, so swap
-them if the bus does not link. Confirm the wire colors on your own unit; they can vary by revision.
-(Cross-check against the transceiver: A/B go to pins 6/7, GND to pin 5, 5 V to pin 8.)
+Pins 2 and 3 are the differential pair. Which of them is A was not determined: if the bus does
+not link, swap them. Check the wire colours on your own unit, because they can differ between
+revisions. As a cross-check against the transceiver, A and B go to its pins 6 and 7, ground to
+pin 5 and 5 V to pin 8.
+
+Wiring a replacement board step by step is in
+[`docs/guide/Hardware-and-Wiring.md`](../../docs/guide/Hardware-and-Wiring.md).

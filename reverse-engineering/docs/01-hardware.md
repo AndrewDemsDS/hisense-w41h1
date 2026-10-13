@@ -1,43 +1,55 @@
 # Hardware
 
+What is inside the AEH-W41H1 module, how it connects to the A/C, and how its flash was read. The
+pin diagrams of the two chips and of the 4-pin connector are in
+[`../hardware/pinouts.md`](../hardware/pinouts.md).
+
+## Status of this page
+
+Current reference. The part numbers were read off the board, the flash id comes from the dump
+tool, the pin functions of the SoC come from the firmware (doc 10 §2.1), and the connector's pin
+order was measured on the bench. Nothing here is inferred from another model.
+
 ## Overview
 
-The AEH-W41H1 is a sealed plastic dongle that plugs into the A/C indoor unit via a
-**4-pin connector** carrying **5 V, GND, and an RS-485 A/B pair**.
+The module is a sealed plastic dongle that plugs into the indoor unit through a 4-pin connector
+carrying 5 V, ground and an RS-485 pair. Under an RF shield sit the Wi-Fi SoC and its flash. The
+RS-485 transceiver is outside the shield, next to the cable connector.
 
-Inside, under an RF shield can, is the Wi-Fi SoC + its external flash. The RS-485
-transceiver sits outside the shield next to the cable connector.
+| Part | Marking | Role |
+|---|---|---|
+| Wi-Fi SoC | Realtek RTL8710C (AmebaZ2), ARM Cortex-M, FreeRTOS v10.0.1 | Wi-Fi, BLE, the vendor's Matter stack and cloud client, the bus driver |
+| Flash | GigaDevice GD25Q32(B), 4 MB SPI NOR, SOIC-8, JEDEC id `C8 40 16` | firmware and settings |
+| Transceiver | Union Semiconductor UM3352E, SOIC-8, MAX485 compatible | RS-485 to the A/C mainboard |
+| Board | `MW8415C.02`, Qingdao Hisense | carrier |
+| Power | 5 V, 450 mA, from the A/C's 4-pin port | |
 
-## Components
+The firmware confirms the SoC with the strings `AmebaZIIRTL8710C`, `amebaz2` and `ARM_RTL8710C`.
 
-### Wi-Fi SoC: Realtek RTL8710C (AmebaZ2)
-- ARM Cortex-M, FreeRTOS v10.0.1.
-- Runs the Wi-Fi stack, BLE (used for Matter commissioning), the Matter
-  (`connectedhomeip`) stack, the ConnectLife cloud client, and the RS-485 driver to the A/C.
-- Firmware confirms strings: `AmebaZIIRTL8710C`, `amebaz2`, `ARM_RTL8710C`.
+The flash holds two firmware slots and the settings near the top. The layout is in
+[13-stock-fw-feature-map.md](13-stock-fw-feature-map.md#persistent-storage-map).
 
-### Flash: GigaDevice GD25Q32(B)
-- 4 MB (32 Mbit) SPI NOR, SOIC-8, JEDEC ID `C8 40 16`.
-- Standard 25-series pinout: `1=CS 2=DO 3=WP 4=GND 5=DI 6=CLK 7=HOLD 8=VCC`.
-- Fully dumpable with a CH341A + SOIC-8 clip; see `firmware/flasher/ch341dump.py`.
-- Two firmware images (OTA1 + OTA2) + a KV/FTL config partition near the top of flash.
+On the transceiver, pins 6 and 7 (A and B) go to the A/C mainboard. Pin 1 (RO) carries the bytes
+the A/C sends and pin 4 (DI) the bytes the module sends, both as logic-level UART, which makes
+them the two points to tap. The SoC drives pin 3 (DE) from `PA_17`
+([03-rs485-ac-protocol.md](03-rs485-ac-protocol.md#physical-layer)).
 
-### RS-485 transceiver: Union Semiconductor UM3352E
-- MAX485-compatible, 8-pin SOIC. This is the A/C communication path.
-- Pinout: `1=RO 2=/RE 3=DE 4=DI 5=GND 6=A 7=B 8=VCC`.
-- Bus A/B (pins 6/7) go to the A/C mainboard. RO (pin 1) = incoming bytes as
-  logic-level UART; DI (pin 4) = outgoing bytes. Handy sniff points.
+## Reading the flash with a CH341A
 
-## Dumping the flash (CH341A)
+1. Set the CH341A to programmer mode. It then enumerates as USB `1a86:5512`. In TTL/UART mode it
+   is `1a86:5523` and will not work.
+2. Clip onto the GD25Q32. Pin 1 is the corner with the dot. A read in circuit often fails,
+   because the SoC powers up through the clip and drives the SPI lines. If the read returns
+   `0xFF` or no device, hold the SoC in reset, or lift or desolder the flash.
+3. Run `python3 firmware/flasher/ch341dump.py dump.bin`. It checks the chip id (`c84016`), reads
+   the chip twice and writes the file only when both reads agree.
 
-1. Set the CH341A to **programmer mode** (it enumerates as USB `1a86:5512`; the
-   TTL/UART mode is `1a86:5523` and won't work).
-2. Clip the SOIC-8 onto the GD25Q32 (pin 1 = dot corner). In-circuit reads often fail
-   because the SoC back-powers/contends the bus, desolder or lift the flash, or hold the
-   SoC in reset, if you get `0xFF`/no-device.
-3. `python3 firmware/flasher/ch341dump.py dump.bin` checks the chip id (`c84016`), reads the
-   chip twice and writes the file only when both reads agree. Do not use flashrom for writes
-   on this programmer (silent partial writes), and the project's tools for reads keep one path.
+Do not write with flashrom on this programmer: it leaves silent partial writes. The project's own
+tools are used for reading too, so there is one path. Writing and recovery are covered in
+[`docs/guide/Recovery-and-Reflash.md`](../../docs/guide/Recovery-and-Reflash.md).
 
-> ⚠️ The common black CH341A drives the SPI lines at ~5 V even in "3.3 V" mode, a real
-> hazard for 3.3 V flash. Use a 3.3 V-modded board or a level adapter if you can.
+The common black CH341A drives the SPI lines at about 5 V even in its "3.3 V" mode. That is a
+hazard for a 3.3 V flash. Use a board modified for 3.3 V or a level adapter.
+
+A dump holds the Wi-Fi credentials and the device's keys. It never goes into the repository
+([`dumps/README.md`](../../dumps/README.md)).

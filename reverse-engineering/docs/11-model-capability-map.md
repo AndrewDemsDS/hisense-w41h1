@@ -1,16 +1,32 @@
-# Stock W41H1: device-type → model capability map (how features are gated per A/C model)
+# Device type and model capabilities
 
-**Scope:** how the stock dongle decides *which features an attached indoor unit has*. You need this
-mechanism to support any A/C model other than the one on the bench.
+How the stock module decides which features the attached indoor unit has. You need this mechanism
+to support an A/C model other than the ones measured here.
 
-**Sources:** static RE of `dumps/w41h1_dump1.bin` (2026-07-16), building on the call graph in
-[`10-stock-fw-init-and-comms.md`](10-stock-fw-init-and-comms.md). XIP mapping
-`runtime = file_offset + 0x9b6d0000`, re-verified before decoding (`0x9b805506` →
-`0a 04 00`, `0x9b807823` → `07 01 00`, matching doc 10 §3.3). **[PROVEN]**
+## Status of this page
 
-Each claim below is tagged **[PROVEN]** (read off the disassembly, runtime address cited) or
-**[INFERRED]** (reasoning). Treat [INFERRED] as untested. We acted on one [INFERRED] claim from
-doc 10 §4.5, shipped it as v10207, and killed the A/C link (post-mortem there).
+Current reference for the mechanism. History for the tooling it was measured with.
+
+- Sections 1 to 4 are static analysis of `dumps/w41h1_dump1.bin` (2026-07-16, the dump is not in
+  the repository), building on the call graph in
+  [`10-stock-fw-init-and-comms.md`](10-stock-fw-init-and-comms.md). The address mapping
+  `runtime = file_offset + 0x9b6d0000` was checked again before decoding (`0x9b805506` holds
+  `0a 04 00`, `0x9b807823` holds `07 01 00`, matching doc 10 §3.3).
+- Each claim is tagged **[PROVEN]** (read off the disassembly, address cited) or **[INFERRED]**
+  (reasoning). Treat [INFERRED] as untested. One [INFERRED] claim of doc 10 §4.5 was acted on,
+  shipped in a Matter firmware build, and killed the A/C link (the account is there).
+- Section 5 holds measurements on two units, on 2026-07-16 and 2026-07-18. They are called unit
+  A (driven by an ESP32 replacement board) and unit B (with its stock module) below. Both ran the
+  project's Matter firmwares, and the flags were read through the diagnostic console on TCP port
+  2323 that those firmwares had. The Matter firmwares are retired (2026-10-12, tag
+  `matter-final`, [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md)).
+  With the ESPHome firmware the same flags are the `capability_*` binary sensors
+  ([`docs/guide/Entities-and-Diagnostics.md`](../../docs/guide/Entities-and-Diagnostics.md)).
+- `hisense_get_features()` and `hisense_parse_features()` are the first driver's names
+  (`firmware/test/reference-driver/`). In the ESPHome component the parser is `parse_features()`
+  in `hisense_protocol.cpp`.
+- The inference of §3.2 about the `desc` word was confirmed later (doc 10 §7.4a and §7.4b).
+- What is still open is in [14-open-questions.md](14-open-questions.md).
 
 ---
 
@@ -111,7 +127,11 @@ Two consumers read **different halves** of it:
 
 **[INFERRED]** that `(b0,b1)` = position in the **command (`0x65`)** frame and `(b2,b3)` = position
 in the **status (`0x66`)** frame. Consistent with spot checks (`f_votage` b3=`0x80` → 16-bit read;
-`t_temp` b2=4 → status byte 6) but **not confirmed**. See §6.
+`t_temp` b2=4 → status byte 6) but **not confirmed** when this was written.
+
+Confirmed since: doc 10 §7.4a decodes six status positions and §7.4b sixteen command values with
+this reading, all of which had been established on the bus independently. The frame byte is
+15 + the `desc` byte, so `t_temp` with b2=4 is frame byte 19, the setpoint.
 
 `word0`'s `b0`/`b1`/`b3` have **no known consumer**. Only `+2` is proven meaningful.
 
@@ -148,7 +168,8 @@ start **off**. The ProductType decision tree switches them on.
 
 ### 5.1 MEASURED: the A/C does answer ProductType **[PROVEN on hardware, 2026-07-16]**
 
-Read live from node 28 (esp32 fw `1.0.7`, `features` command on the `:2323` diag console):
+Read live from unit A (ESP32 board, Matter firmware `1.0.7`, `features` command on its diagnostic
+console):
 
 ```
 0x66/40 ProductType: REPLY PARSED — the A/C DOES answer.
@@ -159,7 +180,7 @@ Read live from node 28 (esp32 fw `1.0.7`, `features` command on the `:2323` diag
 ```
 
 **Re-measured 2026-07-18 on fw `1.0.10`**, after the mislabel fix + the extended `[0x19]`/`[0x1A]`
-tier landed (issue #83). Same node, same A/C:
+tier landed (issue #83). Same board, same A/C:
 
 ```
   cool_heat=1 ai=0 infinite_fan=0 power_save/eco=1 fan_mute/quiet=1
@@ -188,7 +209,7 @@ mechanism behaves as the disassembly describes, so trust the `supported` gate.
 
 > ⚠️ **A `0` means "not on this unit", never "not on this model range".**
 >
-> ProductType answers **per unit**. These flags come from node 28's A/C. Node 14's unit may differ,
+> ProductType answers **per unit**. These flags come from unit A. Unit B may differ (§5.2 measured it),
 > and someone else's Hisense will differ more. A capability reading `0` here can read `1` on another
 > unit: `ac_ai`, `ac_swing_direction_8`, `ac_humidity` and `ac_purify` all exist as stock verbs, so
 > some Hisense unit ships them.
@@ -197,7 +218,7 @@ mechanism behaves as the disassembly describes, so trust the `supported` gate.
 > bench unit lacks it. Read `hisense_get_features()` and expose per unit. Deleting the path breaks
 > compatibility for every owner whose unit has the feature, and this repo is meant to serve them.
 
-**What the flags settle (node 28's A/C only):**
+**What the flags settle (unit A only):**
 
 | flag | value | what to do |
 |---|---|---|
@@ -206,13 +227,14 @@ mechanism behaves as the disassembly describes, so trust the `supported` gate.
 | `ac_cool_heat` | **1** | Heat-pump capable, consistent with the heat mode we drive. |
 | `ac_ai` | **0** | Absent here. **Keep support on the roadmap**, gate on the flag. Other units ship AI/smart mode. |
 | `ac_swing_direction_8` | **0** | 8-position louvre absent here. **Keep it gated, don't delete it.** Deprioritise the capture until someone has a unit reporting `1`. (Basic v/h swing is a different field and works: `poll` shows `hswing=1`.) |
-| `ac_humidity` | **0** | No humidity capability here, so the unfed Humidity endpoint in `firmware/docs/01` is **not a firmware gap on this unit**. Gate the endpoint on the flag rather than delete it: a unit reporting `1` should get it. |
+| `ac_humidity` | **0** | No humidity capability here, so the unfed Humidity endpoint of the Matter firmware (described in a document that is in the tree at `matter-final`) was **not a firmware gap on this unit**. Gate the endpoint on the flag rather than delete it: a unit reporting `1` should get it. |
 | `ac_purify` | **0** | Absent here. Gate, don't remove. |
 
-### 5.2 MEASURED: node 14 returns the SAME flags as node 28 **[PROVEN on hardware, 2026-07-18]**
+### 5.2 MEASURED: unit B returns the SAME flags as unit A **[PROVEN on hardware, 2026-07-18]**
 
-Read from node 14 (AmebaZ2, fw `1.2.12` debug flavour) via the `:2323` console added for issue #23.
-Until then the AmebaZ2 had no remote diagnostic surface, so this unit had never been measured.
+Read from unit B (stock module, AmebaZ2 Matter firmware `1.2.12`, debug flavour) through the
+diagnostic console added for issue #23. Until then the stock module had no remote diagnostic
+surface, so this unit had never been measured.
 
 ```
 cool_heat=1 ai=0 infinite_fan=0 power_save/eco=1 fan_mute/quiet=1
@@ -221,7 +243,7 @@ purify=0  8heat=1  q_display=1  enable_8heat=0  trans_102_64=0
 raw 0x66/40 reply length = 45B
 ```
 
-**Byte-identical to node 28** (§5.1), including the 45 B reply length and the extended
+**Byte-identical to unit A** (§5.1), including the 45 B reply length and the extended
 `[0x19]`/`[0x1A]` tier. This answers §6 Q1b.
 
 Read it as two units of the same model agreeing, not as a general rule. The design rule in §5.1 is
@@ -244,19 +266,22 @@ quirk.
    `ac_purify`, its `purify` read `ac_8heat`, and true `ac_q_display` went unparsed (added
    2026-07-18 with `ac_enable_8heat` + `ac_trans_102_64`, gated on `ext_valid`). Renamed
    2026-07-16: same byte reads, correct names.
-4. **`f_humidity` (record 44), `t_temp_type` and `f_temp_in`** give the docs/01 telemetry gaps a
-   firmware-grounded gate.
+4. **`f_humidity` (record 44), `t_temp_type` and `f_temp_in`** gave the telemetry gaps of the
+   Matter firmware a firmware-grounded gate.
 5. **Supporting a dehumidifier (`0x15`)** is bounded work: TEMPLATE_B, 19 records, its own verbs
    (`t_pump`, `t_anion`) and profiles `400`/`499`.
 
 ## 6. Unproven, and how to settle each
 
+The open rows are also listed in [14-open-questions.md](14-open-questions.md) with the rest of the
+project's open points.
+
 | # | Open question | How to settle |
 |---|---|---|
-| ~~1~~ | ~~Does our A/C reply to the `0x66/40` poll?~~ **ANSWERED §5.1: yes.** | ✅ `features` cmd on the esp32 `:2323` console (fw ≥ 1.0.7). Re-run per unit. |
-| ~~1b~~ | ~~Does **node 14**'s A/C return the same flags as node 28's?~~ **ANSWERED 2026-07-18: yes, byte-identical.** | ✅ AmebaZ2 debug-flavour `:2323` console (`features`), fw 1.2.12. See §5.2. |
-| 2 | Which profile (`100`–`129`/`199`) our unit resolves to. **Narrowed 2026-07-18: NOT `199`** (node 28's `ac_trans_102_64` reads 0 (§5.1), and that bit set is what selects `'199'`). So it is in `100`–`129`. | Log the `0x66/40` payload, or read `0x100096dc` (getter `0x9b6f308c`) on a stock dongle. |
-| 3 | `desc` `(b0,b1)`=command vs `(b2,b3)`=status frame. **[INFERRED]** | Dump the mask table in `0x9b6f8adc`'s prologue; check `t_temp` (b2=4 → status byte 6) against a live `0x66` capture. |
+| ~~1~~ | ~~Does our A/C reply to the `0x66/40` poll?~~ **ANSWERED §5.1: yes.** | ✅ `features` command on the Matter firmware's diagnostic console (ESP32 fw ≥ 1.0.7). With the ESPHome firmware, read the `capability_*` sensors per unit. |
+| ~~1b~~ | ~~Does unit B return the same flags as unit A?~~ **ANSWERED 2026-07-18: yes, byte-identical.** | ✅ The Matter firmware's diagnostic console (`features`), AmebaZ2 fw 1.2.12. See §5.2. |
+| 2 | Which profile (`100`–`129`/`199`) our unit resolves to. **Narrowed 2026-07-18: NOT `199`** (unit A's `ac_trans_102_64` reads 0 (§5.1), and that bit set is what selects `'199'`). So it is in `100`–`129`. | Log the `0x66/40` payload, or read `0x100096dc` (getter `0x9b6f308c`) on a stock dongle. |
+| ~~3~~ | ~~`desc` `(b0,b1)`=command vs `(b2,b3)`=status frame.~~ **ANSWERED: yes** (doc 10 §7.4a and §7.4b). | ✅ Six status positions and sixteen command values reproduce what was confirmed on the bus. |
 | 4 | `word0` `b0`/`b1`/`b3` semantics. | Unknown; no consumer found, but dataflow tracing was not exhaustive. |
 | 5 | Whether the 17 unconditional enables are ever written back to `0`. | Looked straight-line in asm; not exhaustively traced. Disable writes exist in the `0x37` branch (`+0x31a`). |
 | 6 | Full behaviour of STRUCT_A readers `0x9b6f1e3a`, `0x9b6f8150`. | Not decompiled in full. |
