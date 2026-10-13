@@ -130,7 +130,7 @@ binary_sensor:
       name: AC bus link
     problem:
       name: Fault
-    # Per-bit fault detail. Add any of the other 15 bits from binary_sensor.py the same way;
+    # Per-bit fault detail. Add any of the other 14 bits from binary_sensor.py the same way;
     # these four are the ones that have actually fired on a bench unit.
     fault_indoor_temp:
       name: Fault indoor temp sensor

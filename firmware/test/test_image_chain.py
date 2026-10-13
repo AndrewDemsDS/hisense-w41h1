@@ -3,7 +3,7 @@
 
 The bootloader verifies a manifest signature, one HMAC trailer PER SUB-IMAGE, and a
 byte-sum. The retired `revert --repackage` step recomputed only sub-image 0's trailer; a stale
-trailer anywhere hangs boot_load with no fall-back slot (the 2026-07-21 office brick).
+trailer anywhere hangs boot_load with no fall-back slot (the brick of 2026-07-21).
 This locks the recipe down two ways:
 
   SYNTHETIC (always runs, so CI covers it): build a multi-sub-image payload from scratch,

@@ -17,7 +17,7 @@ flash QE bit CLEARED -- the only reliable "did the bootloader reject this?" sign
         HMAC-SHA256(KEY, img[START:END]) == img[END:END+0x20]
      Sub-image 0 starts at 0, so its trailer covers the manifest signature AND the FWHS
      serial at 0xF4: patching the serial invalidates it. Recomputing only that one is
-     what bricked the office unit on 2026-07-21 (#75).
+     what bricked a unit on 2026-07-21 (#75).
   3. a 4-byte little-endian sum of every payload byte, appended after the payload.
 
 The chain is linked by u32le(img[H+4]): the next header sits at H + that value, and

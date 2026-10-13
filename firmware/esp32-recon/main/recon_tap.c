@@ -3,8 +3,8 @@
 // no contention), reassembles F4 F5 .. F4 FB frames in BOTH directions (no buf[2]
 // gate) and hands A/C->module status/producttype frames to the pure parsers.
 //
-// This is the ground-truth check: point it at the stock dongle <-> A/C (or the
-// kitchen AmebaZ2 <-> A/C) bus and watch our decode against real traffic.
+// This is the ground-truth check: point it at the stock dongle <-> A/C bus (or at
+// a module running this project's firmware) and watch our decode against real traffic.
 #include <string.h>
 
 #include "driver/uart.h"

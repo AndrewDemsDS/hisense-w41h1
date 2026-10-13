@@ -632,13 +632,13 @@ code, out = wiki({"Home.md": PAGE})
 check(code == 0 and "no _Sidebar.md" in out, "no sidebar at all only warns")
 
 # The leak denylist.
-for body, why in (("See /home/alice/projects/x/ for it.", "a home path"), ("On node 14 it works.", "a node number below 20"),
-                  ("On node 80 it works.", "a node number of 20 or more"), ("Commission node 4660 again.", "a four-digit node number"),
+for body, why in (("See /home/alice/projects/x/ for it.", "a home path"), ("On node 7 it works.", "a node number below 20"),
+                  ("On node 45 it works.", "a node number of 20 or more"), ("Commission node 4660 again.", "a four-digit node number"),
                   ("Reach it at 172.16.4.20.", "a 172.16.0.0/12 address"), ("Reach it at 172.31.255.1.", "the last 172.16.0.0/12 network"),
                   ("Mail someone@gmail.com.", "a personal mail address"), ("`ssh me@10.0.0.5`", "an address in inline code: not exempt either"),
-                  ("Reach it at 192.168.4.114.", "a private address outside the placeholder range"),
+                  ("Reach it at 192.168.7.20.", "a private address outside the placeholder range"),
                   ("Reach it at 10.0.0.5.", "a 10.x address"), ("Open homeassistant.local.", "the Home Assistant host name"),
-                  ("```\nssh you@192.168.10.149\n```", "an address inside a code block: code is not exempt from the leak rules")):
+                  ("```\nssh you@192.168.20.30\n```", "an address inside a code block: code is not exempt from the leak rules")):
     code, errs = page_errors(body)
     check(code == 1 and any("public-ready leak" in e for e in errs), f"leak refused: {why}")
 for body, why in (("See /home/you/projects/x/ and /home/user/x/.", "the placeholder home paths"),

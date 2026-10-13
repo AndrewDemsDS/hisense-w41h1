@@ -146,7 +146,8 @@ jobs:
           # Every board file: they share packages/, so a change made for one chip is checked
           # against all of them. The glob takes in a board file added later.
           for b in w41h1*.yaml; do esphome config "$b"; done
-          # The exact invocation `dev.py --board c3` makes, which the first nodes were built with.
+          # The -s override form the first nodes were built with. `dev.py --board c3` builds
+          # w41h1-esp32c3.yaml itself now, and this form has to keep working.
           esphome -s board esp32-c3-devkitm-1 -s tx_pin 5 -s rx_pin 6 -s de_pin 10 config w41h1.yaml
           # The upstream-shaped component tests (tests/components/) set every option of every
           # platform, which the board files do not, and build.hub-only.* is the hub with no

@@ -45,7 +45,7 @@ LEAKS = [
         r"/home/(?!you\b|user\b)[A-Za-z0-9_.-]+/",
         "absolute home path (use ~ or a placeholder)",
     ),
-    # Any number: a Matter node id of one installation is as much a leak at 80 as at 14.
+    # Any number: a Matter node id of one installation is a leak whether it is small or large.
     (r"\bnode \d+\b", "hard-coded node number (use a placeholder such as <node>)"),
     (
         # RFC 1918: 192.168/16 (but for the 192.168.1.x placeholder), 10/8 and 172.16/12.
