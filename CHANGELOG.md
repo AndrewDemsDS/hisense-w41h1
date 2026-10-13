@@ -14,6 +14,10 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 - The project builds with ESPHome 2026.9.1 (was 2026.7.4): the pin in CI, `dev.py` and the
   upstream check, and the install commands in the docs. No change to the components. A node
   built with 2026.7.4 keeps working, and nothing has to be done to it.
+- ESPHome 2026.9 refuses an API key of 32 zero bytes, which was the placeholder in
+  `secrets.yaml.example`. The placeholder now decodes to the text
+  `this-is-a-public-placeholder-key`. It is as public as before: replace it in your own
+  `secrets.yaml`.
 
 ## 2.0.0 - 2026-10-13
 
