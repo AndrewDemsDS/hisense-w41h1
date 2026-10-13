@@ -1,6 +1,5 @@
 # Two hubs written as a list under one hisense_ac: key, on one UART.
-# UNHELPFUL: the message does not say that the hub is a single instance.
-# expect: expected a dictionary
+# expect: hisense_ac can be listed only once: the component drives one A/C bus
 esphome:
   name: invalid-case
 

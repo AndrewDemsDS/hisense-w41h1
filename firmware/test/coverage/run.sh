@@ -40,7 +40,7 @@ done
 mkdir -p "$out/obj" "$out/html"
 
 # -O0 and no inlining so that a line is a line. -fkeep-inline-functions makes the compiler emit
-# every inline function of hisense_map.h, called or not: without it a function no test calls is
+# every inline function of the pure headers (hisense_map.h and its parts), called or not: without it a function no test calls is
 # missing from the report instead of showing as uncovered.
 cov=(--coverage -O0 -g -fno-inline -fkeep-inline-functions)
 ref=(-I"$test_dir/stubinc" -I"$test_dir" -I"$test_dir/reference-driver")
@@ -72,6 +72,8 @@ build_and_run test_esphome_edge_cases -I"$comp" \
   "$test_dir/test_esphome_edge_cases.cpp" "$comp/hisense_protocol.cpp"
 build_and_run test_esphome_confirm -I"$comp" \
   "$test_dir/test_esphome_confirm.cpp" "$comp/hisense_protocol.cpp"
+build_and_run test_esphome_entities -I"$comp" \
+  "$test_dir/test_esphome_entities.cpp" "$comp/hisense_protocol.cpp"
 build_and_run test_esphome_setup_request -I"$comp" \
   "$test_dir/test_esphome_setup_request.cpp" "$comp/hisense_bus.cpp" "$comp/hisense_protocol.cpp"
 build_and_run test_esphome_uart_policy -I"$module" "$test_dir/test_esphome_uart_policy.cpp"
@@ -91,7 +93,9 @@ fi
 # Product files only.
 filters=(
   --filter "$comp/hisense_protocol\.cpp" --filter "$comp/hisense_protocol\.h"
-  --filter "$comp/hisense_map\.h" --filter "$comp/hisense_bus\.cpp" --filter "$comp/hisense_bus\.h"
+  --filter "$comp/hisense_mapping\.h" --filter "$comp/hisense_special\.h"
+  --filter "$comp/hisense_confirm\.h" --filter "$comp/hisense_telemetry\.h"
+  --filter "$comp/hisense_commands\.h" --filter "$comp/hisense_entities\.h" --filter "$comp/hisense_bus\.cpp" --filter "$comp/hisense_bus\.h"
   --filter "$module/w41h1_uart_policy\.h" --filter "$setup_mode/setup_mode_logic\.h"
 )
 # gcovr: $GCOVR when set (a command, with arguments if it needs any), otherwise through uvx at

@@ -2,10 +2,10 @@
 // The A/C as a single ESPHome climate entity: power, mode, setpoint, 6-speed fan, swing,
 // current temperature and action.
 //
-// There are no per-field echo guards here, and that is not an oversight: control() is only ever
-// called by Home Assistant, never by our own publish_state(), so a downlink -> readback -> uplink
-// feedback loop cannot form. The only timing defence needed is the hub's command hold-off, which
-// stops a poll already in flight from visibly reverting a control the user just moved.
+// The decisions are in hisense_entities.h (climate_plan, climate_view_from_status), with host
+// tests. control() is called by a user request only, never by this entity's own publish_state(),
+// so what the unit reports is never sent back to it. The one timing defence is the hub's command
+// hold-off, which stops a poll already in flight from reverting a control the user just moved.
 #include "esphome/core/defines.h"
 #ifdef USE_CLIMATE
 #include "esphome/components/climate/climate.h"
@@ -13,18 +13,11 @@
 
 namespace esphome::hisense_ac {
 
-/// The two ladder steps ESPHome has no built-in fan-mode name for (indices 3 and 5).
-/// The other five ride the built-in enum; see the note in hisense_climate.cpp. ESPHome matches
-/// custom modes by pointer into the entity vector, so these strings are the one definition.
-extern const char *const FAN_CUSTOM_NAMES[2];
-
-class HisenseClimate : public climate::Climate, public Component {
+class HisenseClimate final : public climate::Climate, public Component, public Parented<HisenseAC> {
  public:
   void setup() override;
   void dump_config() override;
-  climate::ClimateTraits traits() override;
 
-  void set_parent(HisenseAC *parent) { this->parent_ = parent; }
   void set_visual_min(float v) { this->visual_min_ = v; }
   void set_visual_max(float v) { this->visual_max_ = v; }
   void set_supports_heat(bool v) { this->supports_heat_ = v; }
@@ -35,8 +28,8 @@ class HisenseClimate : public climate::Climate, public Component {
   /// Called from the hub on the main loop with a freshly decoded status frame.
   void update_from_bus(const AcState &state, bool holdoff);
 
-  /// Publish a ladder index using the right representation: built-in enum for the five steps
-  /// ESPHome names, custom string for the two it does not.
+  /// Set the fan fields for a ladder index (as published, see fan_published_index): built-in enum
+  /// for the five steps ESPHome names, custom string for the two it does not.
   void publish_fan_index(uint8_t idx);
 
   /// Publish a preset row using the right representation: built-in enum for none/eco,
@@ -44,10 +37,10 @@ class HisenseClimate : public climate::Climate, public Component {
   void publish_preset_index(uint8_t idx);
 
  protected:
+  climate::ClimateTraits traits() override;
   void control(const climate::ClimateCall &call) override;
-  int preset_request_index_(const climate::ClimateCall &call) const;
+  ClimateShown shown_() const;
 
-  HisenseAC *parent_{nullptr};
   float visual_min_{16.0f};
   float visual_max_{32.0f};
   bool supports_heat_{true};

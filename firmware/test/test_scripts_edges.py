@@ -564,9 +564,8 @@ check(not [t for t in compiled if f"firmware/test/{t}" not in listed],
 check("firmware/esphome/components/hisense_ac/hisense_map.h" in listed
       and "firmware/esphome/components/w41h1_module/w41h1_uart_policy.h" in listed,
       "the pure headers of both components are units of their own")
-known_failure(not cpp.TIDY_PENDING, "no host-compilable unit is waiting for a finding to be fixed",
-              f"cpp-lint.py TIDY_PENDING holds {len(cpp.TIDY_PENDING)} units, one clang-tidy finding each, in files owned by "
-              f"the test and component work: {', '.join(f.rsplit('/', 1)[1] for f, _ in cpp.TIDY_PENDING)}")
+check(not cpp.TIDY_PENDING, "no host-compilable unit is waiting for a finding to be fixed "
+      f"({', '.join(f.rsplit('/', 1)[1] for f, _ in cpp.TIDY_PENDING) or 'none pending'})")
 
 # ================================================================================================
 print("== docs/guide/lint.py: broken links and the leak denylist ==")

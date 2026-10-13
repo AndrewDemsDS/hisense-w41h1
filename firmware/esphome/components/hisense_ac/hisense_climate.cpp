@@ -7,35 +7,9 @@ namespace esphome::hisense_ac {
 
 static const char *const TAG = "hisense_ac.climate";
 
-// Five of the seven steps are advertised as ESPHome's BUILT-IN fan enum, and only the two it
-// has no name for stay custom. Mixing is not cosmetic: ClimateCall converts a name matching a
-// built-in into the enum, and validate_() then DISCARDS that enum unless traits advertise it.
-// Publishing everything as custom would therefore make "High" unsettable.
-// Ladder index -> representation: 0 auto, 2 low, 3 "medium_low", 4 medium, 5 "medium_high",
-// 6 high. Index 1 (quiet) is the `quiet` preset, not a fan mode, and publishes as low.
-const char *const FAN_CUSTOM_MEDIUM_LOW = "medium_low";
-const char *const FAN_CUSTOM_MEDIUM_HIGH = "medium_high";
-const char *const FAN_CUSTOM_NAMES[2] = {FAN_CUSTOM_MEDIUM_LOW, FAN_CUSTOM_MEDIUM_HIGH};
-
-static bool fan_index_is_custom(uint8_t idx) { return idx == 3 || idx == 5; }
-
-static climate::ClimateFanMode fan_index_to_enum(uint8_t idx) {
-  switch (idx) {
-    case 0:
-      return climate::CLIMATE_FAN_AUTO;
-    case 1:  // quiet step: not a fan mode, shows as low
-    case 2:
-      return climate::CLIMATE_FAN_LOW;
-    case 4:
-      return climate::CLIMATE_FAN_MEDIUM;
-    default:
-      return climate::CLIMATE_FAN_HIGH;
-  }
-}
-
-// hisense_map.h mirrors these enums as plain ints so it stays free of ESPHome types. If ESPHome
-// ever renumbers ClimateMode, this is where the build breaks, instead of the A/C silently
-// switching to the wrong mode on the wire.
+// hisense_mapping.h mirrors these enums as plain ints so it stays free of ESPHome types. If ESPHome
+// ever renumbers one, this is where the build breaks, instead of the A/C silently switching to
+// the wrong mode on the wire.
 static_assert((int) climate::CLIMATE_MODE_OFF == CLIMATE_MODE_OFF_VALUE, "ClimateMode drift");
 static_assert((int) climate::CLIMATE_MODE_HEAT_COOL == CLIMATE_MODE_HEAT_COOL_VALUE, "ClimateMode drift");
 static_assert((int) climate::CLIMATE_MODE_COOL == CLIMATE_MODE_COOL_VALUE, "ClimateMode drift");
@@ -62,10 +36,13 @@ static_assert((int) climate::CLIMATE_FAN_MIDDLE == CLIMATE_FAN_MIDDLE_VALUE, "Cl
 static_assert((int) climate::CLIMATE_FAN_FOCUS == CLIMATE_FAN_FOCUS_VALUE, "ClimateFanMode drift");
 static_assert((int) climate::CLIMATE_FAN_QUIET == CLIMATE_FAN_QUIET_VALUE, "ClimateFanMode drift");
 static_assert((int) climate::CLIMATE_FAN_ON == CLIMATE_FAN_ON_VALUE, "ClimateFanMode drift");
+static_assert((int) climate::CLIMATE_FAN_OFF == CLIMATE_FAN_OFF_VALUE, "ClimateFanMode drift");
+static_assert((int) climate::CLIMATE_FAN_DIFFUSE == CLIMATE_FAN_DIFFUSE_VALUE, "ClimateFanMode drift");
+static_assert((int) climate::CLIMATE_PRESET_NONE == CLIMATE_PRESET_NONE_VALUE, "ClimatePreset drift");
+static_assert((int) climate::CLIMATE_PRESET_ECO == CLIMATE_PRESET_ECO_VALUE, "ClimatePreset drift");
 
 void HisenseClimate::setup() {
-  if (this->parent_ != nullptr)
-    this->parent_->set_climate(this);
+  this->parent_->set_climate(this);
   // Custom list carries only the two intermediate steps; the other five ride the built-in enum
   // advertised in traits(). Lives on the entity because ClimateTraits only references the
   // entity's vector, and set_custom_fan_mode_() matches by pointer into it.
@@ -101,7 +78,7 @@ climate::ClimateTraits HisenseClimate::traits() {
   traits.set_supported_fan_modes(
       {climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_HIGH});
 
-  // none + eco ride the built-in enum (see hisense_map.h); the rest are the custom
+  // none + eco ride the built-in enum (see hisense_special.h); the rest are the custom
   // presets registered in setup(). No special modes at all means no preset control.
   if (this->preset_support_ != 0) {
     traits.add_supported_preset(climate::CLIMATE_PRESET_NONE);
@@ -117,219 +94,141 @@ climate::ClimateTraits HisenseClimate::traits() {
   return traits;
 }
 
+// Every decision here is climate_plan() in hisense_entities.h, with a host test. This translates
+// the call into plain values, carries the plan out and shows what the hub took.
 void HisenseClimate::control(const climate::ClimateCall &call) {
-  if (this->parent_ == nullptr)
-    return;
-  // Everything except off rides the combined frame, which is built from the shadow. Before the
-  // first status the shadow is all defaults (see combined_frame_allowed in hisense_map.h).
-  const bool off_only = call.get_mode().has_value() && *call.get_mode() == climate::CLIMATE_MODE_OFF;
-  if (!off_only && !combined_frame_allowed(this->parent_->has_state())) {
-    ESP_LOGW(TAG, "Command refused: no status from the unit yet");
-    return;
-  }
-  AcCommand &cmd = this->parent_->cmd();
-  bool send_combined = false;
-  bool powering_on = false;
-  uint16_t fields = 0;  // what this call asks of the unit, for the confirm and retry check
-
+  ClimateRequest request;
   if (call.get_mode().has_value()) {
-    climate::ClimateMode mode = *call.get_mode();
-    if (mode == climate::CLIMATE_MODE_OFF) {
-      this->parent_->send_user_power_off();
-      this->mode = mode;
-      this->parent_->note_user_command();
-      this->publish_state();
-      return;
-    }
-    Mode hmode;
-    if (climate_mode_to_hisense((uint8_t) mode, &hmode)) {
-      cmd.mode = hmode;
-      this->mode = mode;
-      send_combined = true;
-      fields |= CONFIRM_MODE;
-      // The A/C ignores a mode change while powered down, so the combined frame that carries the
-      // mode also switches the unit on.
-      // power_expected(), not the last status: that still reads on for a poll or two after an off.
-      if (!this->parent_->power_expected())
-        powering_on = true;
-    } else {
-      ESP_LOGW(TAG, "Unsupported climate mode %d", (int) mode);
-    }
+    request.has_mode = true;
+    request.mode = (uint8_t) *call.get_mode();
   }
-
   if (call.get_target_temperature().has_value()) {
-    const AcState &st = this->parent_->last_state();
-    // cmd.mode is the mode the combined frame will carry: the one just requested, else the shadow.
-    if (!setpoint_request_allowed(this->parent_->power_expected() || powering_on, cmd.mode)) {
-      ESP_LOGW(TAG, "Target temperature refused: the unit only takes one in cool and heat");
-    } else {
-      // The A/C reads byte 19 in its panel's unit, so an F panel needs the value in F.
-      int wanted = setpoint_to_cmd((int) lroundf(*call.get_target_temperature()), st.valid && st.temp_unit_f, &cmd);
-      this->target_temperature = (float) wanted;
-      send_combined = true;
-      fields |= CONFIRM_SETPOINT;
-    }
+    request.has_target = true;
+    request.target_c = *call.get_target_temperature();
   }
-
-  // A fan request can arrive by EITHER route, and the trap is that it is not our choice which.
-  // ClimateCall::set_fan_mode(const char *) case-insensitively matches the built-in enum names
-  // FIRST, so "auto", "low", "medium" and "high" are converted to ClimateFanMode and never reach
-  // has_custom_fan_mode(); only "medium_low" and "medium_high" stay custom. Handling just the
-  // custom path would silently drop most of the speeds.
-  int8_t wanted_index = -1;
   if (call.has_custom_fan_mode()) {
-    StringRef wanted = call.get_custom_fan_mode();
-    if (wanted == FAN_CUSTOM_MEDIUM_LOW) {
-      wanted_index = 3;
-    } else if (wanted == FAN_CUSTOM_MEDIUM_HIGH) {
-      wanted_index = 5;
-    }
+    request.custom_fan = call.get_custom_fan_mode().c_str();
   } else if (call.get_fan_mode().has_value()) {
-    wanted_index = (int8_t) climate_fan_to_index((uint8_t) *call.get_fan_mode());
+    request.has_fan = true;
+    request.fan = (uint8_t) *call.get_fan_mode();
   }
-  // A mode that owns the fan (turbo, quiet, sleep) overwrites any other speed about a second
-  // later. Refuse instead of acknowledging a change that undoes itself, and keep showing the
-  // pinned speed.
-  if (wanted_index >= 0 && !fan_request_allowed(this->parent_->projected_special(), (uint8_t) wanted_index)) {
-    ESP_LOGW(TAG, "Fan change refused: turbo, quiet or sleep is holding the fan speed");
-    wanted_index = -1;
-  }
-  if (wanted_index >= 0) {
-    if (wanted_index == 1) {
-      // Unreachable from Home Assistant now that quiet is not an advertised fan mode (validate_()
-      // drops it), kept so a direct API client asking for QUIET still gets the mute path.
-      // "Quiet" is not reachable through the fan byte on this unit. Commanding fan 0x03 (the
-      // FAN_SPEED_QUIET command value, still marked VERIFY) puts the A/C on HIGH. The A/C
-      // reaches quiet via the MUTE flag instead: setting mute drives fan_raw to 0x02.
-      this->parent_->enqueue_special({SPECIAL_OP_MUTE, 1});
-    } else {
-      cmd.fan = fan_index_to_hisense((uint8_t) wanted_index);
-      send_combined = true;
-      fields |= CONFIRM_FAN;
-    }
-    this->publish_fan_index((uint8_t) wanted_index);
-  }
-
   if (call.get_swing_mode().has_value()) {
-    climate::ClimateSwingMode swing = *call.get_swing_mode();
-    climate_swing_to_hisense((uint8_t) swing, &cmd.vswing, &cmd.hswing);
-    this->swing_mode = swing;
-    send_combined = true;
-    fields |= CONFIRM_SWING;
+    request.has_swing = true;
+    request.swing = (uint8_t) *call.get_swing_mode();
+  }
+  if (call.has_custom_preset()) {
+    request.custom_preset = call.get_custom_preset().c_str();
+  } else if (call.get_preset().has_value()) {
+    request.has_preset = true;
+    request.preset = (uint8_t) *call.get_preset();
+  }
+  const AcState &status = this->parent_->last_state();
+  ClimateContext context;
+  context.have_status = status.valid;
+  context.power_expected = this->parent_->power_expected();
+  context.panel_f = status.valid && status.temp_unit_f;
+  context.shadow = this->parent_->cmd();
+  context.projected = this->parent_->projected_special();
+  context.preset_support = this->preset_support_;
+
+  const ClimatePlan plan = climate_plan(request, context);
+  if ((plan.refused & CLIMATE_REFUSED_NO_STATUS) != 0) {
+    ESP_LOGW(TAG, "Command refused: no status from the unit yet");
+  }
+  if ((plan.refused & CLIMATE_REFUSED_MODE) != 0) {
+    ESP_LOGW(TAG, "Unsupported climate mode %d", (int) request.mode);
+  }
+  if ((plan.refused & CLIMATE_REFUSED_SETPOINT) != 0) {
+    ESP_LOGW(TAG, "Target temperature refused: the unit only takes one in cool and heat");
+  }
+  if ((plan.refused & CLIMATE_REFUSED_FAN) != 0) {
+    ESP_LOGW(TAG, "Fan change refused: turbo, quiet or sleep is holding the fan speed");
+  }
+  if ((plan.refused & CLIMATE_REFUSED_PRESET) != 0) {
+    ESP_LOGW(TAG, "Unsupported preset requested");
   }
 
-  int preset = this->preset_request_index_(call);
-  if (preset >= 0) {
-    this->parent_->request_preset((uint8_t) preset);
-    this->publish_preset_index((uint8_t) preset);
+  // A frame the hub could not queue changes nothing here: the entity keeps showing the unit.
+  if (plan.power_off) {
+    if (!this->parent_->send_user_power_off())
+      return;
+    this->mode = climate::CLIMATE_MODE_OFF;
     this->publish_state();
+    return;
   }
-
-  if (send_combined)
-    this->parent_->send_user_command(fields, powering_on);
-  if (send_combined) {
-    this->parent_->note_user_command();
+  bool publish = false;
+  if (plan.mute_on && this->parent_->enqueue_special({SPECIAL_OP_MUTE, 1}))
+    this->publish_fan_index((uint8_t) plan.fan_index);
+  if (plan.preset >= 0 && this->parent_->request_preset((uint8_t) plan.preset)) {
+    this->publish_preset_index((uint8_t) plan.preset);
+    publish = true;
+  }
+  if (plan.send_combined && this->parent_->send_user_command(plan.cmd, plan.fields, plan.power_on)) {
+    if (plan.show_mode)
+      this->mode = (climate::ClimateMode) plan.mode;
+    if (plan.show_target)
+      this->target_temperature = plan.target_c;
+    if (plan.show_swing)
+      this->swing_mode = (climate::ClimateSwingMode) plan.swing;
+    if (plan.fan_index >= 0 && !plan.mute_on)
+      this->publish_fan_index((uint8_t) plan.fan_index);
+    publish = true;
+  }
+  if (publish)
     this->publish_state();
-  }
 }
 
-void HisenseClimate::update_from_bus(const AcState &state, bool holdoff) {
-  // A status frame arrives about once a second and is nearly always identical to the last, so
-  // the entity is published only when something it shows actually moved.
-  const float prev_current = this->current_temperature;
-  const float prev_target = this->target_temperature;
-  const climate::ClimateAction prev_action = this->action;
-  const climate::ClimateMode prev_mode = this->mode;
-  const climate::ClimateSwingMode prev_swing = this->swing_mode;
-  const uint8_t prev_fan = this->fan_index_;
-  const uint8_t prev_preset = this->preset_index_;
+ClimateShown HisenseClimate::shown_() const {
+  ClimateShown shown;
+  shown.current_c = this->current_temperature;
+  shown.target_c = this->target_temperature;
+  shown.action = (uint8_t) this->action;
+  shown.mode = (uint8_t) this->mode;
+  shown.swing = (uint8_t) this->swing_mode;
+  shown.fan_index = this->fan_index_;
+  shown.preset_index = this->preset_index_;
+  return shown;
+}
 
-  this->current_temperature = state.indoor_temp_c;
-  Mode action_mode = state.mode;
-  mode_from_status(state.mode, &action_mode);
-  this->action = (climate::ClimateAction) climate_action(state.power_on, action_mode, state.compressor_freq);
-  // During the hold-off the frame may predate the user's command, so only telemetry is taken
-  // from it. Everything the user can move is left showing what they asked for.
-  if (!holdoff) {
-    // A mode value with no meaning keeps the mode shown, where it used to read as cool.
-    Mode mode;
-    if (!state.power_on) {
-      this->mode = climate::CLIMATE_MODE_OFF;
-    } else if (mode_from_status(state.mode, &mode)) {
-      this->mode = (climate::ClimateMode) hisense_mode_to_climate(mode);
-    }
-    this->target_temperature = state.setpoint_c;
-    this->swing_mode = (climate::ClimateSwingMode) climate_swing(state.vswing_on, state.hswing_on);
-    uint8_t idx = fan_raw_to_index(state.fan_raw);
-    if (idx <= FAN_INDEX_MAX)
-      this->publish_fan_index(idx);
+// What a frame shows is climate_view_from_status() in hisense_entities.h, with a host test.
+void HisenseClimate::update_from_bus(const AcState &state, bool holdoff) {
+  const ClimateShown before = this->shown_();
+  const ClimateView view =
+      climate_view_from_status(state, holdoff, this->parent_->special_busy(), this->preset_support_);
+  this->current_temperature = view.current_c;
+  this->action = (climate::ClimateAction) view.action;
+  if (view.controls) {
+    if (view.mode_known)
+      this->mode = (climate::ClimateMode) view.mode;
+    this->target_temperature = view.target_c;
+    this->swing_mode = (climate::ClimateSwingMode) view.swing;
+    this->publish_fan_index(view.fan_index);
   }
-  // A preset can take several paced frames (~10 s apart). Until the last one has landed and been
-  // held off, keep showing the requested preset: a climate group mirroring this entity would
-  // otherwise copy every intermediate state to the other rooms.
-  if (this->preset_support_ != 0 && !holdoff && !this->parent_->special_busy()) {
-    SpecialState special = special_from_status(state.eco_on, state.turbo_on, state.mute_on, state.sleep_raw);
-    this->publish_preset_index(preset_detect(special, this->preset_support_));
-  }
-  // Written as negated equalities so the first frame, where the temperatures are still NaN,
-  // counts as a change.
-  const bool changed = !this->bus_state_published_ || !(prev_current == this->current_temperature) ||
-                       !(prev_target == this->target_temperature) || prev_action != this->action ||
-                       prev_mode != this->mode || prev_swing != this->swing_mode || prev_fan != this->fan_index_ ||
-                       prev_preset != this->preset_index_;
-  if (!changed)
+  if (view.preset_known)
+    this->publish_preset_index(view.preset);
+  // A status frame arrives about once a second and is nearly always identical to the last, so
+  // the entity is published only when something it shows moved.
+  if (this->bus_state_published_ && !climate_shown_changed(before, this->shown_()))
     return;
   this->bus_state_published_ = true;
   this->publish_state();
 }
 
+// Sets the entity's fan fields for a ladder index as it is published (quiet already shown as low):
+// the built-in enum for the steps ESPHome names, the custom string for the two it does not.
 void HisenseClimate::publish_fan_index(uint8_t idx) {
-  idx = fan_published_index(idx);  // quiet (1) shows as low; see hisense_map.h
   this->fan_index_ = idx;
   if (fan_index_is_custom(idx)) {
-    this->set_custom_fan_mode_(idx == 3 ? FAN_CUSTOM_MEDIUM_LOW : FAN_CUSTOM_MEDIUM_HIGH);
+    this->set_custom_fan_mode_(fan_custom_name(idx));
   } else {
     this->clear_custom_fan_mode_();
-    this->fan_mode = fan_index_to_enum(idx);
+    this->fan_mode = (climate::ClimateFanMode) fan_index_to_climate_fan(idx);
   }
-}
-
-int HisenseClimate::preset_request_index_(const climate::ClimateCall &call) const {
-  if (this->preset_support_ == 0)
-    return -1;
-  int idx = -1;
-  // Same two routes as the fan: "none" and "eco" match ESPHome's built-in names and arrive as
-  // the enum; every other name arrives as a custom preset.
-  if (call.has_custom_preset()) {
-    StringRef wanted = call.get_custom_preset();
-    for (const char *name : this->custom_presets_) {
-      if (wanted == name) {
-        idx = preset_index(name);
-        break;
-      }
-    }
-  } else if (call.get_preset().has_value()) {
-    switch (*call.get_preset()) {
-      case climate::CLIMATE_PRESET_NONE:
-        idx = PRESET_NONE;
-        break;
-      case climate::CLIMATE_PRESET_ECO:
-        idx = PRESET_ECO;
-        break;
-      default:
-        break;
-    }
-  }
-  if (idx < 0 || !preset_available((uint8_t) idx, this->preset_support_)) {
-    if (call.has_custom_preset() || call.get_preset().has_value()) {
-      ESP_LOGW(TAG, "Unsupported preset requested");
-    }
-    return -1;
-  }
-  return idx;
 }
 
 void HisenseClimate::publish_preset_index(uint8_t idx) {
+  if (idx >= PRESET_COUNT)
+    return;
   this->preset_index_ = idx;
   if (idx >= PRESET_FIRST_CUSTOM) {
     this->set_custom_preset_(PRESETS[idx].name);

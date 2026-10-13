@@ -1,5 +1,5 @@
-# min_temperature above max_temperature.
-# accepted: climate.py takes any two temperatures. The entity then offers a range no setpoint fits in.
+# min_temperature above max_temperature: a range no setpoint fits in.
+# expect: min_temperature \(30 °C\) is above max_temperature \(18 °C\)
 esphome:
   name: invalid-case
 

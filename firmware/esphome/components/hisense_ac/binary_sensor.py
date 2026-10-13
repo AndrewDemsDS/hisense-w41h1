@@ -2,7 +2,10 @@
 
 Each fault bit and each capability bit the A/C reports is its own binary sensor.
 
-The bit indices below mirror the FAULT1_* / FEAT1_* constants in hisense_protocol.h.
+The tables below name the FAULT1_* / FEAT1_* constants in hisense_protocol.h, and the generated
+code passes the constant, not a number: the bit indices are written once, in the C++ header. A
+name that does not exist there fails the build, and the host test test_esphome_tables.py says so
+before a build is needed.
 """
 
 import esphome.codegen as cg
@@ -15,7 +18,7 @@ from esphome.const import (
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
 
-from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA
+from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA, hisense_ac_ns
 
 DEPENDENCIES = ["hisense_ac"]
 
@@ -23,53 +26,81 @@ CONF_AUX_HEAT = "aux_heat"
 CONF_BUS_LINK = "bus_link"
 CONF_PROBLEM = "problem"
 
-# name -> (bit index, default entity name)
+# option -> (FAULT1_* constant, what the fault is)
 FAULT_BITS = {
-    "fault_indoor_temp": (0, "Fault indoor temp sensor"),
-    "fault_indoor_coil_temp": (1, "Fault indoor coil sensor"),
-    "fault_indoor_humidity": (2, "Fault indoor humidity sensor"),
-    "fault_water_full": (3, "Fault condensate tray full"),
-    "fault_indoor_fan_motor": (4, "Fault indoor fan motor"),
-    "fault_grille": (5, "Fault grille"),
-    "fault_indoor_vzero": (6, "Fault zero-cross detect"),
-    "fault_indoor_comms": (7, "Fault indoor to outdoor comms"),
-    "fault_indoor_display": (8, "Fault indoor display"),
-    "fault_indoor_keys": (9, "Fault indoor keypad"),
-    "fault_indoor_wifi": (10, "Fault indoor wifi module"),
-    "fault_indoor_ele": (11, "Fault indoor electrical"),
-    "fault_indoor_eeprom": (12, "Fault indoor EEPROM"),
-    "fault_outdoor_eeprom": (13, "Fault outdoor EEPROM"),
-    "fault_outdoor_coil_temp": (14, "Fault outdoor coil sensor"),
-    "fault_outdoor_gas_temp": (15, "Fault outdoor gas sensor"),
-    "fault_outdoor_temp": (16, "Fault outdoor temp sensor"),
-    "fault_over_temp": (17, "Fault over temperature"),
+    "fault_indoor_temp": ("FAULT1_IN_TEMP", "Fault indoor temp sensor"),
+    "fault_indoor_coil_temp": ("FAULT1_IN_COIL_TEMP", "Fault indoor coil sensor"),
+    "fault_indoor_humidity": ("FAULT1_IN_HUMIDITY", "Fault indoor humidity sensor"),
+    "fault_water_full": ("FAULT1_WATER_FULL", "Fault condensate tray full"),
+    "fault_indoor_fan_motor": ("FAULT1_IN_FAN_MOTOR", "Fault indoor fan motor"),
+    "fault_grille": ("FAULT1_GRILLE", "Fault grille"),
+    "fault_indoor_vzero": ("FAULT1_IN_VZERO", "Fault zero-cross detect"),
+    "fault_indoor_comms": ("FAULT1_IN_COM", "Fault indoor to outdoor comms"),
+    "fault_indoor_display": ("FAULT1_IN_DISPLAY", "Fault indoor display"),
+    "fault_indoor_keys": ("FAULT1_IN_KEYS", "Fault indoor keypad"),
+    "fault_indoor_wifi": ("FAULT1_IN_WIFI", "Fault indoor wifi module"),
+    "fault_indoor_ele": ("FAULT1_IN_ELE", "Fault indoor electrical"),
+    "fault_indoor_eeprom": ("FAULT1_IN_EEPROM", "Fault indoor EEPROM"),
+    "fault_outdoor_eeprom": ("FAULT1_OUT_EEPROM", "Fault outdoor EEPROM"),
+    "fault_outdoor_coil_temp": ("FAULT1_OUT_COIL_TEMP", "Fault outdoor coil sensor"),
+    "fault_outdoor_gas_temp": ("FAULT1_OUT_GAS_TEMP", "Fault outdoor gas sensor"),
+    "fault_outdoor_temp": ("FAULT1_OUT_TEMP", "Fault outdoor temp sensor"),
+    "fault_over_temp": ("FAULT1_OVER_TEMP", "Fault over temperature"),
 }
 
 # The two-bit fields (power_display, demand_resp) are not booleans and are left out.
 # Each carries its own icon: a capability has no device class, so without one every node shows
 # the generic binary-sensor icon. Eco, quiet and display reuse the icon of the switch they gate.
 CAPABILITY_BITS = {
-    "capability_cool_heat": (0, "Capability heat pump", "mdi:heat-pump"),
-    "capability_ai": (1, "Capability AI mode", "mdi:brain"),
-    "capability_infinite_fan": (2, "Capability infinite fan", "mdi:fan"),
-    "capability_power_save": (3, "Capability eco", "mdi:leaf"),
-    "capability_fan_mute": (4, "Capability quiet", "mdi:volume-off"),
-    "capability_swing_dir_8": (5, "Capability 8-position louvre", "mdi:arrow-up-down"),
-    "capability_swing_follow": (6, "Capability swing follow", "mdi:arrow-oscillating"),
-    "capability_humidity": (7, "Capability humidity", "mdi:water-percent"),
-    "capability_heat_8c": (8, "Capability 8C frost guard", "mdi:snowflake-thermometer"),
-    "capability_purify": (9, "Capability purify", "mdi:air-purifier"),
+    "capability_cool_heat": (
+        "FEAT1_COOL_HEAT",
+        "Capability heat pump",
+        "mdi:heat-pump",
+    ),
+    "capability_ai": ("FEAT1_AI", "Capability AI mode", "mdi:brain"),
+    "capability_infinite_fan": (
+        "FEAT1_INFINITE_FAN",
+        "Capability infinite fan",
+        "mdi:fan",
+    ),
+    "capability_power_save": ("FEAT1_POWER_SAVE", "Capability eco", "mdi:leaf"),
+    "capability_fan_mute": ("FEAT1_FAN_MUTE", "Capability quiet", "mdi:volume-off"),
+    "capability_swing_dir_8": (
+        "FEAT1_SWING_DIR_8",
+        "Capability 8-position louvre",
+        "mdi:arrow-up-down",
+    ),
+    "capability_swing_follow": (
+        "FEAT1_SWING_FOLLOW",
+        "Capability swing follow",
+        "mdi:arrow-oscillating",
+    ),
+    "capability_humidity": (
+        "FEAT1_HUMIDITY",
+        "Capability humidity",
+        "mdi:water-percent",
+    ),
+    "capability_heat_8c": (
+        "FEAT1_HEAT_8C",
+        "Capability 8C frost guard",
+        "mdi:snowflake-thermometer",
+    ),
+    "capability_purify": ("FEAT1_PURIFY", "Capability purify", "mdi:air-purifier"),
     "capability_q_display": (
-        10,
+        "FEAT1_Q_DISPLAY",
         "Capability display control",
         "mdi:television-ambient-light",
     ),
     "capability_enable_8heat": (
-        11,
+        "FEAT1_ENABLE_8HEAT",
         "Capability enable 8C heat",
         "mdi:snowflake-thermometer",
     ),
-    "capability_trans_102_64": (12, "Capability trans 102-64", "mdi:swap-horizontal"),
+    "capability_trans_102_64": (
+        "FEAT1_TRANS_102_64",
+        "Capability trans 102-64",
+        "mdi:swap-horizontal",
+    ),
 }
 
 
@@ -114,12 +145,14 @@ async def to_code(config):
             var = await binary_sensor.new_binary_sensor(config[key])
             cg.add(getattr(parent, f"set_{key}_binary_sensor")(var))
 
-    for key, (bit, _) in FAULT_BITS.items():
+    for key, (constant, _) in FAULT_BITS.items():
         if key in config:
             var = await binary_sensor.new_binary_sensor(config[key])
+            bit = cg.RawExpression(f"{hisense_ac_ns}::{constant}")
             cg.add(parent.add_fault_binary_sensor(bit, var))
 
-    for key, (bit, _, _) in CAPABILITY_BITS.items():
+    for key, (constant, _, _) in CAPABILITY_BITS.items():
         if key in config:
             var = await binary_sensor.new_binary_sensor(config[key])
+            bit = cg.RawExpression(f"{hisense_ac_ns}::{constant}")
             cg.add(parent.add_capability_binary_sensor(bit, var))

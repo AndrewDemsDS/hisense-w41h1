@@ -48,6 +48,7 @@
 #include <vector>
 
 #include "hisense_bus.h"
+#include "hisense_commands.h"
 #include "hisense_map.h"
 #include "hisense_protocol.h"
 
@@ -663,6 +664,7 @@ struct Rig {
   // Enqueue a command frame carrying a tag in bytes 44/45. Those are body bytes no builder writes
   // (zero in every frame of hisense_protocol.cpp) and the scheduler never reads; the tag is how the
   // test follows one frame from the queue to the wire. stamp_link_token() redoes the checksum.
+  H::BusTicket last_ticket = H::BUS_TICKET_NONE;  // of the newest frame send() queued
   bool send(const uint8_t *frame, size_t len, uint16_t *tag_out = nullptr) {
     begin();
     uint8_t tagged[H::CMD_FRAME_MAX];
@@ -671,7 +673,10 @@ struct Rig {
     f[44] = static_cast<uint8_t>(tag >> 8);
     f[45] = static_cast<uint8_t>(tag);
     size_t n = H::stamp_link_token(f.data(), f.size(), f[7], f[8], tagged, sizeof(tagged));
-    if (n == 0 || !bus.enqueue(tagged, n))
+    if (n == 0)
+      return false;
+    last_ticket = bus.enqueue(tagged, n);
+    if (last_ticket == H::BUS_TICKET_NONE)
       return false;
     next_tag++;
     tags[tag].frame.assign(tagged, tagged + n);
@@ -1804,22 +1809,22 @@ static void script_no_de_transmitting(Rig &r) {
 }
 
 // ---- The hub's decisions on top of the real scheduler --------------------------------------------
-// HisenseAC cannot be built on a host. This is its main command path, restated: track_command_(),
-// on_bus_command(), the link edge in loop(), confirm_main_() and the shadow sync, with every
-// decision taken by the same hisense_map.h functions. test_esphome_confirm.cpp runs those decisions
-// against a unit that hears frames at once; here they run through the scheduler, with its command
-// slot, its re-sends and its link detection in between.
-struct MiniHub {
+// HisenseAC cannot be built on a host, but its command tracker (CommandTracker, hisense_commands.h)
+// can, and this is that class with the hub's loop around it: the parked status frame, the link
+// edge, and frames that leave through the scheduler. test_esphome_confirm.cpp runs the same class
+// against a unit that hears frames at once; here they pass through the command slot, the re-sends
+// and the link detection.
+struct MiniHub : H::CommandSink {
   Rig &r;
-  H::AcState parked{}, last{};
+  H::CommandTracker t;
+  H::AcState parked{};
   bool parked_valid = false, link_up = false, link_dirty = false;
-  H::AcCommand cmd{};
-  H::PendingCommand pending{};
-  uint32_t holdoff_start = 0;
-  bool holdoff_armed = false;
+  const H::AcCommand &cmd;  // the shadow
+  const H::PendingCommand &pending;
   int retries = 0, failed = 0, dropped_on_link = 0, done = 0, refused = 0;
 
-  explicit MiniHub(Rig &rig) : r(rig) {
+  explicit MiniHub(Rig &rig) : r(rig), cmd(t.cmd()), pending(t.main_pending()) {
+    t.set_sink(this);
     r.rec.status_hook = [this](const H::AcState &s) {
       parked = s;
       parked_valid = true;
@@ -1830,123 +1835,55 @@ struct MiniHub {
       link_up = up;
       link_dirty = true;
     };
-    r.rec.command_hook = [this](bool) {
-      if (pending.active)
-        note();
-      H::pending_on_wire(&pending, g_now);
-    };
+    r.rec.command_hook = [this](bool answered) { t.on_command_done(r.bus.command_ticket(), answered, g_now); };
   }
-  void note() {
-    holdoff_start = g_now;
-    holdoff_armed = true;
-  }
-  bool holdoff() {
-    if (holdoff_armed && g_now - holdoff_start >= 4000)  // HisenseAC::COMMAND_HOLDOFF_MS
-      holdoff_armed = false;
-    return holdoff_armed;
-  }
-  bool send_combined() {
-    if (!H::combined_frame_allowed(last.valid)) {
-      refused++;
-      return false;
-    }
-    return r.send_cmd(cmd);
-  }
-  bool send_power(bool on) {
+  H::BusTicket ticket(bool queued) const { return queued ? r.last_ticket : H::BUS_TICKET_NONE; }
+  H::BusTicket send_combined(const H::AcCommand &c) override { return ticket(r.send_cmd(c)); }
+  H::BusTicket send_power(bool on) override {
     uint8_t f[H::CMD_FRAME_MAX];
     size_t n = H::build_power_frame(on, f, sizeof(f));
-    return r.send(f, n);
+    return ticket(r.send(f, n));
+  }
+  H::BusTicket send_mute(bool) override { return H::BUS_TICKET_NONE; }
+  H::BusTicket send_sleep(uint8_t) override { return H::BUS_TICKET_NONE; }
+  void on_command_event(H::CommandEvent event, uint16_t, uint16_t count) override {
+    if (event == H::CommandEvent::MAIN_CONFIRMED || event == H::CommandEvent::MAIN_YIELDED)
+      done++;
+    if (event == H::CommandEvent::DROPPED_ON_LINK_LOSS)
+      dropped_on_link += count;
+    if (event == H::CommandEvent::COMBINED_REFUSED_NO_STATUS)
+      refused++;
+  }
+  void counters() {
+    retries = static_cast<int>(t.command_retries());
+    failed = static_cast<int>(t.failed_commands());
   }
   // HisenseClimate::control() for a setpoint and, optionally, a mode.
   void user(int8_t setpoint, int mode = -1) {
     uint16_t fields = H::CONFIRM_SETPOINT;
     bool power_on = false;
+    H::AcCommand wanted = t.cmd();
     if (mode >= 0) {
-      cmd.mode = static_cast<H::Mode>(mode);
+      wanted.mode = static_cast<H::Mode>(mode);
       fields |= H::CONFIRM_MODE;
-      power_on = !last.power_on;
+      power_on = !t.power_expected();
     }
-    H::setpoint_to_cmd(setpoint, false, &cmd);
-    cmd.power_on = power_on;
-    bool sent = send_combined();
-    cmd.power_on = false;
-    if (!sent)
-      return;
-    if (power_on)
-      fields |= H::CONFIRM_POWER;
-    H::pending_begin(&pending, H::intent_from_command(cmd, fields), H::unit_view_from_status(last), g_now);
-    note();
+    H::setpoint_to_cmd(setpoint, false, &wanted);
+    t.send_user_command(wanted, fields, power_on, g_now);
   }
-  void user_off() {
-    if (send_power(false)) {
-      H::pending_begin(&pending, H::intent_power_off(), H::unit_view_from_status(last), g_now);
-      note();
-    }
-  }
-  void confirm() {
-    if (!pending.active)
-      return;
-    uint16_t unmet = 0;
-    H::UnitView view = H::unit_view_from_status(last);
-    switch (H::confirm_decision(pending, view, view.special, g_now, H::COMMAND_RESEND_MAX, &unmet)) {
-      case H::CONFIRM_WAIT:
-        return;
-      case H::CONFIRM_DONE:
-      case H::CONFIRM_YIELD:
-        done++;
-        pending.active = false;
-        return;
-      case H::CONFIRM_GIVE_UP:
-        failed++;
-        pending.active = false;
-        return;
-      case H::CONFIRM_RESEND:
-        break;
-    }
-    pending.resends++;
-    retries++;
-    H::intent_to_command(pending.intent, false, &cmd);
-    switch (H::resend_frames(pending.intent, unmet)) {
-      case H::RESEND_POWER_OFF:
-        send_power(false);
-        break;
-      case H::RESEND_POWER_ON_ALONE:
-        send_power(true);
-        break;
-      case H::RESEND_POWER_ON_PAIR:
-        send_power(true);
-        send_combined();
-        break;
-      case H::RESEND_COMBINED:
-        send_combined();
-        break;
-    }
-    pending.sent_ms = g_now;
-    note();
-  }
+  void user_off() { t.send_user_power_off(g_now); }
   // HisenseAC::loop()
   void loop(uint32_t dt = 1) {
     r.step(dt);
     bool have = parked_valid;
     H::AcState st = parked;
     parked_valid = false;
-    if (link_dirty) {
-      link_dirty = false;
-      if (!link_up && pending.active) {
-        pending.active = false;
-        failed++;
-        dropped_on_link++;
-      }
-    }
-    if (!have)
-      return;
-    link_up = true;
-    last = st;
-    confirm();
-    if (!holdoff()) {
-      H::mode_from_status(st.mode, &cmd.mode);
-      H::sync_shadow_setpoint(st.setpoint_c, st.temp_unit_f, &cmd);
-    }
+    const bool edge = link_dirty;
+    link_dirty = false;
+    t.loop_pass(edge && !link_up, have ? &st : nullptr, g_now);
+    if (have)
+      link_up = true;
+    counters();
   }
   void run(uint32_t ms) {
     for (uint32_t i = 0; i < ms; i++)
@@ -2040,7 +1977,7 @@ static void script_pending_at_link_loss(Rig &r) {
   r.audit_commands();
 }
 
-// WEAKNESS (reported): a command issued while the link is ALREADY down. The hub drops what is
+// Was a WEAKNESS, fixed: a command issued while the link is ALREADY down is refused. Before: The hub drops what is
 // pending at the link-lost edge and at no other time, so this one stays tracked. The scheduler
 // sends it once into the silence. If the unit is back within CONFIRM_STALE_MS (20 s) the first
 // status frame disagrees and the hub sends it again: a request made to a dead unit is carried out
@@ -2054,21 +1991,16 @@ static void script_command_while_down(Rig &r) {
   hub.run(8000);
   CHECK(!hub.link_up && r.rec.links.size() == 1, "link down");
   hub.user(30);
-  CHECK(hub.pending.active, "the command is accepted and tracked while the link is down");
+  CHECK(!hub.pending.active, "the command is refused while the link is down");
   hub.run(g_gap);
   size_t from = r.ac.writes.size();
   r.ac.silent = false;
   hub.run(15000);
   size_t after = r.count(0x65, from);
-  if (g_gap < 15000) {
-    XFAIL(after == 0 && r.ac.setpoint == 22,
-          "a command issued into a dead link is not carried out when the unit "
-          "returns %u ms later (%zu frames, setpoint %u)",
-          (unsigned) g_gap, after, r.ac.setpoint);
-  } else {
-    CHECK(after == 0 && r.ac.setpoint == 22 && hub.failed == 1, "after %u ms it is given up, not sent (%zu frames)",
-          (unsigned) g_gap, after);
-  }
+  CHECK(after == 0 && r.ac.setpoint == 22 && hub.failed == 0,
+        "a command issued into a dead link is not carried out when the unit returns %u ms later (%zu frames, "
+        "setpoint %u)",
+        (unsigned) g_gap, after, r.ac.setpoint);
   r.audit_commands();
 }
 
@@ -2352,7 +2284,7 @@ int main(int argc, char **argv) {
   g_gap = 5 * 60000u;
   everywhere("command unconfirmed when the link drops, back after 5 min", script_pending_at_link_loss);
   g_gap = 4000;
-  everywhere("WEAKNESS: command issued while the link is down, back after 4 s", script_command_while_down);
+  everywhere("command issued while the link is down, back after 4 s", script_command_while_down);
   g_gap = 40000;
   everywhere("command issued while the link is down, back after 40 s", script_command_while_down);
 

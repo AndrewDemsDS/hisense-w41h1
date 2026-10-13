@@ -60,8 +60,9 @@ climate:
   the transceiver. The bus must be 9600 baud, 8 data bits, no parity, 1 stop bit.
 - **de_pin** (*Optional*, [Pin Schema](/guides/configuration-types#pin-schema)): The pin wired to
   the transceiver's DE (and RE) line. The component raises it 5 ms before each frame and lowers it
-  25 ms after the last byte. Leave it out only if the UART's `flow_control_pin` or the transceiver
-  itself switches direction.
+  25 ms after the last byte. It has to be an output. Leave it out only if the UART's
+  `flow_control_pin` or the transceiver itself switches direction: setting both `de_pin` and
+  `flow_control_pin` is refused, and setting neither gives a warning.
 - **on_setup_request** (*Optional*, [Automation](/automations)): An automation to perform when
   the user asks for setup from the remote. See [`on_setup_request`](#hisense_ac-on_setup_request).
 
@@ -76,7 +77,8 @@ climate:
     supports_horizontal_swing: false
 ```
 
-- **hisense_ac_id** (*Optional*, [ID](/guides/configuration-types#id)): ID of the hub.
+- **hisense_ac_id** (*Optional*, [ID](/guides/configuration-types#id)): ID of the hub. A hub
+  takes one climate entity.
 - **supports_heat** (*Optional*, boolean): Set to `false` on a cooling-only unit. Defaults to `true`.
 - **supports_horizontal_swing** (*Optional*, boolean): Set to `true` if the unit has a left/right
   louvre motor. Defaults to `false`.
@@ -84,8 +86,10 @@ climate:
 - **supports_quiet** (*Optional*, boolean): Offer the presets that need quiet mode. Defaults to `true`.
 - **supports_turbo** (*Optional*, boolean): Offer the presets that need turbo mode. Defaults to `true`.
 - **supports_sleep** (*Optional*, boolean): Offer the sleep presets. Defaults to `true`.
-- **min_temperature** (*Optional*, temperature): Lowest setpoint shown. Defaults to `16 °C`.
-- **max_temperature** (*Optional*, temperature): Highest setpoint shown. Defaults to `32 °C`.
+- **min_temperature** (*Optional*, temperature): Lowest setpoint shown, not below `16 °C`.
+  Defaults to `16 °C`.
+- **max_temperature** (*Optional*, temperature): Highest setpoint shown, not above `32 °C`
+  (`90 °F`) and not below `min_temperature`. Defaults to `32 °C`.
 - All other options from [Climate](/components/climate#config-climate).
 
 The entity offers the modes off, auto, cool, heat, fan only and dry, six fan speeds (`auto`,

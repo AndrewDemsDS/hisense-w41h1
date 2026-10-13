@@ -1,5 +1,5 @@
 # DE driven twice: by the hub (de_pin) and by the UART peripheral (flow_control_pin), on two pins.
-# accepted: DE is then driven twice, by the hub and by the UART peripheral. Nothing checks it.
+# expect: The transceiver's DE line is driven twice: by hisense_ac \(de_pin\) and by the uart \(flow_control_pin\)
 esphome:
   name: invalid-case
 
