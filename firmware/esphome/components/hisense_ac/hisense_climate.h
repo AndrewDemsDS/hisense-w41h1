@@ -2,10 +2,10 @@
 // The A/C as a single ESPHome climate entity: power, mode, setpoint, 6-speed fan, swing,
 // current temperature and action.
 //
-// There are no per-field echo guards here, and that is not an oversight: control() is only ever
-// called by Home Assistant, never by our own publish_state(), so a downlink -> readback -> uplink
-// feedback loop cannot form. The only timing defence needed is the hub's command hold-off, which
-// stops a poll already in flight from visibly reverting a control the user just moved.
+// The decisions are in hisense_entities.h (climate_plan, climate_view_from_status), with host
+// tests. control() is called by a user request only, never by this entity's own publish_state(),
+// so what the unit reports is never sent back to it. The one timing defence is the hub's command
+// hold-off, which stops a poll already in flight from reverting a control the user just moved.
 #include "esphome/core/defines.h"
 #ifdef USE_CLIMATE
 #include "esphome/components/climate/climate.h"

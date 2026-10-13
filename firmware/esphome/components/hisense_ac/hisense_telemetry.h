@@ -12,14 +12,14 @@ namespace esphome::hisense_ac {
 // is supply voltage in whole volts, about 6% low.
 static constexpr uint64_t POWER_MW_PER_COUNT2 = 4150;  // milliwatts per byte-55 count squared
 static constexpr int64_t POWER_PF_PERMIL = 950;        // assumed inverter power factor * 1000
-static constexpr int64_t POWER_MW_MAX = 50000000;      // 50 kW; a glitched byte must not reach HA
+// A bound on the arithmetic, not a plausibility filter: 50 kW is about 14 times what a split unit
+// draws, and every byte value from 110 up publishes exactly this.
+static constexpr int64_t POWER_MW_MAX = 50000000;
 
 inline int64_t active_power_mw(uint8_t raw55) {
   auto p = static_cast<int64_t>(POWER_MW_PER_COUNT2 * raw55 * raw55);
   return p > POWER_MW_MAX ? POWER_MW_MAX : p;
 }
-
-inline int64_t voltage_mv(uint8_t raw50) { return static_cast<int64_t>(raw50) * 1000; }
 
 // I = P / (V * PF), back-computed since byte 55 is a power proxy. 0 when the voltage is unknown.
 inline int64_t active_current_ma(uint8_t raw55, uint8_t raw50) {
@@ -27,14 +27,6 @@ inline int64_t active_current_ma(uint8_t raw55, uint8_t raw50) {
     return 0;
   return (active_power_mw(raw55) * 1000) / (static_cast<int64_t>(raw50) * POWER_PF_PERMIL);
 }
-
-// Energy accumulates losslessly in mW*ms per status poll; import only, so non-positive power adds 0.
-inline void energy_add(uint64_t *acc_mw_ms, int64_t power_mw, uint32_t dt_ms) {
-  if (power_mw > 0)
-    *acc_mw_ms += static_cast<uint64_t>(power_mw) * dt_ms;
-}
-
-inline uint64_t energy_mwh(uint64_t acc_mw_ms) { return acc_mw_ms / 3600000ULL; }
 
 // ---- Telemetry pacing ---------------------------------------------------------------------------
 // A status frame arrives about once a second and rarely differs from the previous one. A sensor

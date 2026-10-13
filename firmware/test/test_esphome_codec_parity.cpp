@@ -26,6 +26,10 @@
 //     value (H::command_enums_valid), where the original packs whatever it is given, and the
 //     port's build_single_field refuses an offset outside the body (16 to 45), where the
 //     original's static helper has no guard. Inside those ranges the bytes are the same.
+//  5. Not ported, because the ESPHome component has no use for them: the fan table's percent
+//     column and the running-state bitmap (both Matter attributes), voltage in millivolts (the
+//     sensor publishes byte 50 as volts) and the energy integrator (the YAML uses ESPHome's
+//     total_daily_energy). climate_action, which the running state fed, is compared in full.
 //  4. Eco and turbo both on, to a preset with neither. The original's plan sends the eco clear
 //     alone, which by its own special_apply leaves turbo on. The port sends the turbo clear
 //     (FEATURE_NONE) right after it. Every other plan is the same write for write.
@@ -165,7 +169,6 @@ static void test_constants() {
   CHECK(H::FAN_TABLE_LEN == HISENSE_FAN_TABLE_LEN, "fan table size");
   for (size_t i = 0; i < H::FAN_TABLE_LEN; i++) {
     CHECK(k_hisense_fan_table[i].raw == H::FAN_TABLE[i].raw && k_hisense_fan_table[i].speed == H::FAN_TABLE[i].speed &&
-              k_hisense_fan_table[i].percent == H::FAN_TABLE[i].percent &&
               (int) k_hisense_fan_table[i].cmd == (int) H::FAN_TABLE[i].cmd,
           "fan row %zu", i);
   }
@@ -578,9 +581,6 @@ static void test_map() {
   for (int p = 0; p < 2; p++)
     for (int m = 0; m < 8; m++)
       for (int hz = 0; hz < 4; hz++) {
-        CHECK(hisense_to_running_state(p != 0, (HisenseMode) m, (uint8_t) hz) ==
-                  H::running_state(p != 0, (H::Mode) m, (uint8_t) hz),
-              "running_state %d %d %d", p, m, hz);
         CHECK(hisense_to_climate_action(p != 0, (HisenseMode) m, (uint8_t) hz) ==
                   H::climate_action(p != 0, (H::Mode) m, (uint8_t) hz),
               "climate_action %d %d %d", p, m, hz);
@@ -683,19 +683,10 @@ static void test_presets() {
 static void test_power() {
   for (int i = 0; i < 256; i++) {
     CHECK(hisense_active_power_mw((uint8_t) i) == H::active_power_mw((uint8_t) i), "power %d", i);
-    CHECK(hisense_voltage_mv((uint8_t) i) == H::voltage_mv((uint8_t) i), "voltage %d", i);
     for (int v = 0; v < 256; v += 3)
       CHECK(hisense_active_current_ma((uint8_t) i, (uint8_t) v) == H::active_current_ma((uint8_t) i, (uint8_t) v),
             "current %d %d", i, v);
   }
-  uint64_t oa = 0, na = 0;
-  for (int i = 0; i < 5000; i++) {
-    int64_t p = (int64_t) (rnd() % 3000000) - 100000;
-    uint32_t dt = rnd() % 5000;
-    hisense_energy_add(&oa, p, dt);
-    H::energy_add(&na, p, dt);
-  }
-  CHECK(oa == na && hisense_energy_mwh(oa) == H::energy_mwh(na), "energy integrator");
 }
 
 // The original reassembler is static, so the port is checked against hand-built streams.

@@ -63,11 +63,10 @@ static void test_status_mode() {
 
   out = H::MODE_DRY;
   CHECK(!H::mode_from_status((H::Mode) 7, &out) && out == H::MODE_DRY, "7 is no mode, the output is untouched");
-  CHECK(!H::mode_from_status((H::Mode) 15, &out) && out == H::MODE_DRY, "15 is 7 with bit 7 set: still no mode");
-  for (int m = H::MODE_FAN; m <= H::MODE_AUTO; m++)
-    CHECK(H::mode_from_status((H::Mode)(m | 8), &out) && out == (H::Mode) m, "bit 7 dropped from %d", m | 8);
-  CHECK(H::mode_from_status((H::Mode) 13, &out) && out == H::MODE_AUTO, "auto as 5 with bit 7 set");
-  CHECK(H::mode_from_status((H::Mode) 14, &out) && out == H::MODE_AUTO, "auto as 6 with bit 7 set");
+  // parse_status() is what drops bit 7 and folds 5 and 6 into AUTO (the loop below takes every
+  // nibble through it). Anything above AUTO that still arrives here is no mode.
+  for (int v = H::MODE_AUTO + 1; v < 256; v++)
+    CHECK(!H::mode_from_status((H::Mode) v, &out) && out == H::MODE_DRY, "%d is no mode", v);
 
   // The hazard itself, on the raw path the hub used to take: status nibble 13 landed in the frame
   // as 0xB0, which is no mode command. The builder refuses a mode that has no name now, so even
@@ -397,7 +396,8 @@ static void test_frame_stream() {
     size_t n = feed_all(fa, tiny, &frames);
     H::AcState st;
     H::AcFeatures ft;
-    CHECK(n == 9 && n <= H::FRAME_CLASS_OFFSET, "a 9-byte frame assembles and is too short for the class check");
+    CHECK(n == 9, "a 9-byte frame assembles");
+    static_assert(9 <= H::FRAME_CLASS_OFFSET, "a 9-byte frame is too short for the class check");
     CHECK(!H::parse_status(fa.data(), n, &st) && !H::parse_features(fa.data(), n, &ft), "and parses as nothing");
   }
   // Parsers refuse anything shorter than the fields they read.

@@ -31,7 +31,7 @@ struct PresetRow {
   uint8_t sleep;
 };
 
-static constexpr PresetRow PRESETS[] = {
+inline constexpr PresetRow PRESETS[] = {
     {"none", false, false, false, 0},          {"eco", true, false, false, 0},
     {"quiet", false, false, true, 0},          {"turbo", false, true, false, 0},
     {"eco_quiet", true, false, true, 0},       {"sleep_general", false, false, false, 1},
@@ -98,6 +98,8 @@ inline uint8_t preset_detect(const SpecialState &s, uint8_t support) {
     if (r.eco == s.eco && r.turbo == s.turbo && r.mute == s.mute && r.sleep == s.sleep)
       return preset_available(i, support) ? static_cast<uint8_t>(i) : PRESET_NONE;
   }
+  // No row: turbo, eco or quiet with something they do not combine with (a lone sleep profile
+  // always has a row).
   uint8_t guess = PRESET_NONE;
   if (s.turbo) {
     guess = PRESET_TURBO;
@@ -105,8 +107,6 @@ inline uint8_t preset_detect(const SpecialState &s, uint8_t support) {
     guess = PRESET_ECO;
   } else if (s.mute) {
     guess = PRESET_QUIET;
-  } else if (s.sleep >= 1 && s.sleep <= 4) {
-    guess = static_cast<uint8_t>(PRESET_FIRST_SLEEP + s.sleep);
   }
   return preset_available(guess, support) ? guess : PRESET_NONE;
 }

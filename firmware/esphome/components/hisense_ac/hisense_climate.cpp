@@ -36,6 +36,8 @@ static_assert((int) climate::CLIMATE_FAN_MIDDLE == CLIMATE_FAN_MIDDLE_VALUE, "Cl
 static_assert((int) climate::CLIMATE_FAN_FOCUS == CLIMATE_FAN_FOCUS_VALUE, "ClimateFanMode drift");
 static_assert((int) climate::CLIMATE_FAN_QUIET == CLIMATE_FAN_QUIET_VALUE, "ClimateFanMode drift");
 static_assert((int) climate::CLIMATE_FAN_ON == CLIMATE_FAN_ON_VALUE, "ClimateFanMode drift");
+static_assert((int) climate::CLIMATE_FAN_OFF == CLIMATE_FAN_OFF_VALUE, "ClimateFanMode drift");
+static_assert((int) climate::CLIMATE_FAN_DIFFUSE == CLIMATE_FAN_DIFFUSE_VALUE, "ClimateFanMode drift");
 static_assert((int) climate::CLIMATE_PRESET_NONE == CLIMATE_PRESET_NONE_VALUE, "ClimatePreset drift");
 static_assert((int) climate::CLIMATE_PRESET_ECO == CLIMATE_PRESET_ECO_VALUE, "ClimatePreset drift");
 
@@ -76,7 +78,7 @@ climate::ClimateTraits HisenseClimate::traits() {
   traits.set_supported_fan_modes(
       {climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_HIGH});
 
-  // none + eco ride the built-in enum (see hisense_map.h); the rest are the custom
+  // none + eco ride the built-in enum (see hisense_special.h); the rest are the custom
   // presets registered in setup(). No special modes at all means no preset control.
   if (this->preset_support_ != 0) {
     traits.add_supported_preset(climate::CLIMATE_PRESET_NONE);

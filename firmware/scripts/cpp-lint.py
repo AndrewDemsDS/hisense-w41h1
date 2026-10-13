@@ -311,6 +311,8 @@ TIDY_UNITS = [
     ("firmware/test/test_esphome_bus_stress.cpp", C17_PORT),
     ("firmware/test/test_esphome_codec_gaps.cpp", C17_PORT),
     ("firmware/test/test_esphome_confirm.cpp", C17_PORT),
+    ("firmware/test/test_esphome_edge_cases.cpp", C17_PORT),
+    ("firmware/test/test_esphome_map_gaps.cpp", C17_PORT + C17_MODULE[1:]),
     ("firmware/test/test_esphome_entities.cpp", C17_PORT),
     ("firmware/test/test_esphome_setup_edges.cpp", C17_PORT),
     ("firmware/test/test_esphome_setup_request.cpp", C17_PORT),
@@ -329,12 +331,7 @@ TIDY_UNITS = [
 
 # Host-compilable units that are NOT checked yet, each with the one finding that keeps it out
 # (clang-tidy 22.1.8, 2026-10-12). Fix the line, move the entry up into TIDY_UNITS.
-TIDY_PENDING = [
-    # :375 misc-redundant-expression: `n == 9 && n <= H::FRAME_CLASS_OFFSET`
-    ("firmware/test/test_esphome_edge_cases.cpp", C17_PORT),
-    # :346 misc-redundant-expression: `i < 13 && i < H::PRESET_COUNT`
-    ("firmware/test/test_esphome_map_gaps.cpp", C17_PORT + C17_MODULE[1:]),
-]
+TIDY_PENDING: list = []
 
 
 # Checks whose --fix is mechanical and cannot change behaviour. `fix` applies only these, and

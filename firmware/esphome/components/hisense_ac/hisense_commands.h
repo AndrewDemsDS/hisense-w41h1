@@ -201,7 +201,7 @@ class CommandTracker {
   void loop_pass(bool link_lost_edge, const AcState *status, uint32_t now) {
     if (link_lost_edge)
       this->on_link_lost_();
-    this->drain_special_queue_(now);
+    this->send_next_special_(now);
     if (status != nullptr)
       this->on_status_(*status, now);
   }
@@ -253,13 +253,17 @@ class CommandTracker {
   }
 
   /// Send the next queued special-mode write when its turn has come.
-  void drain_special_queue_(uint32_t now) {
+  void send_next_special_(uint32_t now) {
+    // The pacing is disarmed once it has run out, on every pass and not only when a write is
+    // waiting. Left armed, it reads as running again for 10 s each time the 32-bit clock comes
+    // back round to the last write (every 49.7 days).
+    if (this->special_sent_ && now - this->last_special_ms_ >= SPECIAL_SETTLE_MS)
+      this->special_sent_ = false;
     if (this->special_len_ == 0 || this->link_lost_)
       return;
-    // One write at a time: the next waits until the unit's status has answered for the last.
-    if (this->special_pending_.active)
-      return;
-    if (this->special_sent_ && now - this->last_special_ms_ < SPECIAL_SETTLE_MS)
+    // One write at a time: the next waits until the unit's status has answered for the last,
+    // and then for the unit's debounce.
+    if (this->special_pending_.active || this->special_sent_)
       return;
     SpecialOp op = this->special_queue_[0];
     for (uint8_t i = 1; i < this->special_len_; i++)
@@ -313,7 +317,7 @@ class CommandTracker {
     power_intent_status(&this->power_intent_, this->in_holdoff(now));
 
     // Keep the command shadow tracking reality, so a later single-field write rebuilds the
-    // combined frame from what the A/C is actually doing instead of a stale shadow. Skipped
+    // combined frame from what the A/C is doing instead of a stale shadow. Skipped
     // during the hold-off, when `state` may predate the user's own command.
     if (!this->in_holdoff(now)) {
       FanSpeed fan = shadow_fan_from_status(state.fan_raw);

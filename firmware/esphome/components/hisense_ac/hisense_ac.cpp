@@ -23,11 +23,9 @@ static const char *const TAG = "hisense_ac";
 // These run inside bus_.poll(). Entities are not touched here: the frame is parked and loop()
 // publishes it after the special-mode queue has had its turn.
 void HisenseAC::on_bus_status(const AcState &state) {
-  this->pending_ = state;
-  this->pending_valid_ = true;
+  this->parked_status_ = state;
+  this->parked_status_valid_ = true;
 }
-
-void HisenseAC::on_bus_features(const AcFeatures &features) {}  // polled in publish_diagnostics_
 
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
 // A status frame is about 160 bytes, more than one log line holds, so frames go out in rows.
@@ -86,7 +84,7 @@ void HisenseAC::on_bus_link(bool up) {
   if (!up) {
     // Drop any undrained pre-loss frame, or loop() would publish those stale values (and flip
     // link_up_ back to true) until real data returns.
-    this->pending_valid_ = false;
+    this->parked_status_valid_ = false;
     // A silent unit may be one that lost power, and it comes back with the placeholder.
     outdoor_temp_gate_reset(&this->outdoor_gate_);
   }
@@ -94,7 +92,7 @@ void HisenseAC::on_bus_link(bool up) {
   this->link_dirty_ = true;
 }
 
-void HisenseAC::on_bus_setup_request(uint8_t request) { this->setup_request_pending_ = request; }
+void HisenseAC::on_bus_setup_request(uint8_t request) { this->parked_setup_request_ = request; }
 
 void HisenseAC::set_setup_indicator(bool on) {
   if (on == this->bus_.setup_indicator())
@@ -125,9 +123,9 @@ void HisenseAC::loop() {
 
   AcState state;
   bool have_state = false;
-  if (this->pending_valid_) {
-    state = this->pending_;
-    this->pending_valid_ = false;
+  if (this->parked_status_valid_) {
+    state = this->parked_status_;
+    this->parked_status_valid_ = false;
     have_state = true;
   }
 
@@ -170,9 +168,9 @@ void HisenseAC::loop() {
     ESP_LOGD(TAG, "0x1E reply request bits now 0x%02X", this->logged_link_request_);
   }
 #endif
-  if (this->setup_request_pending_ != 0) {
-    const uint8_t request = this->setup_request_pending_;
-    this->setup_request_pending_ = 0;
+  if (this->parked_setup_request_ != 0) {
+    const uint8_t request = this->parked_setup_request_;
+    this->parked_setup_request_ = 0;
     ESP_LOGI(TAG, "Setup requested from the remote (0x1E reply request bits 0x%02X)", request);
     this->setup_request_callback_.call(request);
   }
@@ -230,15 +228,16 @@ void HisenseAC::publish_telemetry_(const AcState &state) {
   const bool refresh = telemetry_refresh_due(&this->telemetry_refresh_, loop_time_());
   this->publish_sensor_(this->indoor_temperature_sensor_, state.indoor_temp_c, refresh);
   // Both read -20 C for a while after mains power returns: the unit's "not measured yet" value.
-  // Those frames go out as unknown (see outdoor_temps_measured in hisense_map.h).
+  // Those frames go out as unknown (see outdoor_temps_measured in hisense_telemetry.h).
   const bool outdoor_measured = outdoor_temps_measured(&this->outdoor_gate_, state.outdoor_temp_c, state.coil_temp_c);
   this->publish_sensor_(this->outdoor_temperature_sensor_, outdoor_measured ? state.outdoor_temp_c : NAN, refresh);
   this->publish_sensor_(this->coil_temperature_sensor_, outdoor_measured ? state.coil_temp_c : NAN, refresh);
   this->publish_sensor_(this->compressor_frequency_sensor_, state.compressor_freq, refresh);
   // The bus carries a current PROXY, not amps: active power is 4.15 * raw^2, calibrated against
-  // a panel meter. hisense_map.h owns that maths and works in milli-units, so scale back here.
+  // a panel meter. hisense_telemetry.h owns that maths and works in milli-units, so scale back
+  // here. Byte 50 is whole volts as it is.
   this->publish_sensor_(this->power_sensor_, active_power_mw(state.current_raw) / 1000.0f, refresh);
-  this->publish_sensor_(this->voltage_sensor_, voltage_mv(state.voltage_raw) / 1000.0f, refresh);
+  this->publish_sensor_(this->voltage_sensor_, state.voltage_raw, refresh);
   this->publish_sensor_(this->current_sensor_, active_current_ma(state.current_raw, state.voltage_raw) / 1000.0f,
                         refresh);
   this->publish_bus_counters_(refresh);
@@ -285,7 +284,7 @@ void HisenseAC::publish_diagnostics_() {
 
   // Capabilities answer once, after the 0x66/40 ProductType exchange, and never change.
   AcFeatures features;
-  if (this->features_published_ || !this->bus_.features(&features) || !features.valid)
+  if (this->features_published_ || !this->bus_.features(&features))
     return;
   this->features_published_ = true;
   uint32_t bitmap = features_to_bitmap32(features);

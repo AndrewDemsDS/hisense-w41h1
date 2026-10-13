@@ -254,10 +254,6 @@ inline void pending_begin(PendingCommand *p, const CommandIntent &next, const Un
   }
   if ((kept_before & CONFIRM_SETPOINT) != 0)
     p->before.setpoint_c = old_before.setpoint_c;
-  if ((kept_before & CONFIRM_FAN) != 0)
-    p->before.fan_raw = old_before.fan_raw;
-  if ((kept_before & CONFIRM_SLEEP) != 0)
-    p->before.special.sleep = old_before.special.sleep;
   p->before_known = static_cast<uint16_t>((kept_before & ~repeated) | fresh);
 
   p->intent.want = next.want;

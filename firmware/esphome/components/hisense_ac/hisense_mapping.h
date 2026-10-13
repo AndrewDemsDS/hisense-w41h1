@@ -94,51 +94,31 @@ inline uint8_t hisense_mode_to_climate(Mode m) {
 }
 
 // The mode a status frame reports, checked before it reaches the command shadow or the entity.
-// parse_status() hands over the whole upper nibble of byte 18 with 5 and 6 folded into AUTO. The
-// vendor module's descriptor for the field (t_work_mode, 1c030503) is three bits wide, bits 4 to 6,
-// so bit 7 is not part of the mode and is dropped here. That leaves 7 as the one value with no
-// meaning: false, and the caller keeps the mode it had. Copied raw, a value above AUTO would be
-// shown as cool and re-sent by the next combined frame as whatever (mode * 2 + 1) << 4 wraps to.
+// parse_status() takes the three mode bits of byte 18 (bits 4 to 6, the vendor module's
+// t_work_mode) and folds 5 and 6 into AUTO, so the one value it can hand over that is no mode is
+// 7: false, and the caller keeps the mode it had. Copied raw, 7 would be shown as cool and re-sent
+// by the next combined frame as whatever (mode * 2 + 1) << 4 wraps to.
 inline bool mode_from_status(Mode reported, Mode *out) {
-  auto v = static_cast<uint8_t>(reported);
-  if (v > MODE_AUTO) {
-    v &= 0x07;
-    if (v == 5 || v == 6)
-      v = MODE_AUTO;
-  }
-  if (v > MODE_AUTO)
+  if (reported > MODE_AUTO)
     return false;
-  *out = static_cast<Mode>(v);
+  *out = reported;
   return true;
 }
 
-// Bitmap of what is running (Heat = 1, Cool = 2, Fan = 4). Compressor Hz decides whether a heat/cool
-// mode is working or idle.
-inline uint16_t running_state(bool power_on, Mode mode, uint8_t comp_freq) {
-  if (!power_on)
-    return 0;
-  if (mode == MODE_FAN)
-    return 4;
-  if (comp_freq > 0)
-    return (mode == MODE_HEAT) ? 1 : 2;
-  return 0;
-}
-
+// What the unit is doing. The compressor frequency decides whether a mode that uses the
+// compressor is working or idle.
+// VERIFY: in auto with the compressor running this says cooling, also when the unit heats. No
+// capture or RE doc shows which status byte tells the two apart in auto.
 inline uint8_t climate_action(bool power_on, Mode mode, uint8_t comp_freq) {
   if (!power_on)
     return CLIMATE_ACTION_OFF_VALUE;
+  if (mode == MODE_FAN)
+    return CLIMATE_ACTION_FAN_VALUE;
+  if (comp_freq == 0)
+    return CLIMATE_ACTION_IDLE_VALUE;
   if (mode == MODE_DRY)
-    return comp_freq > 0 ? CLIMATE_ACTION_DRYING_VALUE : CLIMATE_ACTION_IDLE_VALUE;
-  switch (running_state(power_on, mode, comp_freq)) {
-    case 1:
-      return CLIMATE_ACTION_HEATING_VALUE;
-    case 2:
-      return CLIMATE_ACTION_COOLING_VALUE;
-    case 4:
-      return CLIMATE_ACTION_FAN_VALUE;
-    default:
-      return CLIMATE_ACTION_IDLE_VALUE;
-  }
+    return CLIMATE_ACTION_DRYING_VALUE;
+  return mode == MODE_HEAT ? CLIMATE_ACTION_HEATING_VALUE : CLIMATE_ACTION_COOLING_VALUE;
 }
 
 // ---- Swing -------------------------------------------------------------------------------------
@@ -160,17 +140,16 @@ inline void climate_swing_to_hisense(uint8_t swing, SwingMode *vswing, SwingMode
 }
 
 // ---- Fan ladder --------------------------------------------------------------------------------
-// The six discrete W41H1 speeds. raw = status byte 16, speed = 1..6, percent = the speed as a
-// percentage, cmd = command enum. Auto (raw 0x01) is not a row: the A/C picks the speed.
+// The six discrete W41H1 speeds. raw = status byte 16, speed = 1..6, cmd = command enum. Auto
+// (raw 0x01) is not a row: the A/C picks the speed.
 struct FanRow {
   uint8_t raw;
   uint8_t speed;
-  uint8_t percent;
   FanSpeed cmd;
 };
-static constexpr FanRow FAN_TABLE[] = {
-    {0x02, 1, 10, FAN_SPEED_QUIET}, {0x0A, 2, 25, FAN_SPEED_LOW},      {0x0C, 3, 42, FAN_SPEED_MED_LOW},
-    {0x0E, 4, 58, FAN_SPEED_MID},   {0x10, 5, 75, FAN_SPEED_MED_HIGH}, {0x12, 6, 100, FAN_SPEED_HIGH},
+inline constexpr FanRow FAN_TABLE[] = {
+    {0x02, 1, FAN_SPEED_QUIET}, {0x0A, 2, FAN_SPEED_LOW},      {0x0C, 3, FAN_SPEED_MED_LOW},
+    {0x0E, 4, FAN_SPEED_MID},   {0x10, 5, FAN_SPEED_MED_HIGH}, {0x12, 6, FAN_SPEED_HIGH},
 };
 static constexpr size_t FAN_TABLE_LEN = sizeof(FAN_TABLE) / sizeof(FAN_TABLE[0]);
 static constexpr uint8_t FAN_RAW_AUTO = 0x01;

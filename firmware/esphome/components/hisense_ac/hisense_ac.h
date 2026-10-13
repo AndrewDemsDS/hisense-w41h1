@@ -1,7 +1,8 @@
 #pragma once
 // Hub component: owns the A/C bus and moves decoded values into entities and user intent back
-// onto the bus. The protocol lives in hisense_protocol.* and hisense_map.h (the codec) and
-// hisense_bus.* (the transaction scheduler).
+// onto the bus. The codec is hisense_protocol.*, the transaction scheduler hisense_bus.*, the
+// decisions are the pure headers behind hisense_map.h, and hisense_commands.h tracks what was
+// sent. This file is what needs ESPHome: the UART, the DE pin, the entities and the log.
 //
 // ESPHome's uart component carries the bytes and the scheduler runs in loop(). No task, no
 // global state.
@@ -89,7 +90,6 @@ class HisenseAC final : public Component,
   /// Whether command frames ask the unit to beep. Applied to every command frame from then on;
   /// nothing is sent when it changes.
   void set_beeper(bool on) { this->beeper_ = on; }
-  bool beeper() const { return this->beeper_; }
 
   /// The command shadow: what the next combined frame states.
   const AcCommand &cmd() const { return this->commands_.cmd(); }
@@ -124,7 +124,6 @@ class HisenseAC final : public Component,
 
   // BusListener. These arrive from poll() on the main loop.
   void on_bus_status(const AcState &state) override;
-  void on_bus_features(const AcFeatures &features) override;
   void on_bus_link(bool up) override;
   void on_bus_frame(const uint8_t *frame, size_t len) override;
   void on_bus_checksum_error(const uint8_t *frame, size_t len) override;
@@ -196,12 +195,12 @@ class HisenseAC final : public Component,
   void publish_diagnostics_();
 
   // A decoded frame is parked here by poll() and published by loop() once the queue has drained.
-  AcState pending_{};
-  bool pending_valid_{false};
+  AcState parked_status_{};
+  bool parked_status_valid_{false};
   bool link_up_{false};
   bool link_dirty_{false};
   // A setup request is parked by poll() too, and its automations run from loop().
-  uint8_t setup_request_pending_{0};
+  uint8_t parked_setup_request_{0};
   uint8_t logged_link_request_{0};
   LazyCallbackManager<void(uint8_t)> setup_request_callback_;
 

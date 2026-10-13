@@ -721,6 +721,7 @@ struct Rig : H::CommandSink {
   // The scheduler's part, as far as the tracker sees it: a ticket per frame, and with `wire_ms`
   // set, the report that the frame's transaction ended that much later.
   uint32_t wire_ms = 0;
+  bool answered = true;  // whether the unit answers the frames it is sent
   H::BusTicket next_ticket = 0;
   std::vector<std::pair<H::BusTicket, uint32_t>> flying;
   H::BusTicket tx(FrameKind kind, const H::AcCommand &c, uint8_t value) {
@@ -780,7 +781,7 @@ struct Rig : H::CommandSink {
       now += 100;
       for (size_t f = 0; f < flying.size();) {
         if (flying[f].second == now) {
-          t.on_command_done(flying[f].first, true, now);
+          t.on_command_done(flying[f].first, answered, now);
           flying.erase(flying.begin() + (long) f);
         } else {
           f++;
@@ -1072,6 +1073,58 @@ static void test_scenarios() {
     CHECK(t.send_user_power_off(1000) && sink.sends == 1, "off is sent before the first status frame");
     H::AcCommand wanted = t.cmd();
     CHECK(!t.send_user_command(wanted, H::CONFIRM_MODE, false, 1000), "a combined frame is not");
+  }
+  {  // The pacing does not come back when the 32-bit clock does.
+    Unit u = running();
+    Rig h(&u);
+    h.user_special({H::SPECIAL_OP_MUTE, 1});
+    h.run(20000);
+    CHECK(u.v.special.mute && !h.busy(), "quiet on, confirmed, and the 10 s pacing has run out");
+    h.now += 0xFFFFFFFFu - 20000u + 1u + 1000u;  // 49.7 days later: the clock reads 1 s after that write
+    u.special_seen = false;                      // the unit's own debounce is long over
+    size_t before = u.heard.size();
+    h.user_special({H::SPECIAL_OP_MUTE, 0});
+    h.run(100);
+    CHECK(u.heard.size() == before + 1, "the next write goes out at once, not after another 9 s");
+    // Unanswered, the frame's end is what the pacing counts from: the unit may still have heard it.
+    Unit v = running();
+    Rig g(&v);
+    g.wire_ms = 100;
+    g.answered = false;
+    g.user_special({H::SPECIAL_OP_MUTE, 1});
+    g.run(100);
+    g.user_special({H::SPECIAL_OP_SLEEP, 2});
+    g.run(30000);
+    CHECK(v.heard.size() >= 2 && v.heard[1].t - v.heard[0].t >= H::SPECIAL_SETTLE_MS + 100,
+          "after an unanswered frame the next write waits 10 s from the frame's end (%u ms)",
+          v.heard.size() >= 2 ? (unsigned) (v.heard[1].t - v.heard[0].t) : 0);
+  }
+  {  // A sleep profile write that is lost is sent again, from a unit that already had a profile.
+    Unit u = running();
+    u.v.special.sleep = 1;
+    Rig h(&u);
+    u.lose = 1;
+    h.user_special({H::SPECIAL_OP_SLEEP, 3});
+    h.run(1500);
+    CHECK(h.busy(), "sleep 3 sent and lost");
+    h.run(30000);
+    CHECK(u.v.special.sleep == 3 && h.retries() == 1,
+          "a lost sleep write is sent again (sleep never yields: the unit moves it itself)");
+  }
+  {  // Power on, alone: the re-send is the literal power-on frame.
+    Unit u;
+    u.v = view(false, H::MODE_COOL, 24, 0x01);
+    u.one_frame_power = false;
+    Rig h(&u);
+    H::CommandIntent on;
+    on.fields = on.known = H::CONFIRM_POWER;
+    on.want.power_on = true;
+    CHECK(H::resend_frames(on, H::CONFIRM_POWER) == H::RESEND_POWER_ON_ALONE,
+          "nothing but power asked: power-on alone");
+    // An op of no known kind is never sent and is counted, not tracked.
+    h.t.enqueue_special({(H::SpecialOpKind) 9, 1}, h.now);
+    h.run(200);
+    CHECK(h.sends == 0 && h.failed() == 1 && !h.busy(), "an unknown special op: no frame, one failure");
   }
   {  // A preset row past the table is refused before anything looks it up.
     Unit u = running();
