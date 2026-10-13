@@ -538,6 +538,25 @@ jobs:
           export PLATFORMIO_BUILD_CACHE_DIR="$HOME/.cache/w41h1/pio-host-objects"
           python3 firmware/test/host_e2e/run.py --require
 
+      # The hub and the entities are outside the clang-tidy run of host-qa: cpp-lint.py compiles its
+      # units with plain host flags and these files need ESPHome's headers. This build has them,
+      # and PlatformIO writes its compile database in a second or two. Report only: the findings
+      # and their count go to the log and the summary. clang-tidy at the version cpp-lint.sh pins.
+      - name: clang-tidy on the hub and the entities (report only)
+        continue-on-error: true
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tidy"
+          "$RUNNER_TEMP/tidy/bin/pip" install --quiet "clang-tidy==$(sed -n 's/^CLANG_TIDY_VERSION=//p' firmware/scripts/cpp-lint.sh)"
+          export CLANG_TIDY="$RUNNER_TEMP/tidy/bin/clang-tidy"
+          python3 firmware/test/host_e2e/run.py --no-build --tidy --require | tee "$RUNNER_TEMP/tidy.log"
+          {
+            echo "## clang-tidy on the hub and the entities"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/tidy.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # The same scenarios on a build with gcov: which lines and functions of the hub and the
       # entities they reach, as a table in the job summary. On main only, and never blocking.
       - name: What the scenarios reach (report only)

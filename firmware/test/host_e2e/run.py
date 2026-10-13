@@ -10,6 +10,7 @@ the native API as Home Assistant drives a node.
     python3 firmware/test/host_e2e/run.py --no-build   use the binary from the last build
     python3 firmware/test/host_e2e/run.py --coverage   build with gcov, print what the scenarios reached
     python3 firmware/test/host_e2e/run.py --update-golden boot   rewrite entities.golden.json
+    python3 firmware/test/host_e2e/run.py --tidy       clang-tidy over the hub and the entities, no scenarios
 
 What is built is host.yaml: packages/hisense-ac.yaml unmodified, on a UART that is a device path.
 The scenarios are in scenarios.py and the A/C in ac_model.py (firmware/test/virtual_ac.py plus the
@@ -202,6 +203,53 @@ def build(args, esphome: str) -> pathlib.Path:
     return binary
 
 
+def tidy_report(args) -> int:
+    """clang-tidy, with the repository's .clang-tidy, over the glue files. firmware/scripts/cpp-lint.py
+    cannot reach them: its units compile with plain host flags and these need ESPHome's headers. The
+    host build has those and PlatformIO writes its compile database in a second or two. Report
+    only: prints the findings and their count, and returns 0 unless the tools are missing."""
+    build_dir = data_dir(args) / "build" / NODE_NAME
+    pio = pathlib.Path(sys.executable).parent / "pio"
+    tidy = os.environ.get("CLANG_TIDY") or shutil.which("clang-tidy")
+    cached = pathlib.Path.home() / ".cache" / "hisense-w41h1" / "cpp-lint" / "bin" / "clang-tidy"
+    if not os.environ.get("CLANG_TIDY") and cached.exists():
+        tidy = str(cached)  # the pinned one firmware/scripts/cpp-lint.sh installs
+    if not pio.exists() or tidy is None:
+        print(f"== clang-tidy on the glue SKIPPED: {'no pio beside ' + sys.executable if not pio.exists() else 'no clang-tidy (set CLANG_TIDY)'} ==")
+        return 1 if args.require else 0
+    # On a copy of the generated project: for this target PlatformIO deletes the project's build
+    # output (.pioenvs), and the program the scenarios run would go with it.
+    project = build_dir
+    build_dir = data_dir(args) / "tidy" / NODE_NAME
+    shutil.rmtree(build_dir, ignore_errors=True)
+    shutil.copytree(project, build_dir, ignore=shutil.ignore_patterns(".pio*", ".piolibdeps", "compile_commands.json"))
+    with open(build_dir / "compiledb.log", "wb") as out:
+        code = subprocess.run([str(pio), "run", "-t", "compiledb"], cwd=build_dir, env=CLEAN_ENV, stdout=out,
+                              stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=600).returncode
+    if code != 0 or not (build_dir / "compile_commands.json").exists():
+        print(f"== clang-tidy on the glue SKIPPED: `pio run -t compiledb` ended with {code} (see {build_dir / 'compiledb.log'}) ==")
+        return 1 if args.require else 0
+    findings: dict[str, str] = {}
+    for name in (g for g in GLUE if g.endswith(".cpp")):
+        log = build_dir / f"tidy-{name}.log"
+        with open(log, "wb") as out:
+            subprocess.run([tidy, f"--config-file={ROOT / '.clang-tidy'}", "-p", str(build_dir),
+                            f"src/esphome/components/hisense_ac/{name}"], cwd=build_dir, stdout=out,
+                           stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=900)
+        for line in open(log, encoding="utf-8", errors="replace"):
+            # A header's finding comes once per file that includes it.
+            if (": warning: " in line or ": error: " in line) and "components/hisense_ac/" in line:
+                where = line.split("components/hisense_ac/", 1)[1].strip()
+                findings.setdefault(where.split(" ", 1)[0], where)
+    version = subprocess.run([tidy, "--version"], stdout=subprocess.PIPE, text=True, timeout=30).stdout
+    number = next((w for w in version.split() if w[:1].isdigit()), "?")
+    print(f"== clang-tidy {number} on the glue: {len(findings)} finding(s) ==")
+    for where in sorted(findings.values()):
+        print(f"  {where}")
+    print("  not covered: wifi_setup_mode.cpp, which needs wifi: and so is not part of a host build")
+    return 0
+
+
 def clear_coverage(args):
     """The counters add up across runs of the program, so the ones of an earlier run go first."""
     for gcda in (data_dir(args) / "build" / NODE_NAME / ".pioenvs").rglob("*.gcda"):
@@ -267,6 +315,8 @@ def main() -> int:
                     help=f"scenarios at a time (default: {DEFAULT_JOBS}; 0: all of them at once)")
     ap.add_argument("--keep", action="store_true", help="keep the temporary directory with every node's log")
     ap.add_argument("--coverage", action="store_true", help="build host-coverage.yaml and report what was reached")
+    ap.add_argument("--tidy", action="store_true",
+                    help="no scenarios: clang-tidy over the hub and the entities, with the build's compile database")
     ap.add_argument("--update-golden", action="store_true", help="rewrite entities.golden.json from this build (run boot)")
     ap.add_argument("--require", action="store_true", help="fail where the default is to skip (no esphome)")
     args = ap.parse_args()
@@ -290,6 +340,8 @@ def main() -> int:
         print("== host e2e SKIPPED: esphome is not installed (set ESPHOME to its path) ==")
         return 1 if args.require else 0
     binary = build(args, esphome)
+    if args.tidy:
+        return tidy_report(args)
     if args.coverage:
         clear_coverage(args)
 

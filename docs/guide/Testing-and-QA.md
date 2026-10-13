@@ -95,7 +95,11 @@ python3 firmware/test/host_e2e/run.py --full       # the long ones too
 python3 firmware/test/host_e2e/run.py --list       # every scenario and what it takes
 python3 firmware/test/host_e2e/run.py holdoff      # one scenario
 python3 firmware/test/host_e2e/run.py --coverage   # which lines and functions the scenarios reach
+python3 firmware/test/host_e2e/run.py --tidy       # clang-tidy over the hub and the entities, no scenarios
 ```
+
+`--tidy` exists because `cpp-lint.sh` cannot reach those files: they need ESPHome's headers, and
+this build has a compile database for them. CI prints its findings without failing on them.
 
 It needs `esphome` and `g++`. The API client comes with esphome, so the script runs itself under
 the Python esphome is installed in. Without esphome it prints that it was skipped. The first
