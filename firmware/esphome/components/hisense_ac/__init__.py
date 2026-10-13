@@ -18,6 +18,7 @@ from esphome.const import (
     CONF_FLOW_CONTROL_PIN,
     CONF_ID,
     CONF_INPUT,
+    CONF_MAX_POWER,
     CONF_MODE,
     CONF_OUTPUT,
     CONF_STATE,
@@ -43,6 +44,14 @@ SetSetupIndicatorAction = hisense_ac_ns.class_(
 CONF_HISENSE_AC_ID = "hisense_ac_id"
 CONF_DE_PIN = "de_pin"
 CONF_ON_SETUP_REQUEST = "on_setup_request"
+
+# The limit on the power estimate, in watts: POWER_LIMIT_W_DEFAULT and POWER_LIMIT_W_MAX in
+# hisense_telemetry.h (the host test test_esphome_tables.py holds these equal to the header).
+# 5 kW is generous for a single-split residential unit. Below 500 W a unit's ordinary draw
+# would be thrown away.
+MAX_POWER_DEFAULT_W = 5000
+MAX_POWER_MAX_W = 50000
+MAX_POWER_MIN_W = 500
 
 
 def _listed_once(config: ConfigFragmentType) -> ConfigFragmentType:
@@ -79,6 +88,12 @@ CONFIG_SCHEMA = cv.All(
             # The remote's "77" gesture (horizontal airflow six times). `x` is the request
             # bits of the unit's 0x1E reply.
             cv.Optional(CONF_ON_SETUP_REQUEST): automation.validate_automation({}),
+            # A power estimate above this is published as unknown, and the current with it,
+            # so a bad byte on the bus cannot reach the energy total as tens of kilowatts.
+            cv.Optional(CONF_MAX_POWER, default=f"{MAX_POWER_DEFAULT_W}W"): cv.All(
+                cv.float_with_unit("power", "(W|w)?"),
+                cv.Range(min=MAX_POWER_MIN_W, max=MAX_POWER_MAX_W),
+            ),
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -158,6 +173,7 @@ async def to_code(config: ConfigType) -> None:
     await uart.register_uart_device(var, config)
     if de_pin := config.get(CONF_DE_PIN):
         cg.add(var.set_de_pin(await cg.gpio_pin_expression(de_pin)))
+    cg.add(var.set_max_power(round(config[CONF_MAX_POWER])))
     await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)
 
 

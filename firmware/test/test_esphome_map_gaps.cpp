@@ -1125,23 +1125,21 @@ static void test_confirm_boundaries() {
 }
 
 // ---- Power estimate ----------------------------------------------------------------------------
-// P[mW] = 4150 * raw^2 (the panel-meter calibration in the header), capped at 50 kW. The cap is
-// first reached at raw 110: 4150 * 109^2 = 49 306 150, 4150 * 110^2 = 50 215 000.
+// P[mW] = 4150 * raw^2 (the panel-meter calibration in the header), with no cap of its own:
+// whether an estimate is a reading is power_reading's decision (test_power_limit).
 static void test_power_estimate() {
-  printf("-- power estimate, at zero, at the cap and at the top of the byte\n");
-  CHECK(H::POWER_MW_PER_COUNT2 == 4150 && H::POWER_PF_PERMIL == 950 && H::POWER_MW_MAX == 50000000, "the calibration");
+  printf("-- power estimate, at zero and at the top of the byte\n");
+  CHECK(H::POWER_MW_PER_COUNT2 == 4150 && H::POWER_PF_PERMIL == 950, "the calibration");
   CHECK(H::active_power_mw(0) == 0, "raw 0 is 0 W");
   CHECK(H::active_power_mw(1) == 4150, "raw 1 is 4.15 W");
   CHECK(H::active_power_mw(2) == 16600, "raw 2 is 16.6 W: the square, not the double");
   CHECK(H::active_power_mw(10) == 415000, "raw 10 is 415 W");
   CHECK(H::active_power_mw(29) == 3490150, "raw 29 is 3490.15 W");
-  CHECK(H::active_power_mw(109) == 49306150, "raw 109 is the last value below the cap");
-  CHECK(H::active_power_mw(110) == 50000000, "raw 110 is capped at 50 kW");
-  CHECK(H::active_power_mw(255) == 50000000, "raw 255 too (269.9 kW uncapped)");
+  CHECK(H::active_power_mw(109) == 49306150, "raw 109 is 49.3 kW");
+  CHECK(H::active_power_mw(110) == 50215000, "raw 110 is 50.2 kW");
+  CHECK(H::active_power_mw(255) == 269853750, "raw 255 is 269.9 kW, as the byte gives it");
   for (int raw = 1; raw < 256; raw++)
-    CHECK(H::active_power_mw((uint8_t) raw) >= H::active_power_mw((uint8_t) (raw - 1)) &&
-              H::active_power_mw((uint8_t) raw) <= H::POWER_MW_MAX,
-          "raw %d: never falls, never passes the cap", raw);
+    CHECK(H::active_power_mw((uint8_t) raw) > H::active_power_mw((uint8_t) (raw - 1)), "raw %d: always rises", raw);
 
   // I[mA] = P[mW] * 1000 / (V * 950).
   CHECK(H::active_current_ma(29, 0) == 0 && H::active_current_ma(255, 0) == 0, "voltage unknown: 0, no division");
@@ -1149,8 +1147,70 @@ static void test_power_estimate() {
   CHECK(H::active_current_ma(29, 230) == 15973, "3490.15 W at 230 V, pf 0.95: 15.973 A");
   CHECK(H::active_current_ma(10, 230) == 1899, "415 W at 230 V: 1.899 A");
   CHECK(H::active_current_ma(10, 1) == 436842, "at 1 V: the smallest divisor");
-  CHECK(H::active_current_ma(255, 1) == 52631578, "the largest value the function returns");
-  CHECK(H::active_current_ma(255, 255) == 206398, "capped power at 255 V");
+  CHECK(H::active_current_ma(255, 1) == 284056578, "the largest value the function returns");
+  CHECK(H::active_current_ma(255, 255) == 1113947, "the top of both bytes");
+}
+
+// ---- Power plausibility ------------------------------------------------------------------------
+// An estimate above the hub's max_power is published as unknown, and the current with it. With the
+// default of 5 kW the last reading is raw 34 (4797.4 W), and raw 35 (5083.75 W) is the first that
+// is not.
+static bool unknown(float value) { return value != value; }
+
+static void test_power_limit() {
+  printf("-- an estimate above max_power is unknown, for power and for current\n");
+  CHECK(H::POWER_LIMIT_W_DEFAULT == 5000 && H::POWER_LIMIT_W_MAX == 50000, "5 kW unless configured, 50 kW at most");
+  const uint32_t limit = H::POWER_LIMIT_W_DEFAULT;
+
+  H::PowerReading r = H::power_reading(20, 228, limit);
+  CHECK(r.power_w == 1660.0f, "raw 20 is 1660 W, as before");
+  CHECK(r.current_a == 7.663f, "and 7.663 A at 228 V");
+  r = H::power_reading(0, 228, limit);
+  CHECK(r.power_w == 0.0f && r.current_a == 0.0f, "a unit at rest reads 0 W and 0 A, not unknown");
+  r = H::power_reading(20, 0, limit);
+  CHECK(r.power_w == 1660.0f && r.current_a == 0.0f, "voltage unknown: power is still a reading, current 0");
+
+  r = H::power_reading(34, 228, limit);
+  CHECK(r.power_w == 4797.4f && !unknown(r.current_a), "raw 34 (4797.4 W) is the last reading under 5 kW");
+  r = H::power_reading(35, 228, limit);
+  CHECK(unknown(r.power_w), "raw 35 (5083.75 W) is unknown, not 5083 W and not 5000 W");
+  CHECK(unknown(r.current_a), "the current computed from it is unknown too");
+  r = H::power_reading(35, 0, limit);
+  CHECK(unknown(r.power_w) && unknown(r.current_a), "with no voltage as well: unknown, not 0 A");
+  r = H::power_reading(255, 228, limit);
+  CHECK(unknown(r.power_w) && unknown(r.current_a), "raw 255 (269.9 kW) is unknown");
+  for (int raw = 0; raw < 256; raw++) {
+    r = H::power_reading((uint8_t) raw, 228, limit);
+    CHECK(unknown(r.power_w) == (raw > 34) && unknown(r.current_a) == (raw > 34),
+          "raw %d: power and current are known together, up to raw 34", raw);
+    CHECK(unknown(r.power_w) || r.power_w <= 5000.0f, "raw %d: nothing above the limit is published", raw);
+  }
+
+  // The limit is the configured one, and it is inclusive.
+  CHECK(H::power_reading(10, 228, 415).power_w == 415.0f, "415 W against a limit of 415 W is a reading");
+  CHECK(unknown(H::power_reading(10, 228, 414).power_w), "and unknown against 414 W");
+  CHECK(H::power_reading(35, 228, 6000).power_w == 5083.75f, "raw 35 is a reading once max_power is 6 kW");
+  r = H::power_reading(109, 228, H::POWER_LIMIT_W_MAX);
+  CHECK(r.power_w > 49306.0f && r.power_w < 49307.0f, "the highest limit lets raw 109 through (49.3 kW)");
+  for (int raw = 110; raw < 256; raw++)
+    CHECK(unknown(H::power_reading((uint8_t) raw, 228, H::POWER_LIMIT_W_MAX).power_w),
+          "raw %d is unknown at every limit the schema takes", raw);
+
+  // What the hub does with it, frame by frame: publish_sensor_ asks telemetry_publish_due with the
+  // sensor's last published value. A bad byte that stays must not go out once a second.
+  printf("-- an unknown power reading goes out once, then only on the refresh\n");
+  float last = H::power_reading(20, 228, limit).power_w;
+  float now = H::power_reading(255, 228, limit).power_w;
+  CHECK(H::telemetry_publish_due(true, last, now, false), "1660 W becoming unknown is published");
+  last = now;
+  for (int frame = 0; frame < 5; frame++) {
+    now = H::power_reading((uint8_t) (255 - frame), 228, limit).power_w;
+    CHECK(!H::telemetry_publish_due(true, last, now, false), "frame %d still over the limit: not published again",
+          frame);
+  }
+  CHECK(H::telemetry_publish_due(true, last, now, true), "the once-a-minute refresh repeats the unknown");
+  now = H::power_reading(20, 228, limit).power_w;
+  CHECK(H::telemetry_publish_due(true, last, now, false), "the next plausible frame is published at once");
 }
 
 // ---- Telemetry pacing and the outdoor placeholder ----------------------------------------------
@@ -1244,6 +1304,7 @@ int main() {
   test_pending();
   test_confirm_boundaries();
   test_power_estimate();
+  test_power_limit();
   test_telemetry();
   test_uart_policy();
   printf("  %d checks, %d failed, %d known defects\n", g_checks, g_fail, g_known);

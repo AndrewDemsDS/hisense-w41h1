@@ -144,6 +144,17 @@ publish it ([details](Entities-and-Diagnostics#behaviour-worth-knowing)).
 `Power` is an estimate computed from a value the bus carries, not a measurement
 (`firmware/docs/09-energy-monitoring.md` has the calibration).
 
+### Power and Current show unknown
+
+The estimate came out above `max_power`, 5 kW unless the node's `hisense_ac:` block sets another
+value. The firmware takes that for a bad byte on the bus and publishes no number. If the unit
+does draw more than 5 kW, raise the limit:
+
+```yaml
+hisense_ac:
+  max_power: 8kW
+```
+
 ## Flashing and recovery
 
 ### An ESP32 board will not flash, or has stopped booting

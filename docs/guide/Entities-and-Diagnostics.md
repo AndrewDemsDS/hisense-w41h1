@@ -36,10 +36,10 @@ presets and the limits are in [Everyday Control](Everyday-Control#the-climate-en
 | Outdoor temperature | `sensor.air_conditioner_outdoor_temperature` | °C | from the outdoor unit |
 | Coil temperature | `sensor.air_conditioner_coil_temperature` | °C | the outdoor (condenser) coil |
 | Compressor frequency | `sensor.air_conditioner_compressor_frequency` | Hz | how hard the compressor runs |
-| Power | `sensor.air_conditioner_power` | W | an estimate. The bus carries a current reading that is a proxy and not amps, and the firmware computes power from it (`firmware/docs/09-energy-monitoring.md`) |
+| Power | `sensor.air_conditioner_power` | W | an estimate. The bus carries a current reading that is a proxy and not amps, and the firmware computes power from it (`firmware/docs/09-energy-monitoring.md`). Unknown when the estimate is above `max_power` (5 kW unless set), which the firmware takes for a bad byte on the bus |
 | Voltage | `sensor.air_conditioner_voltage` | V | as the unit reports it |
-| Current | `sensor.air_conditioner_current` | A | derived from the power estimate and the voltage |
-| Energy today | `sensor.air_conditioner_energy_today` | kWh | the power estimate summed over the day. The day rolls over on Home Assistant's clock |
+| Current | `sensor.air_conditioner_current` | A | derived from the power estimate and the voltage. Unknown when the power is |
+| Energy today | `sensor.air_conditioner_energy_today` | kWh | the power estimate summed over the day. An unknown power value adds nothing of its own. The day rolls over on Home Assistant's clock |
 | Aux heat relay | `binary_sensor.air_conditioner_aux_heat_relay` | | on while the auxiliary heater runs |
 | Fault | `binary_sensor.air_conditioner_fault` | | on while the unit reports any fault |
 

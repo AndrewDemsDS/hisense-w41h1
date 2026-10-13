@@ -266,6 +266,9 @@ def valid_cases() -> list[Case]:
         "    - hisense_ac.set_setup_indicator:\n        id: ac_bus\n        state: !lambda return (x & 0x20) == 0;\n"
         "    - delay: 30s\n    - hisense_ac.set_setup_indicator: false\n",
     )
+    # max_power at both ends of its range: a bare number is watts, and a unit prefix is taken.
+    add("hub-max-power-lowest", base(c3, "hub-power-low").rstrip("\n") + "\n  max_power: 500\n")
+    add("hub-max-power-highest", base(c3, "hub-power-high").rstrip("\n") + "\n  max_power: 50kW\n")
     # No uart_id and no hisense_ac_id anywhere: with one of each ESPHome finds them.
     add(
         "ids-left-to-esphome",

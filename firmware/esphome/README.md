@@ -170,6 +170,7 @@ climate:
 | `id` | ID | generated | |
 | `uart_id` | ID | the only `uart:` | the bus the transceiver is on |
 | `de_pin` | output pin | none | the transceiver's DE (and RE) line. The hub raises it 5 ms before a frame and lowers it 25 ms after the last byte |
+| `max_power` | power | `5000W` | the highest power estimate that counts as a reading. Above it the `power` and `current` sensors are unknown. 500 W to 50 kW |
 | `on_setup_request` | automation | none | [the trigger](#the-trigger-and-the-action) |
 
 Validation:
@@ -185,6 +186,14 @@ Validation:
   direction by itself, and with any other the node never transmits and the bus link stays down.
   `de_pin` has the timing that was validated on hardware. `flow_control_pin` has not run on a
   unit.
+- `max_power` is watts, with or without the unit (`5000`, `5000W`, `3.5kW`), from 500 W to
+  50 kW. Outside that it is refused.
+
+`max_power` exists because the estimate is the square of one status byte, and only the frame
+checksum guards that byte: a wrong value reads as tens of kilowatts (the top of the byte is
+270 kW) and would be summed into the energy total. The default of 5 kW is generous for a
+single-split residential unit. Raise it for a larger unit, or lower it towards the unit's rated
+input to catch more.
 
 ### `climate`
 
@@ -232,9 +241,9 @@ All optional. Each takes every option of ESPHome's sensor schema.
 | `outdoor_temperature` | °C | outdoor temperature. Unknown while the unit sends its placeholder after a power cut |
 | `coil_temperature` | °C | outdoor (condenser) coil. Unknown under the same condition |
 | `compressor_frequency` | Hz | |
-| `power` | W | estimated from the current value the unit reports. Not metered |
+| `power` | W | estimated from the current value the unit reports. Not metered. Unknown when the estimate is above the hub's `max_power` |
 | `voltage` | V | supply voltage as the unit reports it |
-| `current` | A | derived from the power estimate |
+| `current` | A | derived from the power estimate, and unknown when it is |
 | `checksum_errors` | count | frames received with a bad checksum since boot |
 | `reply_timeouts` | count | reply windows that closed empty, any frame |
 | `unanswered_commands` | count | the command frames among those. Each send counts |
@@ -245,7 +254,8 @@ All optional. Each takes every option of ESPHome's sensor schema.
 Values are published when they change and at least once a minute. The six counters are
 diagnostic entities, count since boot and have state class `total_increasing`. For energy, add
 ESPHome's `total_daily_energy` on the power sensor with `method: left`, as
-`packages/hisense-ac.yaml` does.
+`packages/hisense-ac.yaml` does. `total_daily_energy` skips an unknown power value: a stretch
+above `max_power` is counted at the last reading before it.
 
 ### `binary_sensor`
 

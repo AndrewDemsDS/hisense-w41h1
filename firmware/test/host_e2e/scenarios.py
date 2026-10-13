@@ -232,6 +232,22 @@ async def telemetry(ctx):
     r.equal((node.value("sensor.outdoor_temperature"), node.value("sensor.coil_temperature")), (-20.0, -20.0),
             "once a real pair was seen the placeholder value is trusted as -20 C")
 
+    # A power byte no split unit means: 4.15 * 40^2 = 6640 W, above the default max_power of 5 kW.
+    unit.current = 40
+    r.check(await node.wait(lambda: math.isnan(node.value("sensor.power"))
+                            and math.isnan(node.value("sensor.current")), 3),
+            "an estimate above max_power: power and current are unknown, not 6640 W",
+            f"{node.value('sensor.power')}, {node.value('sensor.current')}")
+    seen = len(node.history)
+    await node.quiet_cycles(3)
+    again = [k for _, k, _ in node.history[seen:] if k in ("sensor.power", "sensor.current")]
+    r.check(not again, "the unknown is published once, not with every status frame", str(again))
+    r.equal(node.value("sensor.voltage"), 228.0, "the voltage is a reading all the while")
+    energy = node.value("sensor.energy_today")
+    r.check(energy is not None and energy < 0.01, "energy today took nothing from the 6640 W", str(energy))
+    unit.current = 20
+    r.check(await node.wait(lambda: node.value("sensor.power") == 1660.0, 3), "the next plausible frame reads 1660 W")
+
     unit.indoor, unit.comp, unit.current, unit.voltage, unit.aux_heat = 19, 0, 0, 0, True
     r.check(await node.wait(lambda: node.climate.current_temperature == 19.0 and node.climate.action == Action.IDLE, 3),
             "compressor at 0 Hz: the climate action is idle and the room reads 19")

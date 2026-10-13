@@ -251,7 +251,9 @@ static void test_boundaries() {
 
   // Power estimate at the ends of the raw byte.
   CHECK(H::active_power_mw(0) == 0, "raw 0 is 0 W");
-  CHECK(H::active_power_mw(255) == H::POWER_MW_MAX, "raw 255 is capped");
+  CHECK(H::active_power_mw(255) == 269853750, "raw 255 is 269.9 kW, the most the byte can say");
+  const H::PowerReading top = H::power_reading(255, 255, H::POWER_LIMIT_W_MAX);
+  CHECK(top.power_w != top.power_w && top.current_a != top.current_a, "and unknown at the highest limit there is");
   CHECK(H::active_current_ma(255, 0) == 0, "no voltage, no current (no divide by zero)");
   CHECK(H::active_current_ma(0, 255) == 0, "no power, no current");
 

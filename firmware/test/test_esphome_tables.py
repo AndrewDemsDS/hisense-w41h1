@@ -142,6 +142,20 @@ def main() -> int:
         f"__init__.py demands baud rate {schema_baud.group(1) if schema_baud else None}, BUS_BAUD_RATE is {baud}",
     )
 
+    # The power limit: the default and the top of the range max_power takes.
+    limits = cpp_constants(source("hisense_telemetry.h"), "POWER_LIMIT_W_")
+    hub = source("__init__.py")
+    for name, constant in (("MAX_POWER_DEFAULT_W", "POWER_LIMIT_W_DEFAULT"), ("MAX_POWER_MAX_W", "POWER_LIMIT_W_MAX")):
+        check(
+            python_int(hub, name) is not None and python_int(hub, name) == limits.get(constant),
+            f"__init__.py {name} = {python_int(hub, name)}, hisense_telemetry.h says {limits.get(constant)}",
+        )
+    low = python_int(hub, "MAX_POWER_MIN_W")
+    check(
+        low is not None and 0 < low < limits.get("POWER_LIMIT_W_DEFAULT", 0),
+        f"__init__.py MAX_POWER_MIN_W = {low} is below the default",
+    )
+
     print(f"  {checks} checks, {failures} failed")
     print("== TABLES FAILED ==" if failures else "== TABLES OK ==")
     return 1 if failures else 0

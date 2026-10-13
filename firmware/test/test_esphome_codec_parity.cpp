@@ -680,8 +680,20 @@ static void test_presets() {
   }
 }
 
+// The original clamps the estimate at 50 kW. The port does not clamp: it publishes an estimate
+// above the hub's max_power as unknown (power_reading), and max_power is at most those 50 kW. So
+// the two agree on every byte the original leaves alone, and every byte it clamps is one the port
+// never publishes.
 static void test_power() {
+  CHECK(HISENSE_POWER_MW_MAX == (int64_t) H::POWER_LIMIT_W_MAX * 1000, "the original's clamp is the highest limit");
   for (int i = 0; i < 256; i++) {
+    if (hisense_active_power_mw((uint8_t) i) == HISENSE_POWER_MW_MAX) {
+      const H::PowerReading r = H::power_reading((uint8_t) i, 230, H::POWER_LIMIT_W_MAX);
+      CHECK(H::active_power_mw((uint8_t) i) > HISENSE_POWER_MW_MAX && r.power_w != r.power_w &&
+                r.current_a != r.current_a,
+            "power %d: clamped by the original, unknown in the port", i);
+      continue;
+    }
     CHECK(hisense_active_power_mw((uint8_t) i) == H::active_power_mw((uint8_t) i), "power %d", i);
     for (int v = 0; v < 256; v += 3)
       CHECK(hisense_active_current_ma((uint8_t) i, (uint8_t) v) == H::active_current_ma((uint8_t) i, (uint8_t) v),

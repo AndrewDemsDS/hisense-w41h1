@@ -9,9 +9,9 @@ before you rely on the kWh figure, or if you want to calibrate against your own 
 
 | Entity | Source |
 |---|---|
-| Power (W) | `4.15 * raw^2`, where `raw` is status byte 55 |
+| Power (W) | `4.15 * raw^2`, where `raw` is status byte 55. Unknown above the hub's `max_power` |
 | Voltage (V) | status byte 50, in whole volts as the unit reports it |
-| Current (A) | derived: `P / (V * 0.95)` |
+| Current (A) | derived: `P / (V * 0.95)`. Unknown when the power is |
 | Energy today (kWh) | ESPHome's `total_daily_energy` on the Power sensor, in `packages/hisense-ac.yaml` |
 
 The values are published when they change and at least once a minute. Power and current read 0
@@ -22,8 +22,27 @@ statistics hold the history.
 The model is `active_power_mw()` and `active_current_ma()` in
 `firmware/esphome/components/hisense_ac/hisense_telemetry.h`, pure functions with host tests
 (`test_esphome_codec_parity.cpp` holds them equal to the reference in
-`firmware/test/reference-driver/power_estimate.h`, and `test_esphome_map_gaps.cpp` covers their
-bounds).
+`firmware/test/reference-driver/power_estimate.h` for every byte value the reference does not
+clamp, and `test_esphome_map_gaps.cpp` covers their bounds).
+
+### The limit: `max_power`
+
+An estimate above the hub's `max_power` option (watts, default 5000, 500 W to 50 kW) is not
+published as a number. Power goes out as unknown, and so does current, since it is computed from
+the power. `power_reading()` in the same header makes that decision, with its own host tests.
+
+The estimate is the square of one byte, and nothing but the frame checksum guards that byte: a
+value of 255 reads as 270 kW. Before this limit the
+firmware clamped the estimate at 50 kW and published it, and the energy sensor summed it. 5 kW
+is generous for a single-split residential unit (the highest point in the calibration below is
+934 W, raw 15). With the default, raw 34 (4797 W) is the highest value published and raw 35
+(5084 W) the first that is not.
+
+What an unknown stretch does to the energy figure: ESPHome's `total_daily_energy` ignores an
+unknown value, so nothing is added while it lasts, and the next reading adds the whole gap at
+the last power published before it (`method: left`). A long run of bad bytes during a change of
+load is therefore counted at the old load. An unknown value is published once and then with the
+once-a-minute refresh, not with every status frame.
 
 ## How far to trust it
 
@@ -38,8 +57,8 @@ mode.
   the real power factor is lower.
 - Byte 50 reads about 6 % below a panel meter (about 220 against 234 to 236 V). The power figure
   does not depend on it. The derived current does.
-- There is no plausibility clamp on byte 55. `active_power_mw()` is bounded at 50 kW to keep the
-  arithmetic in range, and nothing more.
+- The only plausibility check on byte 55 is `max_power` (above). A wrong byte that still gives
+  an estimate under the limit is published as a reading.
 - No comparison against the vendor app's numbers is on record.
 
 ## The calibration
