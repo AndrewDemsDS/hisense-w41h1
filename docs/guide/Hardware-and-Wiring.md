@@ -1,87 +1,75 @@
-# Hardware & Wiring
+# Hardware and Wiring
+
+What the AEH-W41H1 module is, what is on its board, and the 4-pin port it plugs into. Read this
+before you build a replacement board or put a clip on the module.
 
 ![The module, external](images/module-external.png)
 
-The AEH-W41H1 is a sealed plastic dongle that plugs into the A/C indoor unit through a **4-pin
-connector** carrying **5 V, GND, and an RS-485 A/B pair**. Under an RF shield can sits the Wi-Fi
-SoC and its external flash; the RS-485 transceiver is outside the shield next to the cable
-connector.
+*The module: a small board in a white housing on a 4-pin cable to the indoor unit. (Photo: FCC ID
+2AGCCAEH-W41H1, public record.)*
 
-Depth: `reverse-engineering/docs/01-hardware.md`
-and `reverse-engineering/hardware/pinouts.md`.
+The module is a sealed plastic dongle. Its connector carries 5 V, GND and an RS-485 A/B pair.
+Under an RF shield sit the Wi-Fi chip and its flash. The RS-485 transceiver is outside the shield,
+next to the cable connector.
 
-## What's on the board
+More detail: `reverse-engineering/docs/01-hardware.md` and `reverse-engineering/hardware/pinouts.md`.
+
+## What is on the board
 
 ![Inside: the parts](images/module-internal-annotated.png)
 
-*RF shield removed; ① 4-pin A/C connector ② RS-485 transceiver ③ SPI flash (clip here) ④ RTL8710C SoC. Photo: FCC ID 2AGCCAEH-W41H1, public record.*
+*RF shield removed. 1: the 4-pin A/C connector. 2: the RS-485 transceiver. 3: the SPI flash (the
+clip goes here). 4: the RTL8710C. Photo: FCC ID 2AGCCAEH-W41H1, public record.*
 
 | Part | Detail |
 |---|---|
-| Wi-Fi SoC | Realtek **RTL8710C (AmebaZ2)**, ARM Cortex-M, FreeRTOS. Secure boot **OFF**. Wi-Fi and BLE. ESPHome runs on it through the LibreTiny platform. |
-| Flash | GigaDevice **GD25Q32(B)**: 4 MB SPI NOR, SOIC-8, JEDEC ID `C8 40 16`. Two firmware slots (OTA1 + OTA2) + a KV/FTL config partition near the top of flash. |
-| RS-485 transceiver | Union Semiconductor **UM3352E**, MAX485-compatible, 8-pin SOIC. The A/C communication path. |
-
-## A/C bus (RS-485)
-
-- The module talks to the A/C mainboard over **UART0** at **9600 8N1**, half-duplex. On the SoC:
-  **TX = PA_14, RX = PA_13, DE = PA_17** (the driver raises DE around every transmit, as the stock
-  firmware does); the log console is on PA_16. See [Protocol Overview](Protocol-Overview#physical-layer).
-- On the UM3352E transceiver, bus **A/B are pins 6/7** to the mainboard; **RO (pin 1)** is received
-  bytes (A/C → dongle) and **DI (pin 4)** is transmitted bytes (dongle → A/C) at logic level. Both
-  are handy sniff points. Bus logic is likely 5 V; level-shift to 3.3 V before a 3.3 V-only
-  adapter.
-
-## The 4-pin A/C port
-
-Carries **5 V · GND · RS-485 A · RS-485 B**. Power comes from the A/C; a bench supply tends to brown
-out the radio, so power the module from the unit. This is where an **ESP32** replacement connects
-(see [ESP32 Replacement Board](ESP32-Replacement-Build)).
-
-![A/C connector pinout](images/ac-connector-pinout.png)
-
-The board silkscreens the pins **4-3-2-1** left to right: **pin 1 = 5 V** (red), **pins 2 and 3 = the
-RS-485 A/B pair** (white, yellow), **pin 4 = GND** (blue). A and B are interchangeable at wiring time;
-if the bus will not link, swap them. Confirm the colors against your own unit before you power
-anything.
-
-## Replacing the module with an ESP32
-
-The recommended build drops the W41H1 entirely and plugs an ESP32 into the same 4-pin port. Parts,
-about €5 in total:
-
-| Part | Pick | Notes |
-|---|---|---|
-| ESP32 board | **ESP32-C3 SuperMini** (small enough for the module bay), or a classic ESP32 dev board | powered from the port's 5 V |
-| RS-485 transceiver | a **3.3 V** part: MAX3485, SP3485 or SN65HVD75, or a 3.3 V auto-direction TTL to RS-485 module | **never a 5 V MAX485 module**: its RO pin drives 5 V into the ESP32 and kills the RX pin |
-| C3 only | a ~10 kΩ pulldown resistor on DE (GPIO10) | stops a floating DE from jamming the bus at power-up |
-| Wiring | a 4-pin lead to the A/C port, jumper wires | A and B are interchangeable; swap them if the bus will not link |
-
-![ESP32 wiring](images/esp32-wiring.png)
-
-*Classic ESP32 ↔ auto-direction RS-485 module ↔ A/C 4-pin bus. The C3 SuperMini uses TX 5 / RX 6 /
-DE 10.*
-
-Full pin tables for both boards, and the GPIO pins you must avoid, are in
-[ESP32 Replacement Board](ESP32-Replacement-Build#bom-5--wiring). Two rules protect the hardware
-while you work:
-
-- **While the board is on USB, connect only A and B** to the A/C. Joining the A/C's mains-earthed
-  GND to a laptop-earthed board browns it out. GND and 5 V go on once the laptop is unplugged.
-- Bench-test with no A/C first: [Build, Flash & Test](Build-Flash-Test#bench-stage-no-ac).
-
-## Flash access (stock module recovery)
-
-The GD25Q32 is fully dumpable and writable with a **CH341A programmer + SOIC-8 clip**. Clip wiring, the in-circuit read problem and
-the CH341A voltage warning are in [Recovery & Reflash](Recovery-and-Reflash#use-the-clip-tooling-not-flashrom).
+| Wi-Fi chip | Realtek RTL8710C (AmebaZ2 family), ARM Cortex-M, Wi-Fi and BLE. Secure boot is off. ESPHome runs on it through the LibreTiny platform ([The Stock Module](Stock-Module-Build)) |
+| Flash | GigaDevice GD25Q32(B): 4 MB SPI NOR, SOIC-8, JEDEC ID `C8 40 16`. Two firmware slots, and a settings area near the top |
+| RS-485 transceiver | Union Semiconductor UM3352E, MAX485-compatible, SOIC-8 |
 
 ![Module label](images/module-internal-back.png)
 
-*The board's underside carries the model marking (FCC ID 2AGCCAEH-W41H1, public record).*
+*The underside of the board carries the model marking (FCC ID 2AGCCAEH-W41H1, public record).*
 
-## Ready to flash?
+## The 4-pin A/C port
 
-- **ESP32 board wired up:** follow the [User Guide](User-Guide).
-- **Keeping the stock module:** read
-  [ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board) and its risk list,
-  and take a full dump with the clip before anything else ([Recovery & Reflash](Recovery-and-Reflash)).
+![A/C connector pinout](images/ac-connector-pinout.png)
+
+The board silkscreens the pins 4-3-2-1 from left to right.
+
+| Pin | Signal | Wire colour on the bench unit |
+|---|---|---|
+| 1 | 5 V | red |
+| 2 | RS-485 A or B | white |
+| 3 | RS-485 A or B | yellow |
+| 4 | GND | blue |
+
+A and B are interchangeable at wiring time. If the bus does not link, swap them. Wire colours can
+differ between revisions, so check them on your own unit before you power anything.
+
+Power comes from the A/C. A bench supply tends to brown out the radio, so run the module, or the
+board that replaces it, from the unit.
+
+## The bus
+
+- RS-485, half duplex, 9600 baud, 8N1. The module is the bus master and the A/C mainboard only
+  answers ([Protocol Overview](Protocol-Overview#physical-layer)).
+- On the module the bus is UART0: TX on `PA_14`, RX on `PA_13`, and the transceiver's driver
+  enable (DE) on `PA_17`. The firmware raises DE around every transmission, as the vendor firmware
+  does. The module's log console is on `PA_16`.
+- On the UM3352E, bus A and B are pins 6 and 7. RO (pin 1) carries the bytes from the A/C at
+  logic level, and DI (pin 4) the bytes to the A/C. Both are good points for a sniffer. The logic
+  level is probably 5 V, so shift it to 3.3 V before a 3.3 V adapter.
+
+## Access to the flash
+
+The GD25Q32 can be read and written with a CH341A programmer and a SOIC-8 clip. The wiring, the
+in-circuit read problem and the CH341A voltage warning are in
+[Recovery and Reflash](Recovery-and-Reflash#stock-module-ch341a-clip).
+
+## Next
+
+- To replace the module with an ESP32: [ESP32 Replacement Board](ESP32-Replacement-Build), which
+  has the parts, the pin tables and the wiring picture.
+- To keep the module: [The Stock Module](Stock-Module-Build), and take a full dump with the clip
+  before anything else.

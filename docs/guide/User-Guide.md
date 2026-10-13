@@ -1,130 +1,88 @@
 # User Guide
 
-One script takes you from a fresh clone to a running A/C node: `firmware/scripts/dev.py`. It
-checks your tools, installs the pinned ESPHome, runs the host tests, builds and flashes. It prints
-every command before it runs it and asks before anything slow or destructive, so you can always see
-what is happening and repeat a step by hand.
+This guide takes you from a Hisense A/C with an `AEH-W41H1` Wi-Fi module to a climate device in
+Home Assistant that works without the ConnectLife cloud. Start here: this page helps you choose
+the hardware, says what state each choice is in, and names the page to read next.
 
-← back to [Home](Home) · details: [Build, Flash & Test](Build-Flash-Test) ·
-[ESPHome Build](ESPHome-Build)
+There is one firmware, the `hisense_ac` ESPHome component. It talks to the A/C over the 4-pin
+RS-485 port the Wi-Fi module plugs into, and to Home Assistant over the ESPHome native API. What
+you choose is the board it runs on.
 
----
+Not sure the unit is the right kind? See
+[Will this work on my A/C?](https://andrewdemsds.github.io/hisense-w41h1/compatibility.html)
 
-## Pick the hardware
+## Choose the hardware
 
-There is one firmware, the `hisense_ac` ESPHome component. It reaches Home Assistant over the
-ESPHome native API. What you choose is the board it runs on:
+| | ESP32 replacement board | The stock module | Another ESPHome chip |
+|---|---|---|---|
+| What it is | an ESP32-C3 SuperMini or a classic ESP32 with a 3.3 V RS-485 transceiver, plugged in where the module was | the module that came with the A/C (Realtek RTL8710C), running ESPHome through the LibreTiny platform | an ESP8266 D1 mini or a Raspberry Pi Pico W with the same transceiver |
+| You add | about 5 EUR of parts and four soldered wires | nothing | parts you already have |
+| First flash | USB cable | over the air from this project's retired Matter firmware (done once). From the vendor firmware it needs a SOIC-8 clip or UART download mode, and that has not been done | USB cable |
+| If an update goes wrong | the bootloader rolls back to the previous image. A USB flash always recovers the board | no rollback. An image that does not boot needs the clip and a dump of that unit taken beforehand | USB flash |
+| State today | on live units since 2026-08, both boards | the factory flash layout runs on one module in an A/C since 2026-10-10. The other two layouts compile and have never run. A second converted module went silent on the bus, cause unknown | example configs that compile every night. Never run on a board |
+| Read next | [ESP32 Replacement Board](ESP32-Replacement-Build) | [The Stock Module](Stock-Module-Build) | [ESPHome Firmware](ESPHome-Build#board-files) |
 
-| # | Hardware | `--board` | Status | Why pick it |
-|---|---|---|---|---|
-| 1 | an ESP32-C3 SuperMini or classic ESP32 plus a 3.3 V RS-485 transceiver, in place of the module | `c3` (default), `classic` | runs on live units since 2026-08 | about 5 EUR of parts, flashed and recovered over USB, a bad update rolls back |
-| 2 | the stock W41H1 module, through LibreTiny | `amebaz2-factory`, `amebaz2-sdk`, `amebaz2-native` | first run in an A/C on 2026-10-10 | nothing added to the unit, but no rollback, and a SOIC-8 clip is the only recovery |
-| 3 | another chip ESPHome supports (ESP8266, RP2040) | none, use the example YAML | compiles, never run | you already have the board |
+Use an ESP32 board unless you have a reason to keep the original module. The measured comparison
+is `firmware/docs/13-path-comparison.md`.
 
-Start with the ESP32 board unless you have a reason not to. The stock module route is described in
-[ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board): read its risk list
-before you choose it. The trade-offs with measured figures are in
-`firmware/docs/13-path-comparison.md`.
+## The route with an ESP32 board
 
-The ESP32 route needs the wiring from [Hardware & Wiring](Hardware-and-Wiring) and the GPIO
-warnings in [ESP32 Replacement Board](ESP32-Replacement-Build).
+1. Look at the module and the port it plugs into: [Hardware and Wiring](Hardware-and-Wiring).
+2. Build the board, and read the pins to avoid before you solder:
+   [ESP32 Replacement Board](ESP32-Replacement-Build).
+3. Install ESPHome and fill in the secrets file: [Build Environment](ESP32-Build-Environment).
+4. Flash it over USB. From `firmware/esphome/`:
 
-Apple Home, Google Home and Alexa are reached through Home Assistant's own Matter or HomeKit
-bridge. The Matter firmwares this project used to have are retired
-([Matter Firmware (Retired)](Matter-Firmware-Retired)).
+   ```
+   esphome run w41h1-esp32c3.yaml      # ESP32-C3 SuperMini
+   esphome run w41h1.yaml              # classic ESP32
+   ```
 
-## What you need
+   Or let the wrapper script ask before each step:
+   `python3 firmware/scripts/dev.py walk esphome --board c3`. Its commands are in
+   [Build, Flash and Test](Build-Flash-Test).
+5. Bring it up in three stages: on the bench against the simulator, on the real bus with only A
+   and B connected, then powered from the A/C
+   ([staged bring-up](ESP32-Replacement-Build#staged-bring-up)).
+6. Add the node to Home Assistant: [ESPHome Firmware](ESPHome-Build#adopt-it-in-home-assistant).
+7. Use it: [Everyday Control](Everyday-Control).
 
-A Linux x86_64 machine. The package names below are for Debian and Ubuntu; `doctor` tells you what
-is still missing. If ESPHome is new to you, read [Build Environment](ESP32-Build-Environment)
-first: it says where each tool comes from and gives the steps by hand.
+## The route with the stock module
 
-| For | Install | Disk |
-|---|---|---|
-| the host tests | `sudo apt install git python3 g++` | |
-| ESPHome | `sudo apt install pipx` (`fetch` installs the pinned ESPHome with it) | about 5 GB: ESPHome downloads its own toolchain into `~/.cache/esphome`, so the first build takes several minutes |
+Read [The Stock Module](Stock-Module-Build) and its risk list first. Take a full dump of the flash
+chip with the clip before anything else ([Recovery and Reflash](Recovery-and-Reflash)). The rest
+of the route (secrets, Home Assistant, everyday use) is the same as above.
 
-Then clone the repository:
+## When something breaks
 
-```
-git clone https://github.com/AndrewDemsDS/hisense-w41h1.git
-cd hisense-w41h1
-```
-
-All commands below run from the repository root.
-
-## The short version
-
-```
-python3 firmware/scripts/dev.py walk esphome [--board c3|classic] [--port /dev/ttyACM0]
-```
-
-`walk` asks before each step: check the tools (and offer to install ESPHome), host tests and the
-config check, build, erase if the board is brand new, flash and logs, then print the staged
-bring-up with its safety warnings. Answer N to skip a step. Everything below is the same flow, one
-command at a time.
-
-`--board` is `c3` (ESP32-C3 SuperMini, the default) or `classic` (ESP32-D0WDQ6). It picks the chip
-and the pins, so no file needs editing to switch boards.
-
-## Step by step
-
-```
-# read-only: is esphome at the pinned version?
-python3 firmware/scripts/dev.py doctor esphome
-# pipx install esphome==2026.7.4, create secrets.yaml
-python3 firmware/scripts/dev.py fetch esphome
-# host tests + esphome config
-python3 firmware/scripts/dev.py test esphome
-# esphome compile
-python3 firmware/scripts/dev.py build esphome --board c3
-# brand-new board only, asks you to type ERASE
-python3 firmware/scripts/dev.py erase esphome --port /dev/ttyACM0
-python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
-```
-
-1. After `fetch`, fill in `firmware/esphome/secrets.yaml` (Wi-Fi and an API encryption key). It is
-   gitignored.
-2. `flash` builds, writes the board over USB and follows the logs.
-3. Home Assistant discovers the node over mDNS; adopt it with the API key from `secrets.yaml`
-   ([ESPHome Build](ESPHome-Build#adopt-it-in-home-assistant)). If the node cannot join Wi-Fi it
-   opens a `hisense-ac-setup` hotspot to set it.
-4. Later updates go over Wi-Fi from ESPHome itself ([ESPHome Build](ESPHome-Build#updates)).
-
-More: [ESPHome Build](ESPHome-Build).
-
-## Test without an A/C
-
-`bench` flashes the firmware and runs `virtual_ac.py` on a second USB adapter that plays the A/C:
-
-```
-python3 firmware/scripts/dev.py bench esphome --board c3 --port /dev/ttyACM0 --sim-port /dev/ttyUSB0
-```
-
-Wiring and what passing output looks like: [Build, Flash & Test](Build-Flash-Test#bench-stage-no-ac).
-
-## Then
-
-`python3 firmware/scripts/dev.py next esphome` prints the remaining bring-up stages (real bus with
-only A/B connected while USB-powered, then powered from the connector) and the warnings that go with
-them. After that: [Everyday Control](Everyday-Control), and [Recovery & Reflash](Recovery-and-Reflash)
-if something goes wrong.
-
-## Command reference
-
-| Command | Does |
+| Situation | Page |
 |---|---|
-| `walk esphome` | the guided flow, asks before each step |
-| `doctor esphome` | read-only: tools on `PATH`, ESPHome at the pinned version, `secrets.yaml` present |
-| `fetch esphome` | install the pinned ESPHome with pipx (asks first) |
-| `test esphome` | `firmware/test/run_tests.sh`, then `esphome config` |
-| `build esphome` | compile the firmware |
-| `erase esphome --port P` | erase-flash, brand-new ESP32 boards only, needs typed `ERASE` |
-| `flash esphome --port P` | flash over USB, then logs |
-| `monitor esphome --port P` | serial logs only |
-| `bench esphome --port P --sim-port S` | firmware against `virtual_ac.py`, no A/C |
-| `next esphome` | the staged bring-up and its warnings |
+| A symptom you can name (no bus link, a command that does not take, a node Home Assistant cannot find) | [Troubleshooting and FAQ](FAQ-Gotchas) |
+| What an entity or a counter means | [Entities and Diagnostics](Entities-and-Diagnostics) |
+| The node has to move to another Wi-Fi network | [Wi-Fi Setup Mode and the Status LED](Wifi-Setup-Mode) |
+| A board or a module that no longer answers | [Recovery and Reflash](Recovery-and-Reflash) |
 
-`python3 firmware/scripts/dev.py --help` prints the same list. A stock module that still runs the
-retired Matter firmware is moved over with `firmware/scripts/matter-convert.py`
-([how](Converting-a-Stock-Module-to-ESPHome)).
+## What has not run on hardware
+
+The firmware drives live A/Cs every day. These parts of the tree are host-tested or compile, and
+nobody has seen them work on a unit yet:
+
+- Wi-Fi setup mode and the remote's "77" gesture ([details](Wifi-Setup-Mode)).
+- The status pixel of the ESP32-C3 SuperMini Plus.
+- The stock module's sdk and native flash layouts.
+- A first install of ESPHome on a stock module with the clip, and the clip tool that writes one
+  firmware slot.
+- The ESP8266 and RP2040 example configs.
+
+Each page repeats the note where it matters.
+
+## Other things to know
+
+- Home Assistant is the only controller. Apple Home, Google Home and Alexa reach the unit through
+  Home Assistant's own Matter or HomeKit bridge.
+- Several units can act as one thermostat: [Climate Groups](Climate-Groups).
+- This project used to ship two Matter firmwares. They are retired. If a unit of yours runs one,
+  see [Matter Firmware (Retired)](Matter-Firmware-Retired).
+- Contributing, the test suite and the protocol:
+  [Repo Map and Build Pipeline](Repo-Map-and-Build-Pipeline), [Testing and QA](Testing-and-QA),
+  [Protocol Overview](Protocol-Overview).

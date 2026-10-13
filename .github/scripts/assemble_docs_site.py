@@ -30,22 +30,27 @@ SOURCES = [
     ("docs/guide", "guide", "guide", "Guide"),
 ]
 
-# Guide pages read in a deliberate order rather than alphabetically: a newcomer needs wiring before
-# flashing before everyday use. Anything unlisted sorts after these, alphabetically.
+# Guide pages read in a deliberate order rather than alphabetically: a newcomer chooses hardware,
+# builds, uses, and only then needs the pages for trouble. Keep it equal to docs/guide/_Sidebar.md.
+# Anything unlisted sorts after these, alphabetically.
 GUIDE_ORDER = [
     "User-Guide",
     "Hardware-and-Wiring",
-    "ESP32-Build-Environment",
-    "ESPHome-Build",
     "ESP32-Replacement-Build",
+    "Stock-Module-Build",
+    "ESP32-Build-Environment",
+    "Build-Flash-Test",
+    "ESPHome-Build",
     "Everyday-Control",
     "Entities-and-Diagnostics",
     "Climate-Groups",
-    "Recovery-and-Reflash",
-    "Build-Flash-Test",
     "FAQ-Gotchas",
+    "Wifi-Setup-Mode",
+    "Recovery-and-Reflash",
+    "Repo-Map-and-Build-Pipeline",
+    "Testing-and-QA",
+    "Protocol-Overview",
     "Matter-Firmware-Retired",
-    "Migrating-ESP32-Matter-to-ESPHome",
     "Converting-a-Stock-Module-to-ESPHome",
 ]
 

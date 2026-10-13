@@ -39,7 +39,7 @@ back_to_top: true
 back_to_top_text: "Back to top"
 
 nav_external_links:
-  - title: "Releases (firmware downloads)"
+  - title: "Releases and changelog"
     url: "https://github.com/AndrewDemsDS/hisense-w41h1/releases"
 
 plugins:

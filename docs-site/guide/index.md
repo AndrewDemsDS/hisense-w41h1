@@ -2,11 +2,14 @@
 title: Guide
 nav_order: 2
 has_children: true
-description: Wiring, flashing, everyday control, updates and recovery for a de-clouded Hisense A/C.
+description: Choose the hardware, build and flash the ESPHome firmware, use the A/C from Home Assistant, and recover a node when something goes wrong.
 ---
 
 # Guide
 
-Everything needed to take a Hisense A/C off the ConnectLife cloud and run it locally, in the order
-you will need it: wiring, flashing, adopting the node in Home Assistant, day-to-day control,
-updates, and getting back out of trouble.
+From a Hisense A/C with an `AEH-W41H1` Wi-Fi module to a climate device in Home Assistant with no
+cloud. The pages are in the order you need them: choose the hardware, build and flash, everyday
+use, then troubleshooting and recovery. The developer pages and the page about the retired Matter
+firmware come last.
+
+Start with the [User Guide](User-Guide.html).

@@ -1,24 +1,31 @@
 ### [Home](Home)
 
-**Operator**
+**Start**
 - [User Guide](User-Guide)
-- [Hardware & Wiring](Hardware-and-Wiring)
-- [Build Environment](ESP32-Build-Environment)
-- [ESPHome Build](ESPHome-Build)
+- [Hardware and Wiring](Hardware-and-Wiring)
 - [ESP32 Replacement Board](ESP32-Replacement-Build)
-- [Everyday Control](Everyday-Control)
-- [Entities & Diagnostics](Entities-and-Diagnostics)
-- [Climate Groups](Climate-Groups)
-- [Recovery & Reflash](Recovery-and-Reflash)
-- [FAQ & Gotchas](FAQ-Gotchas)
+- [The Stock Module](Stock-Module-Build)
 
-**From the retired Matter firmware**
-- [Matter Firmware (Retired)](Matter-Firmware-Retired)
-- [Migrating ESP32 Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome)
-- [Converting a Stock Module to ESPHome](Converting-a-Stock-Module-to-ESPHome)
+**Build and install**
+- [Build Environment](ESP32-Build-Environment)
+- [Build, Flash and Test](Build-Flash-Test)
+- [ESPHome Firmware](ESPHome-Build)
+
+**Use**
+- [Everyday Control](Everyday-Control)
+- [Entities and Diagnostics](Entities-and-Diagnostics)
+- [Climate Groups](Climate-Groups)
+
+**When something is wrong**
+- [Troubleshooting and FAQ](FAQ-Gotchas)
+- [Wi-Fi Setup Mode and the Status LED](Wifi-Setup-Mode)
+- [Recovery and Reflash](Recovery-and-Reflash)
 
 **Developer**
-- [Build, Flash & Test](Build-Flash-Test)
-- [Repo Map & Build Pipeline](Repo-Map-and-Build-Pipeline)
+- [Repo Map and Build Pipeline](Repo-Map-and-Build-Pipeline)
+- [Testing and QA](Testing-and-QA)
 - [Protocol Overview](Protocol-Overview)
-- [Testing & QA](Testing-and-QA)
+
+**Retired**
+- [Matter Firmware (Retired)](Matter-Firmware-Retired)
+- [Converting a Stock Module (Moved)](Converting-a-Stock-Module-to-ESPHome)
