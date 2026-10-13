@@ -1,0 +1,27 @@
+# fast_connect: the node is back on its network before the hotspot is up, so setup mode cannot
+# open it on demand. The build is not refused (the fallback hotspot still works and "77" can be
+# lit on it): it says so at config time and the node logs it when asked.
+# accepted: setup mode on demand is switched off for this Wi-Fi configuration, with a warning.
+# warns: wifi_setup_mode cannot open the hotspot on demand .* fast_connect
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  tx_pin: "5"
+  rx_pin: "6"
+  de_pin: "10"
+  w41h1_components:
+    type: local
+    path: ../../components
+
+packages:
+  node: !include ../../packages/node.yaml
+  ota: !include ../../packages/ota.yaml
+  hisense_ac: !include ../../packages/hisense-ac.yaml
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+wifi:
+  fast_connect: true

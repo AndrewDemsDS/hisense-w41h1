@@ -1,0 +1,36 @@
+# wifi_setup_mode on a node without `ap:`: there is no hotspot to open.
+# expect: wifi_setup_mode opens the node's hotspot, and this configuration has none
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [hisense_ac, wifi_setup_mode]
+
+wifi:
+  ssid: example-ssid
+  password: example-password
+
+captive_portal:
+
+uart:
+  - id: uart_bus
+    tx_pin: GPIO5
+    rx_pin: GPIO6
+    baud_rate: 9600
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: GPIO10
+
+wifi_setup_mode:

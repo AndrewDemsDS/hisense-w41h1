@@ -1,0 +1,25 @@
+# packages/status-led.yaml without node.yaml: its lambda asks the wifi_setup_mode component whether
+# setup is showing (wifi_setup), which node.yaml defines.
+# The message names the missing id, not the missing package.
+# expect: Couldn't find ID 'wifi_setup'
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  status_led_pin: GPIO7
+
+packages:
+  status_led: !include ../../packages/status-led.yaml
+
+esphome:
+  name: ${name}
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: example-ssid
+  password: example-password

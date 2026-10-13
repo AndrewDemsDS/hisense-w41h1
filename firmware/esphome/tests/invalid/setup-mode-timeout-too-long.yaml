@@ -1,0 +1,23 @@
+# wifi_setup_timeout above a day: the deadline is compared on a 32 bit millisecond clock, and a
+# hotspot that stays open for days is not a setup mode.
+# expect: value must be at most 24h
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  tx_pin: "5"
+  rx_pin: "6"
+  de_pin: "10"
+  w41h1_components:
+    type: local
+    path: ../../components
+  wifi_setup_timeout: 2d
+
+packages:
+  node: !include ../../packages/node.yaml
+  ota: !include ../../packages/ota.yaml
+  hisense_ac: !include ../../packages/hisense-ac.yaml
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf

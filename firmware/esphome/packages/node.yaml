@@ -6,7 +6,8 @@
 # Substitutions the including file may override: name, friendly_name, wifi_power_save,
 # wifi_setup_timeout (all below).
 # Secrets it reads: wifi_ssid, wifi_password, wifi_ap_password, hisense_ac__encryption_key.
-# It expects the hub from hisense-ac.yaml beside it: setup mode switches the panel's "77" through it.
+# It expects hisense-ac.yaml beside it: setup mode switches the panel's "77" through the hub, and
+# takes its component from the source that file names (w41h1_components).
 
 substitutions:
   # The node's name on the network (and the prefix of its setup hotspot) and the device name Home
@@ -68,115 +69,27 @@ captive_portal:
 # remote's "77" gesture (horizontal airflow six times) does on the stock module. Here the gesture,
 # or the button below, opens the hotspot and puts "77" on the panel. It ends in a restart: after
 # wifi_setup_timeout, when the gesture is repeated, or once a network entered in the portal has
-# connected. A restart is the clean way out because the Wi-Fi component opens its hotspot once
-# per boot.
+# connected. A network that was entered and did not connect is replaced by the one the node had,
+# also when the node restarts for another reason or loses power in between.
 #
-# How the hotspot is forced, with ESPHome's public Wi-Fi API only: ESPHome opens it when no
-# network has been connected for `ap_timeout`. So Wi-Fi is switched off and on again with that
-# timeout at 1 ms, and the station is pointed, in memory only, at a network that does not exist.
-# Nothing is written to flash, so a power cut or a crash in setup mode comes back on the old
-# network. The one thing the portal writes is what the user enters there. If that did not connect
-# by the time setup mode ends, the credentials the node had before are written back first.
-globals:
-  - id: wifi_setup_active
-    type: bool
-    initial_value: "false"
-  # The network the node was on, to put back if one entered in the portal fails, and the name of
-  # the placeholder network, to tell whether the portal was used at all.
-  - id: wifi_setup_prev_ssid
-    type: std::string
-  - id: wifi_setup_prev_password
-    type: std::string
-  - id: wifi_setup_parked_ssid
-    type: std::string
+# All of it is the wifi_setup_mode component (components/wifi_setup_mode/, decisions in
+# setup_mode_logic.h, host-tested). What is here is the wiring: its timeout, the gesture and the
+# button. The component comes from the same place as the hub, which hisense-ac.yaml names
+# (w41h1_components).
+external_components:
+  - source: ${w41h1_components}
+    components: [wifi_setup_mode]
+
+wifi_setup_mode:
+  id: wifi_setup
+  timeout: ${wifi_setup_timeout}
 
 script:
-  # The gesture is both the way in and the way out.
+  # What the hub's on_setup_request runs (hisense-ac.yaml). The gesture is both the way in and
+  # the way out.
   - id: wifi_setup_toggle
     then:
-      - if:
-          condition:
-            lambda: return id(wifi_setup_active);
-          then:
-            - script.execute: wifi_setup_leave
-          else:
-            - script.execute: wifi_setup_enter
-
-  - id: wifi_setup_enter
-    mode: single
-    then:
-      - hisense_ac.set_setup_indicator: true
-      - lambda: |-
-          auto *net = wifi::global_wifi_component;
-          id(wifi_setup_active) = true;
-          if (net->is_ap_active()) {
-            // The configured network was already out of reach and ESPHome opened the hotspot.
-            ESP_LOGW("setup", "Wi-Fi setup mode: the hotspot is already open");
-            return;
-          }
-          const wifi::WiFiAP current = net->get_sta();
-          id(wifi_setup_prev_ssid) = current.get_ssid().c_str();
-          id(wifi_setup_prev_password) = current.get_password().c_str();
-          // A network name nobody has, with a key nobody knows, so nothing can answer to it.
-          char name[20];
-          char key[20];
-          snprintf(name, sizeof(name), "setup-%08x", (unsigned) random_uint32());
-          snprintf(key, sizeof(key), "%08x%08x", (unsigned) random_uint32(), (unsigned) random_uint32());
-          id(wifi_setup_parked_ssid) = name;
-          wifi::WiFiAP parked;
-          parked.set_ssid(name);
-          parked.set_password(key);
-          ESP_LOGW("setup", "Wi-Fi setup mode: leaving the network and opening the hotspot");
-          net->disable();
-          net->set_ap_timeout(1);
-          net->enable();
-          // After enable(), which reloads credentials saved by an earlier use of the portal.
-          net->set_sta(parked);
-      - wait_until:
-          condition:
-            wifi.ap_active:
-          timeout: 30s
-      - if:
-          condition:
-            wifi.ap_active:
-          then:
-            - logger.log:
-                level: WARN
-                tag: setup
-                format: "Wi-Fi setup mode: hotspot open, http://192.168.4.1"
-            - wait_until:
-                condition:
-                  wifi.connected:
-                timeout: ${wifi_setup_timeout}
-          else:
-            # ESPHome opens its hotspot once per boot. If it was open and closed again earlier in
-            # this boot, it does not come back. The restart below clears that, and the next
-            # request works.
-            - logger.log:
-                level: ERROR
-                tag: setup
-                format: "Wi-Fi setup mode: the hotspot did not open. Restarting, ask again after that"
-      - script.execute: wifi_setup_leave
-
-  - id: wifi_setup_leave
-    then:
-      - hisense_ac.set_setup_indicator: false
-      - lambda: |-
-          auto *net = wifi::global_wifi_component;
-          id(wifi_setup_active) = false;
-          const wifi::WiFiAP now = net->get_sta();
-          const bool portal_used = !id(wifi_setup_parked_ssid).empty() && now.get_ssid() != id(wifi_setup_parked_ssid);
-          if (net->is_connected()) {
-            ESP_LOGW("setup", "Wi-Fi setup mode: connected, restarting");
-          } else if (portal_used && !id(wifi_setup_prev_ssid).empty()) {
-            // What was entered in the portal is in flash and did not connect. Without this the
-            // node would come back up on it and stay off the network.
-            ESP_LOGW("setup", "Wi-Fi setup mode: the network entered did not connect, restoring the previous one");
-            net->save_wifi_sta(id(wifi_setup_prev_ssid), id(wifi_setup_prev_password));
-          } else {
-            ESP_LOGW("setup", "Wi-Fi setup mode: over, restarting onto the previous network");
-          }
-          App.safe_reboot();
+      - wifi_setup_mode.toggle: wifi_setup
 
 button:
   # The same thing from Home Assistant, for a unit whose remote is not at hand. The node drops
@@ -186,7 +99,7 @@ button:
     icon: mdi:wifi-cog
     entity_category: diagnostic
     on_press:
-      - script.execute: wifi_setup_enter
+      - wifi_setup_mode.start: wifi_setup
 
 # Node diagnostics, the same three on every board, so a node built from any board file shows what
 # the nodes in the field show. All three exist on every platform the board files use (ESP32,
