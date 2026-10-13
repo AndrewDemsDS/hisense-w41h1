@@ -76,6 +76,12 @@ g++ -std=c++17 -Wall -I../esphome/components/hisense_ac -I../esphome/components/
 ./test_esphome_map_gaps.bin
 
 echo
+# Prints its own "Layer 1o" heading.
+g++ -std=c++17 -Wall -I../esphome/components/wifi_setup_mode test_esphome_setup_mode.cpp \
+    -o test_esphome_setup_mode.bin
+./test_esphome_setup_mode.bin
+
+echo
 echo "== Layer 1m: fuzz corpus replay, known failures, framing edge cases (ASan + UBSan) =="
 ./fuzz/run.sh --smoke
 
