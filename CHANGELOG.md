@@ -39,6 +39,13 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   preset with neither sent only the eco clear and left turbo on. It now sends the eco clear and
   then the turbo clear, 10 s apart like every special-mode write.
 
+- **Configurations that cannot work are refused when they are validated.** A second
+  `hisense_ac` climate entity on one hub, `min_temperature` above `max_temperature`, a setpoint
+  range outside 16 to 32 °C (61 to 90 °F), a `de_pin` in input mode, and `de_pin` together with
+  the UART's `flow_control_pin`. Neither of the two gives a warning. A second hub and
+  `hisense_ac.set_setup_indicator` without `state` now say what is wrong. A configuration that
+  one of these rules refuses did validate before: it has to be corrected to build again.
+
 ### Board files, the stock-module component and CI (2026-10-12)
 - **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air
   Conditioner`), and the board files no longer repeat the two lines. A file that sets them keeps

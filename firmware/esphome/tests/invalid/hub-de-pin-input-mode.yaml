@@ -1,6 +1,6 @@
-# de_pin configured as an input.
-# accepted: pins.gpio_output_pin_schema only makes output the default mode, an explicit
-# `mode: INPUT` gets through. The hub then writes to an input and the bus never transmits.
+# de_pin configured as an input. pins.gpio_output_pin_schema only makes output the default mode,
+# so the component checks the mode itself.
+# expect: de_pin drives the transceiver's DE line, so its mode has to be an output
 esphome:
   name: invalid-case
 

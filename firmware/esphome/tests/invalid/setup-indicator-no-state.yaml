@@ -1,7 +1,5 @@
 # hisense_ac.set_setup_indicator without a state.
-# UNHELPFUL: the message should be "'state' is a required option". It comes from
-# cv.maybe_simple_value, which takes a mapping without the key as the value itself.
-# expect: Expected boolean value, but cannot convert \{'id': 'ac_bus'\} to a boolean
+# expect: 'state' is a required option for hisense_ac.set_setup_indicator
 esphome:
   name: invalid-case
 

@@ -1,6 +1,6 @@
-# Two climate entities on one hub.
-# accepted: the hub keeps one climate pointer (HisenseAC::set_climate), so the entity set up
-# last gets the unit's state and the other one never updates. climate.py does not refuse it.
+# Two climate entities on one hub. The hub hands each status frame to one climate entity, so a
+# second one would never update.
+# expect: Only one hisense_ac climate entity per hub: 2 are declared for 'ac_bus'
 esphome:
   name: invalid-case
 
