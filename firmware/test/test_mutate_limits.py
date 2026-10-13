@@ -13,6 +13,7 @@ needed. It compiles three programs of a few lines with g++. About 10 s, most of 
 """
 
 import importlib.util
+import os
 import pathlib
 import resource
 import subprocess
@@ -86,9 +87,19 @@ with tempfile.TemporaryDirectory(prefix="mutate-limits-") as tmp:
         (tmp / f"{name}.cpp").write_text(source)
         subprocess.run(["g++", "-std=c++17", "-O0", "-w", str(tmp / f"{name}.cpp"), "-o", str(tmp / name)], check=True, timeout=120)
 
+    # The scope mode ends with the kernel killing `hog` at its 64 MB limit. A desktop reports
+    # that as "the system is low on memory" (it cannot tell one scope's limit from a real
+    # shortage), twice per run of this file. So on a desktop the scope mode is asked for.
     scope = mutate.systemd_scope_works()
-    modes = (["scope"] if scope else []) + ["rlimit"]
-    print(f"  --   systemd user scope: {'available' if scope else 'not available here, the RLIMIT_AS fallback is what runs'}")
+    wanted = bool(os.environ.get("CI") or os.environ.get("MUTATE_LIMITS_SCOPE"))
+    modes = (["scope"] if scope and wanted else []) + ["rlimit"]
+    if not scope:
+        print("  --   systemd user scope: not available here, the RLIMIT_AS fallback is what runs")
+    elif not wanted:
+        print("  --   systemd user scope: available, not run (set MUTATE_LIMITS_SCOPE=1 to run it: "
+              "a desktop shows two low-memory notices)")
+    else:
+        print("  --   systemd user scope: available")
     for mode in modes:
         limits = mutate.choose_limits(64, sanitize=False, mode=mode)
         limits["timeout_s"] = 2

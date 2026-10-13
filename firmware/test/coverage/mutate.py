@@ -205,7 +205,10 @@ def run_fenced(exe, cwd, limits: dict) -> int:
     """Run one test binary inside the limits. Returns its exit status, a negative signal number
     when it was killed, or TIMED_OUT. Its output is never read: it goes to /dev/null."""
     def fence():
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        # 1, not 0: with a piped core_pattern (systemd-coredump) the kernel ignores a limit of 0
+        # and runs the handler for every killed mutant. At exactly 1 it skips the pipe, and a
+        # core file of one byte is below what the kernel will write, so there is none either.
+        resource.setrlimit(resource.RLIMIT_CORE, (1, 1))
         resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_FILE_BYTES, MAX_FILE_BYTES))
         if limits["mode"] == "rlimit":
             resource.setrlimit(resource.RLIMIT_AS, (limits["mem_bytes"], limits["mem_bytes"]))
