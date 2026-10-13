@@ -1,117 +1,107 @@
 # ESP32 Replacement Board
 
-The recommended hardware: an **ESP32 and an RS-485 transceiver** that take the place of the
-AEH-W41H1 module on the A/C's 4-pin connector and run the [ESPHome firmware](ESPHome-Build). This
-page is the hardware side: parts, wiring for both boards, the pins to avoid and the staged
-bring-up. Code-level notes are in `firmware/docs/16-esp32-board-notes.md`.
-
-← back to [Home](Home) · siblings: [ESPHome Build](ESPHome-Build) ·
-[Hardware & Wiring](Hardware-and-Wiring) · [Build, Flash & Test](Build-Flash-Test)
-
----
+The recommended hardware: an ESP32 and an RS-485 transceiver that take the place of the AEH-W41H1
+module on the A/C's 4-pin connector and run the [ESPHome firmware](ESPHome-Build). This page is
+the hardware side: the parts, the wiring for both boards, the pins to avoid and the staged
+bring-up. The reasons behind each rule are in `firmware/docs/16-esp32-board-notes.md`.
 
 ## Why replace the module
 
-The W41H1 (RTL8710C) modules **die easily** (ESD and handling, a dead module is a common
-failure) and are **hard to source in the EU**. The protocol is the hard part, and it is done and
-validated. An ESP32 that speaks the same bus bytes **is** a W41H1 to the mainboard: there is no
-Hisense authentication on the wire, only the RS-485 handshake the firmware performs. An ESP32 is
-also flashed and recovered over USB, where the stock module needs a clip on its flash chip.
+The stock modules die easily (static and handling) and are hard to buy in the EU. The A/C
+mainboard asks for no authentication on the bus, so a board that sends the same bytes is a
+module as far as the unit can tell. An ESP32 is also flashed and recovered over USB, where the
+stock module needs a clip on its flash chip.
 
 ```
-Hisense mainboard ──RS-485(A/B)── RS-485 transceiver ──UART── ESP32 ── Wi-Fi ── Home Assistant
+A/C mainboard ── RS-485 (A/B) ── transceiver ── UART ── ESP32 ── Wi-Fi ── Home Assistant
 ```
 
-## BOM (~€5) + wiring
+## Parts
 
-- **ESP32-C3 SuperMini** (small enough to sit where the W41H1 did), 5 V on its `5V` pin. A
-  classic ESP32 dev board works too, 5 V on VIN.
-- A **3.3 V RS-485 transceiver**: **MAX3485 / SP3485 / SN65HVD75**, with DE+RE tied to a GPIO.
-  An **auto-direction** TTL↔RS-485 module also works (the DE toggle is then a harmless no-op).
-  **Avoid a 5 V MAX485 module**: its RO would push 5 V into the ESP32 RX and kill it.
-- Power and bus come from the A/C's module connector (**5 V confirmed**).
+About 5 EUR in total.
 
-The pins are set per board file in `firmware/esphome/` (or by `dev.py --board`), so there is
-nothing to edit when you switch boards:
-
-| Signal | ESP32-C3 SuperMini | classic ESP32-D0WDQ6 | transceiver |
-|---|---|---|---|
-| TX | GPIO5 → | GPIO19 → | DI (auto-direction module: RXD) |
-| RX | GPIO6 ← | GPIO18 ← | RO (auto-direction module: TXD) |
-| DE | GPIO10 → | GPIO4 → | DE+RE tied (auto-direction module: not connected) |
-| 3V3 / GND | 3V3 / GND | 3V3 / GND | VCC / GND |
-
-Both pin sets run on a live A/C. The C3 set is three consecutive plain GPIOs on one header row:
-no strapping pin (2 / 8 / 9), no USB (18 / 19), no UART0 (20 / 21).
-
-**Bus side (transceiver ↔ A/C 4-pin):**
-
-| RS-485 module | | A/C 4-pin |
+| Part | Pick | Notes |
 |---|---|---|
-| A | → | RS-485 A |
-| B | → | RS-485 B |
-| GND | → | GND |
-| ESP32 5V / VIN | ← | 5 V |
+| ESP32 board | an ESP32-C3 SuperMini, which is small enough to sit where the module did. A classic ESP32 dev board works too | powered from the port's 5 V: the `5V` pin on the SuperMini, VIN on a classic board |
+| RS-485 transceiver | a 3.3 V part: MAX3485, SP3485 or SN65HVD75, with DE and RE tied together to one GPIO. A 3.3 V auto-direction TTL to RS-485 module also works, and the DE signal then goes nowhere | never a 5 V MAX485 module: its RO pin drives 5 V into the ESP32 and kills the RX pin |
+| C3 only | a resistor of about 10 kΩ from DE (GPIO10) to GND | keeps a floating DE from jamming the bus at power-up |
+| Wiring | a 4-pin lead to the A/C port, jumper wires | the port's pinout is in [Hardware and Wiring](Hardware-and-Wiring#the-4-pin-ac-port) |
+
+There are two ESP32-C3 SuperMini boards, and they need different board files. The plain SuperMini
+has a small blue LED on GPIO8. The SuperMini Plus has an RGB pixel there (a square white package)
+and usually an external antenna connector
+([board files](ESPHome-Build#board-files)).
+
+## Wiring
+
+The pins are set in the board file, so there is nothing to edit when you switch boards.
+
+| Signal | ESP32-C3 SuperMini | classic ESP32 | transceiver |
+|---|---|---|---|
+| TX | GPIO5 | GPIO19 | DI (auto-direction module: RXD) |
+| RX | GPIO6 | GPIO18 | RO (auto-direction module: TXD) |
+| DE | GPIO10 | GPIO4 | DE and RE tied (auto-direction module: not connected) |
+| 3V3, GND | 3V3, GND | 3V3, GND | VCC, GND |
+
+Both pin sets run on a live A/C. The C3 set is three plain GPIOs in a row on one header: no
+strapping pin (2, 8, 9), no USB (18, 19), no UART0 (20, 21).
+
+Bus side:
+
+| Transceiver or board | A/C 4-pin port |
+|---|---|
+| A | RS-485 A |
+| B | RS-485 B |
+| GND | GND |
+| the ESP32's 5V or VIN | 5 V |
 
 ![ESP32 wiring](images/esp32-wiring.png)
 
-*Classic ESP32 ↔ auto-direction RS-485 module ↔ A/C 4-pin bus. No data? Swap RXD/TXD (vendor
-labeling varies). Never use GPIO16/17 (PSRAM pins).*
+*A classic ESP32, an auto-direction RS-485 module and the A/C's 4-pin bus. The C3 SuperMini uses
+TX 5, RX 6, DE 10. No data? Swap RXD and TXD: vendor labels vary.*
 
-The A/C connector pinout:
+## Pins and mistakes to avoid
 
-![A/C connector pinout](images/ac-connector-pinout.png)
+- **C3: never put the UART on GPIO18 or GPIO19.** They are the USB data lines, and on the
+  SuperMini that USB port is the only way to flash the board or see its console.
+- **C3: fit the 10 kΩ pulldown on DE (GPIO10).** DE floats from power-on until the firmware
+  configures the pin, and a DE that drifts high puts a second driver on the A/C's bus. It shows
+  as intermittent bus corruption, which does not look like a wiring fault. If firmware and wiring
+  disagree on the DE pin, the node sends and never hears a reply: `AC bus link` stays off.
+- **Classic ESP32: never use GPIO16 or GPIO17 on a WROVER or D0WDQ6 module.** They are bonded to
+  the PSRAM die and dead as I/O, even with PSRAM disabled. TX on GPIO17 once cost a whole
+  debugging session, because an internal loopback passes (it does not go through the pads). To
+  prove the pins before wiring the transceiver, put a jumper from GPIO19 to GPIO18: RX has to
+  follow TX.
+- **A brand-new board: erase the flash before the first flash** (`dev.py erase esphome --port P`,
+  or `esptool.py erase_flash`). A vendor test image can leave a Wi-Fi configuration in NVS. Never
+  erase a board that is already running: that throws away its Wi-Fi settings.
+- **Ground loop.** While the board is powered over USB, connect only A and B to the A/C. Joining
+  the A/C's mains-earthed ground to a laptop-earthed board browns it out (watchdog resets,
+  flash read errors). GND and 5 V go on at stage 3, with the laptop unplugged.
 
-## The hard-won gotchas
+Why the C3's DE pin moved from GPIO7 to GPIO10, the DE release timing and the stale-NVS
+diagnosis: `firmware/docs/16-esp32-board-notes.md`.
 
-- **⚠️ C3: never put the UART on GPIO18/19.** On the C3 those are the USB D-/D+ lines, and on the
-  SuperMini that USB port is the only way to flash it or see its console.
-- **⚠️ C3: fit a ~10k pulldown on DE (GPIO10).** DE floats from power-on until the firmware
-  configures the pin, and a DE that drifts high parks a second driver on the A/C's bus. It shows up
-  as intermittent bus corruption, not as an obvious wiring fault. If firmware and wiring disagree
-  on the DE pin, the node sends and never hears a reply: `AC bus link` stays off.
-- **⚠️ Brand-new board: erase flash before the first flash** (`dev.py erase esphome --port P`, or
-  `esptool.py erase_flash`). A vendor test image can leave a Wi-Fi config in NVS. Never erase a
-  board that is already running: that throws away its Wi-Fi settings.
-- **⚠️ Never use GPIO16/17 for UART on a WROVER/D0WDQ6 module**: they're bonded to the PSRAM
-  die and dead as I/O *even with SPIRAM disabled*. TX-on-17 cost a whole "RX=0 but internal
-  loopback passes" debugging session (internal loopback bypasses the pads). Bench tip: prove the
-  pins with a bare GPIO19→GPIO18 jumper (RX must track TX) *before* wiring the transceiver.
-- **⚠️ Ground loop / brownout**: while the ESP32 is USB-powered (bring-up stage 2), connect
-  **only A/B** to the A/C. Routing the mains-earthed A/C GND to the laptop-earthed ESP32 browns
-  it out (RTCWDT resets, flash-read errors). A/C GND/5V only join at stage 3 (powered from the
-  connector, no laptop).
+## Staged bring-up
 
-The history behind these (why the C3's DE moved from GPIO7 to GPIO10, DE-release timing, the
-stale-NVS diagnosis) is in `firmware/docs/16-esp32-board-notes.md`. The envelope device-type bytes
-are explained in
-[Protocol Overview](Protocol-Overview#the-seqhilo-bytes-are-a-device-type-not-a-session-token).
+Never leave the A/C in an unknown state. Three stages, each with a clear pass.
 
-## Staged bring-up (never leave the A/C in an unknown state)
+1. **Bench, no A/C.** Run the host tests, then flash the board and let it talk to the simulator
+   on a USB adapter ([how](Build-Flash-Test#bench-stage-no-ac)). Pass: the `AC bus link` sensor
+   turns on and the climate entity fills in.
+2. **The real bus, on USB power.** Take the module out and connect A and B only. Pass: the link
+   comes up, and the indoor temperature, the mode and the compressor frequency match the unit.
+   That proves reading. Then send one command.
+3. **Powered from the connector.** Unplug the laptop, connect 5 V and GND, close the unit.
 
-1. **Bench, no A/C**: run the host tests (`dev.py test esphome`), then flash the board and drive
-   it with `virtual_ac.py` on a USB adapter (`dev.py bench esphome`, wiring and passing output in
-   [Build, Flash & Test](Build-Flash-Test#bench-stage-no-ac)).
-2. **Real bus, USB-powered**: remove the module, tap **A/B only** (ground-loop warning). The
-   `AC bus link` sensor turns on and the decoded indoor temperature, mode and compressor
-   frequency match the unit. This proves the **read** direction. Then send one command.
-3. **Full integration**: power from the connector's 5 V, close it up.
+`python3 firmware/scripts/dev.py next esphome` prints these stages with their warnings.
 
-Both directions are **hardware-proven**: the mainboard accepts a non-Hisense module, the link
-comes up with the device-type bytes learned from the A/C, and nodes drive A/Cs from Home Assistant
-this way.
+Both directions are proven on hardware: the mainboard accepts a board that is not Hisense's, the
+link comes up with the device-type bytes learned from the A/C, and nodes drive A/Cs from Home
+Assistant this way.
 
-## Build and flash
+## Next
 
-[User Guide](User-Guide) for the guided way, [Build Environment](ESP32-Build-Environment) for a
-clean machine and every step by hand, [ESPHome Build](ESPHome-Build) for what the firmware gives
-you. In short:
-
-```
-python3 firmware/scripts/dev.py walk esphome --board c3        # or --board classic
-```
-
-## Coming from the ESP32 Matter firmware
-
-A board that runs the retired esp-matter build keeps its wiring and can be moved to ESPHome
-without a cable: [Migrating an ESP32 Node from Matter to ESPHome](Migrating-ESP32-Matter-to-ESPHome).
+Install the tools and flash: [Build Environment](ESP32-Build-Environment). A board that will not
+flash or boot: [Recovery and Reflash](Recovery-and-Reflash#esp32-boards).

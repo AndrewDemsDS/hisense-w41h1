@@ -1,10 +1,30 @@
-# Stock firmware feature map (fw1, `dumps/w41h1_dump1.bin`)
+# Stock firmware feature map
 
-Synthesis of the six raw analysis notes (`analysis/cloud-jcmd-tls.md`, `ota-handler.md`,
-`local-attack-surface.md`, `matter-stack.md`, `kv-sysdata-layout.md`, `strings-census.md`).
-Claims below were cross-checked across the notes; where they disagreed, the note with
-byte-exact recomputation or pointer-pool evidence wins. Addresses are XIP runtime
-addresses unless tagged as file/flash offsets.
+Everything the vendor firmware of the AEH-W41H1 does besides driving the A/C bus: its cloud
+channel, the rules an update image has to satisfy, what it listens on, its Matter stack, and where
+it keeps its settings in flash. Read it before reflashing a module, before building an image for
+one, and to know what a module on the vendor firmware exposes on your network.
+
+## Status of this page
+
+Current reference for the vendor firmware, with one history section.
+
+- All of it is static analysis of one flash dump, `dumps/w41h1_dump1.bin` (slot fw1), which is
+  not in the repository. It merges six analysis notes (`cloud-jcmd-tls`, `ota-handler`,
+  `local-attack-surface`, `matter-stack`, `kv-sysdata-layout`, `strings-census`). Those notes
+  quote the dump, so they are kept with it and are not published. Where the notes disagreed, the
+  one with a byte-exact recomputation or pointer-pool evidence was followed.
+- The image acceptance rules are the exception: they were recomputed on real image files (37 and
+  29 files, as stated there), and their omission bricked a module on 2026-07-21, which confirmed
+  the bootloader's check the hard way. They are implemented in
+  [`firmware/scripts/amebaz2_image.py`](../../firmware/scripts/amebaz2_image.py) and tested by
+  `firmware/test/test_image_chain.py`.
+- Nothing about the cloud channel or the listeners was tested against a live module.
+- "Revert-to-stock implications" is about the project's retired Matter firmware and carries a
+  notice.
+- The open questions at the end are also in [14-open-questions.md](14-open-questions.md).
+
+Addresses are runtime addresses unless marked as file or flash offsets.
 
 > **BASE CORRECTION (load-bearing for all xref work):** fw1 executes at XIP base
 > **`0x9b6e0000`** (= flash base `0x9b6d0000` + slot offset `0x10000`), with a second
@@ -28,7 +48,7 @@ addresses unless tagged as file/flash offsets.
 | Module SW version (`version_mp`) | `S2292.6.02.08.MK` | fw1 file `0x1242d6` |
 | fw1 build date | `May 26 2025` (`2025/05/26-14:16:37`) | fw1 file `0x125b88` / `0x13366b` |
 | Bootloader build | `Apr 17 2023 15:19:48` | sysdata off `0xbc98` |
-| Matter base | connectedhomeip `thermostat` example, SDK drop `matter_1102` | source paths `/home/hisense/lyd/matter_1102/ambz2_matter/...` at fw1 file `0x1481fc+` |
+| Matter base | connectedhomeip `thermostat` example, SDK drop `matter_1102` | the vendor's build paths, ending `matter_1102/ambz2_matter/...`, at fw1 file `0x1481fc+` |
 | Default softAP SSID | `HIS-8888` | fw1 file `0x866`, string `0x9b80a134` |
 
 `version_ext` is a second version concept: the A/C mainboard MCU version, fetched over
@@ -85,7 +105,7 @@ partition table). A re-signing recipe must reproduce **both**, in this order.
   next header = H + u32le(img[H+4])      # RELATIVE; 0xFFFFFFFF terminates the chain
   ```
 
-  ⚠️ **Naming trap.** `u32le(img[0xE0])` is the SIZE field `S`. It is **not** `next_img`.
+  **Naming trap.** `u32le(img[0xE0])` is the SIZE field `S`. It is **not** `next_img`.
   `next_img` lives at `H+4` and is a **relative** offset. An earlier revision of this section
   and of the old release script called `img[0xE0]` "next_img"; the code read the right offset so it
   worked, but generalising the wrong name to sub-images 1..N puts the trailer at
@@ -95,13 +115,13 @@ partition table). A re-signing recipe must reproduce **both**, in this order.
   serial at `+0xF4` and the `+0x00` signature from (a), so a serial patch stales exactly that
   one trailer. Verified on 37 real files: every image has 3 sub-images. Custom builds are
   `0xE0 / 0x4000 / 0xF8000`. Stock has **two** layouts in the wild,
-  `0xE0 / 0x8000 / 0x114000` (office, 0x1589c0 bytes) and `0xE0 / 0x8000 / 0x120000`
-  (kitchen / `w41h1_dump1`, 0x16ab40 bytes), so **walk the chain, never hardcode offsets**.
+  `0xE0 / 0x8000 / 0x114000` (one of the owner's modules, 0x1589c0 bytes) and `0xE0 / 0x8000 / 0x120000`
+  (the module of `w41h1_dump1`, 0x16ab40 bytes), so **walk the chain, never hardcode offsets**.
   The last trailer does **not** land at EOF: `elf2bin` appends 0 or 0x20 bytes of `0x87`
   padding (both occur across the archive) before the 4-byte byte-sum, so an
   `END+0x20 == len` assert rejects most genuine images.
 
-  ⚠️ Omitting (b) is what bricked a unit on 2026-07-21 (issue #75): every host-side check
+  Omitting (b) is what bricked a unit on 2026-07-21 (issue #75): every host-side check
   still passes, but `boot_load` prints `"Hash Result Incorrect!"`, clears the flash
   Quad-Enable bit, and hangs, with **no fall-back to the other slot**. Verified across 29
   real images: (b) holds on every genuine image and failed on exactly the four payloads
@@ -187,8 +207,8 @@ Offsets and sizes only; no values. Full record layouts in
 | `0x3ED000–0x3FA000` | **Matter DCT1** (KVS1, config/counters; 13 × 4 KB modules) |
 | `0x3FC000` | BT FTL backup sector |
 
-The custom Matter build reuses DCT1/DCT2 (stock Matter commissioning state is
-overwritten) but never touches `0x2FF000`, `0x3DA000–0x3DE000` (verified by constant
+The project's Matter build (retired, tag `matter-final`) reused DCT1/DCT2 (stock Matter
+commissioning state is overwritten) and never touched `0x2FF000`, `0x3DA000–0x3DE000` (verified by constant
 scan of the deployed custom image).
 
 ## Strings census summary
@@ -210,6 +230,13 @@ RS-485 cmd `0x29` rebooting the module into DOTA mode. `t_*` capability keys map
 per-model gating ([11-model-capability-map.md](11-model-capability-map.md)).
 
 ## Revert-to-stock implications (GitHub issue #19)
+
+> **Retired.** This section is about going back from the project's Matter firmware to the vendor firmware. It was retired on 2026-10-12, and the last tree with it is the tag
+> `matter-final`. See
+> [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md).
+> The image rules it relies on are current and are in "OTA image acceptance" above. How a module on
+> the ESPHome firmware is recovered is in
+> [`docs/guide/Recovery-and-Reflash.md`](../../docs/guide/Recovery-and-Reflash.md).
 
 1. **Slot-flip revert is safe.** The stock config regions `0x2FF000` (Wi-Fi profile),
    `0x3DB000` (cloud config + dkey) and `0x3DD000` (identity) stay byte-intact under
@@ -238,6 +265,8 @@ per-model gating ([11-model-capability-map.md](11-model-capability-map.md)).
    harvested by MITM-ing the phone app (doc 08); the device never asks for them.
 
 ## Open questions
+
+Also listed, with what would settle each, in [14-open-questions.md](14-open-questions.md).
 
 - Which writer (if any) can set state byte `0x10009050` to 6 (VERIFY_NONE path);
   treated as dead/test code.

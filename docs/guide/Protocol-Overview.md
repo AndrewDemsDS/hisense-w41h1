@@ -1,15 +1,12 @@
 # Protocol Overview
 
-A developer's orientation to the Hisense A/C RS-485 bus protocol. Enough to know what the
-frames look like and where the truth lives. This is **not** a byte reference. The bible is
-`reverse-engineering/docs/03-rs485-ac-protocol.md`.
+A developer's orientation to the Hisense A/C RS-485 bus protocol: what the frames look like, which
+mistakes have already been made, and where the full reference is. This page is a summary. The
+byte reference is `reverse-engineering/docs/03-rs485-ac-protocol.md` ("doc 03" below), and the
+vendor firmware's bus handling is in `reverse-engineering/docs/10-stock-fw-init-and-comms.md`
+("doc 10").
 
-← back to [Home](Home) · siblings: [Repo Map and Build Pipeline](Repo-Map-and-Build-Pipeline) ·
-[ESP32 Replacement Board](ESP32-Replacement-Build)
-
----
-
-## ⚠️ The protocol is hardware-validated: trust the repo values
+## The protocol is hardware-validated: trust the repo values
 
 Framing, checksum, and every byte offset were sniff-confirmed against the **real W41H1 bus**
 (command + status) by remote-button correlation. The offsets originally borrowed from the
@@ -28,8 +25,7 @@ reference driver it is tested against, `firmware/test/reference-driver/hisense_r
 | Pins (module) | UART0 **TX = PA_14**, **RX = PA_13**; **DE = PA_17** |
 | Role | Wi-Fi module is **bus master / sole initiator**; the A/C mainboard is a pure slave/responder |
 
-Two facts about DE differ between the RE docs; both are correct in context. The A/C-protocol
-bible (doc 03) notes the transceiver on the *stock module* is effectively auto-direction (no
+Two facts about DE differ between the RE docs, and both are correct in context. Doc 03 notes the transceiver on the *stock module* is effectively auto-direction (no
 `gpio_*` in the UART path it first analysed), while the deeper stock-firmware trace (doc 10)
 proves the stock driver **does** bring up a DE line on **PA_17** and toggles it around every TX
 (5 ms pre-guard, 1 ms post-guard). This project's firmware drives DE on every board: 5 ms of
@@ -57,11 +53,11 @@ F4 F5 | DIR | CTRL | LEN | 00 00 | seqHi seqLo | FE 01 | 00 00 | CLASS | payload
 **Checksum + byte-stuffing:** all `ac_*` frames use `CTRL=0x40` → 2-byte checksum. A checksum
 byte equal to the `0xF4` marker is **escaped by doubling it** (`… F4 → … F4 F4 …`). The
 builder stuffs on TX; the bus task un-stuffs on RX. A frame whose checksum never contains
-`0xF4` never exercises this path, a known test trap (see [Testing and QA](Testing-and-QA)).
+`0xF4` never exercises this path, a known test trap.
 
 ## The `seqHi/Lo` bytes are a device-type, not a session token
 
-Read this before touching the framing. It cost us a working A/C.
+Read this before touching the framing. Getting it wrong once cost a working A/C.
 
 Those two envelope bytes look like a per-session token, and the stock disassembly can be read that way. They are the attached unit's **device-type / sub-type**: a static identifier for that model. The module sends `00 00` until the A/C answers the DevType (`0x0A`) handshake, then sends the code that reply carries, on every later frame.
 
@@ -74,7 +70,7 @@ device-type  inner [3]/[4] : 01 01   <- send this
 session tok  envel [9]/[10]: 00 00   <- NOT this
 ```
 
-We shipped a build that stamped the envelope `[9]/[10]` instead. It read `00 00`, treated that as "no token yet", and sent `00 00` on every frame after the handshake. The A/C rejected all of them: the link never came up, no status arrived, and the unit needed an OTA to recover.
+One build stamped the envelope `[9]/[10]` instead. It read `00 00`, treated that as "no token yet", and sent `00 00` on every frame after the handshake. The A/C rejected all of them: the link never came up, no status arrived, and the unit needed a firmware update to recover.
 
 A `0x66` **status** reply *does* carry `01 01` at `[9]/[10]`, which is what makes the token reading look right. The DevType reply is the one that differs, and it is the frame that matters.
 
@@ -125,7 +121,7 @@ Two directions, two different frames. Full tables (with the confirmed hex per fi
 | 32 | vertical swing | `0xC0` swing / `0x40` fixed |
 | 33 | eco (`0x30`/`0x10`) / turbo (`0x0C`/`0x04`) | ref values were wrong |
 
-**Power and mode in one frame.** The ESPHome build sends a mode request to a unit that is off as
+**Power and mode in one frame.** The firmware sends a mode request to a unit that is off as
 one frame with `0x0C` in byte 18, as the stock module does. `0x5C` and `0x3C` are in the stock
 image. The values for auto, dry and fan-only (`0x9C`, `0x7C`, `0x1C`) follow from the same field
 rule and are marked `VERIFY` in the source. If the unit is still off at the check, the node falls
@@ -139,7 +135,9 @@ that has the motor).
 
 The component translates climate, switch and select writes to A/C fields and status frames back
 to entity state. The mapping and every decision around it (shadow sync, confirm and retry, preset
-planning) are pure functions in `firmware/esphome/components/hisense_ac/hisense_map.h`, host-tested.
+planning) are pure functions in the component's headers under
+`firmware/esphome/components/hisense_ac/` (`hisense_mapping.h`, `hisense_special.h`,
+`hisense_confirm.h`, `hisense_entities.h`), all host-tested.
 
 | Home Assistant | A/C concept |
 |---|---|
@@ -160,27 +158,28 @@ frame, then clears. Conversely, the A/C lights "77" iff the module reports `prov
 **proven on hardware**. Full bitfields and the outbound builder are in doc 03's "Recommission"
 section.
 
-The vendor firmware uses the request to reset Wi-Fi and start pairing. The retired Matter builds
-used it to reopen their commissioning window. The ESPHome firmware has no pairing step. Its
-component reports the request as the `on_setup_request` trigger and can light "77" with the
-`hisense_ac.set_setup_indicator` action, and the shipped configuration binds the two to Wi-Fi
-setup mode: the node opens its hotspot and captive portal, and "77" stays on the panel until
-setup mode ends ([ESPHome Build](ESPHome-Build#wi-fi-setup-mode-and-the-status-led)). `0x20` is
-taken at once, `0x08` has to hold for three replies, and a second request within 10 s is
-ignored. The reference driver under `firmware/test/reference-driver/` still carries the first
-handler (edge-triggered on `0x08|0x20`, with a re-entry lockout).
+The vendor firmware uses the request to reset Wi-Fi and start pairing. This firmware has no
+pairing step. Its component reports the request as the `on_setup_request` trigger and can light
+"77" with the `hisense_ac.set_setup_indicator` action, and the shipped configuration binds the two
+to Wi-Fi setup mode: the node opens its hotspot and captive portal, and "77" stays on the panel
+until setup mode ends ([Wi-Fi Setup Mode](Wifi-Setup-Mode)). `0x20` is taken at once, `0x08` has
+to hold for three replies, and a second request within 10 s is ignored. The reference driver
+under `firmware/test/reference-driver/` still carries the first handler (edge-triggered on
+`0x08|0x20`, with a re-entry lockout).
 
-> ⚠️ **Bring-up ordering on the stock module.** Initialize the DE GPIO (PA_17) and UART from a
-> **task**, after the RTOS scheduler and SDK HAL are up, never from a static constructor. Doing it
-> early faults through unpopulated HAL tables (this was a boot fault in an early build). The exact
-> stock ordering (mutex first, persistent `gpio_t`, DE toggle sequence) and the root-cause analysis
-> are in `reverse-engineering/docs/10-stock-fw-init-and-comms.md`.
+## Bring-up ordering on Realtek's SDK
 
-## The two deep references
+This applies to firmware written directly on Realtek's SDK for the stock module. Under ESPHome
+the platform does the bring-up. Initialise the DE GPIO (`PA_17`) and the UART from a task, after
+the RTOS scheduler and the SDK HAL are up, never from a static constructor. Doing it early faults
+through unpopulated HAL tables, which was a boot fault in an early build. The vendor firmware's
+exact ordering (mutex first, a persistent `gpio_t`, the DE toggle sequence) and the root-cause
+analysis are in doc 10.
 
-- **`reverse-engineering/docs/03-rs485-ac-protocol.md`** is the protocol bible: full frame
-  format, checksum, every confirmed byte map, telemetry block, timer encoding, and the "77"
-  bitfields.
-- **`reverse-engineering/docs/10-stock-fw-init-and-comms.md`** covers stock-firmware init,
-  bus bring-up, DE-GPIO PA_17 ordering, the link state machine, the transaction primitive,
-  and the DE-vs-flash pin analysis.
+## The two references
+
+- `reverse-engineering/docs/03-rs485-ac-protocol.md`: the full frame format, the checksum, every
+  confirmed byte map, the telemetry block, the timer encoding and the "77" bitfields.
+- `reverse-engineering/docs/10-stock-fw-init-and-comms.md`: the vendor firmware's init, bus
+  bring-up, the DE pin, the link state machine, the transaction primitive, and the analysis of
+  the DE pin against the flash pins.

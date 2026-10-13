@@ -1,86 +1,81 @@
-# ESP32 replacement: command ↔ A/C function mapping
+# The community tables: where the payload map started
 
-> **SUPERSEDED, byte offsets below are community-derived, not hardware-confirmed for this
-> unit.** [`03-rs485-ac-protocol.md`](03-rs485-ac-protocol.md) has the **real, W41H1-bus-
-> confirmed** status byte map (offsets 18/19/26/30/31/35/37), pinned by toggling each remote
-> control and diffing the live status reply, and it found several of the community offsets
-> below (esp. the status byte-35/36 flag bits) **wrong** for this unit. Treat this doc's byte
-> tables as a *starting point only*; use §03 as the source of truth for anything already
-> covered there. This doc's unique value, the ESP32 build path, physical wiring, and the
-> firmware `ac_*` field cross-reference, is still current and kept below.
+Before anything had been captured on a W41H1 bus, the project took its first map of the command
+and status payloads from two community projects for older Hisense modules. This page keeps what
+was taken, says which of it survived, and lists the firmware's `ac_*` field names next to the
+functions they turned out to be.
 
-Goal: an **ESP32 + RS-485 transceiver** that plugs into the A/C's 4-pin port in place of
-the W41H1 and drives every function locally. This is the full "what to send / what you get
-back" map.
+## Status of this page
 
-Sources: the frame format is **confirmed from the W41H1 firmware disassembly**
-([`03-rs485-ac-protocol.md`](03-rs485-ac-protocol.md)); the payload byte layout and value
-tables below are from the tested community implementations (`pslawinski/esphome_airconintl`
-`messages.h`/`device_status.h`, `deiger/AirCon`), which speak the identical Hisense A/C
-bus, **not yet reconciled against this unit's confirmed status map in §03**. Offsets marked
-*(verify)* should be confirmed against your unit with a capture, the framing is identical,
-but a specific model can shift a field.
+History. Do not build from the tables on this page. The reference for the bus is
+[03-rs485-ac-protocol.md](03-rs485-ac-protocol.md), which was confirmed on a real unit and found
+several of the values below wrong for it. The byte-offset tables that once stood here were
+removed when doc 03 replaced them.
 
-## Physical / link
+The sources are [`pslawinski/esphome_airconintl`](https://github.com/pslawinski/esphome_airconintl)
+(`messages.h`, `device_status.h`) and [`deiger/AirCon`](https://github.com/deiger/AirCon). Both
+target the older AEH-W4A1 module. [`NOTICE.md`](../../NOTICE.md#acknowledgements-earlier-work-on-this-ac-bus)
+records what this project took from each and which frames are still their bytes.
 
-- **RS-485, 9600 8N1.** ESP32 UART → MAX485 (or reuse a UM3352) → A/C 4-pin port
-  (`5V, GND, A, B`). Set the transceiver DE/RE from a GPIO (half-duplex).
-- Frame: `F4 F5 [LEN(2, big-endian)] [payload] [CKSUM(2, little-endian)] F4 FB`.
+To build a replacement board today, use the project's own component:
+[`firmware/esphome/README.md`](../../firmware/esphome/README.md) and
+[`docs/guide/ESP32-Replacement-Build.md`](../../docs/guide/ESP32-Replacement-Build.md).
 
-## COMMAND frame (ESP32 → A/C): "set" packet, and STATUS frame (A/C → ESP32): "report" packet
+## What the community description said, and what holds
 
-Byte-offset tables for both frame directions **removed here, see
-[`03-rs485-ac-protocol.md`](03-rs485-ac-protocol.md#status-frame-byte-map--hardware-confirmed-160b-class-0x66-reply)**
-for the hardware-confirmed offsets (status byte map pinned by remote-button correlation on
-the real W41H1 bus) plus the general frame format (`F4 F5` … `F4 FB`, length, checksum). The
-community tables that used to live here disagreed with §03 in several places (notably the
-status byte-35/36 flag bit assignments) and were the wrong source for this unit.
-
-## Value tables (semantic encodings)
-
-Mode, fan, etc. use these values on the bus (from `deiger/AirCon`, matching the firmware):
-
-| Function | Values |
+| Community description | On the W41H1 |
 |---|---|
-| **Mode** | FAN=0, HEAT=1, COOL=2, DRY=3, AUTO=4 |
-| **Fan speed** | AUTO=0, LOWER=5, LOW=6, MEDIUM=7, HIGH=8, HIGHER=9 |
-| **Power** | OFF=0, ON=1 |
-| **Temperature** | integer °C or °F; unit flag selects (status byte 26 / cmd temp bytes). Raw units may be 0.5° steps, verify. |
-| **Vertical swing** | OFF=0, ON=1 |
-| **Horizontal swing** | OFF=0, ON=1 |
-| **Sleep** | STOP=0, 1, 2, 3, 4 |
-| **Eco / power-save** | OFF=0, ON=1 |
-| **Quiet / mute** | OFF=0, ON=1 |
-| **8°C heat** | OFF=0, ON=1 |
+| RS-485, 9600 8N1, an ESP32 UART through a MAX485 to the 4-pin port, DE and RE from a GPIO | Holds. Wiring is in [`../hardware/pinouts.md`](../hardware/pinouts.md) |
+| Frame `F4 F5`, a 2-byte big-endian length, payload, a 2-byte little-endian checksum, `F4 FB` | The tags hold. The length is one byte at offset 4 and the checksum is high byte first (doc 03, frame envelope) |
+| Status frame of 82 bytes | 160 bytes |
+| Room temperature as `(raw - 32) × 0.5556` | Whole degrees in the panel's unit |
+| Fan command values `05`, `07`, `09` | `0B` to `13` in steps of two, auto `01` |
+| Eco at status byte 35 bit 3 | Bit 2 |
+| Purify at status byte 36 bit 5 | Unsettled: the stock capability table says bit 7 ([doc 03](03-rs485-ac-protocol.md#the-purify-bit-the-documents-and-the-code-disagree)) |
+| Power on, power off and the status poll as literal frames | Still sent as published. No capture of them from the owner's bus exists |
 
-## Firmware `ac_*` field ↔ function
+## Value tables
 
-The W41H1 firmware's status fields line up with the above (confirms the unit supports them):
+From `deiger/AirCon`. These are semantic values, the numbers an application uses, not the bytes
+on the wire. Doc 03 has the wire encoding.
 
-| firmware `ac_*` | function |
-|---|---|
-| `ac_cool_heat` | fast cool/heat |
-| `ac_fan_mute` | quiet / mute (status b36.2) |
-| `ac_humidity` | humidity (status 22/23) |
-| `ac_8heat` / `ac_enable_8heat` | 8 °C heat |
-| `ac_power_save` | eco (status b35.3) |
-| `ac_power_display` | panel LED / dimmer |
-| `ac_purify` | ionizer / clean (status b36.5) |
-| `ac_swing_direction_8` / `ac_swing_follow` | swing (status b35.6/7) |
-| `ac_infinite_fan_speed` | stepless fan (status 16) |
-| `ac_q_display` / `ac_ai` / `ac_dr` | quick-display / AI / demand-response |
+| Function | Values | Today |
+|---|---|---|
+| Mode | FAN=0, HEAT=1, COOL=2, DRY=3, AUTO=4 | In use as the command index (`Mode` in the codec) |
+| Fan speed | AUTO=0, LOWER=5, LOW=6, MEDIUM=7, HIGH=8, HIGHER=9 | `NOTICE.md` records that the source's fan table did not match this bus and was replaced. The codec's fan index also runs 5 to 9 for low to high, with 0 for auto and 1 for quiet |
+| Power | OFF=0, ON=1 | |
+| Temperature | whole °C or °F, a unit flag selects. The source notes that raw units may be half degrees | Whole degrees. The unit flag is status byte 26 bit 1 |
+| Vertical swing | OFF=0, ON=1 | |
+| Horizontal swing | OFF=0, ON=1 | No motor on the units measured |
+| Sleep | STOP=0, 1, 2, 3, 4 | Four profiles: General, Old, Young, Kids |
+| Eco | OFF=0, ON=1 | |
+| Quiet (mute) | OFF=0, ON=1 | |
+| 8 °C heat | OFF=0, ON=1 | Not implemented. See [14-open-questions.md](14-open-questions.md) |
 
-## Recommended build
+## The firmware's `ac_*` names and their functions
 
-Don't hand-roll the frame builder, and don't reach for a community component either: this repo
-now ships its own, over the codec that was validated against this bus. Flash
-[`../../firmware/esphome/`](../../firmware/esphome/) (ESPHome, Home Assistant only). The Matter
-firmware that used to sit beside it is retired (tag `matter-final`). The driver both were derived
-from is kept as a test reference in `firmware/test/reference-driver/`.
+The vendor firmware names fifteen capability fields. This was the first evidence of what a unit
+can support. They are the flags of the ProductType reply, and their positions in that reply are in
+doc 10 §5a. The status positions in the right column were the community's and are superseded by
+doc 03.
 
-The third-party components this doc used to recommend (`pslawinski/esphome_airconintl`,
-`akrabi/hisense_ac_esphome`) speak the same bus and remain useful reading, but their payload byte
-map is unvalidated for this unit, which is the whole point of the SUPERSEDED banner above. If you
-do use one, verify against your unit by capturing real frames
-([`../tools/sniff.py`](../tools/sniff.py)) and checking the mode/temp/fan bytes against the tables
-above before trusting writes.
+| Firmware name | Function | Status position first assumed |
+|---|---|---|
+| `ac_cool_heat` | heat pump (cooling and heating) | |
+| `ac_fan_mute` | quiet | byte 36 bit 2 (holds) |
+| `ac_humidity` | humidity | bytes 22 and 23 (never confirmed) |
+| `ac_8heat`, `ac_enable_8heat` | 8 °C heat | |
+| `ac_power_save` | eco | byte 35 bit 3 (wrong, it is bit 2) |
+| `ac_power_display` | panel display and dimmer | |
+| `ac_purify` | ioniser | byte 36 bit 5 (unsettled) |
+| `ac_swing_direction_8`, `ac_swing_follow` | louvre positions | byte 35 bits 6 and 7 are the plain swing flags |
+| `ac_infinite_fan_speed` | stepless fan | byte 16 (the fan byte) |
+| `ac_q_display`, `ac_ai`, `ac_dr` | quick display, smart mode, demand response | |
+
+## Other community components
+
+`akrabi/hisense_ac_esphome` and `zoffypal/esphome_hisence_ac` speak the same kind of bus and
+were on the first reading list. Their payload maps were never checked against this unit. If you
+use one of them on a W41H1, capture real frames first
+([`../tools/README.md`](../tools/README.md)) and compare mode, temperature and fan against doc 03
+before trusting a write.

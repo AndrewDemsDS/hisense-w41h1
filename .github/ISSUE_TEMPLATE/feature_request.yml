@@ -1,16 +1,33 @@
-name: Feature / support request
-description: Propose a capability, or ask about building, flashing, or control.
+name: Feature or support request
+description: Propose a capability, report another A/C model, or ask about building, flashing or control.
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        The firmware is ESPHome, for Home Assistant. The project's Matter firmwares are retired and
+        requests for them are not taken.
+
+        Remove Wi-Fi names, passwords, API keys and addresses from anything you paste.
   - type: textarea
     id: idea
     attributes:
       label: What would you like?
-      description: The capability or question. Link the relevant doc under `firmware/docs/` or `reverse-engineering/docs/` if there is one.
+      description: The capability or the question. Link the page under `docs/guide/`, `firmware/docs/` or `reverse-engineering/docs/` if there is one.
     validations:
       required: true
   - type: textarea
     id: context
     attributes:
-      label: Context
-      description: Your hardware, Home Assistant setup, and what you've already tried.
+      label: Your setup
+      description: The A/C model, the hardware the firmware runs on (board file or chip), the firmware version if a node is running, and what you have tried.
+  - type: textarea
+    id: frames
+    attributes:
+      label: Frames or capability flags, if this is about the protocol or another model
+      description: |
+        For a unit that behaves differently, or for one of the open questions in
+        reverse-engineering/docs/14-open-questions.md: the values of the capability sensors and
+        the "A/C device type", and a log at VERY_VERBOSE that shows the frames, with a note of
+        what you pressed or switched and when.
+      render: text

@@ -1,11 +1,11 @@
 # Climate Groups
 
-Several A/Cs, one thermostat. With every unit exposing the same climate vocabulary, a Home Assistant
-climate group can drive them together: one setpoint, one mode, one fan speed, one preset for the
-whole house.
+How to drive several A/Cs as one thermostat. Every unit exposes the same modes, fan names and
+presets, so a Home Assistant climate group can set them together: one setpoint, one mode, one fan
+speed and one preset for the whole house.
 
-The group is a control layer, not a new control loop. Each A/C still regulates on its own indoor
-sensor; the group keeps their settings in step.
+The group only keeps the units' settings in step. Each A/C still regulates on its own indoor
+sensor.
 
 ## What you need
 
@@ -13,16 +13,15 @@ sensor; the group keeps their settings in step.
 |---|---|---|
 | Home Assistant | 2026.3 or later | required by Climate Group Helper |
 | [Climate Group Helper](https://github.com/bjrnptrsn/climate_group_helper) | 1.10.0 or later | the group itself, from the HACS default list |
-| ESPHome firmware (this repo) | current `main` | special modes as climate presets, fan names below |
+| This firmware | 2.0.0 (current `main`) | special modes as climate presets, and the fan names below |
 
-A unit that still runs one of the retired Matter builds can join the same group through the
-[hisense-unified-ac](https://github.com/AndrewDemsDS/hisense-unified-ac) integration (1.4.0 or
-later), whose climate entity uses the same names. Add that entity, not the raw Matter climate.
+A unit that still runs the retired Matter firmware can join the same group
+([how](Matter-Firmware-Retired#until-you-move-a-unit)).
 
 ## The shared vocabulary
 
-Every unit exposes these names. A group offers only what all its members
-agree on, so matching names is what makes the whole set available.
+A group offers only what all its members agree on, so matching names are what make the whole set
+available. Every unit exposes these:
 
 | Attribute | Values |
 |---|---|
@@ -62,17 +61,17 @@ These are the values the group was validated with.
 
 ## How it behaves
 
-- **Mirror means the whole house.** Switching one unit off with its remote switches every member
-  off. That is the point of a group; use member isolation rules if a room should opt out.
-- **Presets settle slowly.** The A/C ignores a special-mode command that lands within about 8 s of
+- Mirror means the whole house. Switching one unit off with its remote switches every member
+  off. Use the helper's member isolation rules if a room should opt out.
+- Presets settle slowly. The A/C ignores a special-mode command that lands within about 8 s of
   the previous one, so the firmware spaces them 10 s apart and a combined preset such as
   `eco_sleep_old` takes about 10 s. The entity keeps showing the requested preset until it has
   landed, so a mirroring group does not copy a half-applied state.
-- **Some modes own the fan.** While turbo, quiet or a sleep profile is active, a different fan speed
+- Some modes own the fan. While turbo, quiet or a sleep profile is active, a different fan speed
   is refused: the A/C would overwrite it a second later. Clear the preset first.
-- **Turbo moves the setpoint.** The A/C forces cooling and 16 °C when turbo engages, and a mirroring
+- Turbo moves the setpoint. The A/C forces cooling and 16 °C when turbo engages, and a mirroring
   group spreads that setpoint too.
-- **Fan writes while off do nothing.** Units ignore fan changes while powered off, so a fan change
+- Fan writes while off do nothing. Units ignore fan changes while powered off, so a fan change
   made on a group that is off is not applied until it is on.
 
 ## Wall thermostat
@@ -81,5 +80,5 @@ A group is a single climate entity, so anything that controls one climate entity
 house: the HA thermostat card, voice assistants, or a wall panel running ESPHome that targets the
 group.
 
-See also: [Everyday Control](Everyday-Control) for what a single unit exposes, and
-[ESPHome Build](ESPHome-Build) for the preset details and YAML capability gating.
+What a single unit exposes and how its presets behave: [Everyday Control](Everyday-Control).
+Removing a capability a unit lacks: [ESPHome Firmware](ESPHome-Build#capability-gating).
