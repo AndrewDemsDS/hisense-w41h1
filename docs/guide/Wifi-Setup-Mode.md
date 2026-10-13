@@ -4,10 +4,12 @@ How to move a node to another Wi-Fi network without a cable, what the status LED
 what ESPHome's safe mode does when a firmware keeps crashing. Getting a board back with a cable
 or a clip is on [Recovery and Reflash](Recovery-and-Reflash).
 
-> **Setup mode has not run on a unit.** Its decisions are host-tested and the images compile.
-> Whether the hotspot opens on each chip, and what a given A/C sends for the gesture, has to be
-> seen on hardware. The check to run on a unit, the full table of cases and what happens on the
-> bus are in `firmware/esphome/README.md` ("Wi-Fi setup mode and the 77 gesture").
+> **Setup mode has run once on a unit, in part.** On 2026-10-13, on an ESP32-C3 SuperMini Plus,
+> the remote's gesture opened the hotspot, the node left the home network, and after the
+> 10 minute timeout it restarted onto the network it had. Not seen on a unit: the portal, a
+> network entered in it, a second gesture, the button, the status LED or pixel, and anything on
+> the stock module or another chip. The check to run on a unit, the full table of cases and what
+> happens on the bus are in `firmware/esphome/README.md` ("Wi-Fi setup mode and the 77 gesture").
 
 ## The hotspot
 

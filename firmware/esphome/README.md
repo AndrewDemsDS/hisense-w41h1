@@ -41,7 +41,7 @@ Or, from the repository root, `python3 firmware/scripts/dev.py flash --board c3 
 |---|---|---|
 | [`hisense_ac`](#hisense_ac) | always. It is the bus, the hub and every entity platform | runs on live units on ESP32, ESP32-C3 and the stock module |
 | [`w41h1_module`](#w41h1_module) | the node is the stock AEH-W41H1 module itself (RTL8710C through LibreTiny). It carries the flash layout, the reboot workaround and the serial port restart | the factory layout runs on one module since 2026-10-10. The sdk and native layouts have not run |
-| [`wifi_setup_mode`](#wifi_setup_mode) | you want the node's hotspot and captive portal on demand, from the remote or a button, while the home network is still there | **not run on hardware** |
+| [`wifi_setup_mode`](#wifi_setup_mode) | you want the node's hotspot and captive portal on demand, from the remote or a button, while the home network is still there | gesture, hotspot and timeout seen once on an ESP32-C3. The portal has **not run on hardware** |
 
 The board files in this directory use all of them through the packages, so most nodes never name
 a component directly. A configuration of your own can take only `hisense_ac`.
@@ -544,12 +544,14 @@ beside the file given to `esphome`, which is how the board files in this reposit
 
 ## Wi-Fi setup mode and the "77" gesture
 
-> **Setup mode has not run on a unit.** The decisions are host-tested
+> **Setup mode has run once on a unit, in part.** On 2026-10-13, on an ESP32-C3 SuperMini Plus,
+> the remote's gesture opened the hotspot, the node left the home network, and after the
+> 10 minute timeout it restarted onto the network it had. Not seen on a unit: the portal, a
+> network entered in it, a second gesture, the button, the status LED or pixel, and anything on
+> the stock module or another chip. The decisions are host-tested
 > (`firmware/test/test_esphome_setup_mode.cpp` for the mode,
 > `firmware/test/test_esphome_setup_request.cpp` and `test_esphome_setup_edges.cpp` for the
-> gesture on the bus) and the images compile. Whether the hotspot opens on each chip, and what a
-> given unit sends for the gesture, has to be seen on a unit. The
-> [check list](#the-check-on-a-unit) is below.
+> gesture on the bus). The [check list](#the-check-on-a-unit) is below.
 
 On the remote, press horizontal airflow six times. The panel shows "77" and the node opens its
 hotspot, `<name>-setup`, with the password from `wifi_ap_password` in `secrets.yaml`. Join it,
