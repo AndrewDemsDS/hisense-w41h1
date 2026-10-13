@@ -76,6 +76,15 @@ owner of a node has to do or will see change. Read it before you rebuild a node.
   single-split residential unit. A larger unit needs `max_power` raised, or its real readings
   above 5 kW go unknown. No configuration has to change otherwise: the option has a default, and
   the 50 kW clamp is gone.
+- **The bus counters and the per-bit fault sensors are disabled by default in Home Assistant.**
+  The six counters (`checksum_errors`, `reply_timeouts`, `unanswered_commands`,
+  `command_retries`, `failed_commands`, `link_losses`) and the 18 `fault_*` binary sensors have
+  `disabled_by_default: true` as their schema default. This affects new installs only: Home
+  Assistant reads the flag when it first registers an entity, so a node it already knows keeps
+  all of them enabled. On a new node, enable the ones you want on the device page, or set
+  `disabled_by_default: false` on the entity in the YAML. The summary `Fault` sensor, `AC bus
+  link` and the capability sensors are enabled as before, and the node publishes every entity
+  either way.
 
 ### Added
 

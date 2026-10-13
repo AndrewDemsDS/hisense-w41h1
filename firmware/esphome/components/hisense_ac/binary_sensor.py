@@ -12,6 +12,7 @@ import esphome.codegen as cg
 from esphome.components import binary_sensor
 import esphome.config_validation as cv
 from esphome.const import (
+    CONF_DISABLED_BY_DEFAULT,
     DEVICE_CLASS_CONNECTIVITY,
     DEVICE_CLASS_HEAT,
     DEVICE_CLASS_PROBLEM,
@@ -105,13 +106,23 @@ CAPABILITY_BITS = {
 }
 
 
-def _diagnostic(device_class: str | None = None, icon: str | None = None) -> cv.Schema:
+def _diagnostic(
+    device_class: str | None = None,
+    icon: str | None = None,
+    disabled_by_default: bool = False,
+) -> cv.Schema:
     kwargs = {"entity_category": ENTITY_CATEGORY_DIAGNOSTIC}
     if device_class is not None:
         kwargs["device_class"] = device_class
     if icon is not None:
         kwargs["icon"] = icon
-    return binary_sensor.binary_sensor_schema(**kwargs)
+    schema = binary_sensor.binary_sensor_schema(**kwargs)
+    if disabled_by_default:
+        # The schema default only: `disabled_by_default: false` on the entity turns it round.
+        schema = schema.extend(
+            {cv.Optional(CONF_DISABLED_BY_DEFAULT, default=True): cv.boolean}
+        )
+    return schema
 
 
 CONFIG_SCHEMA = (
@@ -127,7 +138,18 @@ CONFIG_SCHEMA = (
             ),
         }
     )
-    .extend({cv.Optional(key): _diagnostic(DEVICE_CLASS_PROBLEM) for key in FAULT_BITS})
+    # The per-bit faults are disabled by default in Home Assistant: the summary `problem`
+    # sensor says that there is a fault, and these say which, for whoever goes looking. Home
+    # Assistant reads the flag when it first registers an entity, so one it already knows
+    # stays as it is.
+    .extend(
+        {
+            cv.Optional(key): _diagnostic(
+                DEVICE_CLASS_PROBLEM, disabled_by_default=True
+            )
+            for key in FAULT_BITS
+        }
+    )
     .extend(
         {
             cv.Optional(key): _diagnostic(icon=icon)

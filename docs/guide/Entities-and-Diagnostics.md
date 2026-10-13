@@ -61,6 +61,12 @@ presets and the limits are in [Everyday Control](Everyday-Control#the-climate-en
 | Start Wi-Fi setup | a button | opens [Wi-Fi setup mode](Wifi-Setup-Mode) |
 | Serial port restarts, Flash layout | | the stock module only ([The Stock Module](Stock-Module-Build#after-the-first-boot)) |
 
+The six bus counters and the per-bit `Fault ...` sensors are disabled by default: a node added
+to Home Assistant shows them under "disabled entities" on the device page, and you enable the
+ones you want there. The summary `Fault` sensor and `AC bus link` are always enabled. Home
+Assistant applies this only when it first sees an entity, so on a node it already knows they
+stay enabled.
+
 The node's own diagnostics and the button come from `packages/node.yaml`, and the stock module's
 two from `packages/amebaz2.yaml`. They are not in the golden file, which covers the A/C's
 entities.
@@ -108,7 +114,8 @@ A unit was heard to stay silent with the switch off (maintainer's check, 2026-10
 
 ## Bus counters
 
-The counters start at 0 at boot and return to 0 on a restart.
+The counters start at 0 at boot and return to 0 on a restart. On a newly added node they are
+disabled in Home Assistant until you enable them on the device page ([Diagnostics](#diagnostics)).
 
 | Counter | Counts |
 |---|---|

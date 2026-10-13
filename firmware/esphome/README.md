@@ -252,7 +252,8 @@ All optional. Each takes every option of ESPHome's sensor schema.
 | `link_losses` | count | times the bus link was declared lost |
 
 Values are published when they change and at least once a minute. The six counters are
-diagnostic entities, count since boot and have state class `total_increasing`. For energy, add
+diagnostic entities, count since boot and have state class `total_increasing`. They are
+[disabled by default](#entities-that-are-disabled-by-default) in Home Assistant. For energy, add
 ESPHome's `total_daily_energy` on the power sensor with `method: left`, as
 `packages/hisense-ac.yaml` does. `total_daily_energy` skips an unknown power value: a stretch
 above `max_power` is counted at the last reading before it.
@@ -266,7 +267,7 @@ All optional. Each takes every option of ESPHome's binary sensor schema.
 | `bus_link` | connectivity, diagnostic | on while the unit answers its status poll |
 | `problem` | problem | on while the unit reports any fault |
 | `aux_heat` | heat | on while the auxiliary heater relay is closed |
-| `fault_*` | problem, diagnostic | one per fault bit, list below |
+| `fault_*` | problem, diagnostic | one per fault bit, list below. [Disabled by default](#entities-that-are-disabled-by-default) |
 | `capability_*` | diagnostic | one per capability bit, list below |
 
 The 18 fault options: `fault_indoor_temp`, `fault_indoor_coil_temp`, `fault_indoor_humidity`,
@@ -280,6 +281,26 @@ The 13 capability options: `capability_cool_heat`, `capability_ai`, `capability_
 `capability_swing_follow`, `capability_humidity`, `capability_heat_8c`, `capability_purify`,
 `capability_q_display`, `capability_enable_8heat`, `capability_trans_102_64`. The unit's two-bit
 fields (`power_display`, `demand_resp`) are not booleans and have no entity.
+
+### Entities that are disabled by default
+
+The six bus counters and the 18 `fault_*` binary sensors are created disabled in Home Assistant
+(ESPHome's `disabled_by_default: true`, as the default of their schema). The node still publishes
+them, and the summary `problem` sensor, `bus_link` and the `capability_*` sensors are enabled as
+before. To see one, enable it on the device page in Home Assistant, or change the default in the
+YAML:
+
+```yaml
+sensor:
+  - platform: hisense_ac
+    link_losses:
+      name: Bus link losses
+      disabled_by_default: false
+```
+
+Home Assistant reads this flag once, when it first registers an entity. An entity it already
+knows keeps its state, so a node that was added before this default keeps its counters and
+fault sensors enabled after an update, and the YAML line changes nothing for it either.
 
 ### `switch`
 
@@ -418,9 +439,11 @@ read the counters, is in
 | switch | Eco, Turbo, Quiet, Panel display, Beeper |
 | select | Sleep profile |
 | sensor | Outdoor temperature, Coil temperature, Compressor frequency, Power, Voltage, Current, Energy today |
-| sensor, diagnostic | Bus checksum errors, Bus reply timeouts, Unanswered commands, Command retries, Failed commands, Bus link losses, Uptime, WiFi signal |
+| sensor, diagnostic | Uptime, WiFi signal |
+| sensor, diagnostic, disabled by default | Bus checksum errors, Bus reply timeouts, Unanswered commands, Command retries, Failed commands, Bus link losses |
 | binary sensor | Aux heat relay, Fault |
-| binary sensor, diagnostic | AC bus link, Fault indoor temp sensor, Fault indoor to outdoor comms, Fault condensate tray full, Fault outdoor temp sensor, Capability heat pump, Capability eco, Capability quiet |
+| binary sensor, diagnostic | AC bus link, Capability heat pump, Capability eco, Capability quiet |
+| binary sensor, diagnostic, disabled by default | Fault indoor temp sensor, Fault indoor to outdoor comms, Fault condensate tray full, Fault outdoor temp sensor |
 | text sensor, diagnostic | AC device type, Reset reason |
 | button, diagnostic | Start Wi-Fi setup |
 | stock module only | Serial port restarts, Flash layout |

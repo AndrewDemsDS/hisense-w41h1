@@ -293,6 +293,16 @@ def valid_cases() -> list[Case]:
         add(f"only-{domain}", base(c3, f"only-{domain.replace('_', '-')}") + text)
         if domain != "climate":
             add(f"empty-{domain}", base(c3, f"empty-{domain.replace('_', '-')}") + entities(domain, {}))
+    # The bus counters and the per-bit faults are disabled by default (DISABLED_BY_DEFAULT below
+    # counts them). The flag is a schema default, so the YAML can turn it round per entity.
+    add(
+        "diagnostics-enabled-in-yaml",
+        base(c3, "diag-enabled")
+        + "sensor:\n  - platform: hisense_ac\n    link_losses:\n      name: Bus link losses\n"
+        "      disabled_by_default: false\n"
+        "binary_sensor:\n  - platform: hisense_ac\n    fault_grille:\n      name: Fault grille\n"
+        "      disabled_by_default: false\n",
+    )
     # Everything except the climate entity: a node of sensors and switches.
     add(
         "no-climate",
@@ -472,6 +482,18 @@ def warnings_of(output: str) -> list[str]:
 
 
 # ---- The three checks ----------------------------------------------------------------------------
+# How many entities `esphome config` shows as disabled by default, per valid case: the six bus
+# counters and the 18 fault bits, and nothing else (not bus_link, not the summary fault, not a
+# capability bit).
+COUNTERS = [key for key in SENSORS if key.endswith(("_errors", "_timeouts", "_commands", "_retries", "_losses"))]
+DISABLED_BY_DEFAULT = {
+    "everything-esp32c3": len(COUNTERS) + len(FAULTS),
+    "only-sensor": len(COUNTERS),
+    "only-binary_sensor": len(FAULTS),
+    "diagnostics-enabled-in-yaml": 0,
+}
+
+
 def check_valid(runner: Runner, full: bool) -> tuple[int, list[str]]:
     cases = [case for case in valid_cases() if full or not case.full_only]
     items = []
@@ -489,6 +511,13 @@ def check_valid(runner: Runner, full: bool) -> tuple[int, list[str]]:
             failures.append(
                 f"valid/{result.name}: accepted with a warning\n{indent(chr(10).join(warnings_of(result.output)))}"
             )
+        elif result.name in DISABLED_BY_DEFAULT:
+            disabled = result.output.count("disabled_by_default: true")
+            if disabled != DISABLED_BY_DEFAULT[result.name]:
+                failures.append(
+                    f"valid/{result.name}: {disabled} entities disabled by default, "
+                    f"expected {DISABLED_BY_DEFAULT[result.name]}"
+                )
     return len(cases), failures
 
 
