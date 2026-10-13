@@ -35,6 +35,6 @@ python3 scripts/jlc_cpl.py "$out/$name-pos-kicad.csv" "$out/$name-cpl.csv"
 
 echo "documents"
 kicad-cli sch export pdf -o "$out/$name-schematic.pdf" "$name.kicad_sch" >/dev/null 2>&1
-kicad-cli pcb export step --subst-models --force -o "$out/$name.step" "$name.kicad_pcb" >/dev/null 2>&1
+kicad-cli pcb export step --drill-origin --subst-models --no-dnp --force -o "$out/$name.step" "$name.kicad_pcb" >/dev/null 2>&1
 
 ls -1 "$out"

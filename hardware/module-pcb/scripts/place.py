@@ -29,6 +29,8 @@ MID = BOARD_W / 2
 MODULE_X = BOARD_L - 13.1
 REG = (11.6, 4.6)  # centre of the buck regulator
 
+NOT_FITTED = {"J2"}  # bare pads for programming, no part goes on them
+
 # reference: (x, y, rotation in degrees, side)
 PLACEMENT = {
     "H1": (HOLE_X, MID - HOLE_PITCH / 2, 0, "F"),
@@ -135,6 +137,10 @@ def place(fps):
         fp.SetOrientationDegrees(rot)
         # The board is too small for legible designators: they stay on the fab layer only.
         fp.Reference().SetVisible(False)
+        if ref in NOT_FITTED:
+            fp.SetAttributes(
+                fp.GetAttributes() | pcbnew.FP_DNP | pcbnew.FP_EXCLUDE_FROM_POS_FILES
+            )
 
 
 def outline(board):
@@ -241,6 +247,41 @@ def preroute(board):
             board.Add(v)
 
 
+# Silkscreen: (text, x, y, side, height)
+LABELS = [
+    ("W41H1-C3 rev A", 14.0, 16.2, "F", 0.8),
+    ("5V", 8.9, MID - 3.0, "F", 0.8),
+    ("A", 8.7, MID - 1.0, "F", 0.8),
+    ("B", 8.7, MID + 1.0, "F", 0.8),
+    ("G", 8.7, MID + 3.0, "F", 0.8),
+    ("PROG", 14.8, 16.9, "B", 0.8),
+    ("1 GND 2 3V3", 14.8, 17.95, "B", 0.8),
+    ("3 EN 4 IO9", 14.8, 19.0, "B", 0.8),
+    ("5 TX 6 RX", 14.8, 20.05, "B", 0.8),
+    ("1", MODULE_X + 1.3, 18.9, "B", 0.8),
+    ("D-", MODULE_X + 6.3, 13.5, "B", 0.8),
+    ("D+", MODULE_X + 6.3, 11.5, "B", 0.8),
+    ("5V", 7.3, 15.5, "B", 0.8),
+    ("GND", 6.9, 17.5, "B", 0.8),
+]
+
+
+def labels(board):
+    silk = (pcbnew.F_SilkS, pcbnew.B_SilkS)
+    for d in list(board.GetDrawings()):
+        if d.GetClass() == "PCB_TEXT" and d.GetLayer() in silk:
+            board.Delete(d)
+    for text, x, y, side, height in LABELS:
+        t = pcbnew.PCB_TEXT(board)
+        t.SetText(text)
+        t.SetPosition(mm(x, y))
+        t.SetLayer(pcbnew.F_SilkS if side == "F" else pcbnew.B_SilkS)
+        t.SetMirrored(side == "B")
+        t.SetTextSize(pcbnew.VECTOR2I(pcbnew.FromMM(height), pcbnew.FromMM(height)))
+        t.SetTextThickness(pcbnew.FromMM(0.15))
+        board.Add(t)
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     path = (
@@ -260,6 +301,7 @@ def main():
     board.GetDesignSettings().SetAuxOrigin(mm(0, BOARD_W))
     for z in list(board.Zones()):
         board.Delete(z)
+    labels(board)
     keepouts(board)
     ground_zones(board)
     board.Save(path)

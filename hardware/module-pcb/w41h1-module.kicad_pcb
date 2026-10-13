@@ -5058,7 +5058,7 @@
 				(justify mirror)
 			)
 		)
-		(attr smd)
+		(attr smd exclude_from_pos_files dnp)
 		(duplicate_pad_numbers_are_jumpers no)
 		(fp_line
 			(start -1.16 -3.92)
@@ -6527,7 +6527,170 @@
 		)
 		(fill no)
 		(layer "Edge.Cuts")
-		(uuid "a4dd0f35-41f5-4ba0-98d8-56c63ab812c6")
+		(uuid "789c60ea-4bde-482d-a1a5-36e016602ed3")
+	)
+	(gr_text "A"
+		(at 108.7 109.25 0)
+		(layer "F.SilkS")
+		(uuid "d6e6458e-e57b-4013-baef-6ef60455fa6f")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+		)
+	)
+	(gr_text "B"
+		(at 108.7 111.25 0)
+		(layer "F.SilkS")
+		(uuid "181d629f-9502-4d1c-9bb4-0cdf29b5b291")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+		)
+	)
+	(gr_text "G"
+		(at 108.7 113.25 0)
+		(layer "F.SilkS")
+		(uuid "d580f7c7-6c76-4ea7-90c2-1dcbe9f8488e")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+		)
+	)
+	(gr_text "5V"
+		(at 108.9 107.25 0)
+		(layer "F.SilkS")
+		(uuid "31280009-a946-4fb4-8a3f-f158aad83cab")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+		)
+	)
+	(gr_text "W41H1-C3 rev A"
+		(at 114 116.2 0)
+		(layer "F.SilkS")
+		(uuid "d14cc70a-f4e4-4072-9e63-3c8551643e62")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+		)
+	)
+	(gr_text "GND"
+		(at 106.9 117.5 0)
+		(layer "B.SilkS")
+		(uuid "f81cfd36-1b43-429a-8609-0b049babf56c")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "5V"
+		(at 107.3 115.5 0)
+		(layer "B.SilkS")
+		(uuid "209cd393-da98-46ca-84a7-4b1802081bfe")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "PROG"
+		(at 114.8 116.9 0)
+		(layer "B.SilkS")
+		(uuid "d6e07849-96f3-4da8-b1bd-c8c7362fadd4")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "1 GND 2 3V3"
+		(at 114.8 117.95 0)
+		(layer "B.SilkS")
+		(uuid "ca1ca3ba-e6ab-4d08-9f84-8ec530389c31")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "3 EN 4 IO9"
+		(at 114.8 119 0)
+		(layer "B.SilkS")
+		(uuid "df0c73d9-bcf3-4f00-9629-891908c7708d")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "5 TX 6 RX"
+		(at 114.8 120.05 0)
+		(layer "B.SilkS")
+		(uuid "fb58d5a6-d081-4e58-a79f-d915d2256b3d")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "1"
+		(at 128.199999 118.9 0)
+		(layer "B.SilkS")
+		(uuid "2f8ac243-7824-4b8c-97ff-002370839feb")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "D+"
+		(at 133.199999 111.5 0)
+		(layer "B.SilkS")
+		(uuid "5227e3b8-3ad2-4758-a404-4b6ec48e01fb")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+			(justify mirror)
+		)
+	)
+	(gr_text "D-"
+		(at 133.199999 113.5 0)
+		(layer "B.SilkS")
+		(uuid "9d9ddd02-cac2-4ecb-a2d3-34b8bf510bc4")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.15)
+			)
+			(justify mirror)
+		)
 	)
 	(segment
 		(start 112.74 103.65)
@@ -8234,9 +8397,40 @@
 		(uuid "9eca0d3c-cc09-4bfb-b525-5a5f33c68c33")
 	)
 	(zone
+		(layer "F.Cu")
+		(uuid "0a7fadf0-0e58-4b20-a245-c436675b4479")
+		(name "under-module")
+		(hatch edge 0.5)
+		(connect_pads
+			(clearance 0)
+		)
+		(min_thickness 0.25)
+		(keepout
+			(tracks not_allowed)
+			(vias allowed)
+			(pads allowed)
+			(copperpour allowed)
+			(footprints allowed)
+		)
+		(placement
+			(enabled no)
+			(sheetname "")
+		)
+		(fill
+			(thermal_gap 0.5)
+			(thermal_bridge_width 0.5)
+			(island_removal_mode 0)
+		)
+		(polygon
+			(pts
+				(xy 120 107.15) (xy 134 107.15) (xy 134 115.65) (xy 120 115.65)
+			)
+		)
+	)
+	(zone
 		(net "/GND")
 		(layer "F.Cu")
-		(uuid "9b92e4ed-2726-4d7c-9021-bf19057327c5")
+		(uuid "94d5b7f5-8434-4d35-bd5c-f5542b67186e")
 		(name "GND")
 		(hatch edge 0.5)
 		(connect_pads yes
@@ -8749,39 +8943,8 @@
 		)
 	)
 	(zone
-		(layer "F.Cu")
-		(uuid "fd184069-d6bb-4e01-b848-799480f2a7e8")
-		(name "under-module")
-		(hatch edge 0.5)
-		(connect_pads
-			(clearance 0)
-		)
-		(min_thickness 0.25)
-		(keepout
-			(tracks not_allowed)
-			(vias allowed)
-			(pads allowed)
-			(copperpour allowed)
-			(footprints allowed)
-		)
-		(placement
-			(enabled no)
-			(sheetname "")
-		)
-		(fill
-			(thermal_gap 0.5)
-			(thermal_bridge_width 0.5)
-			(island_removal_mode 0)
-		)
-		(polygon
-			(pts
-				(xy 120 107.15) (xy 134 107.15) (xy 134 115.65) (xy 120 115.65)
-			)
-		)
-	)
-	(zone
 		(layers "F.Cu" "B.Cu")
-		(uuid "1427bc1b-6807-4312-94ec-57dbecc47a61")
+		(uuid "38a3983f-6968-46e1-941b-a276d8def7eb")
 		(name "edge-bottom")
 		(hatch edge 0.5)
 		(connect_pads
@@ -8812,38 +8975,7 @@
 	)
 	(zone
 		(layers "F.Cu" "B.Cu")
-		(uuid "36945202-5a92-408a-a4bd-112e0ef595cd")
-		(name "edge-left")
-		(hatch edge 0.5)
-		(connect_pads
-			(clearance 0)
-		)
-		(min_thickness 0.25)
-		(keepout
-			(tracks not_allowed)
-			(vias not_allowed)
-			(pads allowed)
-			(copperpour allowed)
-			(footprints allowed)
-		)
-		(placement
-			(enabled no)
-			(sheetname "")
-		)
-		(fill
-			(thermal_gap 0.5)
-			(thermal_bridge_width 0.5)
-			(island_removal_mode 0)
-		)
-		(polygon
-			(pts
-				(xy 100 100) (xy 100.6 100) (xy 100.6 120.5) (xy 100 120.5)
-			)
-		)
-	)
-	(zone
-		(layers "F.Cu" "B.Cu")
-		(uuid "910f11a1-78d8-4959-b158-8419195f9ee8")
+		(uuid "4eb07a1c-0d40-4172-b9d9-9b1544bdfa0d")
 		(name "edge-top")
 		(hatch edge 0.5)
 		(connect_pads
@@ -8873,9 +9005,40 @@
 		)
 	)
 	(zone
+		(layers "F.Cu" "B.Cu")
+		(uuid "510003cc-e5d7-4e15-bdaa-7d51e33c1d5a")
+		(name "edge-left")
+		(hatch edge 0.5)
+		(connect_pads
+			(clearance 0)
+		)
+		(min_thickness 0.25)
+		(keepout
+			(tracks not_allowed)
+			(vias not_allowed)
+			(pads allowed)
+			(copperpour allowed)
+			(footprints allowed)
+		)
+		(placement
+			(enabled no)
+			(sheetname "")
+		)
+		(fill
+			(thermal_gap 0.5)
+			(thermal_bridge_width 0.5)
+			(island_removal_mode 0)
+		)
+		(polygon
+			(pts
+				(xy 100 100) (xy 100.6 100) (xy 100.6 120.5) (xy 100 120.5)
+			)
+		)
+	)
+	(zone
 		(net "/GND")
 		(layer "B.Cu")
-		(uuid "2f871c81-ef2c-450e-8037-4890737a8f1c")
+		(uuid "19d0f025-bb46-4a4c-be61-09fac6b5bf0f")
 		(name "GND")
 		(hatch edge 0.5)
 		(connect_pads yes

@@ -5561,7 +5561,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(in_pos_files yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "fb34819a-6b04-4b7e-86a5-b20df4f9bb41")
 		(property "Reference" "J2"
 			(at 255.27 157.48 0)
