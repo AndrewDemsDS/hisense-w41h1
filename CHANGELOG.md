@@ -11,6 +11,11 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+## 2.0.1 - 2026-10-13
+
+The same firmware built with ESPHome 2026.9.1. Nothing changes in what a node does. Build
+with ESPHome 2026.9.1 or later.
+
 - The project builds with ESPHome 2026.9.1 (was 2026.7.4): the pin in CI, `dev.py` and the
   upstream check, and the install commands in the docs. No change to the components. A node
   built with 2026.7.4 keeps working, and nothing has to be done to it.
@@ -19,7 +24,8 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
   `this-is-a-public-placeholder-key`. It is as public as before: replace it in your own
   `secrets.yaml`.
 - The status pixel package gives the colour order as `channel_colors`, the name ESPHome 2026.9
-  uses (`rgb_order` is deprecated there). The `status_pixel_order` substitution is unchanged.
+  uses (`rgb_order` is deprecated there). The `status_pixel_order` substitution is unchanged. A
+  node that includes this package now needs ESPHome 2026.9 or later to build.
 
 ## 2.0.0 - 2026-10-13
 
