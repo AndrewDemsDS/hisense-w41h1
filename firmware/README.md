@@ -38,7 +38,7 @@ starts at [`docs/guide/User-Guide.md`](../docs/guide/User-Guide.md).
 | [`docs/03-ac-uart-pins.md`](docs/03-ac-uart-pins.md) | the stock module's bus UART pins, as found in the vendor firmware |
 
 Releases: the version is in `esphome/packages/version.yaml`, and how a release is cut is in
-[`CONTRIBUTING.md`](../CONTRIBUTING.md#releasing). No release has been tagged yet.
+[`CONTRIBUTING.md`](../CONTRIBUTING.md#releasing). The first release is 2.0.0, the tag `v2.0.0`.
 
 ## Matter firmware (retired)
 

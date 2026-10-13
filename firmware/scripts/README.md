@@ -156,8 +156,8 @@ The version lives in `firmware/esphome/packages/version.yaml`, and a release is 
 [`CONTRIBUTING.md`](../../CONTRIBUTING.md#releasing). The release workflow
 (`.github/workflows/esphome-release.yaml`) checks the tag against the version and the changelog,
 runs the host tests, compiles every board file and publishes a GitHub release with the changelog
-section as its text and no firmware images. As of 2026-10-13 it has run once, as a dry run from a
-branch, and no release has been tagged.
+section as its text and no firmware images. The first release it made is 2.0.0
+(2026-10-13).
 
 ## Where the rest lives
 

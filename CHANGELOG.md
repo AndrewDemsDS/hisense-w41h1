@@ -11,7 +11,9 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
-This becomes 2.0.0, the first release of the ESPHome firmware under a version number of its own.
+## 2.0.0 - 2026-10-13
+
+The first release of the ESPHome firmware under a version number of its own.
 The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 
 Everything below was merged between 2026-10-12 and 2026-10-13. The first section is what the

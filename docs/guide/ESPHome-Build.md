@@ -111,9 +111,7 @@ A release is the git tag `vX.Y.Z` on `main`, with a section in `CHANGELOG.md` an
 that carries that section. A release has no firmware image attached. An image holds its builder's
 Wi-Fi credentials, API key and hotspot password, so everyone builds their own.
 
-As of 2026-10-13 no release has been tagged. The tree says 2.0.0, which becomes the tag `v2.0.0`
-when that release is cut. Until then, build from `main` or pin a commit. The examples below use
-`v2.0.0` for the form.
+The first release is 2.0.0, the tag `v2.0.0` (2026-10-13). The examples below use it.
 
 To build a release from a clone, check out its tag and build as usual:
 

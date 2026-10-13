@@ -183,8 +183,7 @@ gates. It does not block a pull request.
 For the maintainer. The firmware version lives in one file,
 `firmware/esphome/packages/version.yaml`, and a release is the tag `v<version>` on `main`.
 
-No release has been made this way yet. The release workflow has only run as a dry run. The first
-real run will be the tag `v2.0.0`.
+The first release made this way is 2.0.0, the tag `v2.0.0` (2026-10-13).
 
 1. **Pick the number** (semver). Patch for fixes. Minor for something new that leaves existing
    nodes as they are. Major when a node's owner has to act: an entity renamed or removed, a new

@@ -474,11 +474,7 @@ has no firmware images attached: an image holds its builder's Wi-Fi credentials,
 hotspot password, so everyone builds their own. How a release is cut is in
 [`CONTRIBUTING.md`](../../CONTRIBUTING.md#releasing).
 
-**No release has been made yet.** As of 2026-10-13 the tag `v2.0.0` does not exist: 2.0.0 is the
-number the tree carries, and its changes are under `## Unreleased` in the changelog. The release
-workflow has run once, on 2026-10-12, as a dry run from a branch (every compile passed, nothing
-was tagged or published). The examples below use `v2.0.0` as the tag they will have. Until it
-exists, put a branch or a commit in `ref:`.
+The first release is 2.0.0, the tag `v2.0.0` (2026-10-13). The examples below use it.
 
 ### Using a release from your own configuration
 
