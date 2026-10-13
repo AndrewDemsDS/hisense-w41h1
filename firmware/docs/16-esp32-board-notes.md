@@ -1,11 +1,14 @@
 # 16: ESP32 replacement board: notes behind the wiring rules
 
-The wiring, the parts list and the pins to avoid are in the guide:
+For someone who wants to know why the build guide says what it says, or who is about to change a
+pin. The wiring, the parts list and the pins to avoid are in the guide:
 [`docs/guide/ESP32-Replacement-Build.md`](../../docs/guide/ESP32-Replacement-Build.md) and
 [`docs/guide/Hardware-and-Wiring.md`](../../docs/guide/Hardware-and-Wiring.md). This page keeps
-the reasons and the measurements behind those rules. Most of them were found on the ESP32 Matter
-firmware, which is retired (tag `matter-final`, issue #182). They are facts about the board and
-the bus, so they hold for the ESPHome firmware on the same hardware.
+the reasons and the measurements behind those rules.
+
+Most of them were found on the ESP32 Matter firmware, which is retired (tag `matter-final`,
+[`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md)). They are
+facts about the board and the bus, so they hold for the ESPHome firmware on the same hardware.
 
 ## Pins
 
@@ -34,7 +37,12 @@ drops. The ESPHome component does this itself when `de_pin` is set
 
 The trap behind the second number: on ESP-IDF, writing to the UART only queues bytes into the
 FIFO. Dropping DE when the write call returns cuts the frame short. The retired firmware waited
-for `uart_wait_tx_done()`. The ESPHome component waits out the frame's wire time.
+for `uart_wait_tx_done()`. The ESPHome component waits out the frame's wire time, counted from
+before the write, so the release is right on a platform whose write blocks too
+([`01-component-architecture.md`](01-component-architecture.md#portability)).
+
+The alternative, letting the UART peripheral drive DE (`flow_control_pin` on ESPHome's `uart:`),
+has not been validated against this A/C.
 
 The stock module's own DE behaviour (PA_17, the toggle sequence, why it must be set up from a
 task) is in
@@ -52,8 +60,29 @@ refused any other SSID. It read like a credentials problem when the radio was ne
 Observed on a new ESP32-C3 SuperMini, 2026-08-07.
 
 The rule for any firmware: erase a new board once before the first flash
-(`dev.py erase esphome --port P`, or `esptool.py erase_flash`). Never erase a board that is
-already running, since that throws away its settings.
+(`dev.py erase --port P`, or `esptool.py erase_flash`). Never erase a board that is already
+running, since that throws away its settings. `dev.py erase` asks for a typed confirmation and
+tells esptool which chip to expect
+([`firmware/scripts/README.md`](../scripts/README.md)).
+
+## Wi-Fi power saving
+
+`packages/node.yaml` sets `power_save_mode: none`. ESPHome's default on ESP32 is `light`, where
+the radio sleeps between beacons. On an ESP32-C3 node with a weak signal (about -77 dBm) that
+default gave 65 % ping loss, an API connection that dropped about once a minute, and commands
+that did not reach the unit. With `none`: 100 of 100 pings and a command taken in 0.5 s
+(2026-10-10). The retired ESP32 Matter build forced the radio on for the same reason. ESP8266
+and LibreTiny already default to `none`.
+
+The cost is current: the radio no longer sleeps between beacons. The setting is a substitution,
+`wifi_power_save`, for a board whose supply cannot carry that.
+
+## A supply that dips when Wi-Fi starts
+
+On a SuperMini whose 3.3 V rail dips when Wi-Fi starts at full power, a new image resets on its
+first boot and the bootloader rolls the update back. The symptom, and the cap on the transmit
+power for a board that has to run as it is, are in
+[`firmware/esphome/README.md`](../esphome/README.md#an-update-uploads-then-the-node-is-back-on-the-old-firmware).
 
 ## Ground loop
 
@@ -68,8 +97,21 @@ They are the unit's device type and sub type, static per model, and not a sessio
 2026-07-16). The node reads them from the DevType (`0x0A`) reply's inner `[3]/[4]` and stamps them
 on later frames. The default before they are learned is `01 01`. Do **not** stamp that reply's
 envelope `[9]/[10]`: it is `00 00` on the `0x0A` frame, and a firmware that did so made the A/C
-reject every frame until it was replaced. See `reverse-engineering/docs/10` §4.5 and the guide's
-Protocol Overview. The ESPHome build shows the learned bytes as the `AC device type` text sensor.
+reject every frame until it was replaced. See
+[`reverse-engineering/docs/10-stock-fw-init-and-comms.md`](../../reverse-engineering/docs/10-stock-fw-init-and-comms.md),
+section 4.5. The ESPHome build shows the learned bytes as the `AC device type` text sensor.
+
+The whole reply was captured on 2026-10-12 from a deployed ESP32-C3 node, which settles its
+length and checksum:
+
+```
+F4 F5 01 40 0D 01 00 FE 01 00 00 01 00 0A 04 01 01 01 01 60 F4 FB
+```
+
+22 bytes: the LEN byte (`0D`, 13) plus 9, as for every frame. The device type `01 01` is at
+bytes 16 and 17, which are inner `[3]/[4]` (the inner payload starts at byte 13). Bytes 9 and 10
+are `00 00`. Bytes 18 and 19 (`01 60`) are the 16-bit sum of bytes 2 to 17, the same checksum
+rule as the other frames.
 
 ## Task stack units differ by platform
 

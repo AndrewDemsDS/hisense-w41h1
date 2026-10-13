@@ -1,16 +1,36 @@
 # Reference driver (frozen)
 
 This is the project's first RS-485 bus driver for the Hisense indoor unit: codec, bus task, DE
-handling and link state machine. It ran on real A/Cs for months inside the two Matter firmwares,
-which are now retired (tag `matter-final`, issue #182). Nothing ships from this directory any
-more. It is kept for one reason: **it is the hardware-validated reference the ESPHome component's
-codec is tested against.**
+handling and link state machine. It is kept for one reason: it is the reference that the ESPHome
+component's codec is tested against. Read this page before you change a file here, or when a
+parity test fails and you need to know which side is right.
+
+> **Retired on 2026-10-12.** This directory holds the driver of the two Matter firmwares, in which it
+> ran on real A/Cs for months. Those firmwares are no longer on `main`
+> ([`docs/guide/Matter-Firmware-Retired.md`](../../../docs/guide/Matter-Firmware-Retired.md)),
+> and nothing ships from here. The current code is the ESPHome component under
+> `firmware/esphome/components/hisense_ac/`. The last tree that has the Matter builds is the tag
+> `matter-final`.
+
+## What it is, and what it is not
+
+- It is the side of the parity comparison that ran on hardware. For the frames it builds, its
+  bytes are ones that units have taken.
+- It is no specification. It carries the bytes of its time, some from this project's own
+  bus captures and the vendor firmware, and three literal frames (power on, power off and the
+  status poll) from the community project `pslawinski/esphome_airconintl`, with no capture of
+  those three from this project's bus on record
+  ([`NOTICE.md`](../../../NOTICE.md#acknowledgements-earlier-work-on-this-ac-bus)).
+- It is no second firmware either. It sends a command once and never checks that it took. It
+  does not have confirm and retry, the stricter setup-request rules, or the outdoor temperature
+  placeholder rule. Those exist only in the component.
+- Nobody develops it. A change here is a protocol fact that both sides must carry.
 
 | File | What |
 |---|---|
 | `hisense_rs485.{h,cpp}` | the driver: frame builders and parsers, the bus task, the "77" handler. A C API written as C++11, against the Realtek SDK's `serial_*` / `gpio_*` HAL |
 | `aircon_map_common.h` | the fan ladder, setpoint clamp and running-state derivation. What is left of the Matter builds' mapping header |
-| `esphome_aircon_map.h` | the first ESPHome mapping (modes, fan names, presets, shadow sync), written before the component had its own |
+| `esphome_aircon_map.h` | the first ESPHome mapping (modes, fan names, presets, shadow sync), written before the component had its own. `test_esphome_map.cpp` tests this file, not the component |
 | `power_estimate.h` | the calibrated power estimate (`firmware/docs/09-energy-monitoring.md`) |
 
 ## Who uses it
@@ -59,19 +79,21 @@ speeds, command byte 16 = index*2+1, all hardware-confirmed.
   (Fahrenheit samples) via `raw = value*2+1`. **No confirmed 0.5-degree-step encoding**: treat as
   whole degrees until a bench capture proves otherwise.
 - Hisense status frame: setpoint (byte 19) and room temperature (byte 20) are direct integers in
-  whole degrees C, hardware-confirmed. The reference project's `(raw - 32) * 0.5556` formula was
-  wrong for this unit and is not used (RE docs/03, status-frame byte map).
+  whole degrees C, hardware-confirmed. The `(raw - 32) * 0.5556` formula of `esphome_airconintl`
+  was wrong for this unit and is not used (`reverse-engineering/docs/03-rs485-ac-protocol.md`,
+  status-frame byte map).
 
 ## Bus timing
 
-The reference implementation (`aircon_climate.h`) enforces, per TX:
+The community project this driver started from (`aircon_climate.h` in `esphome_airconintl`)
+enforces, per TX:
 - >=100ms since the last send before dequeuing the next message
 - >=10ms of RX silence before sending (don't talk over an in-flight reply)
 - a 1500ms idle window after every send before the next
 - a 3000ms ACK timeout (treated as a soft failure, message dropped, bus reset
   to idle)
 
-**This is now built into the driver.** `hisense_send_frame()` only ENQUEUES;
+The driver has the first three built in. `hisense_send_frame()` only enqueues:
 the driver's single bus task owns the UART and applies the first three timing
 rules above (>=100ms gap, >=10ms RX-quiet, 1500ms post-send idle) before it
 puts the next queued frame on the wire. So several callers can call

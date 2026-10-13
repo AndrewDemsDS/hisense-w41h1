@@ -1,109 +1,133 @@
-# esp32-recon: independent RS-485 A/C bus diagnostic tool
+# esp32-recon: a console on the A/C bus
 
-A standalone ESP-IDF app (no Home Assistant, no pairing) that talks the Hisense A/C
-RS-485 bus directly and lets you **verify everything**: wiring/UART/DE, link
-bring-up, framing + checksum, every decoded field, command→status round-trips,
-ProductType feature flags, and open protocol questions, from a shell you can reach
-**remotely over the network** (`nc esp32-recon.local 2323`) or over USB serial.
+A small ESP-IDF program for a classic ESP32 that sits on the Hisense RS-485 bus and gives you a
+command line on it: listen to a bus someone else drives, decode frames, compare two frames bit by
+bit, or be the bus master and send commands. It has no Home Assistant and no pairing. Use it for
+byte-level questions (which bit moved when I pressed this button) and for checking wiring.
 
-It builds the hardware-validated reference driver **unchanged**: the same
-`../test/reference-driver/hisense_rs485.cpp` the host tests compile (via the
-`hisense_rs485` component in `components/`) on the ESP32 `hisense_hal` shim next to it.
-The on-device `selftest` proves the flashed codec is byte-identical to the
-host-validated one. The ESPHome firmware has its own port of this codec, held equal
-to it by `firmware/test/test_esphome_codec_parity.cpp`.
+It is not the firmware. The firmware is under [`firmware/esphome/`](../esphome/README.md). This
+tool was kept when the Matter firmwares were retired because it is the one way to run the frozen
+reference driver on a wire.
 
-## Why it exists
+> **The network console has no authentication and can drive the A/C.** Once the board is on
+> Wi-Fi, anyone who can reach TCP port 2323 on it gets the same command line as the USB console,
+> with no password. In master mode that includes `power`, `set` and `raw`, which sends any bytes
+> you type onto the bus of an appliance. Run it on a network you trust, keep it in tap mode
+> unless you are driving on purpose, and do not leave it installed. `wifi clear` removes the
+> stored credentials.
 
-Looking at one decoded frame through a full firmware means a build, a node adopted in
-Home Assistant and a round-trip through it. This tool builds in seconds, flashes fast,
-and gives you a REPL right on the wire.
+## What it is built from
+
+It builds the reference driver unchanged: `firmware/test/reference-driver/hisense_rs485.cpp`, the
+file the host tests compile, through the `hisense_rs485` component in `components/`, on the ESP32
+HAL shim in `components/hisense_hal/`. The `selftest` command runs the codec's golden vectors on
+the board. The ESPHome firmware has its own codec, held equal to this one by
+`firmware/test/test_esphome_codec_parity.cpp`, so a decode seen here is the decode the firmware
+makes. What this tool does not have is anything the firmware learned after the driver was frozen
+(confirm and retry, the stricter setup-request rules).
 
 ## Wiring
 
-From `components/hisense_hal/include/PinNames.h`:
+From `components/hisense_hal/include/PinNames.h`, for the classic ESP32:
 
 | ESP32 | Transceiver | |
-|-------|-------------|-|
-| GPIO19 | DI  | UART1 TX |
-| GPIO18 | RO  | UART1 RX |
-| GPIO4  | DE + /RE (tied) | half-duplex direction |
-| GND    | GND | **common ground with the A/C bus is mandatory** |
+|---|---|---|
+| GPIO19 | DI | UART1 TX |
+| GPIO18 | RO | UART1 RX |
+| GPIO4 | DE and /RE (tied) | direction |
+| GND | GND | see below |
 
-Transceiver A/B → the A/C RS-485 bus. 9600 8N1.
+Transceiver A and B go to the A/C's RS-485 pair, 9600 8N1. Use a 3.3 V transceiver. The ground
+and power rules are the firmware's: while the board is powered from a computer's USB port,
+connect only A and B
+([`firmware/docs/16-esp32-board-notes.md`](../docs/16-esp32-board-notes.md#ground-loop)).
 
-## Build & flash
+The header also has a pin set for the ESP32-C3 (5, 6, 10). CI builds the classic ESP32 target
+only, and that is the target this page describes.
+
+## Build and flash
+
+It needs ESP-IDF. CI builds it every night with v5.5.5 in Espressif's container (the
+`esp32-recon` job of `.github/workflows/nightly.yaml`), so that is the version known to work.
 
 ```sh
-. ~/esp/esp-idf-v5.5.4/export.sh
+. $IDF_PATH/export.sh
 cd firmware/esp32-recon
 idf.py set-target esp32
 idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-## First run (USB console)
+The build has a few compiler warnings of its own (missing field initializers in
+`recon_console.c`). CI reports their count and does not fail on them.
 
-The UART0 console comes up immediately. Provision WiFi once, then go remote:
+## First run
+
+The USB console comes up at once. Check the codec, then put the board on Wi-Fi if you want the
+network console:
 
 ```
-esp32-recon> selftest            # golden vectors, no hardware — expect PASS
-esp32-recon> wifi <ssid> <pass>  # stored in NVS (flash), never in git
+esp32-recon> selftest            # golden vectors, no hardware. Expect PASS
+esp32-recon> wifi <ssid> <pass>  # stored in the board's flash (NVS), never in git
 esp32-recon> wifi status
 ```
 
-Then from your laptop (behind the same LAN / WireGuard):
+Then, from a machine on the same network:
 
 ```sh
 nc esp32-recon.local 2323
 ```
 
-## Capture modes
+One network client at a time. The USB console stays available beside it.
 
-Switch with `mode tap|master` (persisted in NVS; the device reboots into it).
+Credentials can also be compiled in for a board with no console at hand: copy
+`main/wifi_secrets.h.example` to `main/wifi_secrets.h` (gitignored) and fill it in. `sdkconfig`
+is gitignored too. Never put credentials in `sdkconfig.defaults`.
 
-- **tap** (default, safe): drives nothing: DE held low. Passively decodes existing
-  bus traffic in **both directions** (point it at the stock dongle ↔ A/C, or the
-  kitchen AmebaZ2 ↔ A/C). Ground-truth check of the decode.
-- **master**: the ESP32 *is* the module: the driver auto-does link bring-up + ~1 Hz
-  polling; `set`/`power`/`producttype`/`raw` are enabled and `set` auto-verifies the
-  next status reflects the change.
+## Two modes
+
+Switch with `mode tap` or `mode master`. The choice is stored in flash and the board restarts
+into it.
+
+- **tap** (the default): drives nothing. DE is held low. It decodes the traffic of a bus that
+  something else drives (the stock module, or a node running the firmware), in both directions.
+- **master**: the board is the module. The driver brings the link up and polls about once a
+  second, and `set`, `power`, `producttype` and `raw` are enabled. It must be the only master on
+  the bus: take the module or the node off first.
 
 ## Commands
 
 ```
-mode [tap|master]     show/set capture mode (reboots)
-stats                 frame + checksum counters, HAL tx/rx bytes, link health
-poll                  show the latest decoded A/C status (all fields)
-watch [on|off] [hex]  stream decoded frames as they arrive (hex = include raw bytes)
-set <k> <v>           master: mode|temp|fan|swing|eco|turbo|mute|sleep (auto-verifies)
-power on|off          master: power the A/C
-producttype           master: poll + show A/C feature flags
-raw <hex>             master: send a literal frame (protocol probing)
-decode <hex>          offline-decode a pasted frame (any mode)
-selftest              run codec golden vectors on-target (no hardware)
-wifi <ssid> <pass>    store creds in NVS + connect (wifi clear | wifi status)
-help                  list commands
+mode [tap|master]     show or set the mode (restarts)
+stats                 frame and checksum counters, HAL byte counters, link health
+poll                  the latest decoded status, every field
+watch [on|off] [hex]  stream decoded frames as they arrive (hex adds the raw bytes)
+snap [status|cmd]     tap: remember the latest raw frame of that kind
+diff [status|cmd]     tap: which bytes and bits changed since snap
+decode <hex>          decode a pasted frame, in any mode
+set <k> <v>           master: mode|temp|fan|swing|eco|turbo|mute|sleep, then checks the next status
+power on|off          master: switch the unit
+producttype           master: poll and show the unit's capability flags
+token                 the device type learned from the unit's 0x0A reply
+raw <hex>             master: send a literal frame
+selftest              the codec's golden vectors, on the board
+wifi <ssid> <pass>    store credentials and connect (wifi clear, wifi status)
+help                  list the commands
 ```
 
-## Verifying open protocol issues
-
-- **#55 (C/F unit bit):** `mode tap` the stock dongle while toggling the remote's
-  °C/°F; `watch hex` and compare the changed byte, or `decode` a captured frame.
-- **#49 (envelope `[7]/[8]`): RESOLVED**: not a session token; it's the A/C's device-type/sub-type
-  from the `0x0A` reply's inner `[3]/[4]`. Measured 2026-07-16: inner `[3]/[4]`=`01 01`, envelope
-  `[9]/[10]`=`00 00` on that frame (stamping the latter killed the link, v10207). `token` on any
-  esp32 node re-reports it, useful to see what a **different A/C model** returns.
-- **#50 (cold-off power-on):** `mode master`, `power on` on a physically-off unit and
-  watch whether status reflects it.
+`snap` and `diff` are the working pair for reverse engineering: take a baseline, change one
+thing on the remote, and `diff` shows the byte and bit that moved. The procedures for the open
+protocol questions are in [`HIL-RUNBOOK.md`](HIL-RUNBOOK.md).
 
 ## Notes
 
-- `raw` is send-only in master mode, the A/C's reply isn't surfaced inline (the
-  driver consumes replies internally). To see a reply, run a second board in `mode
-  tap`, or paste captured bytes into `decode`.
-- One remote client at a time. The UART console stays available in parallel.
-- WiFi creds live in NVS (flash), provisioned via the `wifi` command, nothing lands
-  in a tracked file. `sdkconfig` is gitignored; never put creds in `sdkconfig.defaults`.
-- **Never** define `HISENSE_HAL_UART_INTERNAL_LOOPBACK`: it internally loops UART1
-  TX→RX and would blind the tool to the real bus.
+- `raw` only sends. The reply is consumed by the driver and not shown. To see one, run a second
+  board in tap mode, or paste captured bytes into `decode`.
+- `token` prints the two bytes under the label "link session token (reply [9]/[10])". The label
+  is from before the bytes were understood: they are the unit's device type, read from the
+  reply's inner `[3]/[4]`
+  ([`firmware/docs/16-esp32-board-notes.md`](../docs/16-esp32-board-notes.md#envelope-bytes-78-are-the-acs-device-type)).
+- Never define `HISENSE_HAL_UART_INTERNAL_LOOPBACK`. It loops UART1 TX to RX inside the chip and
+  blinds the tool to the real bus.
+- The stack size of the bus task is set to 4096 for ESP-IDF in the component's `CMakeLists.txt`.
+  The reason is in [`firmware/docs/16-esp32-board-notes.md`](../docs/16-esp32-board-notes.md#task-stack-units-differ-by-platform).

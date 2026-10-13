@@ -1,21 +1,24 @@
-# esp32-recon HIL runbook: settling the open bus/protocol issues
+# esp32-recon runbook: settling the open bus and protocol questions
 
-Turnkey procedures for the hardware-in-the-loop issues, using `esp32-recon`. Each is
-"wire it, flash it, run these commands, record the result on the issue." No procedure
-needs Home Assistant or a paired node.
+Procedures for the questions that need a real unit, using [`esp32-recon`](README.md). Each one
+is: wire it, flash it, run these commands, record the result on the issue. None needs Home
+Assistant. Read the warning about the tool's network console in its README first.
+
+The issue numbers in the headings are the ones each question was filed under when the section
+was written.
 
 ## Setup (once)
 
 ```sh
-. ~/esp/esp-idf-v5.5.4/export.sh
+. $IDF_PATH/export.sh
 cd firmware/esp32-recon && idf.py set-target esp32 && idf.py flash monitor
 esp32-recon> selftest            # golden vectors — expect PASS before trusting anything
 esp32-recon> wifi <ssid> <pass>  # then reach it remotely: nc esp32-recon.local 2323
 ```
 
 **Two rigs, depending on the issue:**
-- **Tap rig** (RE / byte-hunting): leave the **stock dongle** (or kitchen AmebaZ2) driving
-  the bus; wire the ESP32 RX (GPIO18) + GND onto the same A/B pair; `mode tap`. You watch
+- **Tap rig** (RE / byte-hunting): leave the **stock module** (or a node running the firmware)
+  driving the bus; wire the ESP32 RX (GPIO18) + GND onto the same A/B pair; `mode tap`. You watch
   real traffic + toggle features on the A/C's remote/app. DE stays low, the ESP32 is invisible.
 - **Master rig** (control): the ESP32 is the **only** module on the bus (no stock dongle);
   `mode master`. The ESP32 drives link + poll and you issue `set`/`power`.
@@ -28,6 +31,10 @@ setpoint `[19]`, etc.).
 ---
 
 ## #55 (I22) · C/F unit bit: firmware always assumes Celsius
+
+Since this was written the codec gained a unit flag (`temp_unit_f` in the status struct) and the
+firmware sends the setpoint in the unit the panel is in. The procedure stays for checking that
+flag on another model.
 
 **Goal:** find the status/command bit that encodes °C vs °F, so the firmware can read and
 track it instead of hardcoding Celsius.
@@ -104,8 +111,9 @@ precede a successful start. **Pass:** deterministic power-on from the off state.
 
 ## #49 (I16) · Envelope `[7]/[8]`: RESOLVED ON HARDWARE 2026-07-16. No tap rig needed.
 
-**Settled.** The "session token" premise was **wrong**. Measured on node 28 (fw 1.0.6) via the
-instrumented `token` console command, both sources read from the same `0x0A` DevType reply:
+**Settled.** The "session token" premise was **wrong**. Measured on an ESP32 node of the retired
+Matter firmware (1.0.6) with its instrumented `token` console command, both sources read from the
+same `0x0A` DevType reply:
 
 ```
   device-type  inner [3]/[4] : 01 01  [learned from A/C]   <- USED
@@ -117,12 +125,13 @@ reply's inner `[3]/[4]`; the envelope `[9]/[10]` on that frame is `00 00`. `[lea
 also proves the driver's learning path fires rather than riding its `01 01` default. Full
 narrative + the v10207 post-mortem: RE `docs/10` §4.5.
 
-**Re-run only if** supporting a **different A/C model** (to see what device-type it reports):
-```
-nc <node-ip> 2323   ->   token
-```
-No bus wiring required, any esp32 node running the driver reports it. A tap capture
-(`mode tap` + `watch hex` through a dongle power-cycle) is now purely optional corroboration.
+The whole reply was captured on 2026-10-12 and is in
+[`firmware/docs/16-esp32-board-notes.md`](../docs/16-esp32-board-notes.md#envelope-bytes-78-are-the-acs-device-type).
+
+**Look again only for a different A/C model**, to see what device type it reports. On a node
+running the ESPHome firmware it is the `AC device type` text sensor, with no wiring. With this
+tool it is `token` in master mode. A tap capture (`mode tap` and `watch hex` through a power
+cycle of the module) is optional corroboration.
 
 ---
 
