@@ -13,6 +13,7 @@ No hardware and no network: the esphome command is a small script in a temporary
 nothing is written outside that directory. About 2 s.
 """
 
+import base64
 import pathlib
 import re
 import shutil
@@ -312,6 +313,11 @@ check(len(secrets_read) >= 4 and all(key in out.getvalue() for key in secrets_re
 example = (dev.ESPHOME_DIR / "secrets.yaml.example").read_text()
 check(all(re.search(rf"^{key}:", example, re.M) for key in secrets_read),
       "and secrets.yaml.example has a line for each of them")
+# The example's API key is public. It has to look like a placeholder, so nobody takes it for a
+# key, and still be 32 bytes of base64, so ESPHome accepts the file as it is.
+example_key = re.search(r'^hisense_ac__encryption_key:\s*"([^"]+)"', example, re.M)
+check(example_key is not None and base64.b64decode(example_key.group(1), validate=True) == bytes(32),
+      "the example's API key is the placeholder everyone can recognise: 32 zero bytes")
 
 # The guide pages the two scripts send the user to exist, are not "Moved" pointers, and have the
 # heading the link names.
