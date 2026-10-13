@@ -997,6 +997,19 @@ upstream = (SCRIPTS / "esphome-upstream-check.sh").read_text()
 check("esphome-components.sh" not in re.sub(r"(?m)^\s*#.*$", "", upstream) and "hisense_ac alone, on purpose" in upstream,
       "esphome-upstream-check.sh takes hisense_ac alone, and says that it is on purpose")
 
+# clang-tidy on the hub and the entities is a gate of the esphome-host-e2e job. run.py only
+# reports, so the job reads the count from the line run.py prints: the two have to say it alike.
+run_py = (ROOT / "firmware/test/host_e2e/run.py").read_text()
+e2e_job = re.search(r"(?ms)^  esphome-host-e2e:\n.*?(?=^  [\w-]+:\n|\Z)", qa).group(0)
+tidy_step = re.search(r"(?ms)^      - name: clang-tidy on the hub and the entities\n.*?(?=^      - name: |\Z)", e2e_job)
+check('print(f"== clang-tidy {number} on the glue: {len(findings)} finding(s) ==")' in run_py
+      and tidy_step is not None and 'grep -qxF "== clang-tidy $pin on the glue: 0 finding(s) =="' in tidy_step.group(0),
+      "qa.yaml takes the clang-tidy count of the glue from the line run.py --tidy prints, at the pinned version")
+check(tidy_step is not None and "continue-on-error" not in tidy_step.group(0) and "exit 1" in tidy_step.group(0),
+      "and a finding fails the job: the step is not report-only")
+check(all(f"{n}.cpp" in (SCRIPTS / "cpp-lint.py").read_text() for n in ("wifi_setup_mode", "w41h1_module")),
+      "cpp-lint.py says what covers the two glue files no host build has")
+
 pin_sh = (SCRIPTS / "cpp-lint.sh").read_text()
 fmt_pin = re.search(r"^CLANG_FORMAT_VERSION=(\S+)$", pin_sh, re.M).group(1)
 tidy_pin = re.search(r"^CLANG_TIDY_VERSION=(\S+)$", pin_sh, re.M).group(1)
