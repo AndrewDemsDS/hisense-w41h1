@@ -8,7 +8,8 @@ name: Nightly
 #                         their first compile would be at release time.
 #   esphome-upstream-dev  ESPHome's own gates against their dev branch. Informational: it shows
 #                         what an upstream pull request would have to change. It installs whatever
-#                         their branch requires that day, which is why it is not in qa.yaml.
+#                         their branch requires that day, which is why it is not in qa.yaml. The
+#                         job passes either way, and a failure opens one tracking issue.
 #   esp32-recon           the bus diagnostic tool builds with ESP-IDF. The image with the
 #                         toolchain is several GB, too much for every pull request.
 #   host-e2e-full         every scenario of firmware/test/host_e2e/, the long ones included (each
@@ -26,6 +27,7 @@ on:
     paths:
       - .github/workflows/nightly.yaml
       - .github/scripts/board-groups.sh
+      - .github/scripts/upstream*
       - .github/ci/esphome/**
       - firmware/esp32-recon/**
       - firmware/test/reference-driver/**   # esp32-recon builds the reference driver
@@ -36,7 +38,8 @@ concurrency:
   group: nightly-${{ github.ref }}
   cancel-in-progress: true
 
-# Nothing here writes. Every job repeats what it needs.
+# Nothing here writes to the repository. Every job repeats what it needs, and one of them
+# (esphome-upstream-dev) may also write its tracking issue.
 permissions:
   contents: read
 
@@ -167,27 +170,66 @@ jobs:
           # shellcheck disable=SC2086
           bash firmware/scripts/esphome-compile-check.sh $configs
 
-  # A failure is a warning annotation and a line in the summary, and the job passes: their rules
-  # move ahead of the release this repo builds with, so a red night would say nothing about this
-  # tree. The pinned-release run in qa.yaml is the one that has to pass.
+  # The job passes whatever the gates say: their rules move ahead of the release this repo builds
+  # with, so a red night would say nothing about this tree, and the pinned-release run in qa.yaml
+  # is the one that has to pass. A failure is not lost in a green run, though: it opens one
+  # tracking issue with the failing gates' output, or rewrites the one that is open, and the
+  # first night the gates pass again closes it (.github/scripts/upstream-dev-issue.sh). A pull
+  # request that changes this workflow runs the gates and leaves the issue alone.
+  #
+  # Their clang-tidy is not run here: esphome-upstream-check.sh has no step for it (their
+  # script/clang-tidy needs a PlatformIO environment per target), and cpp-lint.sh runs clang-tidy
+  # with their configuration at their pin on this tree.
   esphome-upstream-dev:
     if: ${{ github.server_url == 'https://github.com' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+      issues: write   # the tracking issue, and nothing else in this workflow writes
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: ESPHome upstream gates (their dev branch)
+        id: gates
         run: |
-          if ESPHOME_UPSTREAM_REF=dev bash firmware/scripts/esphome-upstream-check.sh; then
+          log="$RUNNER_TEMP/upstream-dev.log"
+          status=0
+          ESPHOME_UPSTREAM_REF=dev bash firmware/scripts/esphome-upstream-check.sh > "$log" 2>&1 || status=$?
+          cat "$log"
+          src="${XDG_CACHE_HOME:-$HOME/.cache}/hisense-w41h1/esphome-upstream/src-dev"
+          echo "commit=$(git -C "$src" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)" >> "$GITHUB_OUTPUT"
+          if [ "$status" = 0 ]; then
+            result=pass
             echo "The component passes ESPHome's dev-branch gates." >> "$GITHUB_STEP_SUMMARY"
+          elif python3 .github/scripts/upstream_gate_report.py "$log" > "$RUNNER_TEMP/failing-gates.md"; then
+            result=fail
+            echo "::warning title=ESPHome dev gates::The component does not pass ESPHome's dev-branch gates. See the tracking issue and this job's summary. Informational, not blocking."
+            {
+              echo "## The component does not pass ESPHome's dev-branch gates (informational)"
+              echo
+              cat "$RUNNER_TEMP/failing-gates.md"
+            } >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning title=ESPHome dev gates::The component does not pass ESPHome's dev-branch gates. See this job's log. Informational, not blocking."
-            echo "The component does NOT pass ESPHome's dev-branch gates (informational). See the log." >> "$GITHUB_STEP_SUMMARY"
+            # No gate failed: the clone or the tool install did. That says nothing about the
+            # component, so the issue is left as it is.
+            result=broken
+            echo "::warning title=ESPHome dev gates::esphome-upstream-check.sh stopped before or between the gates (see this job's log). The tracking issue was not touched."
+            echo "The run stopped outside the gates (see the log). The tracking issue was not touched." >> "$GITHUB_STEP_SUMMARY"
           fi
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+
+      - name: The tracking issue
+        if: ${{ github.event_name != 'pull_request' && steps.gates.outputs.result != 'broken' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ steps.gates.outputs.result }}
+          UPSTREAM: ${{ steps.gates.outputs.commit }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REF_NAME: ${{ github.ref_name }}
+        run: bash .github/scripts/upstream-dev-issue.sh "$RESULT" "$RUNNER_TEMP/failing-gates.md"
 
   # The component as a Linux program against the A/C model, as the esphome-host-e2e job of the QA
   # workflow runs it, with the scenarios that take minutes on the hub's real timers. No cache: the

@@ -942,6 +942,81 @@ code, out, log = compile_check("w41h1.yaml", **CACHE)
 check(code == 0 and len(log) == 1 and "slot image" not in out, "a board file that names no layout is not asked for a slot image")
 
 # ================================================================================================
+print("== the nightly ESPHome-dev job: the failing gates and the tracking issue ==")
+
+GH_SCRIPTS = ROOT / ".github/scripts"
+gate_report = load("upstream_gate_report", GH_SCRIPTS / "upstream_gate_report.py")
+MARK_OK, MARK_BAD = "\x1b[1;36m[upstream]\x1b[0m ", "\x1b[1;31m[upstream] FAILED:\x1b[0m "
+UPSTREAM_LOG = (MARK_OK + "updating the dev checkout\n" + MARK_OK + "script/ci-custom.py\n"
+                "a.cpp:9:2: lint: Declare log tags with ESPHOME_LOG_TAG(TAG, \"name\");\n(add ```// NOLINT```)\n\n"
+                + MARK_BAD + "python script/ci-custom.py\n" + MARK_OK + "ruff check\nAll checks passed!\n"
+                + MARK_OK + "script/test_build_components.py (config, every platform)\n"
+                + "".join(f"config {i}\n" for i in range(500)) + "x" * 900 + "\nTest Summary: 3 passed, 1 failed\n"
+                + MARK_BAD + "script/test_build_components.py\n" + MARK_OK + "one or more upstream gates failed against dev\n")
+text = gate_report.report(UPSTREAM_LOG)
+check(text.count("### ") == 2 and "### script/ci-custom.py\n" in text and "### script/test_build_components.py (config, every platform)\n" in text,
+      "the report has the gates that failed, under the names the script printed")
+check("All checks passed" not in text and "updating the dev checkout" not in text, "and nothing of a gate that passed")
+check("ESPHOME_LOG_TAG" in text and "\x1b" not in text, "with the gate's own output, the terminal colours removed")
+check("config 0\n" in text and "config 250\n" not in text and "Test Summary: 3 passed, 1 failed" in text and "lines left out" in text,
+      "a long output keeps its first and last lines")
+check(max(map(len, text.splitlines())) < 320, "and a long line is cut")
+check("````text\n" in text, "output that holds backticks is fenced with more of them")
+check(gate_report.report(MARK_OK + "cloning esphome/esphome at dev\nfatal: unable to access\n") == "",
+      "a run that stopped outside the gates (the clone) has no failing gate")
+big = gate_report.report("".join(MARK_OK + f"gate {g}\n" + ("y" * 290 + "\n") * 60 + MARK_BAD + f"gate {g}\n" for g in range(6)))
+check(len(big) <= gate_report.LIMIT and big.count("### ") == 6, "six failing gates with long output still fit an issue body")
+
+GH_LOG = TMP / "gh.log"
+FAKE_GH = script(TMP / "ghbin/gh", '''#!/usr/bin/env bash
+echo "$*" >> "$GH_LOG"
+case "$1 $2" in
+  "issue list") echo "${FAKE_ISSUE:-}" ;;
+  "issue create"|"issue edit")
+    while [ $# -gt 0 ]; do [ "$1" = --body-file ] && cp "$2" "$GH_BODY"; shift; done ;;
+esac
+''')
+ISSUE_SH = GH_SCRIPTS / "upstream-dev-issue.sh"
+write(TMP / "gates.md", text)
+
+
+def tracking_issue(*args, **env):
+    GH_LOG.unlink(missing_ok=True)
+    (TMP / "gh.body").unlink(missing_ok=True)
+    r = subprocess.run(["bash", str(ISSUE_SH), *args], capture_output=True, text=True, cwd=TMP,
+                       env={**GIT_ENV, "PATH": f"{FAKE_GH.parent}:{os.environ['PATH']}", "GH_LOG": str(GH_LOG), "GH_BODY": str(TMP / "gh.body"),
+                            "RUN_URL": "https://example.com/run/1", "REF_NAME": "main", "UPSTREAM": "abc123", **env})
+    calls = GH_LOG.read_text().splitlines() if GH_LOG.exists() else []
+    body = (TMP / "gh.body").read_text() if (TMP / "gh.body").exists() else ""
+    return r.returncode, r.stdout + r.stderr, calls, body
+
+
+code, out, calls, body = tracking_issue("fail", str(TMP / "gates.md"))
+check(code == 0 and len(calls) == 2 and calls[0].startswith("issue list --state open") and calls[1].startswith("issue create --title Nightly: hisense_ac fails"),
+      "the gates fail and no issue is open: one is created")
+check("ESPHOME_LOG_TAG" in body and "https://example.com/run/1" in body and "abc123" in body and "`main`" in body,
+      "its text has the failing gates, the run, this repo's ref and their commit")
+check("—" not in body and not re.search(r"\d+\.\d+\.\d+\.\d+|@[\w-]+\.", body), "and no dash or address that the repo's own rules refuse")
+code, out, calls, body = tracking_issue("fail", str(TMP / "gates.md"), FAKE_ISSUE="41")
+check(code == 0 and len(calls) == 2 and calls[1].startswith("issue edit 41 --body-file") and "ESPHOME_LOG_TAG" in body,
+      "the gates fail and the issue is open: its text is rewritten, and no second issue is opened")
+code, out, calls, body = tracking_issue("pass", FAKE_ISSUE="41")
+check(code == 0 and len(calls) == 2 and calls[1].startswith("issue close 41 --reason completed --comment"),
+      "the gates pass and the issue is open: it is closed with a comment")
+code, out, calls, body = tracking_issue("pass")
+check(code == 0 and len(calls) == 1 and "nothing to do" in out, "the gates pass and no issue is open: nothing is written")
+code, out, calls, body = tracking_issue("fail", str(TMP / "no-such.md"))
+check(code == 2 and not calls, "a failure without its report is a usage error, before anything is asked of GitHub")
+code, out, calls, body = tracking_issue("broken")
+check(code == 2 and not calls, "and so is a result that is neither pass nor fail")
+nightly_text = (ROOT / ".github/workflows/nightly.yaml").read_text()
+dev_job = re.search(r"(?ms)^  esphome-upstream-dev:\n.*?(?=^  [\w-]+:\n|\Z)", nightly_text).group(0)
+check(nightly_text.count("issues: write") == 1 and "issues: write" in dev_job and "contents: write" not in nightly_text,
+      "nightly.yaml gives issues: write to the esphome-upstream-dev job alone, and no job may write the repository")
+check("github.event_name != 'pull_request'" in dev_job and "upstream-dev-issue.sh" in dev_job and "upstream_gate_report.py" in dev_job,
+      "the job reports through the two scripts, and a pull request does not touch the issue")
+
+# ================================================================================================
 print("== how the lists agree: workflows, run_tests.sh, the lint scope, .gitignore ==")
 
 release = (ROOT / ".github/workflows/esphome-release.yaml").read_text()
