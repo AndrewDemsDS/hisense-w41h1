@@ -232,11 +232,11 @@ static void test_checksum() {
 
   // The literal frames carry their own checksums: the poll 0x01B3 (published), the three link
   // frames 0x0158, 0x0154, 0x0302 (capture).
-  CHECK(H::status_checksum_ok(H::STATUS_REQUEST, H::STATUS_REQUEST_LEN), "the captured status poll verifies");
+  CHECK(H::status_checksum_ok(H::STATUS_REQUEST, H::STATUS_REQUEST_LEN), "the published status poll verifies");
   CHECK(H::status_checksum_ok(H::LINK_INIT_0A, H::LINK_INIT_0A_LEN), "the captured 0x0A frame verifies");
   CHECK(H::status_checksum_ok(H::LINK_INIT_07, H::LINK_INIT_07_LEN), "the captured 0x07 frame verifies");
   CHECK(H::status_checksum_ok(H::LINK_HEARTBEAT, H::LINK_HEARTBEAT_LEN), "the captured heartbeat verifies");
-  CHECK(H::checksum_range(H::STATUS_REQUEST, 2, 17) == 0x01B3, "and the sum is the captured 01 B3");
+  CHECK(H::checksum_range(H::STATUS_REQUEST, 2, 17) == 0x01B3, "and the sum is the published 01 B3");
 
   // Line 145: nothing shorter than checksum + end tag + two bytes is looked at.
   const uint8_t six[6] = {0xAA, 0xBB, 0x00, 0x00, 0xF4, 0xFB};  // sum over [2, 2) is 0

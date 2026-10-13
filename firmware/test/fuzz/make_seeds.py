@@ -5,8 +5,8 @@ The files are committed; this script is how they were made and how to make them 
 harness changes its input format. It is deterministic and reads the golden frames out of the
 codec's own sources (hisense_protocol.h / .cpp) instead of repeating their bytes here:
 
-    STATUS_REQUEST, LINK_INIT_0A, LINK_INIT_07, LINK_HEARTBEAT   captured from the vendor module
-    FRAME_ON, FRAME_OFF                                          the literal power frames
+    LINK_INIT_0A, LINK_INIT_07, LINK_HEARTBEAT   captured from the vendor module
+    STATUS_REQUEST, FRAME_ON, FRAME_OFF          published by the community project (NOTICE.md)
 
 A/C -> module frames are built the way the existing tests build them (test_codec.cpp
 make_status(), test_esphome_setup_request.cpp link_reply(), test_esphome_bus.cpp ac_frame()),

@@ -39,7 +39,7 @@ It prints a heading per layer and ends with `ALL QA LAYERS PASSED`.
 
 | Layer | Test | What it holds down |
 |---|---|---|
-| 1a | `test_codec.cpp` | the reference driver's builders and parsers against captured frames |
+| 1a | `test_codec.cpp` | the reference driver's builders and parsers against golden frames |
 | 1b | `test_reference_map.cpp` | the reference fan ladder, setpoint clamp, running state and power estimate |
 | 1c | `test_esphome_map.cpp` | the reference mapping of modes, fan names and presets |
 | 1d | `test_esphome_codec_parity.cpp` | the component's codec equals the reference driver, byte for byte, over exhaustive and seeded random inputs |
