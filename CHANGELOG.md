@@ -11,6 +11,10 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- The project builds with ESPHome 2026.9.1 (was 2026.7.4): the pin in CI, `dev.py` and the
+  upstream check, and the install commands in the docs. No change to the components. A node
+  built with 2026.7.4 keeps working, and nothing has to be done to it.
+
 ## 2.0.0 - 2026-10-13
 
 The first release of the ESPHome firmware under a version number of its own.

@@ -30,7 +30,7 @@ git config core.hooksPath firmware/.githooks     # optional: the pre-commit chec
 python3 firmware/scripts/dev.py doctor           # what is installed and what is missing
 ```
 
-To build firmware you also need ESPHome at the version the project pins (2026.7.4 at the time of
+To build firmware you also need ESPHome at the version the project pins (2026.9.1 at the time of
 writing: `dev.py doctor` prints the pin and `dev.py fetch` installs it with pipx), and a
 `firmware/esphome/secrets.yaml` copied from `secrets.yaml.example`. Building and flashing are
 described in [`firmware/esphome/README.md`](firmware/esphome/README.md) and

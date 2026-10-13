@@ -24,7 +24,7 @@ board offered first), then the staged bring-up with its warnings.
 |---|---|
 | `walk` | the guided flow |
 | `doctor` | read-only: `git`, `python3` and `g++` present, ESPHome at the pinned version, `secrets.yaml` present. Exits non-zero when something is missing |
-| `fetch` | `pipx install esphome==2026.7.4` (asks first), and creates `secrets.yaml` from the example when there is none |
+| `fetch` | `pipx install esphome==2026.9.1` (asks first), and creates `secrets.yaml` from the example when there is none |
 | `test` | `firmware/test/run_tests.sh`, then `esphome config` on the board file |
 | `build` | `esphome compile` |
 | `erase --port P` | erases the whole flash of an ESP32. For a brand-new board only. You type `ERASE` to confirm |
