@@ -101,7 +101,7 @@ inline uint32_t bus_tx_time_ms(size_t len) {
 // re-sent into it would pile up and all land when it comes back.
 //
 // There is a second retry above this one: the hub sends a command again when the status a few
-// seconds later does not show it (COMMAND_RESEND_MAX in hisense_map.h, two more sends). The two
+// seconds later does not show it (COMMAND_RESEND_MAX in hisense_confirm.h, two more sends). The two
 // answer different failures, a frame nobody heard and a frame that was heard and not applied, and
 // they are left separate on purpose. They multiply only when both fail every time, which is a unit
 // that answers its status poll and never a command: it gets 3 x 3 = 9 frames over about 20 s
@@ -132,9 +132,11 @@ inline bool command_slot_open(uint8_t sent_this_cycle, uint32_t cycle_elapsed_ms
 // when its payload repeats the first two payload bytes of the command and carries 1 in the third
 // (RE docs/10 section 4.2 step 6). Payload byte N is frame byte 13 + N, so that is frame bytes 13
 // and 14 echoed, and the value 1 at frame offset 15.
-// VERIFY: the layout is read from the stock image and has not been captured on this bus. Until a
-// capture backs it the verdict is logged and nothing is decided on it: the hub's status check
-// (confirm_decision in hisense_map.h) is what tells a command that took from one that did not.
+// VERIFY: the layout is read from the stock image and no reply frame has been captured on this bus.
+// One stock module logged a verdict that agrees with it on 2026-10-10 (firmware/docs/15), which is
+// a log line and not the frame. Until a capture backs it the verdict is logged and nothing is
+// decided on it: the hub's status check (confirm_decision in hisense_confirm.h) is what tells a
+// command that took from one that did not.
 static constexpr size_t CMD_REPLY_ACK_OFFSET = 15;
 static constexpr uint8_t CMD_REPLY_ACK_VALUE = 0x01;
 

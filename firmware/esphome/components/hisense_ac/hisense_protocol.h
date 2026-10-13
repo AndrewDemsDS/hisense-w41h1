@@ -5,7 +5,7 @@
 // from a bus capture, from the vendor Wi-Fi module's firmware, or from the sample frames of the
 // community project https://github.com/pslawinski/esphome_airconintl, which documented this bus
 // first (the comment at each such frame names it). `VERIFY` marks values not yet confirmed on
-// hardware.
+// hardware; reverse-engineering/docs/14-open-questions.md lists each one with what would settle it.
 //
 // The remote's "77" gesture is carried as a setup request: the request bits of the A/C's 0x1E
 // reply, their debounce and lockout, and the heartbeat bit that puts "77" on the panel. What the
@@ -105,9 +105,11 @@ enum Mode : uint8_t {
 };
 
 // Enum value = W41H1 fan index: command byte 16 is index * 2 + 1, status byte 16 is index * 2.
+// The quiet command value is the open one: the DI tap of 2026-07-08 lists 0x03 for quiet, and sent
+// by this project it put the unit on high (hisense_entities.h). Quiet is reached through the mute flag.
 enum FanSpeed : uint8_t {
   FAN_SPEED_AUTO = 0,         // cmd 0x01 / status 0x01, confirmed
-  FAN_SPEED_QUIET = 1,        // cmd 0x03 / status 0x02 (mute). VERIFY cmd
+  FAN_SPEED_QUIET = 1,        // cmd 0x03 / status 0x02 (mute). VERIFY cmd, see above
   FAN_SPEED_LOW = 5,          // cmd 0x0B / status 0x0A, confirmed
   FAN_SPEED_MED_LOW = 6,      // cmd 0x0D / status 0x0C, confirmed
   FAN_SPEED_MID = 7,          // cmd 0x0F / status 0x0E, confirmed
@@ -123,11 +125,14 @@ enum SwingMode : uint8_t {
 };
 
 // Byte 33. Eco and turbo share it, so they are mutually exclusive on the wire.
+// The eco-off value is the open one: RE docs/03 records 0x10 from the DI tap of 2026-07-08 and the
+// capability rule gives the same value, but the tap's log is not in the repository and no read-back
+// of the status bit is on record.
 enum Feature : uint8_t {
   FEATURE_NONE = 0,     // 0x04, neutral and turbo-off, confirmed
   FEATURE_ECO = 1,      // 0x30, confirmed on W41H1
   FEATURE_TURBO = 2,    // 0x0C, confirmed on W41H1
-  FEATURE_ECO_OFF = 3,  // 0x10, explicit eco clear (NONE does not clear eco). VERIFY
+  FEATURE_ECO_OFF = 3,  // 0x10, explicit eco clear (NONE does not clear eco). VERIFY, see above
 };
 
 // Byte 36. NOCHANGE rides ordinary frames.
@@ -159,7 +164,9 @@ struct AcCommand {
   // Also switch the unit on, in this frame (byte 18 |= CMD_POWER_ON_BITS). Set for the one frame
   // that powers the unit on, never kept in the shadow. Cool 0x5C and heat 0x3C are the stock
   // module's own bytes. VERIFY on hardware: auto 0x9C, dry 0x7C and fan 0x1C, which follow from the
-  // same field rule and which this project's earlier firmware never sent.
+  // same field rule and which this project's earlier firmware never sent. The stock module does
+  // not send them either, and none has been compared with a capture (RE docs/03, "Power travels
+  // in the mode byte").
   bool power_on{false};
 };
 
@@ -181,11 +188,11 @@ struct AcState {
   bool mute_on{false};         // byte 36 bit 2
   bool sleep_on{false};        // byte 17 != 0
   uint8_t sleep_raw{0};        // byte 17 holds profile * 2
-  bool purify_on{false};       // byte 36 bit 7. VERIFY (no test unit had purify)
+  bool purify_on{false};       // byte 36 bit 7. VERIFY: the community map has bit 5, neither seen set
   int8_t outdoor_temp_c{0};    // byte 44, always C
   int8_t coil_temp_c{0};       // byte 45, always C
   uint8_t compressor_freq{0};  // byte 42, Hz
-  uint8_t current_raw{0};      // byte 55, power proxy (see hisense_map.h)
+  uint8_t current_raw{0};      // byte 55, power proxy (hisense_telemetry.h)
   uint8_t voltage_raw{0};      // byte 50, whole volts
 };
 
@@ -336,8 +343,9 @@ size_t stamp_link_token(const uint8_t *in, size_t len, uint8_t hi, uint8_t lo, u
 // Set or clear the buzzer bit of a finished 0x65 command frame and fix the checksum. The stock
 // module ORs `t_beep << 2` into payload byte 10, which is frame byte 23 (get_dev_control_cmd, stock
 // image file 0x1f96e), and defaults it to 1; every builder here writes it as 1 too. It is a flag
-// on the one frame, not a stored setting. VERIFY on hardware: that the unit stays silent with the
-// bit clear. Any other frame class is copied through unchanged. 0 on error.
+// on the one frame, not a stored setting. With the bit clear a unit took commands from an ESPHome
+// node in silence (maintainer's check, 2026-10-10, firmware/docs/07-stock-parity-gaps.md). Any
+// other frame class is copied through unchanged. 0 on error.
 static constexpr uint8_t CMD_BEEP_BYTE = 23;
 static constexpr uint8_t CMD_BEEP_BIT = 0x04;
 size_t stamp_beep(const uint8_t *in, size_t len, bool beep, uint8_t *out, size_t out_cap);
@@ -354,16 +362,17 @@ bool devtype_from_reply(const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo
 // one included, through one parser that rejects a checksum mismatch before any handler sees the
 // payload (RE docs/03 "Parser facts", docs/10 section 4.2 step 5), and a wrong pair in bytes 7/8
 // makes the unit reject every frame (docs/10 section 4.5). 00 00 means "not linked yet" to the
-// stock module and is never adopted. VERIFY: no capture of a real DevType reply is in the
-// repository. That it carries the 2-byte sum follows from the frame being LEN + 9 bytes long
-// (every deployed unit learns its type through an assembler that requires exactly that), which in
-// the stock parser's layout leaves two bytes between the payload and the end tag.
+// stock module and is never adopted. A real reply was captured on 2026-10-12 from a unit driven
+// by this firmware on an ESP32-C3 board (RE docs/03, "The device-type exchange"):
+//   F4 F5 01 40 0D 01 00 FE 01 00 00 01 00 0A 04 01 01 01 01 60 F4 FB
+// 22 bytes (LEN 0x0D + 9), the device type at bytes 16 and 17, and bytes 18 and 19 the 16-bit sum
+// of bytes 2 to 17 (0x0160): the same length and checksum rules as every other frame.
 bool devtype_reply_usable(bool checksum_ok, const uint8_t *reply, size_t n, uint8_t *hi, uint8_t *lo);
 
 // ---- Setup request: the remote's "77" gesture --------------------------------------------------
 // Horizontal airflow pressed six times on the remote makes the mainboard set a request bit in
 // payload[4] (frame byte 17) of its reply to the 0x1E heartbeat. The vendor module tests exactly
-// these two bits there (reverse-engineering/docs/03-rs485-ac-protocol.md, "Recommission (77)").
+// these two bits there (reverse-engineering/docs/03-rs485-ac-protocol.md, 'Recommission ("77")').
 static constexpr size_t LINK_FLAGS_OFFSET = 17;
 // Bit 5: smart-config pairing. Bench unit, 2026-07-20: set for exactly one reply per gesture, about
 // one second, and never transmitted by the module, so the unit cannot be handing it back.

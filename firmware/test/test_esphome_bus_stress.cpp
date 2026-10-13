@@ -1546,7 +1546,7 @@ static void script_burst(Rig &r) {
         accepted);
   CHECK(std::is_sorted(order.begin(), order.end()), "in the order they were accepted");
   CHECK(r.rec.commands.size() == order.size(), "each reported");
-  // The verdict on the ack byte is not asserted: its layout is still VERIFY in hisense_map.h.
+  // The verdict on the ack byte is not asserted: its layout is still VERIFY in hisense_bus.h.
   for (auto &c : r.rec.commands)
     CHECK(c.answered && c.cls == 0x65, "answered by a 0x65");
   r.audit_commands();
