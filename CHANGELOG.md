@@ -272,8 +272,9 @@ Nothing in this section changes what is on the wire, the entities or what they p
   page to a file outside the documentation now opens that file on GitHub (it was a dead link),
   the API key in `secrets.yaml.example` is 32 zero bytes so that nobody takes it for a key (the
   earlier example value is public: a node built with it unchanged needs a key of its own),
-  `dev.py fetch` names all four secrets the build reads, and `run_tests.sh` labels its layers in
-  the order they run.
+  `dev.py fetch` names all four secrets the build reads, `run_tests.sh` labels its layers in
+  the order they run, and `firmware/scripts/amebaz2_image.py verify <dump-or-image>` checks the
+  image chain of a stock-module dump from the command line (read-only, exit 0 or 1).
 
 ## Matter and ESPHome side by side - 2026-10-10
 

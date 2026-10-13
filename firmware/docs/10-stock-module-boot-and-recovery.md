@@ -73,7 +73,8 @@ byte-sum             last 4 bytes == sum(all bytes before them) & 0xFFFFFFFF
   trailer to end at the end of the file: the build tool pads 0 or `0x20` trailing bytes.
 
 `firmware/scripts/amebaz2_image.py` is the one implementation of this recipe (walk, verify,
-re-sign). `matter-convert.py` and the clip writers in `firmware/flasher/` use it.
+re-sign). `matter-convert.py` and the clip writers in `firmware/flasher/` use it, and
+`amebaz2_image.py verify <file>` runs the check on a dump or an image (section 4).
 `firmware/test/test_image_chain.py` holds it down with synthetic images, and with any real
 images found in `firmware/built-images/` or `dumps/` (both gitignored).
 
@@ -111,26 +112,28 @@ What settles it, cheapest first:
    **set**. This was readable the whole time on both occasions a healthy unit was taken for a
    brick (2026-07-26/27).
 2. **A clip dump** (`firmware/flasher/ch341dump.py`), then a walk of the image chain in every
-   slot. `amebaz2_image.py` is a module with no command line, so from the repository root:
+   slot:
 
-   ```python
-   import sys
-   sys.path.insert(0, "firmware/scripts")
-   import amebaz2_image as img
-
-   blob = open(sys.argv[1], "rb").read()
-   for off in range(0, len(blob), 0x1000):
-       if img.manifest_ok(blob[off:off + 0x140]):
-           ok, lines = img.verify(blob[off:off + 0x1AC000])
-           print("0x%06X serial %d %s" % (off, img.read_serial(blob[off:]), "valid" if ok else "INVALID"))
-           for line in img.failures(lines):
-               print("   ", line)
+   ```bash
+   python3 firmware/scripts/amebaz2_image.py verify dump.bin
    ```
 
-   It prints one line per image found at a sector boundary, with the trailer that failed when
-   one did. It checks the manifest signature and every sub-image trailer, not the byte-sum. A
-   valid chain in the slot with the higher serial plus QE set means the firmware is fine and the
-   problem is elsewhere.
+   It reads the file and writes nothing. It prints every image found at a sector boundary with
+   its serial, then one line per check: the manifest signature, each sub-image trailer and,
+   where the end of the image can be told, the byte-sum.
+
+   ```
+   image at 0x010000  serial 100  VALID
+       manifest sig = OK
+       sub0 hdr@0xe0 covers [0x0,0x3660) trailer@0x3660 = OK
+       ...
+       byte-sum = OK
+   ```
+
+   The exit status is 0 when at least one image was found and all of them verify, and 1
+   otherwise. A stale image left in the other slot therefore gives 1: read the lines. A valid
+   chain in the slot with the higher serial plus QE set means the firmware is fine and the
+   problem is elsewhere. The same command takes an image file from a build.
 3. On a unit that still runs the retired Matter firmware, its break-glass listener:
    `matter-convert.py slots <ip>` prints `ok: fw1_sn=<n> fw2_sn=<n> cur=<slot>`. An answer
    proves the unit is alive. No answer proves nothing.

@@ -111,7 +111,7 @@ Tested on the host by `firmware/test/test_matter_convert.py`. The conversion ran
 
 | File | What it does |
 |---|---|
-| `amebaz2_image.py` | the stock module's image format: walk the sub-image chain, verify, re-sign (#75). A module with no command line. Used by `matter-convert.py` and the clip writers in `firmware/flasher/`, tested by `firmware/test/test_image_chain.py`. The recipe is in [`firmware/docs/10-stock-module-boot-and-recovery.md`](../docs/10-stock-module-boot-and-recovery.md) |
+| `amebaz2_image.py` | the stock module's image format: walk the sub-image chain, verify, re-sign (#75). Its one command, `amebaz2_image.py verify <dump-or-image>`, prints every image in the file with its chain and whether each signature verifies, exits 0 or 1 and writes nothing. Used by `matter-convert.py` and the clip writers in `firmware/flasher/`, tested by `firmware/test/test_image_chain.py`. The recipe is in [`firmware/docs/10-stock-module-boot-and-recovery.md`](../docs/10-stock-module-boot-and-recovery.md) |
 | `version-lint.py` | holds the firmware version (`firmware/esphome/packages/version.yaml`), the changelog, the release tag and the ESPHome pins together. Options below |
 | `cpp-lint.sh`, `cpp-lint.py` | C and C++ lint for every tree this repository owns. Options below |
 | `esphome-compile-check.sh <config.yaml>...` | compiles the configurations it is given (paths relative to `firmware/esphome/`) and fails when one does not build, when one of this repository's components warns, when a board file's image does not carry the version, or when a stock-module build leaves no slot image of its layout. CI's compile gate. It copies the placeholder secrets when there is no `secrets.yaml`, so **never flash an image it built** |
