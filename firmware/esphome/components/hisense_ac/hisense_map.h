@@ -17,3 +17,7 @@
 #include "hisense_protocol.h"
 #include "hisense_special.h"
 #include "hisense_telemetry.h"
+
+// Nothing is declared here: the declarations are in the headers above. ESPHome's own lint asks
+// every C++ file of a component to name the component's namespace, so this one does.
+namespace esphome::hisense_ac {}  // namespace esphome::hisense_ac
