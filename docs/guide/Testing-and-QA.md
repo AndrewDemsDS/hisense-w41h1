@@ -31,7 +31,9 @@ without an A/C or a board. Why the suite is shaped this way is in
 | `firmware/scripts/cpp-lint.sh check` | clang-format, the custom rules and clang-tidy | | installs its pinned tools on first use |
 
 The coverage and mutation scripts write to a temporary directory, never into the tree. Neither is
-part of the default suite.
+part of the default suite. `mutate.py` runs at most four mutants at once, each with a memory
+limit and a timeout of its own, and prints those limits when it starts
+(`firmware/docs/04-qa-strategy.md`).
 
 ## What run_tests.sh holds down
 
@@ -59,7 +61,7 @@ It prints a heading per layer, in the order of this table, and ends with `ALL QA
 | 3 | `test_image_chain.py` | the stock module's image signing chain (`amebaz2_image.py`): walk, verify, re-sign |
 | 4 | `test_dev_release.py`, `test_matter_convert.py` | `dev.py` (build cache, board files, command line) and `matter-convert.py` |
 | 5 | `version-lint.py`, `test_version_lint.py` | the firmware version, the changelog and the ESPHome pin agree, and the lint fails on trees that have to fail |
-| 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py` | edge cases of the tooling: `dev.py`, the scripts, the commit hook, the lint lists, the clip flasher's checks |
+| 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py`, `test_mutate_limits.py` | edge cases of the tooling: `dev.py`, the scripts, the commit hook, the lint lists, the clip flasher's checks, the limits `mutate.py` puts on a mutant |
 
 To run one C++ test alone, compile it from `firmware/test/` as `run_tests.sh` does:
 

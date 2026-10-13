@@ -60,28 +60,31 @@ python3 firmware/test/host_e2e/run.py               # the real component on ESPH
 firmware/test/coverage/run.sh                       # line and branch coverage, needs gcovr (uvx fetches it)
 firmware/test/fuzz/run.sh --smoke                   # replay the fuzz corpus (run_tests.sh already does this)
 firmware/test/fuzz/run.sh <seconds> [harness...]    # fuzz, needs clang++ with libFuzzer
-firmware/test/coverage/mutate.py --sample N         # mutation testing, minutes, needs uvx
+firmware/test/coverage/mutate.py --sample N         # mutation testing, minutes, needs uvx. Limits its own memory
 ```
 
 What each layer covers is in [`docs/guide/Testing-and-QA.md`](docs/guide/Testing-and-QA.md).
 
 ### Cap the memory of the heavy ones
 
-`mutate.py` and a timed `fuzz/run.sh` start many compilers or sanitizer processes at once
-(`mutate.py --jobs`, and `fuzz/run.sh` runs every harness it is given in parallel). They can use
-up a desktop's memory and take the session with them. Run them in a scope with a limit, so a
-runaway is killed alone:
+`mutate.py` limits itself. It runs at most four mutants at once (`--jobs`), gives each mutated
+test binary a memory limit of its own (`--mem-limit`, 512 MB) and 20 s, keeps none of its output,
+and refuses a `--jobs` that could claim more than a quarter of the machine's memory. It prints the
+limits when it starts. It needs no wrapper, with one exception: `--sanitize` on a machine where
+`systemd-run --user --scope` does not work has no memory limit, and says so.
+
+A timed `fuzz/run.sh` runs every harness it is given in parallel, each a sanitizer process, and
+does not limit itself. It can use up a desktop's memory and take the session with it. Run it in a
+scope with a limit, so a runaway is killed alone:
 
 ```bash
-systemd-run --user --scope -q -p MemoryMax=6G -p MemorySwapMax=0 -- \
-    firmware/test/coverage/mutate.py --sample 20 --jobs 2
 systemd-run --user --scope -q -p MemoryMax=6G -p MemorySwapMax=0 -- \
     firmware/test/fuzz/run.sh 600 parsers
 ```
 
-A process killed by the limit exits with 137. Name one or two harnesses per fuzz run, keep
-`--jobs` low, and run one heavy command at a time. The same wrapper suits `host_e2e/run.py` and a
-full ESPHome compile on a small machine.
+A process killed by the limit exits with 137. Name one or two harnesses per fuzz run, and run one
+heavy command at a time. The same wrapper suits `host_e2e/run.py` and a full ESPHome compile on a
+small machine.
 
 ### Known failures
 

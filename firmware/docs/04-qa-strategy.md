@@ -68,7 +68,7 @@ The layers, in the order they run, with the label each prints:
 | 3 | `test_image_chain.py` | the stock module's image signing chain (`amebaz2_image.py`): walk, verify, re-sign, and the stale-trailer defect that bricked a unit. Real images under `firmware/built-images/` and `dumps/` are checked when present (both are gitignored) |
 | 4 | `test_dev_release.py`, `test_matter_convert.py` | `dev.py` (build cache, board files, the command line) and `matter-convert.py` |
 | 5 | `version-lint.py`, `test_version_lint.py` | the version, the changelog and the ESPHome pin agree, and the lint fails on trees that have to fail |
-| 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py` | edge cases of the tooling: `dev.py`, the lint scripts, the hook, the clip flasher against a chip that is a bytearray, the restore path of the hardware test |
+| 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py`, `test_mutate_limits.py` | edge cases of the tooling: `dev.py`, the lint scripts, the hook, the clip flasher against a chip that is a bytearray, the restore path of the hardware test, the limits `mutate.py` puts on a mutant |
 
 Run one test by compiling it the way the script does, from `firmware/test/`:
 
@@ -131,7 +131,7 @@ tests, to see what they add. It needs `gcovr` (fetched through `uvx` at the vers
 set `GCOVR`), takes about 15 s and writes nothing into the tree.
 
 ```bash
-python3 firmware/test/coverage/mutate.py [--target NAME ...] [--sample N] [--seed S] [--jobs J] [--out DIR]
+python3 firmware/test/coverage/mutate.py [--target NAME ...] [--sample N] [--seed S] [--jobs J] [--mem-limit MB] [--out DIR]
 ```
 
 Mutation testing changes the product code a little at a time (`universalmutator`, through `uvx`)
@@ -143,15 +143,25 @@ is a missing test. The score is killed over killed plus survivors. Targets are `
 and `uart_h`. `--survivors-of LABEL` re-runs only the survivors of an earlier run, and
 `--sanitize` builds the tests with the sanitizers, about three times slower. A run takes minutes.
 
-**Run it under a memory cap.** A mutant is broken code on purpose: a flipped loop condition can
-spin, and a changed size can allocate without bound. The script stops a test after 20 s. It does
-not limit memory, and with several jobs at once a few runaway mutants are enough to take a
-desktop down. Put the whole run in a scope with a limit, for example:
+**The script fences each mutant in.** A mutant is broken code on purpose: a flipped loop
+condition can spin while it prints, and a changed size can allocate without bound. So every
+mutated test binary runs with these limits, which the script prints when it starts:
 
-```bash
-systemd-run --user --scope -q -p MemoryMax=6G -p MemorySwapMax=0 -- \
-    python3 firmware/test/coverage/mutate.py --target confirm_h --sample 50 --jobs 4
-```
+| Limit | Default | How |
+|---|---|---|
+| memory | 512 MB per test binary (`--mem-limit MB`) | a `systemd-run --user --scope` with `MemoryMax` and no swap, so the kernel kills that one process. Where no user scope can be started, `RLIMIT_AS` on the process |
+| time | 20 s | the process is killed |
+| output | none is kept | stdout and stderr go to `/dev/null` and are never read into the script |
+| files | 16 MB, and no core file | `RLIMIT_FSIZE`, `RLIMIT_CORE` |
+| workers | 4 at once (`--jobs J`) | the run is refused when `--jobs` times `--mem-limit` is more than a quarter of the machine's memory |
+
+A mutant stopped by a limit is killed, like one that fails a check. With `--sanitize` and no
+systemd scope there is no memory limit, because the sanitizers reserve more address space than
+`RLIMIT_AS` could allow: the script says so in a warning, and that run belongs in a container or
+a scope with a limit of its own. The compilers are not limited. Each worker runs one at a time.
+`firmware/test/test_mutate_limits.py` feeds the runner a program that allocates without bound,
+one that prints without end and one that writes a file without end, and is part of
+`run_tests.sh`.
 
 It is not in CI and not in `run_tests.sh`. What it found is in the two gap tests (layer 1m),
 where each block names the line or the mutant it is there for.
