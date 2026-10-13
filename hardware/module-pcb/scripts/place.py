@@ -27,6 +27,7 @@ MID = BOARD_W / 2
 # ESP32-C3-WROOM-02: the antenna end of the module is 13.1 mm from the footprint
 # origin and has to sit at the board edge.
 MODULE_X = BOARD_L - 13.1
+REG = (11.6, 4.6)  # centre of the buck regulator
 
 # reference: (x, y, rotation in degrees, side)
 PLACEMENT = {
@@ -34,15 +35,15 @@ PLACEMENT = {
     "H2": (HOLE_X, MID + HOLE_PITCH / 2, 0, "F"),
     "J1": (6.5, MID - 3.0, 270, "F"),
     "U1": (MODULE_X, MID, 270, "F"),
-    # 5 V to 3.3 V buck, top side
-    "U2": (11.5, 4.0, 0, "F"),
-    "L1": (10.3, 7.8, 270, "F"),
-    "C1": (15.5, 4.95, 0, "F"),
-    "C8": (15.5, 6.9, 0, "F"),
-    "R1": (15.3, 1.3, 180, "F"),
-    "R2": (15.3, 3.05, 0, "F"),
-    "C2": (13.8, 8.9, 0, "F"),
-    "C3": (13.8, 11.1, 0, "F"),
+    # 5 V to 3.3 V buck, top side, laid out around the regulator at REG
+    "U2": (REG[0], REG[1], 0, "F"),
+    "C1": (REG[0], REG[1] + 2.8, 180, "F"),
+    "L1": (REG[0], REG[1] + 5.9, 270, "F"),
+    "C2": (REG[0] + 3.3, REG[1] + 6.97, 0, "F"),
+    "C3": (REG[0] + 3.3, REG[1] + 9.1, 0, "F"),
+    "C8": (REG[0] + 3.7, REG[1] + 1.7, 0, "F"),
+    "R2": (REG[0] + 3.7, REG[1] - 0.95, 0, "F"),
+    "R1": (REG[0] + 3.7, REG[1] - 2.7, 180, "F"),
     # status LED, top side
     "D1": (12.0, 18.9, 0, "F"),
     "R6": (15.5, 18.9, 0, "F"),
@@ -69,20 +70,36 @@ PLACEMENT = {
 }
 
 
-# Connections laid down before the autorouter runs, because it gets them wrong: it boxes the
-# regulator's ground pin in with the 5 V feed and leaves the module's supply pin on an island.
+def reg(*points):
+    return [(REG[0] + dx, REG[1] + dy) for dx, dy in points]
+
+
+# Connections laid down before the autorouter runs, because it gets them wrong: it gave the
+# regulator's feedback node a long detour and left the module's supply pin on an island.
+# The regulator follows the datasheet's advice: input capacitor, inductor and output
+# capacitor next to the part, a short switch node, a short feedback node.
 # (net, width, layer, points, via at the last point)
 PREROUTE = [
-    # regulator EN to VIN, around the top of the package
+    # EN to VIN under the package
     (
         "/+5V",
-        0.25,
+        0.2,
         "F",
-        [(10.36, 3.05), (10.36, 2.2), (13.65, 2.2), (13.65, 4.95), (12.64, 4.95)],
+        reg((-1.14, -0.95), (0.1, -0.95), (0.1, 0.95), (1.14, 0.95)),
         False,
     ),
-    # regulator ground pin out to the pour, with a via to the bottom pour
-    ("/GND", 0.4, "F", [(10.36, 4.0), (8.9, 4.0)], True),
+    # VIN to the input capacitor
+    ("/+5V", 0.5, "F", reg((1.14, 0.95), (1.14, 2.6), (0.95, 2.8)), False),
+    # switch node to the inductor, between the input capacitor's pads
+    ("/SW", 0.3, "F", reg((-1.14, 0.95), (-0.6, 1.5), (0, 1.5), (0, 4.83)), False),
+    # ground pin to the input capacitor's ground pad, with vias to the bottom pour
+    ("/GND", 0.5, "F", reg((-1.14, 0), (-2.3, 0)), True),
+    ("/GND", 0.5, "F", reg((-2.3, 0), (-2.3, 2.8)), True),
+    ("/GND", 0.5, "F", reg((-2.3, 2.8), (-0.95, 2.8)), False),
+    # feedback pin to the divider
+    ("/FB", 0.2, "F", reg((1.14, -0.95), (2.875, -0.95), (2.875, -2.7)), False),
+    # inductor to the output capacitors
+    ("/+3V3", 0.5, "F", reg((0, 6.97), (2.35, 6.97), (2.35, 9.1)), False),
     # module ground pin to the bottom pour
     (
         "/GND",
@@ -239,6 +256,8 @@ def main():
             board.Delete(t)
         preroute(board)
     outline(board)
+    # Gerbers, drill and placement files all take the bottom-left board corner as origin.
+    board.GetDesignSettings().SetAuxOrigin(mm(0, BOARD_W))
     for z in list(board.Zones()):
         board.Delete(z)
     keepouts(board)

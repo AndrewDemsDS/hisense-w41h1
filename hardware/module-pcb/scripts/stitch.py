@@ -5,7 +5,7 @@ After routing, the two ground pours are cut into islands by the tracks. This scr
 the islands on each layer, treats every existing ground via and through-hole ground pad as a
 link between the islands it sits in, and adds a via wherever one joins two groups that are
 not joined yet. A via is only placed where its whole footprint, plus a margin, lies inside
-ground copper on both layers, so it cannot touch another net.
+ground copper on both layers, so it cannot touch another net, and never inside a pad.
 
 Usage: python3 scripts/stitch.py [board.kicad_pcb]
 Run it after routing and again after any change to the tracks.
@@ -93,6 +93,15 @@ def main():
         if None not in (n[1] for n in nodes):
             groups.join(*nodes)
 
+    # No via inside a pad: solder wicks down an open via during reflow.
+    grow = pcbnew.FromMM(VIA_SIZE / 2 + 0.1)
+    pad_boxes = []
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            bb = pad.GetBoundingBox()
+            bb.Inflate(grow)
+            pad_boxes.append(bb)
+
     box = board.GetBoardEdgesBoundingBox()
     step = pcbnew.FromMM(GRID)
     reach = VIA_SIZE / 2 + MARGIN
@@ -101,7 +110,11 @@ def main():
         for y in range(box.GetTop(), box.GetBottom(), step):
             point = pcbnew.VECTOR2I(x, y)
             nodes = [(layer, island_at(fills[layer], point, reach)) for layer in LAYERS]
-            if None in (n[1] for n in nodes) or not groups.join(*nodes):
+            if None in (n[1] for n in nodes) or any(
+                bb.Contains(point) for bb in pad_boxes
+            ):
+                continue
+            if not groups.join(*nodes):
                 continue
             via = pcbnew.PCB_VIA(board)
             via.SetPosition(point)
