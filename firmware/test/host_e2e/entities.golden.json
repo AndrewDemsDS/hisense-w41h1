@@ -1,0 +1,399 @@
+{
+  "device": {
+    "name": "hisense-ac",
+    "friendly_name": "Air Conditioner"
+  },
+  "entities": [
+    {
+      "domain": "binary_sensor",
+      "object_id": "ac_bus_link",
+      "name": "AC bus link",
+      "icon": "",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "connectivity"
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "aux_heat_relay",
+      "name": "Aux heat relay",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": "heat"
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "capability_eco",
+      "name": "Capability eco",
+      "icon": "mdi:leaf",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "capability_heat_pump",
+      "name": "Capability heat pump",
+      "icon": "mdi:heat-pump",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "capability_quiet",
+      "name": "Capability quiet",
+      "icon": "mdi:volume-off",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "fault",
+      "name": "Fault",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": "problem"
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "fault_condensate_tray_full",
+      "name": "Fault condensate tray full",
+      "icon": "",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "problem"
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "fault_indoor_temp_sensor",
+      "name": "Fault indoor temp sensor",
+      "icon": "",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "problem"
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "fault_indoor_to_outdoor_comms",
+      "name": "Fault indoor to outdoor comms",
+      "icon": "",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "problem"
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "fault_outdoor_temp_sensor",
+      "name": "Fault outdoor temp sensor",
+      "icon": "",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "problem"
+    },
+    {
+      "domain": "climate",
+      "object_id": "air_conditioner",
+      "name": "",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "modes": [
+        "off",
+        "cool",
+        "heat",
+        "fan_only",
+        "dry",
+        "auto"
+      ],
+      "fan_modes": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "custom_fan_modes": [
+        "medium_low",
+        "medium_high"
+      ],
+      "swing_modes": [
+        "off",
+        "vertical"
+      ],
+      "presets": [
+        "none",
+        "eco"
+      ],
+      "custom_presets": [
+        "quiet",
+        "turbo",
+        "eco_quiet",
+        "sleep_general",
+        "sleep_old",
+        "sleep_young",
+        "sleep_kids",
+        "eco_sleep_general",
+        "eco_sleep_old",
+        "eco_sleep_young",
+        "eco_sleep_kids"
+      ],
+      "visual": [
+        16.0,
+        32.0,
+        1.0,
+        1.0
+      ],
+      "current_temperature": true,
+      "action": true
+    },
+    {
+      "domain": "select",
+      "object_id": "sleep_profile",
+      "name": "Sleep profile",
+      "icon": "mdi:sleep",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "options": [
+        "Off",
+        "General",
+        "Old",
+        "Young",
+        "Kids"
+      ]
+    },
+    {
+      "domain": "sensor",
+      "object_id": "bus_checksum_errors",
+      "name": "Bus checksum errors",
+      "icon": "mdi:alert-circle-outline",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "",
+      "unit_of_measurement": "",
+      "accuracy_decimals": 0,
+      "state_class": "total_increasing"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "bus_link_losses",
+      "name": "Bus link losses",
+      "icon": "mdi:lan-disconnect",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "",
+      "unit_of_measurement": "",
+      "accuracy_decimals": 0,
+      "state_class": "total_increasing"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "bus_reply_timeouts",
+      "name": "Bus reply timeouts",
+      "icon": "mdi:timer-alert-outline",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "",
+      "unit_of_measurement": "",
+      "accuracy_decimals": 0,
+      "state_class": "total_increasing"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "coil_temperature",
+      "name": "Coil temperature",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": "temperature",
+      "unit_of_measurement": "\u00b0C",
+      "accuracy_decimals": 0,
+      "state_class": "measurement"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "command_retries",
+      "name": "Command retries",
+      "icon": "mdi:repeat",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "",
+      "unit_of_measurement": "",
+      "accuracy_decimals": 0,
+      "state_class": "total_increasing"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "compressor_frequency",
+      "name": "Compressor frequency",
+      "icon": "mdi:sine-wave",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": "",
+      "unit_of_measurement": "Hz",
+      "accuracy_decimals": 0,
+      "state_class": "measurement"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "current",
+      "name": "Current",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": "current",
+      "unit_of_measurement": "A",
+      "accuracy_decimals": 2,
+      "state_class": "measurement"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "e2e_setup_requests",
+      "name": "E2E setup requests",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": "",
+      "unit_of_measurement": "",
+      "accuracy_decimals": 0,
+      "state_class": "none"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "energy_today",
+      "name": "Energy today",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": "energy",
+      "unit_of_measurement": "kWh",
+      "accuracy_decimals": 3,
+      "state_class": "total_increasing"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "failed_commands",
+      "name": "Failed commands",
+      "icon": "mdi:message-off-outline",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "",
+      "unit_of_measurement": "",
+      "accuracy_decimals": 0,
+      "state_class": "total_increasing"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "outdoor_temperature",
+      "name": "Outdoor temperature",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": "temperature",
+      "unit_of_measurement": "\u00b0C",
+      "accuracy_decimals": 0,
+      "state_class": "measurement"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "power",
+      "name": "Power",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": "power",
+      "unit_of_measurement": "W",
+      "accuracy_decimals": 0,
+      "state_class": "measurement"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "unanswered_commands",
+      "name": "Unanswered commands",
+      "icon": "mdi:message-alert-outline",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": "",
+      "unit_of_measurement": "",
+      "accuracy_decimals": 0,
+      "state_class": "total_increasing"
+    },
+    {
+      "domain": "sensor",
+      "object_id": "voltage",
+      "name": "Voltage",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": "voltage",
+      "unit_of_measurement": "V",
+      "accuracy_decimals": 0,
+      "state_class": "measurement"
+    },
+    {
+      "domain": "switch",
+      "object_id": "beeper",
+      "name": "Beeper",
+      "icon": "mdi:volume-high",
+      "entity_category": "config",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "switch",
+      "object_id": "e2e_setup_indicator",
+      "name": "E2E setup indicator",
+      "icon": "",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "switch",
+      "object_id": "eco",
+      "name": "Eco",
+      "icon": "mdi:leaf",
+      "entity_category": "config",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "switch",
+      "object_id": "panel_display",
+      "name": "Panel display",
+      "icon": "mdi:television-ambient-light",
+      "entity_category": "config",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "switch",
+      "object_id": "quiet",
+      "name": "Quiet",
+      "icon": "mdi:volume-off",
+      "entity_category": "config",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "switch",
+      "object_id": "turbo",
+      "name": "Turbo",
+      "icon": "mdi:fan-plus",
+      "entity_category": "config",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "text_sensor",
+      "object_id": "ac_device_type",
+      "name": "AC device type",
+      "icon": "mdi:identifier",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": ""
+    }
+  ]
+}
