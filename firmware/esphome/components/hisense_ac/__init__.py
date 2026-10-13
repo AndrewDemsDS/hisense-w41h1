@@ -23,7 +23,9 @@ from esphome.const import (
     CONF_STATE,
     CONF_UART_ID,
 )
+from esphome.core import ID
 import esphome.final_validate as fv
+from esphome.types import ConfigFragmentType, ConfigType, TemplateArgsType
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ CONF_DE_PIN = "de_pin"
 CONF_ON_SETUP_REQUEST = "on_setup_request"
 
 
-def _listed_once(config):
+def _listed_once(config: ConfigFragmentType) -> ConfigFragmentType:
     # Without this a second entry is refused with ESPHome's "expected a dictionary", which does
     # not say what is wrong.
     if isinstance(config, list):
@@ -54,7 +56,7 @@ def _listed_once(config):
     return config
 
 
-def _de_pin_is_an_output(pin):
+def _de_pin_is_an_output(pin: ConfigType) -> ConfigType:
     # gpio_output_pin_schema only makes output the default mode: `mode: INPUT` gets through it,
     # and the hub would then write to an input and never transmit.
     mode = pin.get(CONF_MODE, {})
@@ -84,10 +86,10 @@ CONFIG_SCHEMA = cv.All(
 )
 
 
-def _one_owner_for_de(config):
+def _one_owner_for_de(config: ConfigType) -> ConfigType:
     """DE has exactly one driver: the hub's de_pin, the UART's flow_control_pin, or neither."""
 
-    def check(uart_config):
+    def check(uart_config: ConfigType) -> ConfigType:
         uart_drives_de = CONF_FLOW_CONTROL_PIN in uart_config
         if CONF_DE_PIN in config and uart_drives_de:
             raise cv.Invalid(
@@ -123,7 +125,7 @@ _UART_SETTINGS = uart.final_validate_device_schema(
 )
 
 
-def _final_validate(config):
+def _final_validate(config: ConfigType) -> ConfigType:
     # Each check looks the uart up through uart_id, so each gets the config as it was written
     # (a schema returns the uart's own config in place of the id).
     _UART_SETTINGS(config)
@@ -150,12 +152,12 @@ _CALLBACK_AUTOMATIONS = (
 )
 
 
-async def to_code(config):
+async def to_code(config: ConfigType) -> None:
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
-    if CONF_DE_PIN in config:
-        cg.add(var.set_de_pin(await cg.gpio_pin_expression(config[CONF_DE_PIN])))
+    if de_pin := config.get(CONF_DE_PIN):
+        cg.add(var.set_de_pin(await cg.gpio_pin_expression(de_pin)))
     await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)
 
 
@@ -168,7 +170,7 @@ _SET_SETUP_INDICATOR_SCHEMA = cv.maybe_simple_value(
 )
 
 
-def _setup_indicator_schema(value):
+def _setup_indicator_schema(value: ConfigFragmentType) -> ConfigType:
     # maybe_simple_value takes a mapping without the key as the value itself, so `{id: ac_bus}`
     # was refused with "cannot convert {'id': 'ac_bus'} to a boolean".
     if isinstance(value, dict) and CONF_STATE not in value:
@@ -185,7 +187,12 @@ def _setup_indicator_schema(value):
     _setup_indicator_schema,
     synchronous=True,
 )
-async def hisense_ac_set_setup_indicator_to_code(config, action_id, template_arg, args):
+async def hisense_ac_set_setup_indicator_to_code(
+    config: ConfigType,
+    action_id: ID,
+    template_arg: cg.TemplateArguments,
+    args: TemplateArgsType,
+) -> cg.MockObj:
     var = cg.new_Pvariable(action_id, template_arg)
     await cg.register_parented(var, config[CONF_ID])
     cg.add(var.set_state(await cg.templatable(config[CONF_STATE], args, cg.bool_)))

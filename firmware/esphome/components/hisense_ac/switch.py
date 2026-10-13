@@ -2,6 +2,7 @@ import esphome.codegen as cg
 from esphome.components import switch
 import esphome.config_validation as cv
 from esphome.const import CONF_BEEPER, CONF_DISPLAY, ENTITY_CATEGORY_CONFIG
+from esphome.types import ConfigType
 
 from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA, hisense_ac_ns
 
@@ -40,11 +41,10 @@ CONFIG_SCHEMA = cv.Schema(
 ).extend(HISENSE_AC_CLIENT_SCHEMA)
 
 
-async def to_code(config):
+async def to_code(config: ConfigType) -> None:
     for key, (kind, _) in SWITCHES.items():
-        if key not in config:
-            continue
-        var = await switch.new_switch(config[key])
-        await cg.register_component(var, config[key])
-        await cg.register_parented(var, config[CONF_HISENSE_AC_ID])
-        cg.add(var.set_kind(kind))
+        if conf := config.get(key):
+            var = await switch.new_switch(conf)
+            await cg.register_component(var, conf)
+            await cg.register_parented(var, config[CONF_HISENSE_AC_ID])
+            cg.add(var.set_kind(kind))
