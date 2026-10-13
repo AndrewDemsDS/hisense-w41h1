@@ -2,8 +2,10 @@
 // Hisense / AirconIntl indoor-unit RS-485 codec: frame constants, builders and parsers.
 //
 // Plain constants and free functions, plus the receive-side frame assembler. Every byte value comes
-// from a bus capture or from the vendor Wi-Fi module's firmware. `VERIFY` marks values not yet
-// confirmed on hardware.
+// from a bus capture, from the vendor Wi-Fi module's firmware, or from the sample frames of the
+// community project https://github.com/pslawinski/esphome_airconintl, which documented this bus
+// first (the comment at each such frame names it). `VERIFY` marks values not yet confirmed on
+// hardware.
 //
 // The remote's "77" gesture is carried as a setup request: the request bits of the A/C's 0x1E
 // reply, their debounce and lockout, and the heartbeat bit that puts "77" on the panel. What the
@@ -53,12 +55,14 @@ static constexpr size_t CMD_CHK_OFFSET = 46;
 static constexpr size_t CMD_FRAME_MAX = CMD_FRAME_LEN + 2;
 
 // CTRL (frame[3]) = 0x40 selects a 2-byte big-endian checksum in the vendor module's parser;
-// frame[4] = 0x29 is the 8-bit LEN; frame[13] = 0x65.
+// frame[4] = 0x29 is the 8-bit LEN; frame[13] = 0x65. These 16 bytes open every command frame in
+// esphome_airconintl's messages.h.
 // The frame templates are `inline constexpr`: one copy in the image, however many files use them.
 inline constexpr uint8_t CMD_HEADER[CMD_HEADER_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01,
                                                        0x01, 0xFE, 0x01, 0x00, 0x00, 0x65, 0x00, 0x00};
 
-// Status poll (0x66/00).
+// Status poll (0x66/00). Source: request_status[] in components/airconintl/messages.h of
+// https://github.com/pslawinski/esphome_airconintl, byte for byte.
 static constexpr size_t STATUS_REQUEST_LEN = 21;
 inline constexpr uint8_t STATUS_REQUEST[STATUS_REQUEST_LEN] = {0xF4, 0xF5, 0x00, 0x40, 0x0C, 0x00, 0x00,
                                                                0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x66,
