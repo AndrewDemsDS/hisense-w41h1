@@ -1,0 +1,31 @@
+# A network marked hidden is connected to without a scan, which has the same effect as
+# fast_connect (setup-mode-fast-connect.yaml).
+# accepted: setup mode on demand is switched off for this Wi-Fi configuration, with a warning.
+# warns: wifi_setup_mode cannot open the hotspot on demand .* marked hidden
+substitutions:
+  name: invalid-case
+  friendly_name: Invalid case
+  tx_pin: "5"
+  rx_pin: "6"
+  de_pin: "10"
+  w41h1_components:
+    type: local
+    path: ../../components
+
+packages:
+  node: !include ../../packages/node.yaml
+  ota: !include ../../packages/ota.yaml
+  hisense_ac: !include ../../packages/hisense-ac.yaml
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !remove
+  password: !remove
+  networks:
+    - ssid: example-hidden
+      password: example-password
+      hidden: true

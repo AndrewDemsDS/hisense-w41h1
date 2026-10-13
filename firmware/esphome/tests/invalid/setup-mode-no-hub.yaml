@@ -1,0 +1,28 @@
+# wifi_setup_mode without the hub: "77" on the panel goes through it.
+# expect: Component wifi_setup_mode requires component hisense_ac
+esphome:
+  name: invalid-case
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [wifi_setup_mode]
+
+wifi:
+  ssid: example-ssid
+  password: example-password
+  ap:
+    ssid: example-setup
+    password: example-password
+
+captive_portal:
+
+wifi_setup_mode:

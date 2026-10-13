@@ -1,0 +1,57 @@
+# Every option of wifi_setup_mode, each action in both of its forms, and the condition. The uart
+# bus comes from ESPHome's shared test package and the DE pin from the per-target test.*.yaml.
+# The hub is here because the component is its child: "77" on the panel goes through it.
+wifi:
+  ssid: MySSID
+  password: password1
+  ap:
+    ssid: setup-test
+    password: password1
+
+captive_portal:
+
+hisense_ac:
+  id: ac_bus
+  uart_id: uart_bus
+  de_pin: ${de_pin}
+  # The remote's gesture: the way in and the way out.
+  on_setup_request:
+    - wifi_setup_mode.toggle:
+    - wifi_setup_mode.toggle: wifi_setup
+
+wifi_setup_mode:
+  id: wifi_setup
+  hisense_ac_id: ac_bus
+  timeout: 5min
+
+button:
+  - platform: template
+    name: Start Wi-Fi setup
+    on_press:
+      - wifi_setup_mode.start:
+      - wifi_setup_mode.start:
+          id: wifi_setup
+  - platform: template
+    name: Stop Wi-Fi setup
+    on_press:
+      - if:
+          condition:
+            wifi_setup_mode.active:
+          then:
+            - wifi_setup_mode.stop:
+          else:
+            - wifi_setup_mode.stop: wifi_setup
+      - if:
+          condition:
+            wifi_setup_mode.active: wifi_setup
+          then:
+            - logger.log: "Setup mode is still on"
+
+interval:
+  # What a status LED package reads.
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (id(wifi_setup).status_display() == wifi_setup_mode::Display::SETUP) {
+            ESP_LOGD("test", "setup showing, active: %d", id(wifi_setup).is_active());
+          }
