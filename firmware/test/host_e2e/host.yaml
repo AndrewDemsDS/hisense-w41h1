@@ -1,0 +1,93 @@
+# The real hisense_ac component and the real entity package, built for ESPHome's `host` platform:
+# a Linux program that talks to a pseudo-terminal where a board talks to the A/C. run.py starts it
+# against a model of the A/C and drives it over the native API, as Home Assistant does.
+#
+# Everything a node exposes comes from packages/hisense-ac.yaml, unmodified. What is added here is
+# only what the host platform or the test needs, and every added entity is named "E2E ...".
+
+substitutions:
+  w41h1_components:
+    type: local
+    path: ../../esphome/components
+  # The host platform's GPIO is a stub that takes any number. With a DE pin the hub runs the
+  # same settle and drain timing as on a board.
+  de_pin: "4"
+  # Never read: the two keys are removed from the UART below, a host UART has a device path.
+  tx_pin: "0"
+  rx_pin: "0"
+
+packages:
+  ac: !include ../../esphome/packages/hisense-ac.yaml
+
+esphome:
+  name: hisense-ac
+  # The package's climate has `name: None`, which takes the device's friendly name as on a node.
+  friendly_name: Air Conditioner
+  on_boot:
+    # Before the UART (priority 1000) and the API server open anything. The device path and the
+    # port are compile-time values in ESPHome; taking them from the environment lets one binary
+    # run as several instances at once, each on its own pseudo-terminal and its own port.
+    priority: 1100
+    then:
+      - lambda: |-
+          const char *uart_path = getenv("HISENSE_E2E_UART");
+          if (uart_path != nullptr)
+            id(uart_bus).set_name(uart_path);
+          const char *api_port = getenv("HISENSE_E2E_API_PORT");
+          if (api_port != nullptr)
+            id(e2e_api).set_port((uint16_t) atoi(api_port));
+
+host:
+
+api:
+  id: e2e_api
+
+mdns:
+  disabled: true
+
+logger:
+  level: VERY_VERBOSE
+  initial_level: DEBUG
+  logs:
+    hisense_ac: VERY_VERBOSE
+    hisense_ac.climate: VERY_VERBOSE
+
+# Merged into the package's uart_bus: the same id and baud rate, a device path where the pins were.
+uart:
+  tx_pin: !remove
+  rx_pin: !remove
+  # Placeholder that satisfies the schema. HISENSE_E2E_UART replaces it at start.
+  port: /dev/hisense-e2e
+
+globals:
+  - id: e2e_setup_requests
+    type: int
+    initial_value: "0"
+
+# packages/hisense-ac.yaml runs this script from on_setup_request; on a node packages/node.yaml
+# defines it and opens the Wi-Fi setup hotspot. Here it counts, so the test can see the trigger.
+script:
+  - id: wifi_setup_toggle
+    then:
+      - lambda: |-
+          id(e2e_setup_requests) += 1;
+          id(e2e_setup_request_count).publish_state(id(e2e_setup_requests));
+
+sensor:
+  - platform: template
+    id: e2e_setup_request_count
+    name: E2E setup requests
+    accuracy_decimals: 0
+    update_interval: never
+
+switch:
+  # The test's handle on hisense_ac.set_setup_indicator, which a node calls from wifi_setup_toggle.
+  - platform: template
+    name: E2E setup indicator
+    # Nothing is run at boot: the hub's own initial state is what the test starts from.
+    restore_mode: DISABLED
+    lambda: return id(ac_bus).setup_indicator();
+    turn_on_action:
+      - hisense_ac.set_setup_indicator: true
+    turn_off_action:
+      - hisense_ac.set_setup_indicator: false

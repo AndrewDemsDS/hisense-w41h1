@@ -1,0 +1,5 @@
+# esphome writes a .gitignore beside a configuration that has none, so this one is kept.
+# run.py builds into build/ (ESPHOME_DATA_DIR); .esphome/ appears when esphome is run by hand.
+/build/
+/.esphome/
+/secrets.yaml

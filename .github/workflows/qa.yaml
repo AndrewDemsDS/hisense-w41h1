@@ -6,7 +6,8 @@ name: QA
 #
 # What runs where:
 #   every push and pull request   host-qa (the one required check), version, lint-extra
-#   when the firmware changed     esphome-esp32, esphome-amebaz2, esphome-upstream (job `changes`)
+#   when the firmware changed     esphome-esp32, esphome-amebaz2, esphome-upstream (job `changes`),
+#                                 and esphome-host-e2e, which also runs when its own files changed
 #   pushes to main only           coverage (a table in the job summary, never blocking)
 #   every night                   nightly.yaml: fuzzing, the board files no job here compiles,
 #                                 ESPHome's dev-branch gates, the esp32-recon build
@@ -48,6 +49,7 @@ jobs:
       contents: read
     outputs:
       firmware: ${{ steps.diff.outputs.firmware }}
+      e2e: ${{ steps.diff.outputs.e2e }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,13 +71,22 @@ jobs:
           elif git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
             files="$(git diff --name-only "$BEFORE" HEAD)"
           fi
+          # The end-to-end job builds from the same files and, on top of them, from its own
+          # directory and the A/C model with the frame decoder it imports.
+          e2e_inputs='^(firmware/test/(host_e2e/|virtual_ac\.py)|reverse-engineering/tools/decode_ac_frames\.py)'
           # No list (a new branch, a forced push, a push of several commits): compile.
           firmware=true
-          if [ -n "$files" ] && ! grep -vE '\.mdx?$' <<<"$files" | grep -qE "$inputs"; then
-            firmware=false
+          e2e=true
+          if [ -n "$files" ]; then
+            built="$(grep -vE '\.mdx?$' <<<"$files" || true)"
+            if ! grep -qE "$inputs" <<<"$built"; then
+              firmware=false
+              grep -qE "$e2e_inputs" <<<"$built" || e2e=false
+            fi
           fi
           echo "firmware=$firmware" >> "$GITHUB_OUTPUT"
-          echo "changed files: $(wc -l <<<"$files"), compile jobs: $firmware"
+          echo "e2e=$e2e" >> "$GITHUB_OUTPUT"
+          echo "changed files: $(wc -l <<<"$files"), compile jobs: $firmware, end-to-end job: $e2e"
 
   host-qa:
     # GitHub-only, as above.
@@ -478,6 +489,105 @@ jobs:
         with:
           path: ~/.cache/w41h1/ccache
           key: idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1*.yaml', 'firmware/esphome/tests/build.hub-only.*.yaml') }}
+
+  # The component end to end, with no hardware: host.yaml is packages/hisense-ac.yaml built for
+  # ESPHome's `host` platform, a Linux program with a pseudo-terminal where a board has the A/C.
+  # run.py starts it against firmware/test/virtual_ac.py and drives it over the native API as Home
+  # Assistant does: every entity, every command frame, the hold-off, the re-sends, link loss, the
+  # setup request, damaged replies. This is the only test that runs the hub and the entities
+  # (hisense_ac.cpp, hisense_climate.cpp, hisense_switch.cpp, hisense_select.cpp); the host tests
+  # compile the pure layers under them. The scenarios run four at a time, in about
+  # two minutes, on the hub's real timers. The long ones (--full) run in nightly.yaml.
+  esphome-host-e2e:
+    needs: changes
+    if: ${{ needs.changes.outputs.e2e == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Two entries, keyed as in esphome-amebaz2. PlatformIO's tree here is only its `native`
+      # platform (the compiler is the runner's own g++), a few MB that change with the ESPHome
+      # release. The build cache holds the objects of ESPHome's core and of the components, by
+      # content. Every run restores, only main saves, and only a key that is new.
+      - name: Restore the PlatformIO tree
+        id: tree
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.platformio
+          key: pio-host-tree-${{ env.ESPHOME_VERSION }}
+
+      - name: Restore the build cache
+        id: objects
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/w41h1/pio-host-objects
+          key: pio-host-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/test/host_e2e/*.yaml') }}
+          restore-keys: |
+            pio-host-objects-${{ env.ESPHOME_VERSION }}-
+
+      # aioesphomeapi, the API client, is a dependency of esphome at the version that release
+      # pins: run.py finds the Python esphome was installed into and runs under it.
+      - name: Build the host program and run the scenarios
+        run: |
+          pipx install "esphome==$ESPHOME_VERSION"
+          export PLATFORMIO_BUILD_CACHE_DIR="$HOME/.cache/w41h1/pio-host-objects"
+          python3 firmware/test/host_e2e/run.py --require
+
+      # The hub and the entities are outside the clang-tidy run of host-qa: cpp-lint.py compiles its
+      # units with plain host flags and these files need ESPHome's headers. This build has them,
+      # and PlatformIO writes its compile database in a second or two. Report only: the findings
+      # and their count go to the log and the summary. clang-tidy at the version cpp-lint.sh pins.
+      - name: clang-tidy on the hub and the entities (report only)
+        continue-on-error: true
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tidy"
+          "$RUNNER_TEMP/tidy/bin/pip" install --quiet "clang-tidy==$(sed -n 's/^CLANG_TIDY_VERSION=//p' firmware/scripts/cpp-lint.sh)"
+          export CLANG_TIDY="$RUNNER_TEMP/tidy/bin/clang-tidy"
+          python3 firmware/test/host_e2e/run.py --no-build --tidy --require | tee "$RUNNER_TEMP/tidy.log"
+          {
+            echo "## clang-tidy on the hub and the entities"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/tidy.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The same scenarios on a build with gcov: which lines and functions of the hub and the
+      # entities they reach, as a table in the job summary. On main only, and never blocking.
+      - name: What the scenarios reach (report only)
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        continue-on-error: true
+        run: |
+          export PLATFORMIO_BUILD_CACHE_DIR="$HOME/.cache/w41h1/pio-host-objects"
+          log="$RUNNER_TEMP/host-e2e-coverage.log"
+          python3 firmware/test/host_e2e/run.py --require --coverage > "$log" 2>&1 || { tail -n 120 "$log"; exit 1; }
+          {
+            echo "## What the host end-to-end scenarios reach"
+            echo
+            echo '```'
+            sed -n '/^== what the scenarios reached/,$p' "$log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          sed -n '/^== what the scenarios reached/,$p' "$log"
+
+      - name: Save the PlatformIO tree
+        if: ${{ github.ref == 'refs/heads/main' && steps.tree.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.platformio
+          key: pio-host-tree-${{ env.ESPHOME_VERSION }}
+
+      - name: Save the build cache
+        if: ${{ github.ref == 'refs/heads/main' && steps.objects.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/w41h1/pio-host-objects
+          key: pio-host-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/test/host_e2e/*.yaml') }}
 
   # ESPHome's own CI gates, run against the hisense_ac component placed in a checkout of
   # esphome/esphome at the release this repo builds with (firmware/scripts/esphome-upstream-check.sh).

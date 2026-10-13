@@ -11,6 +11,9 @@ name: Nightly
 #                         their branch requires that day, which is why it is not in qa.yaml.
 #   esp32-recon           the bus diagnostic tool builds with ESP-IDF. The image with the
 #                         toolchain is several GB, too much for every pull request.
+#   host-e2e-full         every scenario of firmware/test/host_e2e/, the long ones included (each
+#                         climate preset in turn, a unit that never answers a command, what
+#                         happens once a minute). Pull requests get the default set, in qa.yaml.
 #
 # A pull request that changes this workflow, or what one of its jobs builds, runs it too, with one
 # minute of fuzzing per harness, so a change here is tested before it is merged.
@@ -27,6 +30,7 @@ on:
       - firmware/esp32-recon/**
       - firmware/test/reference-driver/**   # esp32-recon builds the reference driver
       - firmware/test/fuzz/**
+      - firmware/test/host_e2e/scenarios.py   # where the long scenarios are
 
 concurrency:
   group: nightly-${{ github.ref }}
@@ -184,6 +188,24 @@ jobs:
             echo "::warning title=ESPHome dev gates::The component does not pass ESPHome's dev-branch gates. See this job's log. Informational, not blocking."
             echo "The component does NOT pass ESPHome's dev-branch gates (informational). See the log." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # The component as a Linux program against the A/C model, as the esphome-host-e2e job of the QA
+  # workflow runs it, with the scenarios that take minutes on the hub's real timers. No cache: the
+  # build is one minute a night.
+  host-e2e-full:
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the host program and run every scenario
+        run: |
+          pipx install "$(grep -oE '^esphome==[0-9.]+' .github/ci/esphome/requirements.txt)"
+          python3 firmware/test/host_e2e/run.py --require --full
 
   # firmware/esp32-recon/ (the RS-485 bus diagnostic tool) builds for the classic ESP32 with
   # ESP-IDF v5.5.5, the release it was last built with by hand. Espressif's image has that release

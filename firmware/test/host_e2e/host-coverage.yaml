@@ -1,0 +1,16 @@
+# host.yaml built with gcov instrumentation, for `run.py --coverage`: which lines and functions of
+# the component the scenarios reach. Same node, same entities; the program writes its counters when
+# it exits, and every instance adds to the same files.
+
+packages:
+  host: !include host.yaml
+
+esphome:
+  platformio_options:
+    build_unflags:
+      - -Os
+    build_flags:
+      - -O0
+      - -fprofile-arcs
+      - -ftest-coverage
+      - -lgcov
