@@ -1,76 +1,89 @@
-# Recovery & Reflash
+# Recovery and Reflash
 
-The safety net. How you get back from a bad flash depends on the hardware: an ESP32 board is
-recovered over its USB port, the stock module over a **CH341A SPI programmer + SOIC-8 clip**.
+How to get a node back when it no longer answers. What works depends on the hardware: an ESP32
+board is recovered over its USB port, the stock module with a CH341A programmer and a SOIC-8 clip
+on its flash chip. For a first install, start at the [User Guide](User-Guide).
 
-> **First install?** This page is for recovery and clean reflash. For a first install see the
-> [User Guide](User-Guide).
+## Try these first
+
+A node that is silent on the network is often not dead.
+
+1. Look for its hotspot. A node that cannot join Wi-Fi opens `<name>-setup` after about a
+   minute. Join it and give it the network ([Wi-Fi setup mode](Wifi-Setup-Mode#the-hotspot)).
+2. Wait for safe mode. A firmware that crashes at every boot ends up in ESPHome's safe mode
+   after ten tries, where it can be updated over the air
+   ([safe mode](Wifi-Setup-Mode#safe-mode)).
+3. Power-cycle the unit at the mains, and leave a stock module off for 30 seconds
+   ([why](Stock-Module-Build#risks)).
 
 ## ESP32 boards
 
 An ESP32 cannot be bricked by a bad application image: the ROM bootloader is in silicon, so a USB
 write always gets you back. No clip, no dump.
 
-**1. Get the board into download mode.** Plug it in over USB. If no serial port appears, or the
-write fails to connect, hold the **BOOT** button while plugging it in (or while pressing RESET),
-then release. On the C3 SuperMini that USB port is the only way in, which is why its GPIO18/19 must
-never carry the UART ([ESP32 Replacement Board](ESP32-Replacement-Build#the-hard-won-gotchas)).
+1. Get the board into download mode. Plug it in over USB. If no serial port appears, or the
+   write fails to connect, hold the BOOT button while plugging it in (or while pressing RESET),
+   then release. On the C3 SuperMini that USB port is the only way in, which is why its GPIO18
+   and GPIO19 must never carry the UART.
+2. Write the firmware again from source. `secrets.yaml` is compiled in, so the node comes
+   back on your Wi-Fi with the same API key, and Home Assistant picks it up without adopting it
+   again.
 
-**2. Rewrite the firmware.** Flash it again from source. `secrets.yaml` is compiled in, so the node
-comes back on your Wi-Fi with the same API key and Home Assistant picks it up without re-adoption.
+   ```
+   python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
+   ```
 
-```
-python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
-```
+   or, from `firmware/esphome/`, `esphome run w41h1-esp32c3.yaml --device /dev/ttyACM0`.
 
-**What survives.** A normal flash leaves the NVS partition alone, so the node keeps any Wi-Fi it
-learned through the setup hotspot. `dev.py erase esphome --port P` wipes NVS: that is right for a
-brand-new board with stale vendor settings, and it means re-joining Wi-Fi for anything else.
-
-A board that still runs the retired ESP32 Matter firmware is rewritten the same way, with the
-release files from the `matter-final` tag's documentation, or moved to ESPHome
-([how](Migrating-ESP32-Matter-to-ESPHome)).
+A normal flash leaves the NVS partition alone, so the node keeps a Wi-Fi network it learned
+through the setup hotspot. `dev.py erase esphome --port P` wipes NVS. That is right for a
+brand-new board with stale vendor settings, and for anything else it means the node goes back to
+the Wi-Fi in `secrets.yaml`.
 
 ## Stock module (CH341A clip)
 
-If an update leaves a stock module dark, or you want to put back what was on it, write the GD25Q32
-flash chip directly. Read `firmware/docs/10-stock-module-boot-and-recovery.md` first: a quiet
-module is often not a dead one, and one read of the flash status register tells the two apart.
+If an update leaves a stock module dark, or you want to put back what was on it, write the
+GD25Q32 flash chip directly. Read `firmware/docs/10-stock-module-boot-and-recovery.md` first: a
+quiet module is often not a dead one, and one read of the flash status register tells the two
+apart.
 
-> **Safety first.** Before writing anything, take a full dump of the chip and keep it
-> (`dumps/w41h1_dump1.bin`). It holds this unit's calibration data, keys and vendor firmware, and
-> it is the only complete way back. `dumps/` is local-only and gitignored (it holds Wi-Fi
-> credentials, the device RSA key and the vendor blob).
+> **Take a dump first.** Before writing anything, read the whole chip and keep the file. It holds
+> this unit's calibration data, keys and vendor firmware, and it is the only complete way back.
+> Keep it out of git: it also holds your Wi-Fi credentials. The repository ignores `dumps/` for
+> that reason.
 
-### Use the clip tooling, NOT flashrom
-
-Flash with `firmware/flasher/` (pyusb, per-sector verify and retry), **not** `flashrom`. The common
-flaky CH341A does **silent partial writes** with flashrom on this chip. Clip the SOIC-8 onto the
-GD25Q32 (pin 1 = dot corner). In-circuit reads and writes can fail because the SoC contends the
-bus. Lift the flash or hold the SoC in reset if you see `0xFF` or no device.
+### Clip it on
 
 ![Which chip to clip](images/module-internal-annotated.png)
 
-*RF shield removed; ① 4-pin A/C connector ② RS-485 transceiver ③ SPI flash (clip here) ④ RTL8710C SoC. Photo: FCC ID 2AGCCAEH-W41H1, public record.*
+*RF shield removed. 3 is the SPI flash. Photo: FCC ID 2AGCCAEH-W41H1, public record.*
 
 ![CH341A clip wiring](images/ch341a-clip.png)
 
-*SOIC-8 clip maps 1:1 to the flash pins; pin 1 = the dot/dimple corner.*
+*The SOIC-8 clip maps one to one onto the flash pins. Pin 1 is the corner with the dot.*
 
-> ⚠️ The common black CH341A drives SPI at ~5 V even in "3.3 V" mode, a hazard for 3.3 V flash. Use
-> a 3.3 V-modded board or a level adapter. Keep the A/C **unplugged** while clipped. The module is
-> fragile: clip cycles and handling have killed modules by ESD.
+- Keep the A/C unplugged while the clip is on.
+- The common black CH341A drives SPI at about 5 V even in its "3.3 V" mode, which is a hazard for
+  a 3.3 V flash chip. Use a board modified for 3.3 V, or a level adapter.
+- In-circuit reads and writes can fail because the module's own chip contends for the bus. If you
+  read `0xFF` or the programmer finds no device, lift the flash chip or hold the chip in reset.
+- The module is fragile. Clip cycles and handling have killed modules by static discharge.
 
-### The tools
+### Use the tools here, not flashrom
+
+Write with the scripts in `firmware/flasher/` (pyusb, with verify and retry per sector). The
+common CH341A does silent partial writes with `flashrom` on this chip.
+`firmware/flasher/requirements.txt` pins `pyusb`. A stock Linux install needs no udev rule for the
+programmer.
 
 | Script | Does |
 |---|---|
-| `ch341dump.py <out.bin>` | read the whole 4 MB chip to a file, twice, and write it only when both reads agree. Do it before every write |
-| `ch341_readverify.py <dump.bin>` | read-only: spot-check that the chip matches a full dump on an even grid of points, and report QE |
-| `ch341_sr.py` | read the status registers. The **QE bit** (SR2 bit 1) is cleared when the bootloader rejected an image, set after a healthy boot |
-| `ch341_setqe.py` | set the QE bit again |
-| `ch341flash-full.py <dump.bin> --backup <dump.bin>` | write the whole chip, `0x0` to `0x400000`, and set QE at the end. For putting a unit's own full dump back |
-| `ch341flash.py <image.bin> --layout <layout> --slot <1 or 2> --backup <dump.bin>` | write one firmware slot and leave the rest of the chip alone. Not run on a module yet in this form |
+| `ch341dump.py <out.bin>` | reads the whole 4 MB chip twice and writes the file only when both reads agree. Do it before every write |
+| `ch341_readverify.py <dump.bin>` | read-only: spot-checks that the chip matches a full dump on an even grid of points, and reports the QE bit |
+| `ch341_sr.py` | reads the status registers. The QE bit (SR2 bit 1) is cleared when the bootloader rejected an image, and set after a healthy boot |
+| `ch341_setqe.py` | sets the QE bit again |
+| `ch341flash-full.py <dump.bin> --backup <dump.bin>` | writes the whole chip and sets QE at the end. For putting a unit's own full dump back |
+| `ch341flash.py <image.bin> --layout <layout> --slot <1 or 2> --backup <dump.bin>` | writes one firmware slot and leaves the rest of the chip alone. **Not run on a module yet** |
 
 Both writers refuse before the first erase unless all of this holds:
 
@@ -78,30 +91,26 @@ Both writers refuse before the first erase unless all of this holds:
 - The file is what the tool writes. For the whole chip: exactly 4 MB, with a firmware image whose
   signatures all verify, and with the module's system data at `0x1000` (a full-flash image from a
   build has none and is refused). For a slot: an application image that verifies the way the
-  bootloader checks it and fits the slot, on a chip whose images sit at the slot addresses of
-  the layout you named.
-- `--backup` names a full dump (`ch341dump.py`). It is the way back if the write goes wrong.
+  bootloader checks it and fits the slot, on a chip whose images sit at the slot addresses of the
+  layout you named.
+- `--backup` names a full dump made with `ch341dump.py`.
 - You type the confirmation it asks for, which names the target and the size, for example
   `chip-0x400000` or `factory-ota2-0x170000`. `--confirm <the same text>` is for a script.
 
-A write that is interrupted, or stops on a sector that will not verify, leaves the chip half
+A write that is interrupted, or that stops on a sector that will not verify, leaves the chip half
 written with the QE bit clear, and the module does not boot. Run the same command again: sectors
 that already hold the image are skipped. None of the tools can tell two modules apart, so whether
 a dump belongs to the unit on the clip is for you to know.
 
-`firmware/flasher/requirements.txt` pins `pyusb`. A stock Linux install needs no udev rule for the
-programmer.
-
 ### Getting a module back
 
-The way back that has worked on hardware: write the unit's **own** full dump with
-`ch341flash-full.py` (the guards above were added after that run, see the manual check in
-`firmware/flasher/ch341common.py`), then power-cycle. The unit comes up as it was when the dump was taken. If
-the dump was taken after custom firmware had run, replace the first firmware slot with the
-original vendor slot bytes and erase the second, as described in
-`firmware/docs/10-stock-module-boot-and-recovery.md`, section 5.
+The way back that has worked on hardware: write the unit's own full dump with
+`ch341flash-full.py`, then power-cycle. The unit comes up as it was when the dump was taken. (The
+checks listed above were added after that run.) If the dump was taken after custom firmware had
+run, replace the first firmware slot with the original vendor slot bytes and erase the second, as
+described in `firmware/docs/10-stock-module-boot-and-recovery.md`, section 5.
 
-Two rules from that page that are easy to break here:
+Two rules that are easy to break here:
 
 - A full-flash image produced by an ESPHome build is blank at `0x1000..0x3FFF`, where the module
   keeps its calibration data. Do not write it over a module as it is.
@@ -109,12 +118,11 @@ Two rules from that page that are easy to break here:
   firmware slots.
 
 Writing the ESPHome firmware to a module with the clip as a first install has not been done. The
-module that runs ESPHome got it over the air
-([ESPHome Build](ESPHome-Build#the-stock-module-without-a-replacement-board)).
+module that runs ESPHome got it over the air ([The Stock Module](Stock-Module-Build)).
 
 ## References
 
-- Flasher scripts: `firmware/flasher/`
-- How the module boots, image signing, the QE-bit triage: `firmware/docs/10-stock-module-boot-and-recovery.md`
+- How the module boots, image signing, the QE-bit triage:
+  `firmware/docs/10-stock-module-boot-and-recovery.md`
 - Hardware, flash access and dumping: `reverse-engineering/docs/01-hardware.md`
 - Why a new ESP32 board must be erased once: `firmware/docs/16-esp32-board-notes.md`
