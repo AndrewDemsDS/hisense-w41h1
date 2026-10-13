@@ -682,17 +682,18 @@ static int cmd_diff(int argc, char **argv) {
   return 0;
 }
 
-// #49: show the link session token the driver captured from the A/C reply
-// envelope [9]/[10] (master mode), vs the 01 01 the driver currently hardcodes.
+// #49: show the pair the driver stamps into bytes 7 and 8 of its frames: the A/C's device type and
+// sub-type, read from bytes 16 and 17 of its 0x0A reply (master mode). The command keeps the name
+// `token` from when the pair was taken for a session token in the reply's bytes 9 and 10.
 static int cmd_token(int argc, char **argv) {
   (void) argc;
   (void) argv;
   uint8_t hi = 0, lo = 0;
   bool seen = hisense_get_link_token(&hi, &lo);
-  printf("link session token (reply [9]/[10]): %02x %02x  [%s]\r\n", hi, lo,
-         seen ? "captured" : "seed — no reply captured");
+  printf("device type (reply bytes 16/17): %02x %02x  [%s]\r\n", hi, lo,
+         seen ? "read from the A/C" : "seed, no reply read yet");
   if (!seen) {
-    printf("  run in `mode master` against the A/C to capture it\r\n");
+    printf("  run in `mode master` against the A/C to read it\r\n");
   } else if (hi == 0x01 && lo == 0x01) {
     printf("  == the hardcoded 01 01: this unit is safe; #49 is the robustness fix\r\n");
   } else {
@@ -738,7 +739,7 @@ void recon_register_commands(void) {
       {"set", "master: set mode|temp|fan|swing|eco|turbo|mute|sleep (auto-verifies)", NULL, cmd_set, NULL},
       {"power", "master: power on|off", NULL, cmd_power, NULL},
       {"producttype", "master: poll + show A/C feature flags", NULL, cmd_producttype, NULL},
-      {"token", "#49: show link session token captured from the A/C reply", NULL, cmd_token, NULL},
+      {"token", "#49: show the device type read from the A/C's 0x0A reply", NULL, cmd_token, NULL},
       {"raw", "master: send a literal hex frame (protocol probing)", NULL, cmd_raw, NULL},
       {"decode", "offline-decode a pasted hex frame (any mode)", NULL, cmd_decode, NULL},
       {"snap", "tap: snapshot the latest raw frame: snap [status|cmd]", NULL, cmd_snap, NULL},

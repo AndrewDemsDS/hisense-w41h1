@@ -10,7 +10,7 @@ converted to ESPHome over the air is now a section of
 > [ESPHome firmware](ESPHome-Build). The last tree with the Matter builds is the tag
 > `matter-final`.
 
-The page stays because the script's help text and other documents point here.
+The page stays because older links and documents point here.
 
 | Looking for | Now in |
 |---|---|

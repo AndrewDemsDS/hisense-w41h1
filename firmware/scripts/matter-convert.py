@@ -23,7 +23,7 @@ flash or update the ESPHome firmware itself: that is dev.py.
         (read-only).
 
 Settings: firmware/scripts/ota-release.env (copy ota-release.env.example), or the file ENVF names.
-The whole procedure: docs/guide/Converting-a-Stock-Module-to-ESPHome.md.
+The whole procedure: docs/guide/Matter-Firmware-Retired.md#a-stock-module.
 """
 
 import argparse
@@ -339,7 +339,7 @@ def convert(board, name=None, software_version=None, serial=None, stage=False):
         say("  not staged: copy both to the OTA provider directory and restart matter-server, or re-run with --stage")
     say(f"next: check the unit's running serial is below {serial} (matter-convert.py slots <ip>),")
     say(f"  then install {semver} from the unit's update entity in Home Assistant. The unit reboots into ESPHome")
-    say("  and leaves the Matter fabric: docs/guide/Converting-a-Stock-Module-to-ESPHome.md")
+    say("  and leaves the Matter fabric: docs/guide/Matter-Firmware-Retired.md#a-stock-module")
 
 
 def breakglass_query(ip, port, message, timeout):

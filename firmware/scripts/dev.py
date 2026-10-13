@@ -29,7 +29,7 @@ PLATFORMIO_BUILD_CACHE_DIR (default ~/.cache/w41h1-dev/pio-build-cache; set it y
 or to an empty string to switch it off).
 
 Moving a stock module off the retired Matter firmware is a script of its own, matter-convert.py
-(docs/guide/Converting-a-Stock-Module-to-ESPHome.md). The Matter firmwares themselves (AmebaZ2 and
+(docs/guide/Matter-Firmware-Retired.md#a-stock-module). The Matter firmwares themselves (AmebaZ2 and
 esp-matter builds, their release steps, the way back to the vendor firmware over the air) are
 retired. The last tree that has them is the tag `matter-final`.
 """
@@ -281,7 +281,10 @@ def fetch(ctx):
         say("there anyway; to run esphome by hand, run `pipx ensurepath` and open a new terminal.")
     if not (ESPHOME_DIR / "secrets.yaml").is_file():
         run(["cp", ESPHOME_DIR / "secrets.yaml.example", ESPHOME_DIR / "secrets.yaml"])
-    say(f"now fill in {ESPHOME_DIR}/secrets.yaml (it is gitignored): your Wi-Fi, and a new API key")
+    say(f"now fill in {ESPHOME_DIR}/secrets.yaml (it is gitignored). The build reads four values:")
+    say("  wifi_ssid, wifi_password      your Wi-Fi")
+    say("  wifi_ap_password              the node's own setup hotspot, at least 8 characters")
+    say("  hisense_ac__encryption_key    a new API key (the file says how to generate one)")
 
 
 # ---- test / build / flash / monitor ----------------------------------------------------------

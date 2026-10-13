@@ -14,6 +14,7 @@ nothing is written outside that directory. About 2 s.
 """
 
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -297,6 +298,43 @@ calls.clear()
 with patched(dev, have=lambda tool: True, run=record_run, input=lambda q: "n"):
     dev.fetch(dev.Ctx("c3", None, None))
     check(not calls, "fetch answered with n installs nothing")
+# Its closing message names every value the build reads from secrets.yaml. One that is left out
+# (wifi_ap_password was) is one the user learns about from a failed build.
+calls.clear()
+with patched(dev, have=lambda tool: True, run=record_run, input=lambda q: "y"), quiet() as (out, err):
+    dev.fetch(dev.Ctx("c3", None, None))
+secrets_read = set()
+for yaml_file in sorted(dev.ESPHOME_DIR.glob("*.yaml")) + sorted((dev.ESPHOME_DIR / "packages").glob("*.yaml")):
+    if yaml_file.name != "secrets.yaml":
+        secrets_read |= set(re.findall(r"!secret\s+(\w+)", yaml_file.read_text()))
+check(len(secrets_read) >= 4 and all(key in out.getvalue() for key in secrets_read),
+      "fetch ends by naming every secret the board files and packages read: " + ", ".join(sorted(secrets_read)))
+example = (dev.ESPHOME_DIR / "secrets.yaml.example").read_text()
+check(all(re.search(rf"^{key}:", example, re.M) for key in secrets_read),
+      "and secrets.yaml.example has a line for each of them")
+
+# The guide pages the two scripts send the user to exist, are not "Moved" pointers, and have the
+# heading the link names.
+def heading_anchors(text):
+    return {re.sub(r"[^a-z0-9 -]", "", h.lower()).replace(" ", "-") for h in re.findall(r"^#+\s+(.+)$", text, re.M)}
+
+
+for tool in ("dev.py", "matter-convert.py"):
+    pointers = re.findall(r"docs/guide/[\w-]+\.md(?:#[\w-]+)?", (SCRIPTS / tool).read_text())
+    bad = []
+    for pointer in sorted(set(pointers)):
+        page, _, anchor = pointer.partition("#")
+        path = ROOT / page
+        if not path.is_file():
+            bad.append(pointer + " (no such page)")
+            continue
+        text = path.read_text()
+        if "**Moved on" in text:
+            bad.append(pointer + " (a Moved pointer)")
+        elif anchor and anchor not in heading_anchors(text):
+            bad.append(pointer + " (no such heading)")
+    check(pointers and not bad, f"{tool}: every guide page it names is there, current, with its heading"
+          + (": " + "; ".join(bad) if bad else ""))
 
 # erase: the typed word, then esptool from the same environment as esphome.
 venv = TMP / "venv" / "bin"
