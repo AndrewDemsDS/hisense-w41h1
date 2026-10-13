@@ -48,7 +48,6 @@ class HisenseAC final : public Component,
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
 
   /// Optional: without it the UART's flow_control_pin (or the transceiver) owns DE.
   void set_de_pin(GPIOPin *pin) { this->de_pin_ = pin; }
