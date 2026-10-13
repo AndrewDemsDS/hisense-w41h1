@@ -39,7 +39,7 @@ light:
       ignore_strapping_warning: ${status_pixel_strapping_ok}
     num_leds: 1
     chipset: WS2812
-    rgb_order: ${status_pixel_order}
+    channel_colors: ${status_pixel_order}
     restore_mode: ALWAYS_OFF
     default_transition_length: 0s
     # Linear, so the low brightness below is a real, small duty and not rounded to nothing.

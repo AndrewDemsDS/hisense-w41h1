@@ -18,6 +18,8 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
   `secrets.yaml.example`. The placeholder now decodes to the text
   `this-is-a-public-placeholder-key`. It is as public as before: replace it in your own
   `secrets.yaml`.
+- The status pixel package gives the colour order as `channel_colors`, the name ESPHome 2026.9
+  uses (`rgb_order` is deprecated there). The `status_pixel_order` substitution is unchanged.
 
 ## 2.0.0 - 2026-10-13
 
