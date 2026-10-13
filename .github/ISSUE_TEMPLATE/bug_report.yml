@@ -1,38 +1,80 @@
 name: Bug report
-description: Something in the firmware, driver, or tooling doesn't behave as documented.
+description: The firmware, a component or a tool does not behave as documented.
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        This is a personal reverse-engineering project for the Hisense AEH-W41H1 (RTL8710C /
-        AmebaZ2) — no warranty, no vendor support. It assumes you're working on hardware you own.
+        This is a personal project for the Hisense AEH-W41H1 A/C module, with no warranty and no
+        vendor support. It assumes hardware you own.
+
+        Remove Wi-Fi names, passwords, API keys and addresses from anything you paste. For a
+        security problem, do not open an issue: see SECURITY.md.
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Hardware
+      description: What the firmware runs on.
+      options:
+        - ESP32-C3 replacement board (w41h1-esp32c3.yaml or w41h1-esp32c3-plus.yaml)
+        - Classic ESP32 replacement board (w41h1.yaml)
+        - Stock module, RTL8710C through LibreTiny (w41h1-amebaz2-*.yaml)
+        - ESP8266 or RP2040 (w41h1-esp8266.yaml, w41h1-rp2040.yaml)
+        - Another board or my own YAML
+        - No hardware (host tests, scripts, CI, docs)
+    validations:
+      required: true
+  - type: input
+    id: board
+    attributes:
+      label: Board file or chip
+      description: The board file you built, or the chip and the pins if the YAML is your own. For the stock module, the flash layout (factory, sdk or native).
+      placeholder: w41h1-esp32c3.yaml, unchanged
+    validations:
+      required: true
   - type: input
     id: version
     attributes:
       label: Firmware version
-      description: The commit the node was built from (`git rev-parse --short HEAD`) and the ESPHome version.
-      placeholder: 8c0f746, ESPHome 2026.7.4
+      description: The project version and the ESPHome version (Home Assistant shows both on the device page as the firmware), and the commit or tag you built from (`git describe --tags --always`).
+      placeholder: 2.0.0 (ESPHome 2026.7.4), commit 21b0d0f
     validations:
       required: true
-  - type: dropdown
-    id: target
+  - type: input
+    id: unit
     attributes:
-      label: Target
-      options:
-        - ESP32 replacement board
-        - Stock module (RTL8710C, LibreTiny)
-        - Another ESPHome chip
-        - Host QA / tooling only
-    validations:
-      required: true
+      label: A/C model
+      description: The indoor unit's model, and the value of the "A/C device type" diagnostic if the node has learned it.
+      placeholder: the model on the unit's label, device type 01 01
   - type: textarea
     id: what
     attributes:
       label: What happened
-      description: Expected vs actual. Include the exact command and the node's log lines.
+      description: What you did, what you expected and what you saw. For a tool, the exact command and its output.
     validations:
       required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics entities
+      description: |
+        The node's diagnostic values at the time, from the device page in Home Assistant:
+        Bus link, Checksum errors, Reply timeouts, Unanswered commands, Link losses, Command
+        retries, Failed commands, Reset reason, Uptime, WiFi signal. On the stock module also
+        Flash layout and Serial port restarts. Any fault sensor that is on.
+      placeholder: |
+        Bus link: on
+        Checksum errors: 0
+        Reply timeouts: 3
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        The node's log around the problem (`esphome logs <file>.yaml`). Set the level under
+        `logger:` first: DEBUG for a command or a state that is wrong, VERY_VERBOSE when the bus
+        link is down or a frame looks wrong (it shows the raw bytes of every frame).
+      render: text
   - type: textarea
     id: repro
     attributes:

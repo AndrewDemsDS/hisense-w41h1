@@ -3,6 +3,12 @@ contact_links:
   - name: Build, flash and test
     url: https://github.com/AndrewDemsDS/hisense-w41h1/blob/main/docs/guide/Build-Flash-Test.md
     about: The build and flash reference. Read this before filing a build issue.
+  - name: Entities and diagnostics
+    url: https://github.com/AndrewDemsDS/hisense-w41h1/blob/main/docs/guide/Entities-and-Diagnostics.md
+    about: What each entity and each bus counter means. Read this before reporting a control that misbehaves.
   - name: RS-485 A/C protocol reference
     url: https://github.com/AndrewDemsDS/hisense-w41h1/blob/main/reverse-engineering/docs/03-rs485-ac-protocol.md
-    about: The hardware-validated Hisense A/C bus protocol.
+    about: The bus protocol, with how each fact is known. The open questions are in the page next to it.
+  - name: Security problems
+    url: https://github.com/AndrewDemsDS/hisense-w41h1/security/policy
+    about: Report a vulnerability privately, not as an issue.
