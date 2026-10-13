@@ -49,6 +49,19 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 - **`dump_config` of the hub prints what is fixed at setup** (the DE pin and the UART check). The
   link state, the "77" indication and the last status left it: they are in the log when they
   change. The hub's timing other than the bus itself now runs on ESPHome's loop time.
+### Wi-Fi setup mode as a tested component (2026-10-13)
+- **Setup mode is the new `wifi_setup_mode` component.** Its decisions are a pure state machine
+  with host tests, and `packages/node.yaml` only wires it. Same button, same gesture, same
+  entities. The ids `wifi_setup_active`, `wifi_setup_enter` and `wifi_setup_leave` are gone.
+- **A network entered in the portal that never connected is always undone:** also when the node
+  restarts for another reason, and at the next boot after a power cut. For that the previous
+  SSID and password sit in a preference while the mode is on, zeroed when it ends.
+- A network entered just before the timeout gets 90 s to connect. A gesture while the fallback
+  hotspot is already open lights "77" and no longer restarts the node.
+- With `fast_connect`, a hidden network or an enterprise login the hotspot cannot be opened on
+  demand: the build warns, and the node logs why and stays on its network.
+- The status LED and pixel show setup from the request to the restart, by one shared rule.
+  `wifi_setup_timeout` has to be between 30 s and 24 h. The log tag is `wifi_setup_mode`.
 
 ### Board files, the stock-module component and CI (2026-10-12)
 - **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air

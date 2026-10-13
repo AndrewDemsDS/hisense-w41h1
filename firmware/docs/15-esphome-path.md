@@ -126,7 +126,7 @@ refer to `firmware/esp32-matter/main/app_main.cpp`.
 | `:2323` `bootreason` | diagnostic `text_sensor` | `esp_reset_reason()` |
 | `:2323` `poll`, `watch`, `raw` | `logger:` at DEBUG, entity history in HA | driver callbacks |
 | `:2323` `decode`, `tx`, `selftest` | optional `api:` user services, debug YAML only | `hisense_build_command_override()` |
-| Identify=77 recommission (#69) | `on_setup_request:` automation trigger and `hisense_ac.set_setup_indicator`, bound in `packages/node.yaml` to Wi-Fi setup mode | `hisense_set_recommission_cb()`, ported into the component's codec |
+| Identify=77 recommission (#69) | `on_setup_request:` automation trigger and `hisense_ac.set_setup_indicator`, bound in `packages/node.yaml` to Wi-Fi setup mode (the `wifi_setup_mode` component) | `hisense_set_recommission_cb()`, ported into the component's codec |
 | Identify=88 HTTPS-OTA break-glass (#61, #104) | native `ota:` plus `safe_mode` | dropped |
 
 Two entries change character rather than disappearing, and both should be called out in the README
@@ -292,6 +292,14 @@ the panel. Use, limits and the LED patterns are in
   which also runs the cases `test_codec.cpp` has for the original.
 - *The hub* parks a request during the bus poll and runs the automations from `loop()`.
   `set_setup_indicator()` only changes what the next heartbeat carries.
+- *The mode* is a component of its own, `wifi_setup_mode`, split the way the hub is: every
+  decision is a pure function in `setup_mode_logic.h` (a state machine `step(state, event,
+  inputs)`, the rule for which credentials are "the previous ones", the rule for a journal found
+  at boot, and what a status LED shows), and `wifi_setup_mode.cpp` does the calls the returned
+  actions name. `firmware/test/test_esphome_setup_mode.cpp` runs every state against every event
+  and every input, the cases below by name, and every deadline across the wrap of the 32 bit
+  millisecond clock. The component depends on the hub, and the hub builds and works
+  without it. `packages/node.yaml` holds the wiring only.
 - *Opening the hotspot on demand.* ESPHome 2026.7 has no call for it: `setup_ap_config_()` is
   protected, and `loop()` opens the hotspot only when no network has been connected for
   `ap_timeout`. Setup mode gets there with public calls only: `disable()`, `set_ap_timeout(1)`,
@@ -302,17 +310,43 @@ the panel. Use, limits and the LED patterns are in
   Persisting a flag and clearing the station list before Wi-Fi starts makes the portal save
   under a preference key the next normal boot does not read (`start()` derives the key from
   `has_sta()`). Reaching into the component for the protected call would break on an update.
+  It only holds when Wi-Fi scans before it connects. With `fast_connect`, or a network marked
+  hidden, `start()` connects at once, before the placeholder is in place. The component's
+  codegen reads the `wifi:` configuration, warns, and the node then refuses the request with a
+  log line and stays on its network.
 - *Leaving is a restart,* by timeout, by a second gesture, or once a network entered in the
   portal has connected. The Wi-Fi component never clears its "hotspot was set up" flag, so
   within one boot the hotspot opens once. A restart also restores the station list and the
-  timeout from the build and from flash, with nothing to undo by hand.
-- *What cannot strand a node.* Nothing is written on the way in. The portal writes what the
-  user enters. If that has not connected when the mode ends, the previous SSID and password are
-  written back first. If the hotspot does not open within 30 s the node restarts.
+  timeout from the build and from flash, with nothing to undo by hand. The exception is a
+  request made while the fallback hotspot is already open: nothing was parked, so there is
+  nothing a restart would restore. That case only lights "77" and ends without one.
+- *What cannot strand a node.* The portal writes what the user enters, to ESPHome's own saved
+  Wi-Fi settings. On the way in, the component writes the SSID and password to go back to into a
+  journal (a preference of its own, with the build's configuration hash). On every way out it
+  clears the journal, after writing those credentials back if the portal's entry has not
+  connected: at the timeout, on a second gesture, and from `on_shutdown()`, which ESPHome runs
+  for `App.reboot()` and `App.safe_reboot()` alike, so also for the API component's restart
+  after 15 minutes without a client. A power cut runs no hook. Then the journal is still there
+  at the next boot, and `setup()`, which runs after Wi-Fi has started and loaded its saved
+  network, writes the previous one back when the two differ. If the hotspot does not open within
+  30 s the node restarts.
+- *Which credentials are the previous ones.* The station's current entry cannot say:
+  `get_sta()` is empty while Wi-Fi scans. The component remembers the network at each connection and the one
+  loaded from flash at boot, and falls back to the first network of the build, which the codegen
+  hands it.
+- *A network entered late.* A connection attempt takes up to 46 s and the pause before the next
+  one, with the hotspot up, is 30 s. So an entry moves the deadline to at least 90 s away.
+- *The clocks.* Deadlines are compared as a signed difference, the timeout is limited to 24 h,
+  and the look at Wi-Fi runs four times a second from `loop()` on
+  `App.get_loop_component_start_time()`.
 
 Still to be seen on a unit: which bit each unit raises, that "77" lights and clears, that the
-hotspot opens on ESP-IDF and on LibreTiny after `disable()` and `enable()`, and that a restart on
-the stock module out of setup mode comes back (LibreTiny issue 396, see below).
+hotspot opens on ESP-IDF and on LibreTiny after `disable()` and `enable()`, that the journal
+survives a power cut on each chip, and that a restart on the stock module out of setup mode comes
+back (LibreTiny issue 396, see below). The steps are in
+[`../esphome/README.md`](../esphome/README.md#wi-fi-setup-mode-and-the-77-gesture). One limit is
+known from the codec alone: a unit that signals with the sustained bit `0x08` cannot end the mode
+with the gesture, because that bit is not read while the node sends it for "77".
 
 **Phase 6, special modes as climate presets. IMPLEMENTED, awaiting hardware validation.** A
 climate group syncs only `climate` attributes, so eco, quiet, turbo and sleep were invisible to it

@@ -268,19 +268,45 @@ Setup mode ends in a restart, on whichever comes first:
 
 - the network entered in the portal has connected,
 - the gesture is repeated (at least 10 s after the first),
-- `wifi_setup_timeout` has passed (10 minutes, a substitution in `packages/node.yaml`).
+- `wifi_setup_timeout` has passed (10 minutes, a substitution in `packages/node.yaml`, between
+  30 s and 24 h). A network entered shortly before that still gets 90 s to connect.
 
 A gesture made by mistake costs that much: the node is off the network until one of those, then
 back on the network it had. The A/C keeps running and keeps answering the remote throughout.
-Nothing is written to flash on the way in, so a power cut in setup mode also comes back on the old
-network. If a network was entered and did not connect, the credentials the node had before are
-written back before the restart.
+
+What happens to the Wi-Fi credentials, case by case:
+
+| Case | Result |
+|---|---|
+| Nothing entered in the portal | Nothing changes. The node restarts onto the network it had |
+| A network entered, and it connects | It is kept. The node restarts onto it |
+| A network entered, it has not connected when the mode ends (timeout or second gesture) | The network the node had is written back, then the restart |
+| The node restarts for another reason in between (Home Assistant's API restarts a node nothing has connected to for 15 minutes, a restart button, an update) | The same: written back on the way down |
+| Power is cut in between | The network the node had is written back at the next boot |
+| Power is cut in the instant between the new network connecting and the restart | The new network is taken for one that never connected and is undone. Enter it again |
+
+"The network the node had" is the one it was last connected to in this boot, or the one loaded
+from flash at boot. A node that has not been connected since boot and has nothing saved goes
+back to the Wi-Fi in `secrets.yaml`.
+
+While setup mode is on, the SSID and password to go back to are kept in the node's flash in a
+preference of the `wifi_setup_mode` component, beside the copy the image or ESPHome's own saved
+settings already hold. The preference is overwritten with zeroes when the mode ends, and at boot
+when one is found left over. The SSID and password are never logged.
+
+When the hotspot is already open because the network is out of reach (ESPHome opens it by
+itself after a minute), the gesture or the button only lights "77". The node keeps trying its
+network and is not restarted: "77" goes off when a network connects, on a second gesture, or
+after `wifi_setup_timeout`. A network entered in the portal that has not connected by then is
+replaced by the one the node had, as above.
 
 What to know before relying on it:
 
-- **It has not run on hardware.** The codec and the scheduler are host-tested
-  (`firmware/test/test_esphome_setup_request.cpp`) and the images compile. Whether the hotspot
-  opens on each chip, and what a given unit sends for the gesture, has to be seen on a unit.
+- **It has not run on hardware.** The decisions are host-tested
+  (`firmware/test/test_esphome_setup_mode.cpp` for the mode,
+  `firmware/test/test_esphome_setup_request.cpp` for the gesture on the bus) and the images
+  compile. Whether the hotspot opens on each chip, and what a given unit sends for the gesture,
+  has to be seen on a unit. The check to run is below.
 - The hotspot and the home network cannot be up together: ESPHome closes its hotspot as soon as
   the station connects. So the node leaves the network for the duration.
 - ESPHome opens its hotspot once per boot. If the fallback already opened and closed earlier in
@@ -289,12 +315,47 @@ What to know before relying on it:
 - A network saved through the portal is stored under a key that ESPHome derives from the build's
   configuration. An update built from a changed configuration goes back to the Wi-Fi in
   `secrets.yaml`. Put the new network there as well.
-- Only the SSID and password are put back after a failed attempt. A node configured with a
-  static IP, an enterprise login or several networks needs its own handling.
-- With `fast_connect: true` the node reconnects before the hotspot is up and setup mode ends at
-  once. The shipped configuration does not set it.
-- Home Assistant's API has its own 15 minute restart when nothing is connected to it. Keep
-  `wifi_setup_timeout` below that.
+- Only the SSID and password are put back after a failed attempt, as a saved network, which
+  takes the place of the build's own until the next update. A node configured with a static IP
+  or several networks loses those until then. With several networks and the hotspot already
+  open, nothing is written back at all (the node cannot tell a portal entry from its own move to
+  the next network).
+- **With `fast_connect: true`, a network marked `hidden: true`, an enterprise login, or no
+  network in the build at all, the hotspot cannot be opened on demand.** The first two reconnect
+  before the hotspot is up, an enterprise login cannot be written back, and without a network
+  the hotspot is open anyway. `esphome config` says so with a warning, and on the node the
+  gesture and the button log why and change nothing. The fallback hotspot still opens when the
+  network is gone, and the gesture lights "77" on it. The shipped configuration sets none of
+  these.
+- **A unit that asks with the sustained bit (`0x08`) cannot end setup mode with the gesture.**
+  While "77" is on, the node sends that same bit, so the unit's own is not read. Such a unit
+  leaves by the timeout or by a network connecting. The bench unit sends `0x20` and is not
+  affected. No unit here has been seen to send `0x08`.
+- The wait for an update is not covered: an upload blocks the node's loop, so a gesture made
+  during one is lost.
+
+The check on a unit, with the remote and a phone. The log at `INFO` shows each step under the tag
+`wifi_setup_mode`. A node with a serial console shows them while it is off the network.
+
+1. Gesture. "77" appears, the status LED blinks fast (the pixel turns blue), the node drops out
+   of Home Assistant, and the hotspot `<name>-setup` is listed within a few seconds. Log:
+   "leaving the network and opening the hotspot", then "hotspot open".
+2. Gesture again after 10 s. "77" goes off and the node is back in Home Assistant within a
+   minute, on the same network.
+3. Gesture, join the hotspot, enter a network that does not exist. Log: "a network was entered".
+   Wait for the timeout (set `wifi_setup_timeout: 2min` for the test). The node restarts and
+   comes back on the network it had. Log before the restart: "the network entered did not
+   connect, restoring the previous one".
+4. The same, but cut the power one minute after entering the network. At the next boot the log
+   says "The node went down in setup mode with a network that had not connected: restoring the
+   previous one" and the node connects to the network it had.
+5. Gesture, enter the real network. The node restarts onto it. Log: "connected, restarting".
+6. Press `Start Wi-Fi setup` in Home Assistant, then end it with the gesture.
+7. Switch the router off for two minutes with the node running. The fallback hotspot opens by
+   itself. Gesture: "77" lights and the node does not restart. Switch the router on: "77" goes
+   off when the node reconnects, without a restart.
+8. On the stock module, steps 1 and 2 also show whether the restart out of setup mode comes back
+   (LibreTiny issue 396).
 
 On the bus, the gesture is a bit in byte 17 of the unit's reply to the `0x1E` heartbeat. The bench
 unit sets `0x20` for one reply per gesture, and that is taken at once. The vendor firmware also
@@ -303,7 +364,28 @@ ignored while the node itself shows "77" (the node sends the same bit to light i
 ignored when it is already set at boot. A reply with a bad checksum never counts. With the log at
 `DEBUG`, every change of those bits is logged, taken or not.
 
-For other uses, the hub has the pieces on their own:
+The mode is the `wifi_setup_mode` component, which `packages/node.yaml` wires to the hub's
+`on_setup_request` and to the button. In a configuration of your own:
+
+```yaml
+wifi_setup_mode:
+  id: wifi_setup
+  timeout: 10min               # 30 s to 24 h
+  # hisense_ac_id: ac_bus      # found by itself when there is one hub
+
+hisense_ac:
+  on_setup_request:
+    - wifi_setup_mode.toggle:  # in when off, out when on. Also: wifi_setup_mode.start, .stop
+
+binary_sensor:
+  - platform: template
+    name: Wi-Fi setup
+    condition:
+      wifi_setup_mode.active:  # true while "77" is on the panel
+```
+
+It needs `wifi:` with `ap:`, `captive_portal:` and the hub. For other uses of the gesture, the
+hub has the pieces on their own:
 
 ```yaml
 hisense_ac:
@@ -321,8 +403,14 @@ includes neither has no status LED.
 
 | Package | For | Shows |
 |---|---|---|
-| `packages/status-led.yaml` | a plain LED on a GPIO (`status_led_pin`, `status_led_inverted`) | slow blink: no Wi-Fi, no Home Assistant connection, or the A/C bus link down. Fast blink: the setup hotspot is open, or ESPHome's safe mode |
-| `packages/status-pixel.yaml` | one WS2812 RGB pixel, ESP32 only (`status_pixel_pin`) | blue: the setup hotspot is open. Red: no Wi-Fi for 15 s. Amber: Wi-Fi up, the A/C bus link down for 15 s. Dim, and not an entity in Home Assistant |
+| `packages/status-led.yaml` | a plain LED on a GPIO (`status_led_pin`, `status_led_inverted`) | slow blink: no Wi-Fi, no Home Assistant connection, or the A/C bus link down. Fast blink: setup (below), or ESPHome's safe mode |
+| `packages/status-pixel.yaml` | one WS2812 RGB pixel, ESP32 only (`status_pixel_pin`) | blue: setup (below). Red: no Wi-Fi for 15 s. Amber: Wi-Fi up, the A/C bus link down for 15 s. Dim, and not an entity in Home Assistant |
+
+"Setup" is one state for both packages: setup mode from the request until the restart, whether
+the hotspot has opened yet or failed to open, and the fallback hotspot open by itself. The rule
+is the `wifi_setup_mode` component's `status_display()`, and both packages ask it. Through the
+restart itself the plain LED is dark (the pin is not driven), and the pixel keeps its blue for
+about a second until the new boot writes it black.
 
 The two ESP32-C3 SuperMini boards differ exactly here, and both have the LED on GPIO8:
 
