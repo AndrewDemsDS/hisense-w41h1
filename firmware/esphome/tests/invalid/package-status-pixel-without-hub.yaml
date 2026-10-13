@@ -1,29 +1,21 @@
-# packages/status-pixel.yaml without hisense-ac.yaml: its lambda reads the hub's link state (ac_bus).
-# The message names the missing id, not the missing package.
-# expect: Couldn't find ID 'ac_bus'
+# packages/status-pixel.yaml without hisense-ac.yaml. The pixel shows the hub's bus link, which it
+# gets through node.yaml's wifi_setup_mode component, and that one needs the hub.
+# The message names the missing component, not the missing package.
+# expect: Component wifi_setup_mode requires component hisense_ac
 substitutions:
   name: invalid-case
   friendly_name: Invalid case
   status_pixel_pin: GPIO7
+  w41h1_components:
+    type: local
+    path: ../../components
 
 packages:
+  node: !include ../../packages/node.yaml
+  ota: !include ../../packages/ota.yaml
   status_pixel: !include ../../packages/status-pixel.yaml
-
-esphome:
-  name: ${name}
 
 esp32:
   board: esp32-c3-devkitm-1
   framework:
     type: esp-idf
-
-logger:
-
-wifi:
-  ssid: example-ssid
-  password: example-password
-
-globals:
-  - id: wifi_setup_active
-    type: bool
-    initial_value: "false"

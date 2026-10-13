@@ -1,6 +1,6 @@
 # packages/node.yaml without hisense-ac.yaml: setup mode switches the panel's "77" through the hub.
-# The message names the missing action, not the missing package.
-# expect: Unable to find action with the name 'hisense_ac.set_setup_indicator'
+# The message names the missing component, not the missing package.
+# expect: Component wifi_setup_mode requires component hisense_ac
 substitutions:
   name: invalid-case
   friendly_name: Invalid case

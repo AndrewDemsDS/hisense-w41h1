@@ -45,6 +45,7 @@ INCLUDE = [
     "firmware/esp32-recon/*",
     "firmware/esphome/components/hisense_ac/*",
     "firmware/esphome/components/w41h1_module/*",
+    "firmware/esphome/components/wifi_setup_mode/*",
     "firmware/test/*",
 ]
 
@@ -291,6 +292,7 @@ def fix_rules(content: str) -> str:
 C11 = ["-std=c++11", "-Ifirmware/test/stubinc", "-Ifirmware/test", "-Ifirmware/test/reference-driver"]
 C17_PORT = ["-std=c++17", "-Ifirmware/esphome/components/hisense_ac"]
 C17_MODULE = ["-std=c++17", "-Ifirmware/esphome/components/w41h1_module"]
+C17_SETUP_MODE = ["-std=c++17", "-Ifirmware/esphome/components/wifi_setup_mode"]
 HDR = ["-x", "c++-header"]
 
 # (file, flags). Headers are listed as their own units so each is checked under the .clang-tidy
@@ -311,23 +313,29 @@ TIDY_UNITS = [
     ("firmware/test/test_esphome_bus_stress.cpp", C17_PORT),
     ("firmware/test/test_esphome_codec_gaps.cpp", C17_PORT),
     ("firmware/test/test_esphome_confirm.cpp", C17_PORT),
+    ("firmware/test/test_esphome_edge_cases.cpp", C17_PORT),
+    ("firmware/test/test_esphome_map_gaps.cpp", C17_PORT + C17_MODULE[1:]),
+    ("firmware/test/test_esphome_entities.cpp", C17_PORT),
     ("firmware/test/test_esphome_setup_edges.cpp", C17_PORT),
     ("firmware/test/test_esphome_setup_request.cpp", C17_PORT),
     ("firmware/test/test_esphome_uart_policy.cpp", C17_MODULE),
+    ("firmware/test/test_esphome_setup_mode.cpp", C17_SETUP_MODE),
     ("firmware/esphome/components/hisense_ac/hisense_protocol.cpp", C17_PORT),
     ("firmware/esphome/components/hisense_ac/hisense_bus.cpp", C17_PORT),
     ("firmware/esphome/components/hisense_ac/hisense_map.h", HDR + C17_PORT),
+    ("firmware/esphome/components/hisense_ac/hisense_mapping.h", HDR + C17_PORT),
+    ("firmware/esphome/components/hisense_ac/hisense_special.h", HDR + C17_PORT),
+    ("firmware/esphome/components/hisense_ac/hisense_confirm.h", HDR + C17_PORT),
+    ("firmware/esphome/components/hisense_ac/hisense_telemetry.h", HDR + C17_PORT),
+    ("firmware/esphome/components/hisense_ac/hisense_entities.h", HDR + C17_PORT),
+    ("firmware/esphome/components/hisense_ac/hisense_commands.h", HDR + C17_PORT),
     ("firmware/esphome/components/w41h1_module/w41h1_uart_policy.h", HDR + C17_MODULE),
+    ("firmware/esphome/components/wifi_setup_mode/setup_mode_logic.h", HDR + C17_SETUP_MODE),
 ]
 
 # Host-compilable units that are NOT checked yet, each with the one finding that keeps it out
 # (clang-tidy 22.1.8, 2026-10-12). Fix the line, move the entry up into TIDY_UNITS.
-TIDY_PENDING = [
-    # :375 misc-redundant-expression: `n == 9 && n <= H::FRAME_CLASS_OFFSET`
-    ("firmware/test/test_esphome_edge_cases.cpp", C17_PORT),
-    # :346 misc-redundant-expression: `i < 13 && i < H::PRESET_COUNT`
-    ("firmware/test/test_esphome_map_gaps.cpp", C17_PORT + C17_MODULE[1:]),
-]
+TIDY_PENDING: list = []
 
 
 # Checks whose --fix is mechanical and cannot change behaviour. `fix` applies only these, and

@@ -14,6 +14,55 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 This becomes 2.0.0, the first release of the ESPHome firmware under a version number of its own.
 The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 
+### The hub, the mapping and the entities (2026-10-13)
+- **A finished frame is credited to the command it belongs to.** A display-preference frame or a
+  special-mode write no longer restarts the wait of another command, so a lost command is sent
+  again after about 4 s where an unrelated frame used to push that to 7 s.
+- **A command that could not be queued is no longer shown as sent.** The climate entity, the eco,
+  turbo and quiet switches and the sleep select keep their state when the hub refuses a request
+  (transmit queue full, special-mode queue full), where they showed it for 4 s and then went
+  back. The refused values no longer stay in the command shadow, and a special-mode write that
+  could not be queued is counted in `failed_commands` and no longer starts the 10 s pacing.
+- **A command made while the unit is not answering is refused.** It used to go out once into the
+  silence and was then carried out if the unit came back within 20 s. Now the entity keeps its
+  state and the log says `Command refused: the unit is not answering`. A special-mode write
+  whose turn came in the loop pass that reported the link lost is no longer sent either.
+- **Special-mode requests that undo each other before they are sent merge.** Eco, turbo, quiet
+  or the sleep profile changed several times within the 10 s pacing now cost one frame for the
+  final value, where every change was queued and sent 10 s apart. A request the queue cannot
+  take is refused and the entity keeps its state.
+- **Fahrenheit panels: a setpoint chosen on the remote is no longer moved by one degree.** The
+  command shadow takes the status frame's own setpoint byte. It used to go through whole Celsius
+  and back, which changed 13 of the 30 values (62 F became 63), and the next fan, swing or mode
+  change from Home Assistant sent the changed value. Celsius panels are unaffected.
+- **A preset chosen while the unit reports eco and turbo together clears both.** A plan to a
+  preset with neither sent only the eco clear and left turbo on. It now sends the eco clear and
+  then the turbo clear, 10 s apart like every special-mode write.
+
+- **Configurations that cannot work are refused when they are validated.** A second
+  `hisense_ac` climate entity on one hub, `min_temperature` above `max_temperature`, a setpoint
+  range outside 16 to 32 °C (61 to 90 °F), a `de_pin` in input mode, and `de_pin` together with
+  the UART's `flow_control_pin`. Neither of the two gives a warning. A second hub and
+  `hisense_ac.set_setup_indicator` without `state` now say what is wrong. A configuration that
+  one of these rules refuses did validate before: it has to be corrected to build again.
+
+- **`dump_config` of the hub prints what is fixed at setup** (the DE pin and the UART check). The
+  link state, the "77" indication and the last status left it: they are in the log when they
+  change. The hub's timing other than the bus itself now runs on ESPHome's loop time.
+### Wi-Fi setup mode as a tested component (2026-10-13)
+- **Setup mode is the new `wifi_setup_mode` component.** Its decisions are a pure state machine
+  with host tests, and `packages/node.yaml` only wires it. Same button, same gesture, same
+  entities. The ids `wifi_setup_active`, `wifi_setup_enter` and `wifi_setup_leave` are gone.
+- **A network entered in the portal that never connected is always undone:** also when the node
+  restarts for another reason, and at the next boot after a power cut. For that the previous
+  SSID and password sit in a preference while the mode is on, zeroed when it ends.
+- A network entered just before the timeout gets 90 s to connect. A gesture while the fallback
+  hotspot is already open lights "77" and no longer restarts the node.
+- With `fast_connect`, a hidden network or an enterprise login the hotspot cannot be opened on
+  demand: the build warns, and the node logs why and stays on its network.
+- The status LED and pixel show setup from the request to the restart, by one shared rule.
+  `wifi_setup_timeout` has to be between 30 s and 24 h. The log tag is `wifi_setup_mode`.
+
 ### Board files, the stock-module component and CI (2026-10-12)
 - **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air
   Conditioner`), and the board files no longer repeat the two lines. A file that sets them keeps

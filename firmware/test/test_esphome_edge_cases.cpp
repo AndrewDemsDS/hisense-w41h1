@@ -63,11 +63,10 @@ static void test_status_mode() {
 
   out = H::MODE_DRY;
   CHECK(!H::mode_from_status((H::Mode) 7, &out) && out == H::MODE_DRY, "7 is no mode, the output is untouched");
-  CHECK(!H::mode_from_status((H::Mode) 15, &out) && out == H::MODE_DRY, "15 is 7 with bit 7 set: still no mode");
-  for (int m = H::MODE_FAN; m <= H::MODE_AUTO; m++)
-    CHECK(H::mode_from_status((H::Mode)(m | 8), &out) && out == (H::Mode) m, "bit 7 dropped from %d", m | 8);
-  CHECK(H::mode_from_status((H::Mode) 13, &out) && out == H::MODE_AUTO, "auto as 5 with bit 7 set");
-  CHECK(H::mode_from_status((H::Mode) 14, &out) && out == H::MODE_AUTO, "auto as 6 with bit 7 set");
+  // parse_status() is what drops bit 7 and folds 5 and 6 into AUTO (the loop below takes every
+  // nibble through it). Anything above AUTO that still arrives here is no mode.
+  for (int v = H::MODE_AUTO + 1; v < 256; v++)
+    CHECK(!H::mode_from_status((H::Mode) v, &out) && out == H::MODE_DRY, "%d is no mode", v);
 
   // The hazard itself, on the raw path the hub used to take: status nibble 13 landed in the frame
   // as 0xB0, which is no mode command. The builder refuses a mode that has no name now, so even
@@ -183,6 +182,31 @@ static void test_boundaries() {
     CHECK(!H::sync_shadow_setpoint((int8_t) t, false, &c) && c.setpoint == 22, "status setpoint %d C not taken", t);
   CHECK(H::sync_shadow_setpoint(16, false, &c) && c.setpoint == 16, "16 C taken");
   CHECK(H::sync_shadow_setpoint(32, false, &c) && c.setpoint == 32, "32 C taken");
+  // An F panel, from the status frame to the next command frame: the setpoint byte the unit
+  // reports is the one it gets back, for every value the panel can show.
+  for (int f = H::SETPOINT_MIN_F; f <= H::SETPOINT_MAX_F; f++) {
+    std::vector<uint8_t> frame = status_frame(0x58, 0x01, (uint8_t) f);
+    frame[26] = 0x02;  // byte 26 bit 1: the panel is in Fahrenheit
+    uint16_t sum = H::checksum_range(frame.data(), 2, 156);
+    frame[156] = (uint8_t) (sum >> 8);
+    frame[157] = (uint8_t) sum;
+    H::AcState st;
+    CHECK(H::parse_status(frame.data(), frame.size(), &st) && st.temp_unit_f && st.setpoint_raw == f &&
+              st.setpoint_c == H::f_to_c(f),
+          "F panel status with %d F parses", f);
+    H::AcCommand shadow;
+    uint8_t tx[H::CMD_FRAME_MAX];
+    CHECK(H::sync_shadow_setpoint(st, &shadow) && H::build_command(shadow, tx, sizeof(tx)) != 0 && tx[19] == f * 2 + 1,
+          "%d F reported goes back out as %d F (command byte 19 = 0x%02X)", f, shadow.setpoint, tx[19]);
+  }
+  // A Celsius panel: byte 19 is kept raw as well, and is the same number.
+  {
+    std::vector<uint8_t> frame = status_frame(0x58, 0x01, 22);
+    H::AcState st;
+    CHECK(H::parse_status(frame.data(), frame.size(), &st) && !st.temp_unit_f && st.setpoint_raw == 22 &&
+              st.setpoint_c == 22,
+          "C panel status: raw and Celsius agree");
+  }
 
   // Fan ladder ends and beyond.
   CHECK(H::fan_index_to_hisense(0) == H::FAN_SPEED_AUTO && H::fan_index_to_hisense(6) == H::FAN_SPEED_HIGH,
@@ -372,7 +396,8 @@ static void test_frame_stream() {
     size_t n = feed_all(fa, tiny, &frames);
     H::AcState st;
     H::AcFeatures ft;
-    CHECK(n == 9 && n <= H::FRAME_CLASS_OFFSET, "a 9-byte frame assembles and is too short for the class check");
+    CHECK(n == 9, "a 9-byte frame assembles");
+    static_assert(9 <= H::FRAME_CLASS_OFFSET, "a 9-byte frame is too short for the class check");
     CHECK(!H::parse_status(fa.data(), n, &st) && !H::parse_features(fa.data(), n, &ft), "and parses as nothing");
   }
   // Parsers refuse anything shorter than the fields they read.

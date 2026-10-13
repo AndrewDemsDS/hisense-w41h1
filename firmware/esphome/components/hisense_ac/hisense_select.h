@@ -9,17 +9,18 @@
 
 namespace esphome::hisense_ac {
 
-class HisenseSleepSelect : public select::Select, public Component, public StatusListener {
+class HisenseSleepSelect final : public select::Select,
+                                 public Component,
+                                 public StatusListener,
+                                 public Parented<HisenseAC> {
  public:
   void setup() override;
   void dump_config() override;
-  void set_parent(HisenseAC *parent) { this->parent_ = parent; }
   void on_status(const AcState &state) override;
 
  protected:
-  void control(const std::string &value) override;
+  void control(size_t index) override;
 
-  HisenseAC *parent_{nullptr};
   /// Profile last published, so an unchanged status frame does not republish it.
   uint8_t published_profile_{0xFF};
 };

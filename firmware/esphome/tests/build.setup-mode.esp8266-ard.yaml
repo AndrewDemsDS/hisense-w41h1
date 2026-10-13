@@ -1,0 +1,19 @@
+# Repo-only harness: supplies what ESPHome's own tests/test_build_components base config would,
+# so `esphome config` (CI) and `esphome compile` can run the upstream-shaped test of
+# wifi_setup_mode for esp8266-ard.
+esphome:
+  name: setup-mode-test
+
+esp8266:
+  board: d1_mini
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [hisense_ac, wifi_setup_mode]
+
+packages:
+  wifi_setup_mode: !include components/wifi_setup_mode/test.esp8266-ard.yaml

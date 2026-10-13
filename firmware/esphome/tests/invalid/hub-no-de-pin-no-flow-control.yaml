@@ -1,6 +1,7 @@
 # No de_pin and no flow_control_pin on the UART: nothing drives the transceiver's DE line.
-# accepted: right for a transceiver that switches direction by itself, and silent for one that
-# does not: the node then never transmits and only shows "link down". At least a warning is due.
+# accepted: by design, with the warning below. It is right for a transceiver that switches
+# direction by itself, and the warning says what happens with one that does not.
+# warns: hisense_ac has no de_pin and its uart has no flow_control_pin
 esphome:
   name: invalid-case
 

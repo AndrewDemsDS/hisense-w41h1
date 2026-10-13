@@ -108,25 +108,22 @@ static void test_mode_enums() {
     CHECK(H::hisense_mode_to_climate((H::Mode) bad) == H::CLIMATE_MODE_COOL_VALUE, "A/C mode %d shows as cool", bad);
 }
 
-// running_state and climate_action. The compressor frequency decides between working and idle,
-// and the boundary is 0 against 1 (mutants `comp_freq > 0` -> `>= 0`, `> 1`).
+// climate_action. The compressor frequency decides between working and idle, and the boundary
+// is 0 against 1 (mutants `comp_freq == 0` -> `<= 1`, `!= 0`).
 static void test_action() {
   printf("-- what is running, at the compressor boundary\n");
   for (int m = H::MODE_FAN; m <= H::MODE_AUTO; m++)
     for (int hz : {0, 1, 255})
-      CHECK(H::running_state(false, (H::Mode) m, (uint8_t) hz) == 0 &&
-                H::climate_action(false, (H::Mode) m, (uint8_t) hz) == H::CLIMATE_ACTION_OFF_VALUE,
+      CHECK(H::climate_action(false, (H::Mode) m, (uint8_t) hz) == H::CLIMATE_ACTION_OFF_VALUE,
             "off is off in mode %d at %d Hz", m, hz);
-  for (int hz : {0, 1, 255}) {
-    CHECK(H::running_state(true, H::MODE_FAN, (uint8_t) hz) == 4, "fan-only is the fan bit at %d Hz", hz);
-    CHECK(H::climate_action(true, H::MODE_FAN, (uint8_t) hz) == H::CLIMATE_ACTION_FAN_VALUE, "and action fan");
-  }
-  CHECK(H::running_state(true, H::MODE_HEAT, 0) == 0 && H::running_state(true, H::MODE_HEAT, 1) == 1,
-        "heat: 0 and 1 Hz");
-  CHECK(H::running_state(true, H::MODE_COOL, 0) == 0 && H::running_state(true, H::MODE_COOL, 1) == 2,
-        "cool: 0 and 1 Hz");
-  CHECK(H::running_state(true, H::MODE_HEAT, 255) == 1 && H::running_state(true, H::MODE_COOL, 255) == 2, "at 255 Hz");
-  CHECK(H::running_state(true, H::MODE_DRY, 1) == 2, "dry with the compressor on counts as the cool bit");
+  for (int hz : {0, 1, 255})
+    CHECK(H::climate_action(true, H::MODE_FAN, (uint8_t) hz) == H::CLIMATE_ACTION_FAN_VALUE, "fan-only is fan at %d Hz",
+          hz);
+  CHECK(H::climate_action(true, H::MODE_COOL, 0) == H::CLIMATE_ACTION_IDLE_VALUE &&
+            H::climate_action(true, H::MODE_COOL, 1) == H::CLIMATE_ACTION_COOLING_VALUE &&
+            H::climate_action(true, H::MODE_COOL, 255) == H::CLIMATE_ACTION_COOLING_VALUE,
+        "cool: idle at 0 Hz, cooling from 1 Hz");
+  CHECK(H::climate_action(true, H::MODE_HEAT, 255) == H::CLIMATE_ACTION_HEATING_VALUE, "heat at 255 Hz is heating");
   CHECK(H::climate_action(true, H::MODE_HEAT, 0) == H::CLIMATE_ACTION_IDLE_VALUE, "heat at 0 Hz is idle");
   CHECK(H::climate_action(true, H::MODE_HEAT, 1) == H::CLIMATE_ACTION_HEATING_VALUE, "heat at 1 Hz is heating");
   CHECK(H::climate_action(true, H::MODE_COOL, 0) == H::CLIMATE_ACTION_IDLE_VALUE, "cool at 0 Hz is idle");
@@ -162,17 +159,16 @@ static void test_fan_ladder() {
   // raw is status byte 16 = fan index * 2, cmd the fan index (FanSpeed, hisense_protocol.h: 0x02
   // quiet, 0x0A..0x12 low..high, each confirmed there). speed is the row's place on the ladder.
   struct {
-    uint8_t raw, speed, percent;
+    uint8_t raw, speed;
     H::FanSpeed cmd;
-  } want[] = {{0x02, 1, 10, H::FAN_SPEED_QUIET},    {0x0A, 2, 25, H::FAN_SPEED_LOW},
-              {0x0C, 3, 42, H::FAN_SPEED_MED_LOW},  {0x0E, 4, 58, H::FAN_SPEED_MID},
-              {0x10, 5, 75, H::FAN_SPEED_MED_HIGH}, {0x12, 6, 100, H::FAN_SPEED_HIGH}};
+  } want[] = {{0x02, 1, H::FAN_SPEED_QUIET}, {0x0A, 2, H::FAN_SPEED_LOW},      {0x0C, 3, H::FAN_SPEED_MED_LOW},
+              {0x0E, 4, H::FAN_SPEED_MID},   {0x10, 5, H::FAN_SPEED_MED_HIGH}, {0x12, 6, H::FAN_SPEED_HIGH}};
   CHECK(H::FAN_TABLE_LEN == 6 && H::FAN_INDEX_MAX == 6 && H::FAN_INDEX_AUTO == 0, "six speeds, auto is index 0");
   CHECK(H::FAN_RAW_AUTO == 0x01, "auto is status byte 0x01");
   for (size_t i = 0; i < 6; i++) {
     const H::FanRow &r = H::FAN_TABLE[i];
-    CHECK(r.raw == want[i].raw && r.speed == want[i].speed && r.percent == want[i].percent && r.cmd == want[i].cmd,
-          "row %zu is raw 0x%02X, speed %u, %u%%, cmd %d", i, r.raw, r.speed, r.percent, (int) r.cmd);
+    CHECK(r.raw == want[i].raw && r.speed == want[i].speed && r.cmd == want[i].cmd,
+          "row %zu is raw 0x%02X, speed %u, cmd %d", i, r.raw, r.speed, (int) r.cmd);
     CHECK(r.raw == (uint8_t) (r.cmd * 2), "row %zu: status byte is the fan index * 2", i);
     CHECK(H::fan_row_by_raw(r.raw) == &r && H::fan_row_by_speed(r.speed) == &r, "row %zu found by raw and by speed", i);
     CHECK(H::fan_raw_to_index(r.raw) == r.speed && H::fan_raw_to_cmd(r.raw) == r.cmd, "row %zu maps both ways", i);
@@ -280,33 +276,57 @@ static void test_setpoint() {
   }
 }
 
-// DEFECT (reported, not fixed here). On a Fahrenheit panel the status setpoint is a whole number
-// of F. parse_status() turns it into whole Celsius and sync_shadow_setpoint() turns that back
-// into F for the command shadow. Whole Celsius is coarser than whole Fahrenheit, so 13 of the 30
-// values the panel can show do not come back: 62 F becomes 63, 65 becomes 64. The shadow rides
-// every combined frame, so the next fan, swing or mode change from Home Assistant also moves the
-// setpoint the user chose on the remote by one degree F.
+// Was a DEFECT, fixed. On a Fahrenheit panel the status setpoint is a whole number of F.
+// parse_status() turns it into whole Celsius, and the shadow used to be filled from that, converted
+// back: 13 of the 30 values the panel can show did not come back (62 F became 63, 65 became 64),
+// and the next combined frame moved the setpoint the user chose on the remote. The shadow now takes
+// the frame's own byte (AcState::setpoint_raw).
 static void test_fahrenheit_shadow_round_trip() {
   printf("-- an F panel's setpoint through the status frame and back into the shadow\n");
-  int drifted = 0;
-  int first_in = 0, first_out = 0;
+  int via_celsius = 0;
   for (int f = H::SETPOINT_MIN_F; f <= H::SETPOINT_MAX_F; f++) {
-    H::AcCommand cmd;
     // What parse_status() stores for status byte 19 = f on an F panel.
-    const int8_t status_c = H::f_to_c(f);
-    CHECK(H::sync_shadow_setpoint(status_c, true, &cmd), "%d F reported is accepted into the shadow", f);
-    CHECK(cmd.setpoint >= f - 1 && cmd.setpoint <= f + 1, "%d F comes back within one degree (got %d)", f,
-          cmd.setpoint);
-    if (cmd.setpoint != f) {
-      if (drifted == 0) {
-        first_in = f;
-        first_out = cmd.setpoint;
-      }
-      drifted++;
-    }
+    H::AcState st;
+    st.valid = true;
+    st.temp_unit_f = true;
+    st.setpoint_raw = (uint8_t) f;
+    st.setpoint_c = H::f_to_c(f);
+    H::AcCommand cmd;
+    CHECK(H::sync_shadow_setpoint(st, &cmd) && cmd.setpoint == f && cmd.fahrenheit,
+          "%d F reported is %d F in the shadow", f, cmd.setpoint);
+    // The old path, still there for the Celsius side and for parity with the reference driver.
+    H::AcCommand old;
+    CHECK(H::sync_shadow_setpoint(st.setpoint_c, true, &old) && old.setpoint >= f - 1 && old.setpoint <= f + 1,
+          "%d F through Celsius comes back within one degree (got %d)", f, old.setpoint);
+    via_celsius += old.setpoint != f;
   }
-  KNOWN_DEFECT(drifted == 0, "F panel: %d of 30 reported setpoints change in the shadow (first: %d F becomes %d F)",
-               drifted, first_in, first_out);
+  CHECK(via_celsius == 13, "through Celsius, %d of 30 values would move: that is what the raw byte avoids",
+        via_celsius);
+  // Out of range on an F panel: the shadow is left alone, both fields.
+  for (int bad : {0, 60, 91, 127, 128, 200, 255}) {
+    H::AcState st;
+    st.temp_unit_f = true;
+    st.setpoint_raw = (uint8_t) bad;
+    st.setpoint_c = H::f_to_c(72);  // a setpoint_c that would pass must not rescue a bad raw byte
+    H::AcCommand cmd;
+    cmd.setpoint = 21;
+    CHECK(!H::sync_shadow_setpoint(st, &cmd) && cmd.setpoint == 21 && !cmd.fahrenheit, "F panel reporting %d: refused",
+          bad);
+  }
+  // A Celsius panel goes by setpoint_c as before, whatever setpoint_raw holds.
+  for (int c = H::SETPOINT_MIN_C; c <= H::SETPOINT_MAX_C; c++) {
+    H::AcState st;
+    st.setpoint_c = (int8_t) c;
+    st.setpoint_raw = 77;
+    H::AcCommand cmd;
+    cmd.fahrenheit = true;
+    CHECK(H::sync_shadow_setpoint(st, &cmd) && cmd.setpoint == c && !cmd.fahrenheit, "C panel: %d C taken", c);
+  }
+  H::AcState cold;
+  cold.setpoint_c = 15;
+  cold.setpoint_raw = 15;
+  H::AcCommand kept;
+  CHECK(!H::sync_shadow_setpoint(cold, &kept) && kept.setpoint == 24, "C panel reporting 15: refused");
   // Every whole Celsius value does survive C -> F -> C, so the Celsius side of ESPHome is exact.
   for (int c = H::SETPOINT_MIN_C; c <= H::SETPOINT_MAX_C; c++)
     CHECK(H::f_to_c(H::c_to_f(c)) == c, "%d C survives the trip through F", c);
@@ -343,7 +363,7 @@ static void test_presets() {
               {"eco_sleep_old", true, false, false, 2}, {"eco_sleep_young", true, false, false, 3},
               {"eco_sleep_kids", true, false, false, 4}};
   CHECK(H::PRESET_COUNT == 13, "thirteen presets");
-  for (size_t i = 0; i < 13 && i < H::PRESET_COUNT; i++) {
+  for (size_t i = 0; i < H::PRESET_COUNT; i++) {
     const H::PresetRow &r = H::PRESETS[i];
     CHECK(std::strcmp(r.name, want[i].name) == 0 && r.eco == want[i].eco && r.turbo == want[i].turbo &&
               r.mute == want[i].mute && r.sleep == want[i].sleep,
@@ -459,30 +479,33 @@ static void test_special_plan() {
       }
     }
   }
-  // Sleep off, a byte 33 write, a mute write: three at most. PRESET_PLAN_MAX (5) has room.
-  CHECK(longest == 3, "the longest plan is three writes (got %zu)", longest);
-  // DEFECT (reported, not fixed here). With eco and turbo both reported (the unit shows the pair
-  // for a second or two while it arbitrates), a plan to a preset without either sends only the
-  // eco clear (byte 33 = 0x10). Per the Feature enum that value does not switch turbo off (0x04
-  // does), so by the plan's own model (special_apply) turbo stays on.
-  KNOWN_DEFECT(missed == 0,
-               "%d plans do not reach their target, e.g. eco=%d turbo=%d mute=%d sleep=%u to eco=%d turbo=%d mute=%d "
-               "sleep=%u",
-               missed, miss_now.eco, miss_now.turbo, miss_now.mute, miss_now.sleep, miss_want.eco, miss_want.turbo,
-               miss_want.mute, miss_want.sleep);
-  // The plans that miss are exactly those from eco + turbo to a target with neither.
-  int from_pair = 0;
-  for (int mute = 0; mute < 2; mute++)
-    for (uint8_t sleep = 0; sleep <= 4; sleep++)
-      for (uint8_t target = 0; target < H::PRESET_COUNT; target++)
-        if (!H::PRESETS[target].eco && !H::PRESETS[target].turbo)
-          from_pair++;
-  CHECK(missed == from_pair, "all of them start from eco + turbo and aim at neither (%d of %d)", missed, from_pair);
+  // Sleep off, the two byte 33 clears, a mute write: four at most. PRESET_PLAN_MAX (5) has room.
+  CHECK(longest == 4, "the longest plan is four writes (got %zu)", longest);
+  // Was a DEFECT, fixed. With eco and turbo both reported (the unit shows the pair for a second or
+  // two while it arbitrates), a plan to a preset without either sent only the eco clear (byte 33 =
+  // 0x10). Per the Feature enum that value does not switch turbo off (0x04 does), so turbo stayed
+  // on: 60 of the 2,600 plans, all from that start. The plan now sends both clears.
+  CHECK(missed == 0,
+        "%d plans do not reach their target, e.g. eco=%d turbo=%d mute=%d sleep=%u to eco=%d turbo=%d mute=%d "
+        "sleep=%u",
+        missed, miss_now.eco, miss_now.turbo, miss_now.mute, miss_now.sleep, miss_want.eco, miss_want.turbo,
+        miss_want.mute, miss_want.sleep);
 
   H::SpecialOp ops[H::PRESET_PLAN_MAX];
   CHECK(H::preset_plan(special(true, false, true, 2), H::PRESET_COUNT, ops) == 0 &&
             H::preset_plan(special(true, false, true, 2), 255, ops) == 0,
         "a preset index past the table plans nothing");
+
+  // Eco and turbo both on, to neither: the eco clear, then the turbo clear.
+  size_t pair = H::special_plan(special(true, true, false, 0), NO_SPECIAL, ops);
+  CHECK(pair == 2 && ops[0].kind == H::SPECIAL_OP_FEATURE && ops[0].value == H::FEATURE_ECO_OFF &&
+            ops[1].kind == H::SPECIAL_OP_FEATURE && ops[1].value == H::FEATURE_NONE,
+        "eco + turbo to none: both clears (%zu writes)", pair);
+  // To one of the two it stays one write: setting either clears the other.
+  pair = H::special_plan(special(true, true, false, 0), special(true, false, false, 0), ops);
+  CHECK(pair == 1 && ops[0].value == H::FEATURE_ECO, "eco + turbo to eco: one write");
+  pair = H::special_plan(special(true, true, false, 0), special(false, true, false, 0), ops);
+  CHECK(pair == 1 && ops[0].value == H::FEATURE_TURBO, "eco + turbo to turbo: one write");
 
   // The single writes, value by value.
   size_t n = H::special_plan(special(true, false, false, 0), NO_SPECIAL, ops);
@@ -921,7 +944,9 @@ static void test_pending() {
             unmet == H::CONFIRM_SETPOINT,
         "a third setpoint value yields to whoever set it");
 
-  // Lines 822 and 824: a fan and a sleep request keep their `before` the same way.
+  // A fan and a sleep request do not keep theirs. `before` is read for the fields where a third
+  // value is evidence of another hand (CONFIRM_YIELD_FIELDS: mode and setpoint), and the unit moves
+  // the fan and the profile on its own, so for those two the newer status is as good.
   H::PendingCommand q;
   H::CommandIntent fan_and_sleep;
   fan_and_sleep.fields = fan_and_sleep.known = H::CONFIRM_FAN | H::CONFIRM_SLEEP | H::CONFIRM_MODE;
@@ -935,8 +960,9 @@ static void test_pending() {
   moved.special.sleep = 2;
   moved.mode_valid = false;
   H::pending_begin(&q, swing_only, moved, 2000);
-  CHECK(q.before.fan_raw == 0x0A, "the fan's before stays low (got 0x%02X)", q.before.fan_raw);
-  CHECK(q.before.special.sleep == 1, "the profile's before stays 1 (got %u)", q.before.special.sleep);
+  CHECK(q.before.fan_raw == 0x0C, "the fan's before is the newer status (got 0x%02X)", q.before.fan_raw);
+  CHECK(q.before.special.sleep == 2, "and so is the profile's (got %u)", q.before.special.sleep);
+  CHECK((H::CONFIRM_YIELD_FIELDS & (H::CONFIRM_FAN | H::CONFIRM_SLEEP)) == 0, "neither is a field that yields");
   CHECK(q.before.mode == H::MODE_COOL && q.before.mode_valid, "the mode's before stays cool, and valid");
   CHECK(q.before.setpoint_c == 23, "the setpoint was not asked for: it takes the newer status");
   // The newer command carries no value for the older fields, so only what it knows is checked.
@@ -1117,10 +1143,6 @@ static void test_power_estimate() {
               H::active_power_mw((uint8_t) raw) <= H::POWER_MW_MAX,
           "raw %d: never falls, never passes the cap", raw);
 
-  CHECK(
-      H::voltage_mv(0) == 0 && H::voltage_mv(1) == 1000 && H::voltage_mv(230) == 230000 && H::voltage_mv(255) == 255000,
-      "byte 50 is whole volts");
-
   // I[mA] = P[mW] * 1000 / (V * 950).
   CHECK(H::active_current_ma(29, 0) == 0 && H::active_current_ma(255, 0) == 0, "voltage unknown: 0, no division");
   CHECK(H::active_current_ma(0, 230) == 0, "no power: no current");
@@ -1129,27 +1151,6 @@ static void test_power_estimate() {
   CHECK(H::active_current_ma(10, 1) == 436842, "at 1 V: the smallest divisor");
   CHECK(H::active_current_ma(255, 1) == 52631578, "the largest value the function returns");
   CHECK(H::active_current_ma(255, 255) == 206398, "capped power at 255 V");
-
-  // energy_add and energy_mwh.
-  uint64_t acc = 5;
-  H::energy_add(&acc, 0, 1000);
-  CHECK(acc == 5, "0 W adds nothing");
-  H::energy_add(&acc, -1, 1000);
-  CHECK(acc == 5, "negative power adds nothing (import only)");
-  H::energy_add(&acc, 1, 1000);
-  CHECK(acc == 1005, "1 mW for 1 s is 1000 mW ms");
-  H::energy_add(&acc, 3, 0);
-  CHECK(acc == 1005, "no time: nothing");
-  acc = 0;
-  H::energy_add(&acc, 50000000, 0xFFFFFFFFu);
-  CHECK(acc == 50000000ULL * 0xFFFFFFFFULL, "50 kW for 49.7 days does not overflow");
-  CHECK(H::energy_mwh(0) == 0 && H::energy_mwh(3599999) == 0 && H::energy_mwh(3600000) == 1 &&
-            H::energy_mwh(7199999) == 1,
-        "3 600 000 mW ms to the mWh, rounded down");
-  acc = 0;
-  for (int s = 0; s < 3600; s++)
-    H::energy_add(&acc, 1000000, 1000);
-  CHECK(H::energy_mwh(acc) == 1000000, "1 kW for an hour is 1 kWh");
 }
 
 // ---- Telemetry pacing and the outdoor placeholder ----------------------------------------------

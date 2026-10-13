@@ -1,6 +1,7 @@
-# packages/status-pixel.yaml without node.yaml: its lambda reads wifi_setup_active, which node.yaml defines.
+# packages/status-pixel.yaml without node.yaml: its lambda asks the wifi_setup_mode component what to
+# show (wifi_setup), which node.yaml defines.
 # The message names the missing id, not the missing package.
-# expect: Couldn't find ID 'wifi_setup_active'
+# expect: Couldn't find ID 'wifi_setup'
 substitutions:
   name: invalid-case
   friendly_name: Invalid case

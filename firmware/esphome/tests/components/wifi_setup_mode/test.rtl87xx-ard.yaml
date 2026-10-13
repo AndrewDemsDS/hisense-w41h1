@@ -1,0 +1,12 @@
+# ESPHome ships no shared UART test package for this platform, so the bus is given here with the
+# stock module's own wiring: UART0 on PA14 / PA13, DE on PA17.
+substitutions:
+  de_pin: PA17
+
+uart:
+  - id: uart_bus
+    tx_pin: PA14
+    rx_pin: PA13
+    baud_rate: 9600
+
+<<: !include common.yaml

@@ -21,6 +21,7 @@ read -r -a COMPILERS <<<"${CXXS:-g++ clang++}"
 
 PORT=../esphome/components/hisense_ac
 MODULE=../esphome/components/w41h1_module
+SETUP_MODE=../esphome/components/wifi_setup_mode
 REF_INC=(-Istubinc -I. -Ireference-driver)
 
 # name | include flags | translation units as "std:source", space separated.
@@ -33,12 +34,14 @@ TESTS=(
   "test_esphome_bus|-I$PORT|c++17:test_esphome_bus.cpp c++17:$PORT/hisense_bus.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_edge_cases|-I$PORT|c++17:test_esphome_edge_cases.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_confirm|-I$PORT|c++17:test_esphome_confirm.cpp c++17:$PORT/hisense_protocol.cpp"
+  "test_esphome_entities|-I$PORT|c++17:test_esphome_entities.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_setup_request|-I$PORT|c++17:test_esphome_setup_request.cpp c++17:$PORT/hisense_bus.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_uart_policy|-I$MODULE|c++17:test_esphome_uart_policy.cpp"
   "test_esphome_setup_edges|-I$PORT|c++17:test_esphome_setup_edges.cpp c++17:$PORT/hisense_bus.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_bus_stress|-I$PORT|c++17:test_esphome_bus_stress.cpp c++17:$PORT/hisense_bus.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_codec_gaps|-I$PORT|c++17:test_esphome_codec_gaps.cpp c++17:$PORT/hisense_protocol.cpp"
   "test_esphome_map_gaps|-I$PORT -I$MODULE|c++17:test_esphome_map_gaps.cpp c++17:$PORT/hisense_protocol.cpp"
+  "test_esphome_setup_mode|-I$SETUP_MODE|c++17:test_esphome_setup_mode.cpp"
 )
 
 # Known reports, switched off one check at a time so everything else in that test still runs under

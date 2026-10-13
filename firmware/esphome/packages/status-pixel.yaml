@@ -4,13 +4,16 @@
 # status-led.yaml instead. Never both on one pin.
 #
 #   off      Wi-Fi up and the A/C answering
-#   blue     the setup hotspot is open: setup mode, or the fallback when the network is gone
+#   blue     setup mode, from the request to the restart, or the fallback hotspot open because
+#            the network is gone
 #   red      no Wi-Fi for 15 s or more, hotspot not open (yet)
 #   amber    Wi-Fi up, the A/C bus link down for 15 s or more
 #
 # Blue wins over red, red over amber. A missing Home Assistant connection is not shown: the node
 # sits in a bedroom and a restart of Home Assistant should not light it. The 15 s keep the pixel
-# dark through a normal boot. Brightness is fixed and low.
+# dark through a normal boot. Brightness is fixed and low. Which of the four holds is decided in
+# one place for this package and status-led.yaml: the wifi_setup_mode component's
+# status_display(). The block below only turns the answer into a colour.
 #
 # A WS2812 is powered all the time and holds whatever it was last sent, and with a floating data
 # line it can latch a random colour at power-up. So the pixel is written to black at boot
@@ -21,7 +24,7 @@
 # Substitutions the including file must define: status_pixel_pin.
 # Substitutions it may override: status_pixel_strapping_ok (true when the pin is a strapping pin
 # and the board file has said why that is safe), status_pixel_order (GRB for a WS2812B).
-# It expects node.yaml and hisense-ac.yaml beside it (wifi_setup_active, ac_bus).
+# It expects node.yaml and hisense-ac.yaml beside it (wifi_setup, which reads the hub's bus link).
 
 substitutions:
   status_pixel_strapping_ok: "false"
@@ -46,32 +49,21 @@ interval:
   - interval: 1s
     then:
       - lambda: |-
-          static uint8_t shown = 0;
-          static uint8_t wifi_down_s = 0;
-          static uint8_t bus_down_s = 0;
-          auto *net = wifi::global_wifi_component;
-          wifi_down_s = net->is_connected() ? 0 : (wifi_down_s < 255 ? wifi_down_s + 1 : 255);
-          bus_down_s = id(ac_bus).link_up() ? 0 : (bus_down_s < 255 ? bus_down_s + 1 : 255);
-          uint8_t want = 0;
-          if (net->is_ap_active() || id(wifi_setup_active)) {
-            want = 1;
-          } else if (wifi_down_s >= 15) {
-            want = 2;
-          } else if (bus_down_s >= 15) {
-            want = 3;
-          }
+          using wifi_setup_mode::Display;
+          static Display shown = Display::DARK;
+          const Display want = id(wifi_setup).status_display();
           if (want == shown)
             return;
           shown = want;
-          if (want == 0) {
+          if (want == Display::DARK) {
             id(status_pixel).turn_off().perform();
             return;
           }
           auto call = id(status_pixel).turn_on();
           call.set_brightness(0.08f);
-          if (want == 1) {
+          if (want == Display::SETUP) {
             call.set_rgb(0.0f, 0.0f, 1.0f);
-          } else if (want == 2) {
+          } else if (want == Display::NO_WIFI) {
             call.set_rgb(1.0f, 0.0f, 0.0f);
           } else {
             call.set_rgb(1.0f, 0.5f, 0.0f);

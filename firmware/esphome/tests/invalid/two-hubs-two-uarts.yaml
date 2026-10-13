@@ -1,7 +1,5 @@
 # Two units on one board: two UARTs and two hubs. The hub is a single instance, so this is refused.
-# UNHELPFUL: the message does not say that the hub is a single instance, and the
-# component has no option for a second unit.
-# expect: expected a dictionary
+# expect: hisense_ac can be listed only once: the component drives one A/C bus
 esphome:
   name: invalid-case
 

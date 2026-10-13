@@ -193,20 +193,33 @@ does the same for a unit whose remote is not at hand.
 Setup mode ends in a restart, on whichever comes first: the new network has connected, the
 gesture is repeated (at least 10 s after the first), or 10 minutes have passed. The node is off
 the network for that time and the A/C keeps running and keeps answering the remote. A gesture
-made by mistake costs nothing else: the node comes back on the network it had. Put the new
-network in `secrets.yaml` as well, because an update built from a changed configuration goes
-back to the credentials compiled in.
+made by mistake costs nothing else: the node comes back on the network it had.
 
-This has not run on hardware yet. The limits, and what happens on the bus, are in
-`firmware/esphome/README.md` ("Wi-Fi setup mode and the 77 gesture").
+A network that was entered and has not connected when the mode ends is undone: the node goes
+back to the one it had. That also holds when the node restarts for another reason in between,
+and after a power cut, where the old network is put back at the next boot. A network entered in
+the last minute still gets a minute and a half to connect. Put the new network in `secrets.yaml`
+as well, because an update built from a changed configuration goes back to the credentials
+compiled in.
+
+If the hotspot is already open because the network is out of reach, the gesture only lights
+"77": the node keeps trying its network and is not restarted.
+
+What it cannot do: open the hotspot on demand on a node built with `fast_connect`, a hidden
+network or an enterprise login (the build warns, the node logs it and stays on its network), and
+end by gesture on a unit that asks with the sustained request bit, which no unit here has been
+seen to do.
+
+This has not run on hardware yet. The cases, the limits, the check to run on a unit and what
+happens on the bus are in `firmware/esphome/README.md` ("Wi-Fi setup mode and the 77 gesture").
 
 A board with an LED on a GPIO can show the node's state. The LED is dark while everything is
 fine.
 
 | Board file | LED | Shows |
 |---|---|---|
-| `w41h1-esp32c3.yaml` | the SuperMini's blue LED on GPIO8 (`packages/status-led.yaml`) | slow blink: no Wi-Fi, no Home Assistant connection, or the A/C not answering. Fast blink: the setup hotspot is open |
-| `w41h1-esp32c3-plus.yaml` | the Plus board's RGB pixel on GPIO8 (`packages/status-pixel.yaml`) | blue: the setup hotspot is open. Red: no Wi-Fi for 15 s. Amber: Wi-Fi up, the A/C not answering for 15 s |
+| `w41h1-esp32c3.yaml` | the SuperMini's blue LED on GPIO8 (`packages/status-led.yaml`) | slow blink: no Wi-Fi, no Home Assistant connection, or the A/C not answering. Fast blink: setup mode, or the hotspot open by itself |
+| `w41h1-esp32c3-plus.yaml` | the Plus board's RGB pixel on GPIO8 (`packages/status-pixel.yaml`) | blue: setup mode, or the hotspot open by itself. Red: no Wi-Fi for 15 s. Amber: Wi-Fi up, the A/C not answering for 15 s |
 
 The other board files have no status LED. Either package can be added to a board file with the
 pin as a substitution. A power LED wired to the supply, and the LEDs on an RS-485 transceiver

@@ -46,6 +46,12 @@ echo "== Layer 1g: ESPHome confirm and retry, power and mode in one frame (decis
 g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_confirm.cpp \
     ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_confirm
 ./test_esphome_confirm
+echo
+echo "== Layer 1o: ESPHome entities (the climate request as a plan, what a status frame shows, switches, the sleep select) =="
+g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_entities.cpp \
+    ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_entities.bin
+./test_esphome_entities.bin
+python3 ./test_esphome_tables.py  # the Python schema tables against the C++ constants they name
 g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_setup_request.cpp ../esphome/components/hisense_ac/hisense_bus.cpp ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_setup_request.bin; ./test_esphome_setup_request.bin  # prints its own "Layer 1i" heading; .bin is gitignored
 echo
 echo "== Layer 1h: stock module under ESPHome, when the A/C bus serial port is restarted =="
@@ -74,6 +80,12 @@ g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_codec_gaps.
 g++ -std=c++17 -Wall -I../esphome/components/hisense_ac -I../esphome/components/w41h1_module \
     test_esphome_map_gaps.cpp ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_map_gaps.bin
 ./test_esphome_map_gaps.bin
+
+echo
+# Prints its own "Layer 1o" heading.
+g++ -std=c++17 -Wall -I../esphome/components/wifi_setup_mode test_esphome_setup_mode.cpp \
+    -o test_esphome_setup_mode.bin
+./test_esphome_setup_mode.bin
 
 echo
 echo "== Layer 1m: fuzz corpus replay, known failures, framing edge cases (ASan + UBSan) =="

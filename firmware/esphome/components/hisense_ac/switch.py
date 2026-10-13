@@ -41,11 +41,10 @@ CONFIG_SCHEMA = cv.Schema(
 
 
 async def to_code(config):
-    parent = await cg.get_variable(config[CONF_HISENSE_AC_ID])
     for key, (kind, _) in SWITCHES.items():
         if key not in config:
             continue
         var = await switch.new_switch(config[key])
         await cg.register_component(var, config[key])
-        cg.add(var.set_parent(parent))
+        await cg.register_parented(var, config[CONF_HISENSE_AC_ID])
         cg.add(var.set_kind(kind))

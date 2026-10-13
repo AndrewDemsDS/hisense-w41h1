@@ -7,36 +7,27 @@ namespace esphome::hisense_ac {
 
 static const char *const TAG = "hisense_ac.select";
 
-void HisenseSleepSelect::setup() {
-  if (this->parent_ != nullptr)
-    this->parent_->add_status_listener(this);
-}
+void HisenseSleepSelect::setup() { this->parent_->add_status_listener(this); }
 
-void HisenseSleepSelect::control(const std::string &value) {
-  if (this->parent_ == nullptr)
+void HisenseSleepSelect::control(size_t index) {
+  // Option order IS profile order (0 = Off). Paced through the hub's special-mode queue. A
+  // request the hub did not take is not shown: the select keeps the unit's profile.
+  if (!this->parent_->enqueue_special({SPECIAL_OP_SLEEP, (uint8_t) index}))
     return;
-  auto index = this->index_of(value);
-  if (!index.has_value())
-    return;
-  // Option order IS profile order (0 = Off). Paced through the hub's special-mode queue.
-  this->parent_->enqueue_special({SPECIAL_OP_SLEEP, (uint8_t) *index});
-  this->parent_->note_user_command();
-  this->published_profile_ = (uint8_t) *index;
-  this->publish_state(value);
+  this->published_profile_ = (uint8_t) index;
+  this->publish_state(index);
 }
 
 void HisenseSleepSelect::on_status(const AcState &state) {
-  if (this->parent_ != nullptr && (this->parent_->in_command_holdoff() || this->parent_->special_busy()))
+  if (!special_entity_follows_status(this->parent_->in_command_holdoff(), this->parent_->special_busy()))
     return;
-  // Status carries profile * 2 (0x00 off, 0x02 General, 0x04 Old, 0x06 Young, 0x08 Kids).
-  uint8_t profile = (uint8_t) (state.sleep_raw / 2);
-  if (profile == this->published_profile_)
+  uint8_t profile;
+  if (!sleep_profile_from_status(state.sleep_raw, &profile) || profile == this->published_profile_)
     return;
-  auto option = this->at(profile);
-  if (option.has_value()) {
-    this->published_profile_ = profile;
-    this->publish_state(*option);
-  }
+  if (!this->has_index(profile))
+    return;
+  this->published_profile_ = profile;
+  this->publish_state((size_t) profile);
 }
 
 void HisenseSleepSelect::dump_config() { LOG_SELECT("", "Hisense A/C sleep profile", this); }

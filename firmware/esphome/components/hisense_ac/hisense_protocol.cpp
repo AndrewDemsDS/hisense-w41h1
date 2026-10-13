@@ -470,6 +470,7 @@ bool parse_status(const uint8_t *buf, size_t len, AcState *out) {
   out->temp_unit_f = (buf[26] & 0x02) != 0;
   // Setpoint (19) and indoor (20) follow the panel unit; outdoor (44) and coil (45) stay Celsius.
   out->setpoint_c = panel_temp_c(buf[19], out->temp_unit_f);
+  out->setpoint_raw = buf[19];
   out->indoor_temp_c = panel_temp_c(buf[20], out->temp_unit_f);
   out->vswing_on = (flags1 & 0x80) != 0;
   out->hswing_on = (flags1 & 0x40) != 0;

@@ -167,6 +167,7 @@ struct AcState {
   bool temp_unit_f{false};     // byte 26 bit 1, confirmed
   int8_t indoor_temp_c{0};     // byte 20, display unit, converted to C
   int8_t setpoint_c{0};        // byte 19, display unit, converted to C
+  uint8_t setpoint_raw{0};     // byte 19 as received: whole degrees in the panel's unit
   uint8_t fan_raw{0};          // byte 16: 0x01 auto, 0x02 quiet, 0x0A..0x12 low..high
   bool vswing_on{false};       // byte 35 bit 7
   bool turbo_on{false};        // byte 35 bit 1
