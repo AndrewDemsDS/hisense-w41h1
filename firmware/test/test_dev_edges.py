@@ -309,7 +309,7 @@ for yaml_file in sorted(dev.ESPHOME_DIR.glob("*.yaml")) + sorted((dev.ESPHOME_DI
     if yaml_file.name != "secrets.yaml":
         secrets_read |= set(re.findall(r"!secret\s+(\w+)", yaml_file.read_text()))
 check(len(secrets_read) >= 4 and all(key in out.getvalue() for key in secrets_read),
-      "fetch ends by naming every secret the board files and packages read: " + ", ".join(sorted(secrets_read)))
+      f"fetch ends by naming every value the board files and packages read from secrets.yaml ({len(secrets_read)} of them)")
 example = (dev.ESPHOME_DIR / "secrets.yaml.example").read_text()
 check(all(re.search(rf"^{key}:", example, re.M) for key in secrets_read),
       "and secrets.yaml.example has a line for each of them")
