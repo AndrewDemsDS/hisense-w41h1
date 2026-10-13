@@ -28,6 +28,11 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   to it.
 
 ### The hub, the mapping and the entities (2026-10-13)
+- **A healthy unit is no longer logged as reporting a fault.** The log tested the fault bitmap,
+  whose valid bit is always set, so every boot logged `A/C reports a fault: bitmap 0x80000000`
+  at WARN on the first status frame and a fault that cleared logged the same line. Now the WARN
+  line appears for a real fault only, with its bitmap, and a fault that clears logs
+  `A/C fault cleared`. The fault entities were right all along.
 - **A finished frame is credited to the command it belongs to.** A display-preference frame or a
   special-mode write no longer restarts the wait of another command, so a lost command is sent
   again after about 4 s where an unrelated frame used to push that to 7 s.

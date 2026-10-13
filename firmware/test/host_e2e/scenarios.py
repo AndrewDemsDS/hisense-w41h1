@@ -136,14 +136,6 @@ def polls(node: Node, cls: int, sub: int | None = None, since: int = 0):
     return [r for r in node.bus.rx[since:] if r.cls == cls and (sub is None or r.sub == sub)]
 
 
-# Found by this test. publish_diagnostics_() compares faults_to_bitmap32() with 0 to tell a fault from
-# none, and that bitmap always carries FAULT1_VALID (bit 31). So a healthy unit is logged at WARN as
-# reporting a fault on its first status frame, and a fault that clears is logged the same way: the
-# "A/C fault cleared" line cannot be reached. The entities are right (they read AcFaults::any).
-FAULT_LOG_DEFECT = ("hisense_ac.cpp publish_diagnostics_: the fault log tests the bitmap, whose valid bit is always "
-                    "set, where it means AcFaults::any")
-
-
 # ---- Boot ------------------------------------------------------------------------------------------
 @scenario(8)
 async def boot(ctx):
@@ -298,9 +290,9 @@ async def faults(ctx):
         r.check(shown() == want, what, f"got {shown()}")
 
     await expect(False, {}, "a healthy unit: no fault")
-    r.known_failure(node.log_count("A/C reports a fault") == 0,
-                    "a healthy unit is not logged as reporting a fault (the log has "
-                    "'A/C reports a fault: bitmap 0x80000000' from the first status frame)", FAULT_LOG_DEFECT)
+    # Was a known failure, found by this test: the fault log tested the bitmap, whose valid bit
+    # (bit 31) is always set, where it meant AcFaults::any.
+    r.equal(node.log_count("A/C reports a fault"), 0, "a healthy unit is not logged as reporting a fault")
     await node.wait(lambda: node.value("binary_sensor.capability_heat_pump") is not None, 3)
     r.equal({k: node.value(f"binary_sensor.capability_{k}") for k in ("heat_pump", "eco", "quiet")},
             {"heat_pump": False, "eco": False, "quiet": False}, "a unit that advertises nothing: every capability off")
@@ -320,9 +312,8 @@ async def faults(ctx):
     unit.faults = {}
     await expect(False, {}, "all clear again")
     await node.quiet_cycles(2)
-    r.known_failure(node.log_count("A/C fault cleared") == 2,
-                    f"each of the two clearings is logged as 'A/C fault cleared' (logged {node.log_count('A/C fault cleared')} "
-                    f"times; each went out as 'A/C reports a fault: bitmap 0x80000000')", FAULT_LOG_DEFECT)
+    r.equal(node.log_count("A/C fault cleared"), 2, "each of the two clearings is logged as 'A/C fault cleared'")
+    r.equal(node.log_count("bitmap 0x80000000"), 0, "and never as a fault with an empty bitmap")
     logged = {b: node.log_count(f"A/C reports a fault: bitmap 0x{b:08X}") for b in (0xC0010009, 0xC0000080, 0xC0000000,
                                                                                     0xC0020000)}
     r.check(all(n == 1 for n in logged.values()), "each of the four fault patterns was logged once, with its bitmap",

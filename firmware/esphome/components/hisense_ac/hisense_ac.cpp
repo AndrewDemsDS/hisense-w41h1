@@ -270,13 +270,16 @@ void HisenseAC::publish_diagnostics_() {
   AcFaults faults;
   if (this->bus_.faults(&faults)) {
     uint32_t bitmap = faults_to_bitmap32(faults);
-    if (bitmap != this->logged_faults_) {
-      if (bitmap != 0) {
+    // The bitmap always carries its valid bit, so it is never 0: `any` says whether a fault is
+    // set. A healthy unit is remembered as 0, the value before the first status frame.
+    const uint32_t reported = faults.any ? bitmap : 0;
+    if (reported != this->logged_faults_) {
+      if (reported != 0) {
         ESP_LOGW(TAG, "A/C reports a fault: bitmap 0x%08" PRIX32, bitmap);
       } else {
         ESP_LOGI(TAG, "A/C fault cleared");
       }
-      this->logged_faults_ = bitmap;
+      this->logged_faults_ = reported;
     }
 #ifdef USE_BINARY_SENSOR
     if (this->problem_binary_sensor_ != nullptr)
