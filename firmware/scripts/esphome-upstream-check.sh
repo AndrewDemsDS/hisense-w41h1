@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # esphome-upstream-check.sh -- run ESPHome's own CI gates against the hisense_ac component.
 #
-# The component is meant to go to upstream ESPHome, and their CI decides whether it gets in. This
-# drops the component and its tests into a checkout of esphome/esphome at the places they would
-# occupy in a pull request, then runs the scripts their workflow runs:
+# hisense_ac alone, on purpose: it is the one component meant to go to upstream ESPHome, so it is
+# the one their rules apply to. w41h1_module and wifi_setup_mode stay in this repo (the stock
+# module's own hardware, and this firmware's setup mode) and are held to this repo's gates only,
+# which is why this script does not ask esphome-components.sh for the list.
+#
+# Their CI decides whether the component gets in. This drops the component and its tests into a
+# checkout of esphome/esphome at the places they would occupy in a pull request, then runs the
+# scripts their workflow runs:
 #
 #   script/ci-custom.py              their source rules (namespaces, includes, line endings, ...)
 #   script/build_codeowners.py       regenerates CODEOWNERS from the component's CODEOWNERS list

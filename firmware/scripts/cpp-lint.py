@@ -40,12 +40,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 CPP_EXT = (".c", ".cc", ".cpp", ".h", ".hpp", ".tcc")
 
-# Trees we own. Everything else is out of scope.
+# Trees we own. Everything else is out of scope. Every directory under components/ is a component
+# of this repo (esphome-components.sh lists them for the other gates), so one added later is
+# linted without a change here.
 INCLUDE = [
     "firmware/esp32-recon/*",
-    "firmware/esphome/components/hisense_ac/*",
-    "firmware/esphome/components/w41h1_module/*",
-    "firmware/esphome/components/wifi_setup_mode/*",
+    "firmware/esphome/components/*",
     "firmware/test/*",
 ]
 
@@ -296,9 +296,19 @@ C17_SETUP_MODE = ["-std=c++17", "-Ifirmware/esphome/components/wifi_setup_mode"]
 HDR = ["-x", "c++-header"]
 
 # (file, flags). Headers are listed as their own units so each is checked under the .clang-tidy
-# of its own directory, not the one of whichever test happens to include it. The ESPHome glue
-# (hisense_ac.cpp, climate, select, switch) needs ESPHome's headers and is gated by
-# ESPHome's own tooling instead; the esp32-recon tree needs ESP-IDF.
+# of its own directory, not the one of whichever test happens to include it.
+#
+# Not here, because these need ESPHome's headers and a platform's:
+#   hisense_ac.cpp, hisense_climate.cpp, hisense_switch.cpp, hisense_select.cpp
+#       firmware/test/host_e2e/run.py --tidy, with the compile database of the host build. A
+#       gate: the esphome-host-e2e job of qa.yaml fails on any finding.
+#   wifi_setup_mode.cpp (needs wifi:) and w41h1_module.cpp (needs LibreTiny)
+#       no host build has them. What gates them is the compiler-warning check of the board
+#       builds (esphome-compile-check.sh and the stock-module job of qa.yaml). clang-tidy runs
+#       on them from those builds' compile databases (esphome-glue-tidy.py, in the esphome-esp32
+#       and esphome-amebaz2 jobs) and only reports.
+#   the esp32-recon tree
+#       needs ESP-IDF, and has no clang-tidy run.
 TIDY_UNITS = [
     ("firmware/test/reference-driver/hisense_rs485.cpp", C11),
     ("firmware/test/reference-driver/hisense_rs485.h", HDR + C11),

@@ -381,7 +381,8 @@ TRACKED = {
     "firmware/esphome/components/hisense_ac/notes.md": "notes\n",
     "firmware/esphome/components/hisense_ac/__init__.py": "\n",
     "firmware/esphome/components/w41h1_module/m.cpp": "int m;\n",
-    "firmware/esphome/components/other/x.cpp": "int x;\n",
+    "firmware/esphome/components/later_one/x.cpp": "int x;\n",
+    "firmware/esphome/other/y.cpp": "int y;\n",
     "firmware/test/t.cpp": "int t;\n",
     "firmware/test/stubinc/s.h": "#include <x>\n",
     "firmware/test/build/gen.cpp": "int g;\n",
@@ -404,10 +405,13 @@ write(R / "firmware/test/untracked.cpp", "int u;\n")
 cpp.ROOT = R
 IN_SCOPE = ["firmware/esp32-recon/main/r.c", "firmware/esp32-recon/main/r.tcc",
             "firmware/esphome/components/hisense_ac/a.cpp", "firmware/esphome/components/hisense_ac/a.h",
+            "firmware/esphome/components/later_one/x.cpp",
             "firmware/esphome/components/w41h1_module/m.cpp", "firmware/test/late.cpp",
             "firmware/test/stubinc/s.h", "firmware/test/t.cpp"]
 check(cpp.select_files([]) == IN_SCOPE, "in scope: tracked C and C++ files of the four owned trees, subdirectories included")
-for rel, why in (("firmware/esphome/components/other/x.cpp", "another component"), ("firmware/scripts/tool.cpp", "a tree that is not owned"),
+check("firmware/esphome/components/later_one/x.cpp" in cpp.select_files([]),
+      "in scope: every directory under components/, so a component added later is linted without a change to the list")
+for rel, why in (("firmware/esphome/other/y.cpp", "a directory beside components/"), ("firmware/scripts/tool.cpp", "a tree that is not owned"),
                  ("top.cpp", "the repo root"), ("dumps/d.cpp", "dumps/"), ("firmware/test/build/gen.cpp", "a build directory"),
                  ("firmware/test/managed_components/v/v.c", "managed components"),
                  ("firmware/esphome/components/hisense_ac/notes.md", "not C or C++"),
@@ -851,6 +855,11 @@ echo "INFO Successfully compiled program."
 exit "${FAKE_RC:-0}"
 ''')
 CC = C / "firmware/scripts/esphome-compile-check.sh"
+# The script holds this repo's components clean and reads which they are from the directories
+# (esphome-components.sh), so the stand-in tree gets the directories the real one has.
+COMPONENTS = sorted(p.name for p in (ROOT / "firmware/esphome/components").iterdir() if p.is_dir())
+for name in COMPONENTS:
+    (C / "firmware/esphome/components" / name).mkdir(parents=True)
 
 
 def compile_check(*configs, **env):
@@ -878,10 +887,16 @@ check(code == 1 and "::error::w41h1.yaml does not compile" in out and "error: bo
 WARN = "src/esphome/components/hisense_ac/hisense_bus.cpp:10:5: warning: unused variable 'x' [-Wunused-variable]"
 code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN)
 check(code == 1 and "does not compile cleanly" in out, "a compiler warning from hisense_ac fails the gate")
-code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace("hisense_ac/hisense_bus", "w41h1_module/w41h1_module"))
-check(code == 1, "and one from w41h1_module")
+for name in COMPONENTS:
+    code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace("hisense_ac/hisense_bus", f"{name}/{name}"))
+    check(code == 1 and "does not compile cleanly" in out, f"and one from {name}")
+check("wifi_setup_mode" in COMPONENTS and len(COMPONENTS) >= 3, f"which is every component directory of the tree ({', '.join(COMPONENTS)})")
 code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="src/esphome/components/wifi/wifi_component.cpp:1:1: warning: theirs")
-check(code == 0, "a warning from another component passes: only this repo's two are held clean")
+check(code == 0, "a warning from another component passes: only this repo's own are held clean")
+(C / "firmware/esphome/components/later_one").mkdir()
+code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace("hisense_ac/hisense_bus", "later_one/later_one"))
+check(code == 1, "a component directory added later is held clean without a change to the script")
+(C / "firmware/esphome/components/later_one").rmdir()
 code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace(": warning:", ": error:"))
 check(code == 1, "an error line that names a component file fails it too (a build that went on after one)")
 code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="\\033[01m\\033[Ksrc/esphome/components/hisense_ac/hisense_bus.cpp:10:5:\\033[m\\033[K "
@@ -927,6 +942,81 @@ code, out, log = compile_check("w41h1.yaml", **CACHE)
 check(code == 0 and len(log) == 1 and "slot image" not in out, "a board file that names no layout is not asked for a slot image")
 
 # ================================================================================================
+print("== the nightly ESPHome-dev job: the failing gates and the tracking issue ==")
+
+GH_SCRIPTS = ROOT / ".github/scripts"
+gate_report = load("upstream_gate_report", GH_SCRIPTS / "upstream_gate_report.py")
+MARK_OK, MARK_BAD = "\x1b[1;36m[upstream]\x1b[0m ", "\x1b[1;31m[upstream] FAILED:\x1b[0m "
+UPSTREAM_LOG = (MARK_OK + "updating the dev checkout\n" + MARK_OK + "script/ci-custom.py\n"
+                "a.cpp:9:2: lint: Declare log tags with ESPHOME_LOG_TAG(TAG, \"name\");\n(add ```// NOLINT```)\n\n"
+                + MARK_BAD + "python script/ci-custom.py\n" + MARK_OK + "ruff check\nAll checks passed!\n"
+                + MARK_OK + "script/test_build_components.py (config, every platform)\n"
+                + "".join(f"config {i}\n" for i in range(500)) + "x" * 900 + "\nTest Summary: 3 passed, 1 failed\n"
+                + MARK_BAD + "script/test_build_components.py\n" + MARK_OK + "one or more upstream gates failed against dev\n")
+text = gate_report.report(UPSTREAM_LOG)
+check(text.count("### ") == 2 and "### script/ci-custom.py\n" in text and "### script/test_build_components.py (config, every platform)\n" in text,
+      "the report has the gates that failed, under the names the script printed")
+check("All checks passed" not in text and "updating the dev checkout" not in text, "and nothing of a gate that passed")
+check("ESPHOME_LOG_TAG" in text and "\x1b" not in text, "with the gate's own output, the terminal colours removed")
+check("config 0\n" in text and "config 250\n" not in text and "Test Summary: 3 passed, 1 failed" in text and "lines left out" in text,
+      "a long output keeps its first and last lines")
+check(max(map(len, text.splitlines())) < 320, "and a long line is cut")
+check("````text\n" in text, "output that holds backticks is fenced with more of them")
+check(gate_report.report(MARK_OK + "cloning esphome/esphome at dev\nfatal: unable to access\n") == "",
+      "a run that stopped outside the gates (the clone) has no failing gate")
+big = gate_report.report("".join(MARK_OK + f"gate {g}\n" + ("y" * 290 + "\n") * 60 + MARK_BAD + f"gate {g}\n" for g in range(6)))
+check(len(big) <= gate_report.LIMIT and big.count("### ") == 6, "six failing gates with long output still fit an issue body")
+
+GH_LOG = TMP / "gh.log"
+FAKE_GH = script(TMP / "ghbin/gh", '''#!/usr/bin/env bash
+echo "$*" >> "$GH_LOG"
+case "$1 $2" in
+  "issue list") echo "${FAKE_ISSUE:-}" ;;
+  "issue create"|"issue edit")
+    while [ $# -gt 0 ]; do [ "$1" = --body-file ] && cp "$2" "$GH_BODY"; shift; done ;;
+esac
+''')
+ISSUE_SH = GH_SCRIPTS / "upstream-dev-issue.sh"
+write(TMP / "gates.md", text)
+
+
+def tracking_issue(*args, **env):
+    GH_LOG.unlink(missing_ok=True)
+    (TMP / "gh.body").unlink(missing_ok=True)
+    r = subprocess.run(["bash", str(ISSUE_SH), *args], capture_output=True, text=True, cwd=TMP,
+                       env={**GIT_ENV, "PATH": f"{FAKE_GH.parent}:{os.environ['PATH']}", "GH_LOG": str(GH_LOG), "GH_BODY": str(TMP / "gh.body"),
+                            "RUN_URL": "https://example.com/run/1", "REF_NAME": "main", "UPSTREAM": "abc123", **env})
+    calls = GH_LOG.read_text().splitlines() if GH_LOG.exists() else []
+    body = (TMP / "gh.body").read_text() if (TMP / "gh.body").exists() else ""
+    return r.returncode, r.stdout + r.stderr, calls, body
+
+
+code, out, calls, body = tracking_issue("fail", str(TMP / "gates.md"))
+check(code == 0 and len(calls) == 2 and calls[0].startswith("issue list --state open") and calls[1].startswith("issue create --title Nightly: hisense_ac fails"),
+      "the gates fail and no issue is open: one is created")
+check("ESPHOME_LOG_TAG" in body and "https://example.com/run/1" in body and "abc123" in body and "`main`" in body,
+      "its text has the failing gates, the run, this repo's ref and their commit")
+check("—" not in body and not re.search(r"\d+\.\d+\.\d+\.\d+|@[\w-]+\.", body), "and no dash or address that the repo's own rules refuse")
+code, out, calls, body = tracking_issue("fail", str(TMP / "gates.md"), FAKE_ISSUE="41")
+check(code == 0 and len(calls) == 2 and calls[1].startswith("issue edit 41 --body-file") and "ESPHOME_LOG_TAG" in body,
+      "the gates fail and the issue is open: its text is rewritten, and no second issue is opened")
+code, out, calls, body = tracking_issue("pass", FAKE_ISSUE="41")
+check(code == 0 and len(calls) == 2 and calls[1].startswith("issue close 41 --reason completed --comment"),
+      "the gates pass and the issue is open: it is closed with a comment")
+code, out, calls, body = tracking_issue("pass")
+check(code == 0 and len(calls) == 1 and "nothing to do" in out, "the gates pass and no issue is open: nothing is written")
+code, out, calls, body = tracking_issue("fail", str(TMP / "no-such.md"))
+check(code == 2 and not calls, "a failure without its report is a usage error, before anything is asked of GitHub")
+code, out, calls, body = tracking_issue("broken")
+check(code == 2 and not calls, "and so is a result that is neither pass nor fail")
+nightly_text = (ROOT / ".github/workflows/nightly.yaml").read_text()
+dev_job = re.search(r"(?ms)^  esphome-upstream-dev:\n.*?(?=^  [\w-]+:\n|\Z)", nightly_text).group(0)
+check(nightly_text.count("issues: write") == 1 and "issues: write" in dev_job and "contents: write" not in nightly_text,
+      "nightly.yaml gives issues: write to the esphome-upstream-dev job alone, and no job may write the repository")
+check("github.event_name != 'pull_request'" in dev_job and "upstream-dev-issue.sh" in dev_job and "upstream_gate_report.py" in dev_job,
+      "the job reports through the two scripts, and a pull request does not touch the issue")
+
+# ================================================================================================
 print("== how the lists agree: workflows, run_tests.sh, the lint scope, .gitignore ==")
 
 release = (ROOT / ".github/workflows/esphome-release.yaml").read_text()
@@ -952,6 +1042,48 @@ check(all(f"{b[14:-5]}:0x" in qa for b in groups["amebaz2"]) and "board-groups.s
 check("board-groups.sh other" in nightly, "nightly.yaml compiles the board files qa.yaml does not")
 r = subprocess.run(["bash", str(GROUPS)], capture_output=True, text=True, env=GIT_ENV)
 check(r.returncode == 2 and "usage:" in r.stderr, "board-groups.sh with no group prints its usage and exits 2")
+
+# No gate holds a list of this repo's components: esphome-components.sh reads the directories and
+# the gates ask it. A name written into a gate is how wifi_setup_mode stayed outside two of them.
+LIST = SCRIPTS / "esphome-components.sh"
+r = subprocess.run(["bash", str(LIST)], capture_output=True, text=True, env=GIT_ENV)
+check(r.returncode == 0 and r.stdout.split() == COMPONENTS, f"esphome-components.sh prints every component directory ({len(COMPONENTS)})")
+r = subprocess.run(["bash", str(LIST), "regex"], capture_output=True, text=True, env=GIT_ENV)
+check(r.stdout.strip() == "|".join(COMPONENTS), "and the same names as one alternation for grep -E")
+r = subprocess.run(["bash", str(LIST), "nonsense"], capture_output=True, text=True, env=GIT_ENV)
+check(r.returncode == 2 and "usage:" in r.stderr, "an unknown argument prints its usage and exits 2")
+E = TMP / "no-components"
+shutil.copytree(SCRIPTS, E / "firmware/scripts", ignore=shutil.ignore_patterns("__pycache__", "*.env"))
+(E / "firmware/esphome/components").mkdir(parents=True)
+r = subprocess.run(["bash", str(E / "firmware/scripts/esphome-components.sh"), "regex"], capture_output=True, text=True, env=GIT_ENV)
+check(r.returncode == 1 and not r.stdout and "no component directory" in r.stderr,
+      "no component at all is an error, so a gate cannot pass on an empty list")
+gates = {"esphome-compile-check.sh": (SCRIPTS / "esphome-compile-check.sh").read_text()}
+for job in ("lint-extra", "esphome-amebaz2"):
+    gates[f"qa.yaml, job {job}"] = re.search(rf"(?ms)^  {job}:\n.*?(?=^  [\w-]+:\n|\Z)", qa).group(0)
+for where, text in gates.items():
+    code_lines = re.sub(r"(?m)^\s*#.*$", "", text)
+    check("esphome-components.sh" in code_lines, f"{where} asks esphome-components.sh which components are this repo's")
+    # A warning pattern (components/(a|b)/, components/a/) or an include path (-I "$c/a").
+    named = [n for n in COMPONENTS if re.search(rf"components/\(?[\w|]*\b{n}\b[\w|]*\)?/\W|-I\s*\S*/{n}\b", code_lines)]
+    check(not named, f"{where} writes no component into a warning pattern or an include path itself ({', '.join(named) or 'none'})")
+check(all(cpp.owned(f"firmware/esphome/components/{n}/x.cpp") for n in COMPONENTS), "the lint scope of cpp-lint.py takes in every component directory")
+upstream = (SCRIPTS / "esphome-upstream-check.sh").read_text()
+check("esphome-components.sh" not in re.sub(r"(?m)^\s*#.*$", "", upstream) and "hisense_ac alone, on purpose" in upstream,
+      "esphome-upstream-check.sh takes hisense_ac alone, and says that it is on purpose")
+
+# clang-tidy on the hub and the entities is a gate of the esphome-host-e2e job. run.py only
+# reports, so the job reads the count from the line run.py prints: the two have to say it alike.
+run_py = (ROOT / "firmware/test/host_e2e/run.py").read_text()
+e2e_job = re.search(r"(?ms)^  esphome-host-e2e:\n.*?(?=^  [\w-]+:\n|\Z)", qa).group(0)
+tidy_step = re.search(r"(?ms)^      - name: clang-tidy on the hub and the entities\n.*?(?=^      - name: |\Z)", e2e_job)
+check('print(f"== clang-tidy {number} on the glue: {len(findings)} finding(s) ==")' in run_py
+      and tidy_step is not None and 'grep -qxF "== clang-tidy $pin on the glue: 0 finding(s) =="' in tidy_step.group(0),
+      "qa.yaml takes the clang-tidy count of the glue from the line run.py --tidy prints, at the pinned version")
+check(tidy_step is not None and "continue-on-error" not in tidy_step.group(0) and "exit 1" in tidy_step.group(0),
+      "and a finding fails the job: the step is not report-only")
+check(all(f"{n}.cpp" in (SCRIPTS / "cpp-lint.py").read_text() for n in ("wifi_setup_mode", "w41h1_module")),
+      "cpp-lint.py says what covers the two glue files no host build has")
 
 pin_sh = (SCRIPTS / "cpp-lint.sh").read_text()
 fmt_pin = re.search(r"^CLANG_FORMAT_VERSION=(\S+)$", pin_sh, re.M).group(1)

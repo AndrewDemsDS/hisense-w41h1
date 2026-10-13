@@ -20,6 +20,8 @@ esphome_cmd="${ESPHOME:-esphome}"
 [ -f secrets.yaml ] || cp secrets.yaml.example secrets.yaml
 
 version="$(python3 "$HERE/version-lint.py" --print)"
+# Every component of this repo, from the directories: hisense_ac|w41h1_module|...
+own="$(bash "$HERE/esphome-components.sh" regex)"
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 
@@ -62,8 +64,8 @@ for config in "$@"; do
   # is a compiler diagnostic that names one of our files, `<path>:<line>[:<col>]: warning:`, with
   # any colour codes removed first. A file that merely has "error" in its name is not one.
   if sed 's/\x1b\[[0-9;]*[mK]//g' "$log" \
-      | grep -a -E 'components/(hisense_ac|w41h1_module)/[^: ]+:[0-9]+(:[0-9]+)?: +(warning|error|fatal error):'; then
-    echo "::error::hisense_ac or w41h1_module does not compile cleanly for $config (see above)"
+      | grep -a -E "components/($own)/[^: ]+:[0-9]+(:[0-9]+)?: +(warning|error|fatal error):"; then
+    echo "::error::a component of this repo (${own//|/, }) does not compile cleanly for $config (see above)"
     exit 1
   fi
   # A board file takes packages/node.yaml and with it packages/version.yaml, the one place the

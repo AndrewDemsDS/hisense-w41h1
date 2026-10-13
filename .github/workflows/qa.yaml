@@ -215,7 +215,8 @@ jobs:
         run: python3 docs/guide/lint.py
 
       # cppcheck on the code that compiles without ESPHome: the codec and the bus scheduler, and
-      # two host tests that pull in the header-only parts (hisense_map.h, w41h1_uart_policy.h).
+      # three host tests that pull in the header-only parts (hisense_map.h, w41h1_uart_policy.h,
+      # setup_mode_logic.h). Every component directory is on the include path, from the tree.
       # Gated on warning, performance and portability, which are clean. `style` is left out: its
       # findings are naming and "condition always true" in the tests, not defects. The ESPHome
       # glue is not checked here: cppcheck cannot parse it without ESPHome's headers (SUB_SENSOR
@@ -224,11 +225,16 @@ jobs:
         run: |
           cppcheck --version
           c=firmware/esphome/components
+          includes=()
+          for name in $(bash firmware/scripts/esphome-components.sh); do
+            includes+=(-I "$c/$name")
+          done
           cppcheck --enable=warning,performance,portability --inconclusive --check-level=exhaustive \
             --std=c++17 --language=c++ --inline-suppr --quiet --error-exitcode=1 \
-            --suppress=missingIncludeSystem -I "$c/hisense_ac" -I "$c/w41h1_module" \
+            --suppress=missingIncludeSystem "${includes[@]}" \
             "$c/hisense_ac/hisense_protocol.cpp" "$c/hisense_ac/hisense_bus.cpp" \
-            firmware/test/test_esphome_map_gaps.cpp firmware/test/test_esphome_uart_policy.cpp
+            firmware/test/test_esphome_map_gaps.cpp firmware/test/test_esphome_uart_policy.cpp \
+            firmware/test/test_esphome_setup_mode.cpp
 
       # The copy of the ESPHome pin that Dependabot bumps has to be the release the jobs build
       # with. A Dependabot pull request fails here until the other pins are bumped in it too.
@@ -336,6 +342,8 @@ jobs:
           # below only sees what this run compiled. That is enough: an entry is saved only by a
           # main run that passed this step, so every cached object compiled clean.
           export PLATFORMIO_BUILD_CACHE_DIR="$HOME/.cache/w41h1/pio-objects"
+          # Every component of this repo, from the directories: hisense_ac|w41h1_module|...
+          own="$(bash ../scripts/esphome-components.sh regex)"
           # An entry from before the split holds the build cache inside the tree: move it out,
           # so it is used now and is not saved with the tree.
           if [ -d "$HOME/.platformio/w41h1-build-cache" ]; then
@@ -359,8 +367,8 @@ jobs:
             grep -a -E '(RAM|Flash): +\[|Successfully compiled' build.log
             # The SDK and the platform warn about their own code. Ours has to build clean here
             # too: this is the only target with a different compiler and integer widths.
-            if grep -a -E 'components/(hisense_ac|w41h1_module)/.*(warning|error)' build.log; then
-              echo "::error::hisense_ac or w41h1_module does not compile cleanly for AmebaZ2 (see above)"
+            if grep -a -E "components/($own)/.*(warning|error)" build.log; then
+              echo "::error::a component of this repo (${own//|/, }) does not compile cleanly for AmebaZ2 (see above)"
               exit 1
             fi
             # The reboot workaround points lt_reboot() at the SDK's sys_reset with two linker
@@ -391,6 +399,31 @@ jobs:
             echo "build cache over 1 GB: emptied, the next run fills it again"
             rm -rf "$PLATFORMIO_BUILD_CACHE_DIR"
           fi
+
+      # w41h1_module.cpp needs LibreTiny, so this is the one build that compiles it. PlatformIO
+      # writes the compile database in a few seconds, on a copy of the project: in the project
+      # itself that target deletes the build output. Report only, as in esphome-esp32.
+      - name: clang-tidy on the components as the stock-module build compiles them (report only)
+        continue-on-error: true
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tidy"
+          "$RUNNER_TEMP/tidy/bin/pip" install --quiet "clang-tidy==$(sed -n 's/^CLANG_TIDY_VERSION=//p' firmware/scripts/cpp-lint.sh)"
+          export CLANG_TIDY="$RUNNER_TEMP/tidy/bin/clang-tidy"
+          # PlatformIO is installed beside esphome, in the environment pipx made for it.
+          pio="$(dirname "$(readlink -f "$(command -v esphome)")")/pio"
+          project="$RUNNER_TEMP/tidy-project"
+          mkdir -p "$project"
+          tar -C firmware/esphome/.esphome/build/ac-factory --exclude='.pio*' --exclude='.piolibdeps' -cf - . \
+            | tar -C "$project" -xf -
+          (cd "$project" && "$pio" run -t compiledb > compiledb.log 2>&1) || { tail -n 60 "$project/compiledb.log"; exit 1; }
+          python3 firmware/scripts/esphome-glue-tidy.py "$project/compile_commands.json" | tee "$RUNNER_TEMP/tidy.log"
+          {
+            echo "## clang-tidy on the components, stock-module build (report only)"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/tidy.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save the PlatformIO tree
         if: ${{ github.ref == 'refs/heads/main' && steps.tree.outputs.cache-hit != 'true' }}
@@ -476,6 +509,27 @@ jobs:
             tests/build.hub-only.esp32-c3-idf.yaml
           ccache --show-stats | head -n 12 || true
 
+      # wifi_setup_mode.cpp needs wifi:, so the host build of esphome-host-e2e does not have it,
+      # and neither does it have the code under a platform #ifdef. The ESP32-C3 build above does,
+      # and ESP-IDF wrote its compile database. Report only: the count goes to the log and the
+      # summary. The two findings it has today are in hisense_ac.cpp, where a board build's log
+      # level compiles ESP_LOGD and ESP_LOGV away and leaves switch branches that look the same.
+      - name: clang-tidy on the components as the ESP32-C3 build compiles them (report only)
+        continue-on-error: true
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tidy"
+          "$RUNNER_TEMP/tidy/bin/pip" install --quiet "clang-tidy==$(sed -n 's/^CLANG_TIDY_VERSION=//p' firmware/scripts/cpp-lint.sh)"
+          export CLANG_TIDY="$RUNNER_TEMP/tidy/bin/clang-tidy"
+          python3 firmware/scripts/esphome-glue-tidy.py \
+            firmware/esphome/.esphome/build/ci-w41h1-esp32c3/build/compile_commands.json | tee "$RUNNER_TEMP/tidy.log"
+          {
+            echo "## clang-tidy on the components, ESP32-C3 build (report only)"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/tidy.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Save the ESP-IDF tree
         if: ${{ github.ref == 'refs/heads/main' && steps.tree.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -540,22 +594,39 @@ jobs:
 
       # The hub and the entities are outside the clang-tidy run of host-qa: cpp-lint.py compiles its
       # units with plain host flags and these files need ESPHome's headers. This build has them,
-      # and PlatformIO writes its compile database in a second or two. Report only: the findings
-      # and their count go to the log and the summary. clang-tidy at the version cpp-lint.sh pins.
-      - name: clang-tidy on the hub and the entities (report only)
-        continue-on-error: true
+      # and PlatformIO writes its compile database in a second or two. A gate: any finding fails
+      # the job, and so does a file clang could not parse (it has no finding either) or a run
+      # with another clang-tidy than the one cpp-lint.sh pins. run.py itself only reports, so the
+      # count is read from the line it prints.
+      - name: clang-tidy on the hub and the entities
         run: |
+          pin="$(sed -n 's/^CLANG_TIDY_VERSION=//p' firmware/scripts/cpp-lint.sh)"
           python3 -m venv "$RUNNER_TEMP/tidy"
-          "$RUNNER_TEMP/tidy/bin/pip" install --quiet "clang-tidy==$(sed -n 's/^CLANG_TIDY_VERSION=//p' firmware/scripts/cpp-lint.sh)"
+          "$RUNNER_TEMP/tidy/bin/pip" install --quiet "clang-tidy==$pin"
           export CLANG_TIDY="$RUNNER_TEMP/tidy/bin/clang-tidy"
-          python3 firmware/test/host_e2e/run.py --no-build --tidy --require | tee "$RUNNER_TEMP/tidy.log"
+          log="$RUNNER_TEMP/tidy.log"
+          status=0
+          python3 firmware/test/host_e2e/run.py --no-build --tidy --require > "$log" 2>&1 || status=$?
+          cat "$log"
           {
             echo "## clang-tidy on the hub and the entities"
             echo
             echo '```'
-            cat "$RUNNER_TEMP/tidy.log"
+            cat "$log"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" != 0 ]; then
+            echo "::error::clang-tidy on the hub and the entities did not run (see above)"
+            exit 1
+          fi
+          if grep -H -F 'clang-diagnostic-error' firmware/test/host_e2e/build/tidy/*/tidy-*.log; then
+            echo "::error::clang-tidy could not parse a glue file (see above), so its count means nothing"
+            exit 1
+          fi
+          if ! grep -qxF "== clang-tidy $pin on the glue: 0 finding(s) ==" "$log"; then
+            echo "::error::clang-tidy $pin has findings in the hub or the entities (see above): fix them, or mark a false positive with NOLINT and the reason"
+            exit 1
+          fi
 
       # The same scenarios on a build with gcov: which lines and functions of the hub and the
       # entities they reach, as a table in the job summary. On main only, and never blocking.
