@@ -97,7 +97,7 @@ jobs:
 
       # What earlier nights found, on top of the corpus in the tree. The newest entry is taken.
       - name: Restore the corpus
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: firmware/test/fuzz/build/corpus/${{ matrix.harness }}
           key: fuzz-corpus-${{ matrix.harness }}-none
@@ -140,7 +140,7 @@ jobs:
       # after a crash, since the inputs found on the way to it are worth keeping.
       - name: Save the corpus
         if: ${{ !cancelled() && github.event_name != 'pull_request' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: firmware/test/fuzz/build/corpus/${{ matrix.harness }}
           key: fuzz-corpus-${{ matrix.harness }}-${{ hashFiles(format('firmware/test/fuzz/build/corpus/{0}/**', matrix.harness)) }}
