@@ -31,5 +31,4 @@ async def to_code(config):
     conf = config[CONF_SLEEP_PROFILE]
     var = await select.new_select(conf, options=SLEEP_PROFILES)
     await cg.register_component(var, conf)
-    parent = await cg.get_variable(config[CONF_HISENSE_AC_ID])
-    cg.add(var.set_parent(parent))
+    await cg.register_parented(var, config[CONF_HISENSE_AC_ID])

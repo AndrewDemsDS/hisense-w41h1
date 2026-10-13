@@ -46,6 +46,10 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   `hisense_ac.set_setup_indicator` without `state` now say what is wrong. A configuration that
   one of these rules refuses did validate before: it has to be corrected to build again.
 
+- **`dump_config` of the hub prints what is fixed at setup** (the DE pin and the UART check). The
+  link state, the "77" indication and the last status left it: they are in the log when they
+  change. The hub's timing other than the bus itself now runs on ESPHome's loop time.
+
 ### Board files, the stock-module component and CI (2026-10-12)
 - **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air
   Conditioner`), and the board files no longer repeat the two lines. A file that sets them keeps

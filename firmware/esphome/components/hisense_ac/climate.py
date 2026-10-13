@@ -104,8 +104,7 @@ async def to_code(config):
     var = await climate.new_climate(config)
     await cg.register_component(var, config)
 
-    parent = await cg.get_variable(config[CONF_HISENSE_AC_ID])
-    cg.add(var.set_parent(parent))
+    await cg.register_parented(var, config[CONF_HISENSE_AC_ID])
     cg.add(var.set_supports_heat(config[CONF_SUPPORTS_HEAT]))
     cg.add(var.set_supports_horizontal_swing(config[CONF_SUPPORTS_HORIZONTAL_SWING]))
     support = [

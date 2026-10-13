@@ -40,8 +40,7 @@ static_assert((int) climate::CLIMATE_PRESET_NONE == CLIMATE_PRESET_NONE_VALUE, "
 static_assert((int) climate::CLIMATE_PRESET_ECO == CLIMATE_PRESET_ECO_VALUE, "ClimatePreset drift");
 
 void HisenseClimate::setup() {
-  if (this->parent_ != nullptr)
-    this->parent_->set_climate(this);
+  this->parent_->set_climate(this);
   // Custom list carries only the two intermediate steps; the other five ride the built-in enum
   // advertised in traits(). Lives on the entity because ClimateTraits only references the
   // entity's vector, and set_custom_fan_mode_() matches by pointer into it.
@@ -96,8 +95,6 @@ climate::ClimateTraits HisenseClimate::traits() {
 // Every decision here is climate_plan() in hisense_entities.h, with a host test. This translates
 // the call into plain values, carries the plan out and shows what the hub took.
 void HisenseClimate::control(const climate::ClimateCall &call) {
-  if (this->parent_ == nullptr)
-    return;
   ClimateRequest request;
   if (call.get_mode().has_value()) {
     request.has_mode = true;

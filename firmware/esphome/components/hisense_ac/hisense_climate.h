@@ -13,13 +13,11 @@
 
 namespace esphome::hisense_ac {
 
-class HisenseClimate : public climate::Climate, public Component {
+class HisenseClimate final : public climate::Climate, public Component, public Parented<HisenseAC> {
  public:
   void setup() override;
   void dump_config() override;
-  climate::ClimateTraits traits() override;
 
-  void set_parent(HisenseAC *parent) { this->parent_ = parent; }
   void set_visual_min(float v) { this->visual_min_ = v; }
   void set_visual_max(float v) { this->visual_max_ = v; }
   void set_supports_heat(bool v) { this->supports_heat_ = v; }
@@ -39,10 +37,10 @@ class HisenseClimate : public climate::Climate, public Component {
   void publish_preset_index(uint8_t idx);
 
  protected:
+  climate::ClimateTraits traits() override;
   void control(const climate::ClimateCall &call) override;
   ClimateShown shown_() const;
 
-  HisenseAC *parent_{nullptr};
   float visual_min_{16.0f};
   float visual_max_{32.0f};
   bool supports_heat_{true};

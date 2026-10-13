@@ -8,8 +8,6 @@ namespace esphome::hisense_ac {
 static const char *const TAG = "hisense_ac.switch";
 
 void HisenseSwitch::setup() {
-  if (this->parent_ == nullptr)
-    return;
   this->parent_->add_status_listener(this);
   // Boot the display switch to the firmware's standing preference (on), so the UI and what
   // the frames assert agree from the first poll rather than after the first toggle.
@@ -24,8 +22,6 @@ void HisenseSwitch::setup() {
 }
 
 void HisenseSwitch::write_state(bool state) {
-  if (this->parent_ == nullptr)
-    return;
   SpecialOp op;
   if (this->kind_ == SWITCH_BEEPER) {
     // Rides the next command frame. Nothing to send now, and no hold-off to start.

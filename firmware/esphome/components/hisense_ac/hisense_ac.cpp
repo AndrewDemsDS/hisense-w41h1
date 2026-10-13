@@ -79,7 +79,7 @@ void HisenseAC::on_bus_command(bool answered, uint8_t reply_class) {
   } else {
     ESP_LOGW(TAG, "Command frame got no reply from the unit, not sent again");
   }
-  this->commands_.on_command_done(this->bus_.command_ticket(), answered, millis());
+  this->commands_.on_command_done(this->bus_.command_ticket(), answered, loop_time_());
 }
 
 void HisenseAC::on_bus_link(bool up) {
@@ -113,6 +113,7 @@ void HisenseAC::setup() {
 }
 
 void HisenseAC::loop() {
+  // A fresh millis(), not the loop start time: this is the DE timing path.
   this->bus_.poll(millis());
   // DE settle and drain are a few ms each; the default ~16 ms loop would stretch them, so ask for
   // a tight loop only while they run.
@@ -153,7 +154,7 @@ void HisenseAC::loop() {
   // The command tracker takes the link-lost edge, the special-mode queue and the status frame in
   // the one order that is right (CommandTracker::loop_pass). Nothing is re-sent into a dead bus,
   // and nothing still waiting is sent when it comes back.
-  this->commands_.loop_pass(link_edge && !this->link_up_, have_state ? &state : nullptr, millis());
+  this->commands_.loop_pass(link_edge && !this->link_up_, have_state ? &state : nullptr, loop_time_());
   // No status frame arrives while the link is down, so the edge is the one moment the counters
   // can still go out.
   if (link_edge)
@@ -226,7 +227,7 @@ void HisenseAC::publish_telemetry_(const AcState &state) {
 #ifdef USE_SENSOR
   // An unchanged value is still republished once per refresh period: integrating sensors such as
   // total_daily_energy only advance when their source publishes.
-  const bool refresh = telemetry_refresh_due(&this->telemetry_refresh_, millis());
+  const bool refresh = telemetry_refresh_due(&this->telemetry_refresh_, loop_time_());
   this->publish_sensor_(this->indoor_temperature_sensor_, state.indoor_temp_c, refresh);
   // Both read -20 C for a while after mains power returns: the unit's "not measured yet" value.
   // Those frames go out as unknown (see outdoor_temps_measured in hisense_map.h).
@@ -458,6 +459,8 @@ void HisenseAC::on_command_event(CommandEvent event, uint16_t fields, uint16_t c
   }
 }
 
+// Values fixed at setup only. The link state, the "77" indication and the unit's status change at
+// run time and are in the log when they do (see the level table at the top of this file).
 void HisenseAC::dump_config() {
   ESP_LOGCONFIG(TAG, "Hisense A/C (RS-485 9600 8N1)");
   LOG_PIN("  DE pin: ", this->de_pin_);
@@ -465,16 +468,6 @@ void HisenseAC::dump_config() {
     ESP_LOGCONFIG(TAG, "  DE: owned by the UART (flow_control_pin) or the transceiver");
   }
   this->check_uart_settings(BUS_BAUD_RATE, 1, uart::UART_CONFIG_PARITY_NONE, 8);
-  ESP_LOGCONFIG(TAG, "  link: %s", this->link_up_ ? LOG_STR_LITERAL("up") : LOG_STR_LITERAL("down"));
-  ESP_LOGCONFIG(TAG, "  panel setup indication (\"77\"): %s",
-                this->bus_.setup_indicator() ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
-  const AcState &last = this->commands_.last_state();
-  if (last.valid) {
-    ESP_LOGCONFIG(TAG, "  last status: power=%d mode=%d setpoint=%dC indoor=%dC", last.power_on, (int) last.mode,
-                  last.setpoint_c, last.indoor_temp_c);
-  } else {
-    ESP_LOGCONFIG(TAG, "  no status frame decoded yet");
-  }
 }
 
 // ---- BusIO ------------------------------------------------------------------------------------
