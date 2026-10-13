@@ -466,7 +466,6 @@ void HisenseAC::dump_config() {
   if (this->de_pin_ == nullptr) {
     ESP_LOGCONFIG(TAG, "  DE: owned by the UART (flow_control_pin) or the transceiver");
   }
-  this->check_uart_settings(BUS_BAUD_RATE, 1, uart::UART_CONFIG_PARITY_NONE, 8);
 }
 
 // ---- BusIO ------------------------------------------------------------------------------------
