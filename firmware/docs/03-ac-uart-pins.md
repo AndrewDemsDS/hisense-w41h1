@@ -1,27 +1,30 @@
-# A/C RS-485 UART: pin & peripheral findings (RTL8710C / AmebaZ2)
+# 03: The stock module's bus UART: pins and peripheral, as found in the vendor firmware
 
-> **⚠️ CORRECTION, the "no DE/RE / auto-direction" conclusion below is WRONG (disproven on
-> hardware).** There IS a software direction line: the stock firmware drives an RS-485 **DE GPIO on
-> PA_17** (HIGH=TX / LOW=RX) around every transmit. Missing it cost a multi-day debug (TX reached
-> the transceiver DI but never the A/B bus). See
-> [`reverse-engineering/docs/10-stock-fw-init-and-comms.md` §2.1](../../reverse-engineering/docs/10-stock-fw-init-and-comms.md#21-ac-path-pins-proven)
-> (DE = PA_17) and §1.3/§4.4 for the toggle timing. Everything below is preserved as the valid
-> record of the pre-hardware static-RE reasoning that reached the wrong conclusion.
-
-Reverse-engineered from the stock Hisense firmware dump (`dumps/w41h1_dump1.bin`, 4 MB,
-plaintext, local only).
-
-## Summary (fill these into the driver)
+Where the A/C bus is wired on the stock module's RTL8710C, and the evidence for each pin. The
+answer is used by the stock-module board files (`firmware/esphome/packages/amebaz2.yaml`) and by
+the frozen reference driver.
 
 | Item | Value | Raw int | Confidence |
 |------|-------|---------|------------|
 | Peripheral | **UART0** (`Uart0 = 0`) | 0 | High |
-| TX pin | **PA_14** | `0x0E` (14) | **High** |
-| RX pin | **PA_13** | `0x0D` (13) | **High** |
-| Frame format | **8N1** (8 data, no parity, 1 stop) | – | High |
+| TX pin | **PA_14** | `0x0E` (14) | High |
+| RX pin | **PA_13** | `0x0D` (13) | High |
+| Frame format | **8N1** (8 data, no parity, 1 stop) | | High |
 | Baud (boot default) | **115200** | `0x1C200` | High |
-| Baud (A/C-mode select) | **9600** (used when link mode == 9) | `0x2580` | High |
-| DE/RE direction GPIO | ~~None~~ **WRONG, it's PA_17** (see correction banner above) | – | superseded |
+| Baud (A/C link) | **9600** (used when link mode == 9) | `0x2580` | High |
+| DE (direction) GPIO | **PA_17**, high to transmit, low to receive | | confirmed on hardware |
+
+> **Corrected: this analysis first concluded that there is no DE pin.** The static analysis below
+> found no direction GPIO and took the transceiver for one that switches direction by itself.
+> That was wrong. The stock firmware drives DE on **PA_17** around every transmit, from code
+> outside the window that was searched. Missing it cost a multi-day debug: TX reached the
+> transceiver's DI and never the A/B pair. The proof and the toggle timing are in
+> [`reverse-engineering/docs/10-stock-fw-init-and-comms.md`](../../reverse-engineering/docs/10-stock-fw-init-and-comms.md#21-ac-path-pins-proven)
+> (section 2.1, and 1.3 and 4.4 for the timing). The reasoning that reached the wrong conclusion
+> is kept below as a record of how a static search can miss a pin.
+
+The findings come from the stock Hisense firmware dump (a 4 MB plaintext flash dump, kept locally
+and never published).
 
 `serial_init(&obj, PA_14 /*tx*/, PA_13 /*rx*/)` is the call to reproduce. The UART
 *index* (UART0) is derived automatically by the ROM HAL from the pin pair, so the driver
@@ -83,16 +86,16 @@ f0x1a1f16  bl    0x1c55b8             ; serial_baud(obj, baud)
 So the A/C UART physically runs **9600 8N1** in the mode that matches the RE-notes protocol,
 and 115200 otherwise. Same pins (PA_14/PA_13) in both cases.
 
-## DE/RE direction GPIO: none found (WRONG, see correction banner at top)
+## The miss: no direction GPIO found
 
 **No `gpio_init` / `gpio_dir` / `gpio_write` appears in the UART bring-up path** (the two
 helpers called immediately before `serial_init`, at `0x1a1b74` and `0x1c5a04`, are
 link-state/reset bookkeeping, not GPIO). A scan of the whole A/C-UART code window
 (`0x1a1000–0x1a6000`) found only the six `serial_*` HAL calls above and no bracketing GPIO
-toggle around transmit, leading to the (wrong) conclusion of auto-direction, no software DE/RE
-control. The actual DE GPIO (PA_17) is set up and toggled elsewhere in the firmware, outside
-this evidence window; see the correction banner and
-[`reverse-engineering/docs/10`](../../reverse-engineering/docs/10-stock-fw-init-and-comms.md).
+toggle around transmit. That led to the wrong conclusion: auto-direction, no software DE
+control. The DE GPIO (PA_17) is set up and toggled elsewhere in the firmware, outside this
+window. See the correction at the top and
+[`reverse-engineering/docs/10-stock-fw-init-and-comms.md`](../../reverse-engineering/docs/10-stock-fw-init-and-comms.md).
 
 ## Which UART / not the log console
 
@@ -108,24 +111,24 @@ console is a different UART**, `atcmd_sys.c:1856` puts log-UART RX/TX on **PA_16
 are defined in `rtl8710c_uart.h`; the ROM `hal_uart_pin_to_idx` maps the PA_14/PA_13 pair
 to index 0 (UART0) and `hal_uart_init` then does `hal_pinmux_register(pin, PID_UART0+idx)`.
 
-## Suggested driver defines
+## What the analysis suggested at the time
 
-> ⚠️ The last line below is the same wrong DE/RE conclusion the top banner corrects. The actual
-> driver (`hisense_rs485.h`) defines `HISENSE_UART_DE_PIN = PA_17` and drives it HIGH=TX/LOW=RX;
-> use that, not this snippet, for the direction line.
+The last line of this snippet is the wrong conclusion that the correction at the top is about.
+The reference driver (`firmware/test/reference-driver/hisense_rs485.h`) defines
+`HISENSE_UART_DE_PIN = PA_17` and drives it high to transmit, and the ESPHome board files set
+`de_pin: PA17`.
 
 ```c
-// RTL8710C / AmebaZ2 — Hisense A/C RS-485 bus (UM3352E transceiver)
+// RTL8710C / AmebaZ2, Hisense A/C RS-485 bus (UM3352E transceiver)
 #define AC_UART_TX     PA_14   // raw 0x0E ; UART0 TX
 #define AC_UART_RX     PA_13   // raw 0x0D ; UART0 RX
 #define AC_UART_BAUD   9600    // 8N1 (stock also boots 115200, switches to 9600 for the A/C link)
-// No DE/RE GPIO: transceiver is auto-direction (leave direction control unused).
+// No DE/RE GPIO: transceiver is auto-direction (leave direction control unused).   <- WRONG
 ```
 
 ## What remains uncertain
 
-- **DE/RE**: resolved, see the correction banner at top (PA_17, hardware-confirmed). The
-  reasoning below is kept only as the historical record of the static-RE miss.
+- **DE**: resolved, see the correction at the top (PA_17, confirmed on hardware).
 - **Second-image base**: taken as `0x9b000000` because the mbed `serial_api` offsets line up
   with the SDK map. Pin *values* (movs immediates) are base-independent, so the PA_14/PA_13
   result does not depend on this assumption (High).

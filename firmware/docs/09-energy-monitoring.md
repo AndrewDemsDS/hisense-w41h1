@@ -1,134 +1,121 @@
-# 09: Energy monitoring (Watts + kWh), like the cloud app
+# 09: The power estimate and how it was calibrated
 
-Goal: expose live **power (W)** and cumulative **energy (kWh)** for the A/C, native to
-Home Assistant's Energy Dashboard, matching what the Hisense cloud shows, but computed
-locally from the RS-485 telemetry we already decode.
+The firmware publishes the A/C's power, voltage and current from bytes the unit already sends on
+the bus, and Home Assistant's Energy dashboard can use the result. This page says what the
+numbers are, how far to trust them, and how the one constant behind them was measured. Read it
+before you rely on the kWh figure, or if you want to calibrate against your own meter.
 
-## 0. How the cloud actually does it (and what "accurate" means here)
+## What is published
 
-These inverter splits almost never carry a revenue-grade meter. The cloud number is one of:
-- **(a)** a value the indoor MCU reports (it senses DC-bus / compressor current for inverter
-  control), or
-- **(b)** a **model**: power estimated from compressor frequency + mode.
+| Entity | Source |
+|---|---|
+| Power (W) | `4.15 * raw^2`, where `raw` is status byte 55 |
+| Voltage (V) | status byte 50, in whole volts as the unit reports it |
+| Current (A) | derived: `P / (V * 0.95)` |
+| Energy today (kWh) | ESPHome's `total_daily_energy` on the Power sensor, in `packages/hisense-ac.yaml` |
 
-Our telemetry map (see `reverse-engineering/docs/03-rs485-ac-protocol.md`, the telemetry byte map, mapped 2026-07-07) suggests this unit
-**does sense both voltage and current**, so we can do real `P = V·I` rather than a pure model.
-Either way the figure is an **estimate**; one calibration pass against a plug-in meter makes it
-trustworthy (§4). The cloud's is an estimate too, ours can be at least as good, and local.
+The values are published when they change and at least once a minute. Power and current read 0
+while the compressor is off. The energy sensor integrates on the node with `method: left` (the
+value between two updates is the older one) and resets at midnight. Home Assistant's long-term
+statistics hold the history.
 
-## 1. What we already have (no new decode needed)
+The model is `active_power_mw()` and `active_current_ma()` in
+`firmware/esphome/components/hisense_ac/hisense_telemetry.h`, pure functions with host tests
+(`test_esphome_codec_parity.cpp` holds them equal to the reference in
+`firmware/test/reference-driver/power_estimate.h`, and `test_esphome_map_gaps.cpp` covers their
+bounds).
 
-From the 3-state correlation (cool 60 Hz → off 0 Hz → heat 50 Hz):
+## How far to trust it
 
-| Byte | Field | Confidence | Use |
-|---|---|---|---|
-| **@50** | **supply voltage (V)** | High, reads 218 V loaded / 222 V idle (sags under load), matches ~230 V mains | `V` term |
-| **@55 (=@145)** | phase/bus current A | Med, zeros when compressor off, tracks load | candidate `I` |
-| **@56 (=@144)** | phase/bus current B | Med | candidate `I` / second leg |
-| **@60** | active current / power reading | Med | candidate `I` |
-| **@42** | compressor actual freq (Hz) | Confirmed | model input / cross-check |
-| **@41/@43** | compressor target freq (Hz) | Confirmed | – |
-| **@45** | outdoor coil temp (°C) | Confirmed (reverses cool/heat) | diagnostic (COP/efficiency later) |
+It is an estimate, not a meter. These inverter splits almost never carry a revenue-grade meter,
+and the vendor's cloud figure is an estimate too: either a value the indoor MCU reports (it
+senses bus or compressor current for inverter control) or a model from compressor frequency and
+mode.
 
-Unknowns to resolve by calibration: the **scale** of the current byte(s) (raw → amps) and the
-**power factor** (inverter input PF is ~0.6–0.98 depending on load).
+- The constant comes from **two non-zero points** on one unit. The quadratic fits both to under
+  1 %, which supports the shape, but a third steady point was never taken.
+- The power factor is assumed (0.95, typical for an inverter with active PFC). At deep part load
+  the real power factor is lower.
+- Byte 50 reads about 6 % below a panel meter (about 220 against 234 to 236 V). The power figure
+  does not depend on it. The derived current does.
+- There is no plausibility clamp on byte 55. `active_power_mw()` is bounded at 50 kW to keep the
+  arithmetic in range, and nothing more.
+- No comparison against the vendor app's numbers is on record.
 
-## 2. Power model: two paths, pick by what calibration shows
+## The calibration
 
-**Path A, direct metering (preferred if it validates):**
-```
-P_watts = (V=@50) × (I=k·@55) × PF
-```
-We likely have real V and I. Solve `k` (current scale) and `PF` from the calibration points.
-Most accurate, responds to real voltage sag, fan load, part-load PF.
+Reference: a PD3-63VA panel meter on the phase the A/C is on (L3). Three points, matched by time
+(photo EXIF against the logger's `[HH:MM:SS]`). Power is `V * dI(L3 minus baseline) * PF(0.95)`:
 
-**Path B, frequency model (robust fallback):**
-```
-P_watts = a·comp_freq(@42) + b·fan_level + P_standby
-```
-Fit `a, b, P_standby` from the same points. Doesn't depend on trusting the current bytes;
-this is what most community inverter-A/C energy integrations use.
-
-**Shipped:** Path A only (`power_estimate.h`, §4a). Path B was never implemented; there is no
-frequency-based sanity clamp on the current reading.
-
-## 3. Exposure
-
-The ESPHome firmware publishes **Power**, **Voltage** and **Current** sensors from the model
-below on every status poll, and `total_daily_energy` (a stock ESPHome platform) turns Power into
-**Energy today** for the Home Assistant Energy dashboard. They read 0 while the unit is off.
-
-The retired Matter builds carried the same three values on `ElectricalPowerMeasurement` (ep1) and
-left energy to a Riemann-sum helper in Home Assistant. That cluster is delegate-based in
-connectedhomeip, which made it the most awkward endpoint of those builds.
-
-## 4. Calibration procedure: **clamp meter**
-
-Reference instrument: a **clamp ammeter** on the A/C live conductor. Two sub-cases:
-- **True-power clamp** (reads W / PF / kWh): gives real W directly → best; calibrate P against it.
-- **Current-only clamp** (reads A): gives us the true input current → **directly calibrates the
-  @55 byte→amps scale**. We then form apparent power `S = V(@50)·I`, and real power
-  `P = S·PF`. This unit's inverter almost certainly has **active PFC → assume PF ≈ 0.95**
-  (tunable); at deep part-load PF drops, so the freq-model (Path B) is the sanity clamp there.
-
-⚠️ **Safety:** clamping the live conductor means accessing the mains lead into the A/C. Mains
-voltage, clamp *around a single insulated conductor* (never bare metal), power the readings from
-the A/C's own supply, and if the terminal block isn't safely reachable, clamp at the isolator/plug
-lead instead. Don't open anything live you're not comfortable with.
-
-**Steps** (interactive, ~15 min):
-1. Restart `decode_ac_frames.py` logging while I mark boundaries.
-2. Hold ~4 states, read the clamp at each: **off/standby**, **low-cool (~40 Hz)**,
-   **hard-cool/turbo (~69 Hz)**, **heat (~50 Hz)**. Tell me the amps (and W/PF if the clamp shows
-   them) at each; I diff the frame to pair your reading with @50/@55/@56/@60/@42.
-3. `tools/fit_power.py` (to be written) fits the @55→A scale (and Path-B coefficients) by
-   least-squares.
-4. Bake coefficients into the firmware `power_estimate.h`. Optional later: expose them as
-   writable mfg attrs so you can retune from chip-tool without a reflash.
-
-## 4a. Calibration (physical-meter validated: PD3-63VA panel meter, L3)
-
-Power model, from three **timestamp-synced** points (photo EXIF ↔ logger `[HH:MM:SS]`), A/C on L3, power =
-`V · ΔI(L3−baseline) · PF(0.95)`:
-
-| Time | L3 A | ΔI (A/C) | P (W) | @55 | @42 Hz |
+| Time | L3 A | dI (A/C) | P (W) | byte 55 | byte 42 (Hz) |
 |---|---|---|---|---|---|
 | 22:07:36 | 1.1 | 0.0 | 0 | 0 | 0 |
 | 22:12:32 | 2.3 | 1.2 | 268 | 8 | 31 |
 | 22:10:48 | 5.3 | 4.2 | 934 | 15 | 68 |
 
-`@55` is **√power**, not linear amps, a linear fit gives incompatible slopes (33 vs 62 W/count),
-but **quadratic-through-origin fits both load points to <1 %**:
+Byte 55 tracks the **square root of power**, not amps. A linear fit gives incompatible slopes
+(33 against 62 W per count). A quadratic through the origin fits both load points to under 1 %:
 
 ```
-P_watts ≈ 4.15 · @55²        (k = 4.15 W per count², PF 0.95 baked in)
-  @55=8  -> 266 W (meter 268)   @55=15 -> 934 W (meter 934)
+P_watts = 4.15 * raw55^2        (PF 0.95 folded in)
+  raw 8  -> 266 W (meter 268)     raw 15 -> 934 W (meter 934)
 ```
-Derived current for transparency: `I ≈ P/(V·PF)` → @55=15 → 4.47 A (meter 4.2), @55=8 → 1.27 A
-(meter 1.2). `@60` gives the same curve (~0.66·@60²) as a cross-check. **Caveat:** two non-zero
-points, the quadratic is strongly supported but a 4th steady point would bulletproof it (tap now
-removed, so deferred). Voltage term uses @50 (coarse ~220; the meter's live 234–236 V says @50
-reads ~6 % low, minor, since current dominates).
 
-## 4b. Compute location: **firmware**
+The derived current, for comparison: raw 15 gives 4.47 A (meter 4.2), raw 8 gives 1.27 A
+(meter 1.2). Byte 60 gives the same curve (about `0.66 * raw60^2`) as a cross-check. The tap that
+logged the frames has since been removed, so a fourth point is deferred.
 
-The firmware computes P and publishes it (§3). The calculation is a pure function: in the ESPHome
-component it lives in `hisense_map.h`, and the reference it is compared against is
-`firmware/test/reference-driver/power_estimate.h`, so the model is unit-tested without hardware
-(`test_reference_map.cpp`, `test_esphome_codec_parity.cpp`).
+## The bytes behind it
 
-## 5. Energy accumulation (kWh)
+From the three-state correlation in
+[`reverse-engineering/docs/03-rs485-ac-protocol.md`](../../reverse-engineering/docs/03-rs485-ac-protocol.md)
+(cool at 60 Hz, off at 0 Hz, heat at 50 Hz, mapped 2026-07-07):
 
-On the ESPHome firmware, `total_daily_energy` integrates Power on the node and resets at midnight.
-HA's long-term statistics hold the history. The reference `power_estimate.h` also carries a pure,
-host-tested integrator pair (`hisense_energy_add`/`hisense_energy_mwh`) that nothing calls: a
-lifetime counter would need persistence to survive a reboot.
+| Byte | Field | Confidence | Use |
+|---|---|---|---|
+| 50 | supply voltage (V) | high: 218 V loaded, 222 V idle (sags under load), consistent with 230 V mains | the Voltage sensor |
+| 55 (= 145) | first labelled "phase or bus current A": zero when the compressor is off, tracks load. The calibration showed it follows the square root of power | calibrated above | the Power sensor |
+| 56 (= 144) | "phase or bus current B" | medium | not used |
+| 60 | "active current or power reading", on the same curve as byte 55 | medium | cross-check only |
+| 42 | compressor frequency, actual (Hz) | confirmed | the Compressor frequency sensor |
+| 41, 43 | compressor frequency, target (Hz) | confirmed | not used |
+| 45 | outdoor (condenser) coil temperature (°C) | confirmed (reverses between cool and heat) | the Coil temperature sensor |
 
-## 6. Implementation phases
+## What was planned and not built
 
-- **P1: Calibrate.** Done, §4a: meter + 4-point capture, quadratic fit `P ≈ 4.15·@55²`.
-- **P2: Firmware compute.** Done: a pure, host-tested function.
-- **P3: Exposure.** Done (§3).
-- **P4: HA.** Power sensor confirmed live; Energy Dashboard wiring is a per-installation HA step,
-  not tracked here.
-- **P5: Validate.** Open: no recorded comparison against the cloud app's numbers.
+- **A frequency model as a second path** (`P = a * comp_freq + b * fan_level + P_standby`), which
+  is what most community inverter A/C integrations use. It would not depend on byte 55 and could
+  bound it. It was never implemented, so there is no cross-check at run time.
+- **A fitting script** (`tools/fit_power.py`) for a least-squares fit from recorded pairs. It was
+  never written. The constant above was fitted by hand.
+- **Coefficients that can be changed without a rebuild.** The constant is compiled in
+  (`POWER_MW_PER_COUNT2`).
+- **A lifetime energy counter on the node.** The reference `power_estimate.h` carries a pure,
+  host-tested integrator pair (`hisense_energy_add`, `hisense_energy_mwh`) that nothing calls: a
+  lifetime counter would need persistence to survive a restart. `total_daily_energy` and Home
+  Assistant's statistics do the job.
+
+On the retired Matter builds (tag `matter-final`) the same three values were attributes of
+`ElectricalPowerMeasurement` on endpoint 1, and energy was left to a Riemann-sum helper in Home
+Assistant. That cluster is delegate-based in connectedhomeip, which made it the most awkward
+endpoint of those builds.
+
+## Calibrating against your own meter
+
+You need a reference that reads the A/C alone: a clamp meter on the A/C's live conductor, or a
+panel meter on its circuit with the baseline subtracted. A clamp that reads true power (W) is
+best. One that reads only amps gives apparent power, and you have to assume a power factor.
+
+**Safety.** This means working at the mains lead of the A/C. Clamp around a single insulated
+conductor, never bare metal. If the terminal block is not safely reachable, clamp at the
+isolator or the plug lead. Do not open anything live that you are not qualified to open.
+
+1. Log byte 55 next to the meter. With the node's log at `VERY_VERBOSE` the raw status frames are
+   in the log. With a tap on the bus, `reverse-engineering/tools/decode_ac_frames.py --port <tap>`
+   decodes them, and `firmware/esp32-recon/` shows them on a console.
+2. Hold three or four steady states and note the meter at each: off, a low cool (about 40 Hz), a
+   hard cool or turbo (about 69 Hz), heat (about 50 Hz).
+3. Fit `k` in `P = k * raw^2` through the origin and compare with 4.15.
+4. A different constant goes into `POWER_MW_PER_COUNT2` in `hisense_telemetry.h` and into the
+   reference `power_estimate.h`, in one commit, or the parity test fails. Say in the commit what
+   it was measured with.
