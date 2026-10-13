@@ -14,6 +14,7 @@ model's documentation.
 |---|---|---|---|
 | 1 | Host unit tests with a mocked HAL | builders and parsers produce and accept the right bytes, and mapping and retry decisions are right | no |
 | 2 | Device simulation, golden-frame replay | the command and status loop against a modeled A/C | no |
+| 2b | Host end-to-end | the hub and the entities do what the pure layers decided: entity states over the native API, bytes on the wire | no |
 | 3 | Build checks | the YAML and schemas are valid on every board, and the stock-module image is laid out for its flash | no |
 | 4 | Bench | a flashed board against the simulator on a USB adapter | a board |
 | 5 | HIL | timing, RF, the real A/C | yes |
@@ -52,6 +53,30 @@ and the decoder cannot be wrong in the same way without a third party (the captu
 
 `test_esphome_bus.cpp` runs the component's bus scheduler against a simulated unit:
 reply windows, hold-off, link loss, re-sends.
+
+### Host end-to-end
+
+Layer 1 stops below the hub. The hub and the entity classes (`hisense_ac.cpp`,
+`hisense_climate.cpp`, `hisense_switch.cpp`, `hisense_select.cpp`) need ESPHome, and for a long
+time nothing ran them but a board. ESPHome's `host` platform builds the whole component as a Linux
+program, so `firmware/test/host_e2e/` does: the entity package unchanged, a pseudo-terminal for
+the UART, the virtual A/C on the other end, and `aioesphomeapi` where Home Assistant would be.
+
+Each check is one of two kinds: what an entity shows, or which frame the A/C model received.
+Expected frames are written out in the test from the protocol document, not asked of the code
+under test. The test reads nothing of the hub's internals, so it survives a restructuring of the
+hub and fails when the behaviour moves.
+
+What it costs is time. The host platform has no clock to turn forward, and the hub's rules are in
+seconds (a 4 s hold-off, 10 s between special-mode writes, three sends before a command is given
+up). The scenarios run side by side, each on its own node, which brings the default set to about
+a minute. That is the reason the standing rule below still holds: a decision tested here takes
+seconds per case, the same decision as a pure function takes microseconds and can be tested
+exhaustively.
+
+Two limits. The model answers at once, so nothing here says anything about DE timing, baud rate
+or a slow unit. And the model is ours: it proves the firmware against our reading of the unit,
+which the captures and the hardware test have to keep honest.
 
 ## Layer 3: build checks
 
@@ -97,7 +122,7 @@ console on the wire with a listen-only mode (`HIL-RUNBOOK.md` there).
 ## Standing rule: decisions do not live in glue
 
 The ESPHome hub (`hisense_ac.cpp` and the entity classes) needs ESPHome's headers, so it cannot run
-in Layer 1. Any **decision** it makes (is this my own echo, should the shadow sync, is this command
+in Layer 1. It runs in the host end-to-end test, at the speed of its own timers. Any **decision** it makes (is this my own echo, should the shadow sync, is this command
 confirmed, which special-mode frame goes next) is a pure function in `hisense_map.h` with a host
 test. The glue only moves values.
 
@@ -106,4 +131,6 @@ back as a command, which produced another readback, three to six times per user 
 in a layer no host test could reach and was caught on hardware.
 
 One known gap: `test_esphome_confirm.cpp` repeats the hub's command paths to test them, and that
-copy can drift from the hub.
+copy can drift from the hub. The host end-to-end test runs the hub's own paths for the main cases
+(a command ignored, lost, taken on a re-send, overtaken at the remote), not for every ordering the
+pure test covers.

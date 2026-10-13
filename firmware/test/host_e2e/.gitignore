@@ -1,5 +1,5 @@
-# Gitignore settings for ESPHome
-# This is an example and may include too much for your use-case.
-# You can modify this file to suit your needs.
+# esphome writes a .gitignore beside a configuration that has none, so this one is kept.
+# run.py builds into build/ (ESPHOME_DATA_DIR); .esphome/ appears when esphome is run by hand.
+/build/
 /.esphome/
 /secrets.yaml
