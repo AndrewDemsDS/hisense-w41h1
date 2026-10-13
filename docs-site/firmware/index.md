@@ -2,10 +2,11 @@
 title: Firmware
 nav_order: 3
 has_children: true
-description: Design notes, the stock module's boot and recovery, ESP32 board notes, QA strategy and energy monitoring for the ESPHome firmware.
+description: How the ESPHome components are built and tested, the stock module's boot and recovery, ESP32 board notes and the power estimate.
 ---
 
 # Firmware
 
-Design notes for the ESPHome firmware, how the stock module boots and is recovered, the reasons
-behind the ESP32 wiring rules, and how the firmware is tested without hardware.
+How the ESPHome components are built and how they are tested without hardware, the stock module
+through LibreTiny and how it boots and is recovered, and the reasons behind the ESP32 wiring
+rules.

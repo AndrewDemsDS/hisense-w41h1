@@ -5,15 +5,18 @@ ESPHome's native API. This page is the reference for what is in this directory: 
 components and every option they take, the entities, the board files and packages, releases,
 Wi-Fi setup mode, the status LED and troubleshooting.
 
-It works with Home Assistant only. The Matter firmwares this project used to ship are retired
-(tag `matter-final`, [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md)).
+It works with Home Assistant only. The Matter firmwares this project used to ship were retired
+on 2026-10-12 (tag `matter-final`,
+[`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md)).
 
 If you want a working unit and not a reference, start in the guide:
 
-- a clean machine to a first flash: [`docs/guide/ESP32-Build-Environment.md`](../../docs/guide/ESP32-Build-Environment.md)
-- hardware, flashing, adoption in Home Assistant, bring-up in stages: [`docs/guide/ESPHome-Build.md`](../../docs/guide/ESPHome-Build.md)
-- wiring and the GPIO and ground-loop warnings: [`docs/guide/ESP32-Replacement-Build.md`](../../docs/guide/ESP32-Replacement-Build.md)
+- the tools and the four secrets, from a clean machine: [`docs/guide/ESP32-Build-Environment.md`](../../docs/guide/ESP32-Build-Environment.md)
+- parts, wiring and the staged bring-up of an ESP32 board: [`docs/guide/ESP32-Replacement-Build.md`](../../docs/guide/ESP32-Replacement-Build.md)
+- the stock module, without a replacement board: [`docs/guide/Stock-Module-Build.md`](../../docs/guide/Stock-Module-Build.md)
+- board files, adoption in Home Assistant, updates: [`docs/guide/ESPHome-Build.md`](../../docs/guide/ESPHome-Build.md)
 - what each entity means: [`docs/guide/Entities-and-Diagnostics.md`](../../docs/guide/Entities-and-Diagnostics.md)
+- setup mode and the status LED in short: [`docs/guide/Wifi-Setup-Mode.md`](../../docs/guide/Wifi-Setup-Mode.md)
 
 For the code: [`firmware/docs/01-component-architecture.md`](../docs/01-component-architecture.md).
 For the stock module's measurements, flash layouts and open risks:
@@ -97,7 +100,7 @@ pass `-s name bedroom-ac -s friendly_name "Bedroom A/C"`. Board files build into
 `.esphome/build/<name>/`, so two files with the same `name` share a build directory. Give a
 second name when you switch between boards on one machine.
 
-### The stock module
+### The stock module (AmebaZ2)
 
 The `w41h1-amebaz2-*.yaml` files build ESPHome for the Realtek RTL8710C inside the AEH-W41H1, so
 the unit needs no replacement board. There are three files because a module has one of three
@@ -114,7 +117,7 @@ How to tell which one a unit has, what was measured on a module and what is stil
 [`firmware/docs/15-esphome-path.md`](../docs/15-esphome-path.md#which-flash-layout-a-unit-has).
 Read that page before you flash a module. A unit that still runs the retired Matter firmware is
 converted over the air:
-[`docs/guide/Converting-a-Stock-Module-to-ESPHome.md`](../../docs/guide/Converting-a-Stock-Module-to-ESPHome.md).
+[`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md#a-stock-module).
 
 `dev.py test --board amebaz2-factory` and `dev.py build --board amebaz2-factory` (or
 `amebaz2-sdk`, `amebaz2-native`) validate and compile one. `dev.py` refuses a bare
@@ -508,12 +511,12 @@ beside the file given to `esphome`, which is how the board files in this reposit
 
 ## Wi-Fi setup mode and the "77" gesture
 
-**Not run on hardware.** The decisions are host-tested
-(`firmware/test/test_esphome_setup_mode.cpp` for the mode,
-`firmware/test/test_esphome_setup_request.cpp` and `test_esphome_setup_edges.cpp` for the gesture
-on the bus) and the images compile. Whether the hotspot opens on each chip, and what a given
-unit sends for the gesture, has to be seen on a unit. The [check list](#the-check-on-a-unit) is
-below.
+> **Setup mode has not run on a unit.** The decisions are host-tested
+> (`firmware/test/test_esphome_setup_mode.cpp` for the mode,
+> `firmware/test/test_esphome_setup_request.cpp` and `test_esphome_setup_edges.cpp` for the
+> gesture on the bus) and the images compile. Whether the hotspot opens on each chip, and what a
+> given unit sends for the gesture, has to be seen on a unit. The
+> [check list](#the-check-on-a-unit) is below.
 
 On the remote, press horizontal airflow six times. The panel shows "77" and the node opens its
 hotspot, `<name>-setup`, with the password from `wifi_ap_password` in `secrets.yaml`. Join it,

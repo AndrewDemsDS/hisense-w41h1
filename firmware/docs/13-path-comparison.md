@@ -6,11 +6,12 @@ module itself. This page compares the two.
 
 Short answer: use an ESP32 board unless you have a reason to keep the original module.
 
-> **Retired: the Matter columns of this comparison.** This page used to compare three firmwares.
-> The two Matter builds are not in the tree any more. The last tree with them is the tag
-> `matter-final`, and the version of this page at that tag has their columns and figures.
-> Current: one ESPHome firmware on two kinds of hardware, below. See
-> [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md).
+> **Retired on 2026-10-12.** This page used to compare three firmwares. The two Matter builds are no
+> longer on `main`
+> ([`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md)). The
+> current comparison is one ESPHome firmware on two kinds of hardware, below. The last tree that
+> has the Matter builds is the tag `matter-final`, and the version of this page at that tag has
+> their columns and figures.
 
 ## At a glance
 
@@ -48,11 +49,11 @@ increasingly hard to buy in the EU. An ESP32 is a commodity.
 
 ### Getting the firmware on, and getting it off again
 
-An ESP32 is written over USB and can always be written again. That is the whole story.
+An ESP32 is written over USB and can always be written again.
 
 The stock module has no USB. The modules that have run ESPHome got it over the air from this
 project's retired Matter firmware, which installed the image as its own next version
-([`docs/guide/Converting-a-Stock-Module-to-ESPHome.md`](../../docs/guide/Converting-a-Stock-Module-to-ESPHome.md)).
+([`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md#a-stock-module)).
 For a module on the vendor firmware the routes are the clip or UART download mode, and neither
 has been used for this build. The clip tool that writes one firmware slot exists and has not
 written a module yet ([`firmware/flasher/README.md`](../flasher/README.md)). The module's

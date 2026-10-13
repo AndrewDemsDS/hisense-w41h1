@@ -59,15 +59,17 @@ What protects against a wrong target:
   unit at its first update.
 - A board file without `secrets.yaml` beside it is refused with the command that creates it.
 
-Not proven: the guide's verification table records `dev.py flash` and `dev.py bench` as not yet
-run against hardware through this script.
+> **`dev.py flash` and `dev.py bench` have not run on hardware.** The guide's record of what has
+> been run ([`docs/guide/Build-Flash-Test.md`](../../docs/guide/Build-Flash-Test.md#what-has-been-run))
+> lists both as untested through this script.
 
 ## `matter-convert.py`
 
-> **For units on the retired Matter firmware only.** This script moves a stock module off this
-> project's Matter firmware (not on `main` any more, last tree: tag `matter-final`). Nothing in
-> it is needed to build, flash or update the ESPHome firmware. The procedure is in
-> [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md).
+> **Retired on 2026-10-12.** This section describes the tool that moves a stock module off this
+> project's Matter firmware, which is no longer on `main`. Nothing in it is needed to build,
+> flash or update the current ESPHome firmware. The procedure is in
+> [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md#a-stock-module).
+> The last tree that has the Matter builds is the tag `matter-final`.
 
 | Command | Does | Writes or drives |
 |---|---|---|

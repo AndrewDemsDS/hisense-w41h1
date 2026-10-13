@@ -36,6 +36,9 @@ id (`1a86:5512`) and stop with `CH341A not found - replug` when it is not there.
 
 ## What has run on a module
 
+> **The slot writer has not run on a module.** `ch341flash.py` has written the host test's
+> simulated chip only. The details are in the table.
+
 | Tool | Status |
 |---|---|
 | `ch341_sr.py`, `ch341dump.py` | used on modules: the QE read and the dumps that `firmware/docs/10-stock-module-boot-and-recovery.md` rests on |

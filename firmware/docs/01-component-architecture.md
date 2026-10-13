@@ -296,7 +296,8 @@ and every deadline across the wrap of the millisecond clock. `packages/node.yaml
 wiring only. How the mode behaves for a user is in
 [`firmware/esphome/README.md`](../esphome/README.md#wi-fi-setup-mode-and-the-77-gesture).
 
-**Not run on hardware.** The mode and the gesture have run in host tests and in compiles only.
+> **Setup mode has not run on a unit.** The mode and the gesture have run in host tests and in
+> compiles only.
 
 The design decisions:
 

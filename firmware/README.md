@@ -42,8 +42,9 @@ Releases: the version is in `esphome/packages/version.yaml`, and how a release i
 
 ## Matter firmware (retired)
 
-> **Retired: the two Matter firmwares.** This directory used to hold a Matter firmware for the
-> stock module (`src/sdk-edits/`, built on Realtek's SDK) and one for the ESP32
-> (`esp32-matter/`). They are not in the tree any more. The last tree with them is the tag
-> `matter-final`. Current: the ESPHome firmware under `esphome/`. See
-> [`docs/guide/Matter-Firmware-Retired.md`](../docs/guide/Matter-Firmware-Retired.md).
+> **Retired on 2026-10-12.** This directory used to hold a Matter firmware for the stock module
+> (`src/sdk-edits/`, built on Realtek's SDK) and one for the ESP32 (`esp32-matter/`). They are
+> no longer on `main`. The current firmware is the ESPHome firmware under `esphome/`, and what
+> to do with a unit that still runs a Matter build is in
+> [`docs/guide/Matter-Firmware-Retired.md`](../docs/guide/Matter-Firmware-Retired.md). The last
+> tree that has the Matter builds is the tag `matter-final`.

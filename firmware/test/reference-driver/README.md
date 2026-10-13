@@ -5,25 +5,26 @@ handling and link state machine. It is kept for one reason: it is the reference 
 component's codec is tested against. Read this page before you change a file here, or when a
 parity test fails and you need to know which side is right.
 
-> **Retired: the firmwares this driver ran in.** It ran on real A/Cs for months inside the two
-> Matter firmwares. They are not in the tree any more. The last tree with them is the tag
-> `matter-final`. Current: the ESPHome component under `firmware/esphome/components/hisense_ac/`.
-> Nothing ships from this directory. See
-> [`docs/guide/Matter-Firmware-Retired.md`](../../../docs/guide/Matter-Firmware-Retired.md).
+> **Retired on 2026-10-12.** This directory holds the driver of the two Matter firmwares, in which it
+> ran on real A/Cs for months. Those firmwares are no longer on `main`
+> ([`docs/guide/Matter-Firmware-Retired.md`](../../../docs/guide/Matter-Firmware-Retired.md)),
+> and nothing ships from here. The current code is the ESPHome component under
+> `firmware/esphome/components/hisense_ac/`. The last tree that has the Matter builds is the tag
+> `matter-final`.
 
 ## What it is, and what it is not
 
-- It **is** the side of the parity comparison that ran on hardware. For the frames it builds,
-  its bytes are ones that units have taken.
-- It **is not** a specification. It carries the bytes of its time, some from this project's own
+- It is the side of the parity comparison that ran on hardware. For the frames it builds, its
+  bytes are ones that units have taken.
+- It is no specification. It carries the bytes of its time, some from this project's own
   bus captures and the vendor firmware, and three literal frames (power on, power off and the
   status poll) from the community project `pslawinski/esphome_airconintl`, with no capture of
   those three from this project's bus on record
   ([`NOTICE.md`](../../../NOTICE.md#acknowledgements-earlier-work-on-this-ac-bus)).
-- It **is not** a second firmware. It sends a command once and never checks that it took. It
+- It is no second firmware either. It sends a command once and never checks that it took. It
   does not have confirm and retry, the stricter setup-request rules, or the outdoor temperature
   placeholder rule. Those exist only in the component.
-- It **is not** developed. A change here is a protocol fact that both sides must carry.
+- Nobody develops it. A change here is a protocol fact that both sides must carry.
 
 | File | What |
 |---|---|

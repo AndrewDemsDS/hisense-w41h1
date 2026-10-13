@@ -12,8 +12,10 @@ Other pages own the rest:
   [`01-component-architecture.md`](01-component-architecture.md)
 - how the module's bootloader picks a slot and what a rejected image looks like:
   [`10-stock-module-boot-and-recovery.md`](10-stock-module-boot-and-recovery.md)
-- the over-the-air conversion, step by step:
-  [`docs/guide/Converting-a-Stock-Module-to-ESPHome.md`](../../docs/guide/Converting-a-Stock-Module-to-ESPHome.md)
+- the short version for someone who wants a working unit:
+  [`docs/guide/Stock-Module-Build.md`](../../docs/guide/Stock-Module-Build.md)
+- the over-the-air conversion from the retired Matter firmware, step by step:
+  [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md#a-stock-module)
 
 ## The stock module through LibreTiny
 
@@ -27,8 +29,8 @@ layouts compile and have not run on hardware.
 ### Hardware results, 2026-10-10
 
 One module with the factory layout, in an A/C, converted over the air from this project's
-retired Matter firmware (the procedure is
-[`docs/guide/Converting-a-Stock-Module-to-ESPHome.md`](../../docs/guide/Converting-a-Stock-Module-to-ESPHome.md)).
+retired Matter firmware (the procedure is in
+[`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md#a-stock-module)).
 Measured that day:
 
 | What | Result |
@@ -356,13 +358,13 @@ Still open on the ESP32 boards:
 
 ## History: the original plan and what became of it
 
-> **Retired: the Matter firmwares this plan compares against.** This section describes the
-> design of August 2026 (issue #13), when ESPHome was to be a third firmware beside two Matter
-> builds. Paths under `firmware/esp32-matter/` and `firmware/src/`, the `dev.py ota ...`
-> commands, the `:2323` console and the `hisense-unified-ac` integration are not in the tree any
-> more. The last tree with them is the tag `matter-final`. Current: ESPHome is the only
-> firmware, described by the pages linked at the top. See
-> [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md).
+> **Retired on 2026-10-12.** This section describes the design of August 2026 (issue #13), when ESPHome
+> was to be a third firmware beside two Matter builds. Paths under `firmware/esp32-matter/` and
+> `firmware/src/`, the `dev.py ota ...` commands, the `:2323` console and the
+> `hisense-unified-ac` integration are no longer on `main`. The current firmware is ESPHome
+> alone, described by the pages linked at the top and by
+> [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md). The
+> last tree that has the Matter builds is the tag `matter-final`.
 
 ### What the plan set out to do
 
@@ -400,7 +402,7 @@ That was about 3700 lines of ESP32-specific firmware and tooling (`app_main.cpp`
 of transport. The ESPHome path deleted all of it and kept the 2824 lines of driver and mapping
 code (plus the HAL) that encoded the reverse-engineering work.
 
-The diagnostics story is the sharpest example. Doc 14 (at the tag) documents that surfacing the 18
+The diagnostics are the clearest case. Doc 14 (at the tag) documents that surfacing the 18
 fault bits and
 15 capability flags natively in HA is blocked behind PRs to two upstream projects, which is why the
 firmware packs them into `Features1`/`Faults1` bitmaps that a custom HACS integration unpacks, with

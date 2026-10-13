@@ -68,7 +68,7 @@ that marker to the single-field builder fixed both, with no change at any call s
 Verified on a live `CF35LR03G`: all four sleep profiles select (`sleep_raw` 2/4/6/8, and 0 for
 off), the Sleep select entity reads every option back, and mute engages with `fan_raw 0x02`.
 
-What made it hard to see is worth remembering. From `sleep_raw = 0`, "selected a profile" and
+What made it hard to see: from `sleep_raw = 0`, "selected a profile" and
 "ignored" are the same observation, and byte 17 in the combined frame *does* act, but only to
 cancel. Every probe from a zero start therefore looked like silence. Setting a profile on the
 A/C's own remote first, then commanding a different one, is what separated the two cases.
@@ -96,10 +96,11 @@ section 5.1).
 
 ## History: how the Matter builds exposed this
 
-> **Retired: the Matter firmwares.** This section describes how the two Matter builds carried
-> the rows above. They are not in the tree any more. The last tree with them is the tag
-> `matter-final`. Current: the entities in the matrix. See
-> [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md).
+> **Retired on 2026-10-12.** This section describes how the two Matter builds carried the rows above.
+> They are no longer on `main`
+> ([`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md)). The
+> current form of each row is the entity in the matrix. The last tree that has the Matter builds
+> is the tag `matter-final`.
 
 - The endpoint for each row (ep1 OnOff, Thermostat and FanControl, ep3 to ep6 for the special
   modes, ep7 aux heat, ep9 display, ep11 beeper) is in the parity inventory of
