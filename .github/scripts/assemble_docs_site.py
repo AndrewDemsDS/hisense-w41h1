@@ -7,6 +7,10 @@ gets front matter derived from its own first heading and first real paragraph, w
 jekyll-seo-tag turns into <title>, <meta name="description">, Open Graph tags and JSON-LD.
 
 Nothing is duplicated in git: sources stay where they are and this runs at build time.
+
+Links are rewritten on the way, because the sources link the way GitHub resolves them:
+rewrite_wiki_links() for the guide's extension-less page links, rewrite_repo_links() for links
+that leave a page's own directory.
 """
 
 import os
@@ -136,6 +140,87 @@ def rewrite_wiki_links(text, pages):
     return re.sub(r"\[([^\]]*)\]\(([A-Za-z][A-Za-z0-9._-]*)(#[^)]*)?\)", sub, text)
 
 
+# Where a link that leaves the site goes: the file as GitHub shows it.
+REPO_URL = "https://github.com/AndrewDemsDS/hisense-w41h1"
+REPO_BRANCH = "main"
+# The tail of a markdown link, "](target)". The label is not matched: it may hold code spans and
+# may be wrapped over two lines.
+LINK_TAIL = re.compile(r"\]\(([^)\s]+)\)")
+INLINE_CODE = re.compile(r"(`+)(?:(?!\1).)+\1")
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
+
+
+def site_target(repo_path):
+    """Where a tracked file lands on the site, as (subdir, file name), or None when it is not
+    part of the site."""
+    for src_dir, sub, _label, _parent in SOURCES:
+        if repo_path == src_dir or not repo_path.startswith(src_dir + "/"):
+            continue
+        rel = repo_path[len(src_dir) + 1 :]
+        base = os.path.basename(rel)
+        if base in SKIP or base.startswith("_"):
+            return None
+        if rel.endswith(".md"):
+            # Only the top level of a source directory is turned into pages.
+            return (sub, rel[:-3] + ".html") if "/" not in rel else None
+        return sub, rel
+    return None
+
+
+def rewrite_repo_links(text, src, root="."):
+    """Point the relative links that leave a page's own directory at something that exists.
+
+    The sources link the way GitHub resolves them: relative to the file, anywhere in the
+    repository ("../../firmware/esphome/README.md", "../tools/sniff.py"). On the site only the
+    three assembled directories exist, each flattened into one subdirectory, so every such link
+    was a 404. A link to a page of another assembled directory becomes a link to that page on the
+    site. A link to any other file of the repository becomes its GitHub URL (the raw file for an
+    image, so that an embedded one still shows). Links inside the page's own directory, links
+    with a scheme, bare anchors and paths that do not exist are left alone, and so is everything
+    inside code.
+    """
+    src_dir = os.path.dirname(src)
+
+    def resolve(target):
+        path, hash_, anchor = target.partition("#")
+        if not path or path.startswith("/") or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", path):
+            return target
+        repo_path = os.path.normpath(os.path.join(src_dir, path)).replace(os.sep, "/")
+        if repo_path == ".." or repo_path.startswith("../"):
+            return target
+        if repo_path == src_dir or repo_path.startswith(src_dir + "/"):
+            return target  # the page's own directory: copied as it is, the link still holds
+        full = os.path.join(root, repo_path)
+        if not os.path.exists(full):
+            return target
+        on_site = site_target(repo_path)
+        if on_site:
+            return f"../{on_site[0]}/{on_site[1]}{hash_}{anchor}"
+        if repo_path == "docs/guide/Home.md":
+            return f"../{hash_}{anchor}"
+        if os.path.isdir(full):
+            kind = "tree"
+        else:
+            kind = "raw" if repo_path.lower().endswith(IMAGE_SUFFIXES) else "blob"
+        return f"{REPO_URL}/{kind}/{REPO_BRANCH}/{repo_path}{hash_}{anchor}"
+
+    out, in_fence = [], False
+    for line in text.split("\n"):
+        if FENCE.match(line):
+            in_fence = not in_fence
+        elif not in_fence and "](" in line:
+            code = [m.span() for m in INLINE_CODE.finditer(line)]
+
+            def sub(m, code=code):
+                if any(start < m.start() < end for start, end in code):
+                    return m.group(0)  # inside a code span: text, not a link
+                return f"]({resolve(m.group(1))})"
+
+            line = LINK_TAIL.sub(sub, line)
+        out.append(line)
+    return "\n".join(out)
+
+
 def convert(src, dst, pages=None, parent=None, order=None):
     with open(src, encoding="utf-8") as fh:
         lines = fh.readlines()
@@ -160,7 +245,7 @@ def convert(src, dst, pages=None, parent=None, order=None):
         fm.append(f"nav_order: {order}")
     fm += ["---", ""]
 
-    body = "".join(lines)
+    body = rewrite_repo_links("".join(lines), src)
     if pages:
         body = rewrite_wiki_links(body, pages)
     with open(dst, "w", encoding="utf-8") as fh:

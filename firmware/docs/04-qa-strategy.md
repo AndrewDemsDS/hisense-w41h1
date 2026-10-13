@@ -54,24 +54,21 @@ The layers, in the order they run, with the label each prints:
 | 1e | `test_esphome_bus.cpp` | the bus scheduler against a simulated unit: reply windows, DE timing, hold-off, link loss, re-sends, a blocking write, a coarse loop |
 | 1f | `test_esphome_edge_cases.cpp` | shadow sync rules, boundaries, damaged byte streams |
 | 1g | `test_esphome_confirm.cpp` | each confirm and retry decision, then the command tracker against a model of a unit that loses frames and overrides values |
-| 1o | `test_esphome_entities.cpp` | the climate request as a plan, what a status frame shows, the switches, the sleep select |
-| (none) | `test_esphome_tables.py` | the option tables in the Python schemas against the C++ constants they name |
+| 1h | `test_esphome_entities.cpp` | the climate request as a plan, what a status frame shows, the switches, the sleep select |
+| 1h | `test_esphome_tables.py` | the option tables in the Python schemas against the C++ constants they name. It runs under the 1h heading and prints one of its own |
 | 1i | `test_esphome_setup_request.cpp` | the remote's setup request: debounce, lockout, the heartbeat flag |
-| 1h | `test_esphome_uart_policy.cpp` | when the stock module's bus port is restarted |
-| 1j | `test_esphome_setup_edges.cpp` | every ordering of the two request bits, the lockout, link loss |
-| 1k | `test_esphome_bus_stress.cpp` | the scheduler through the clock wrap, damaged replies and seeded random runs |
-| 1l | `test_esphome_codec_gaps.cpp`, `test_esphome_map_gaps.cpp` | the lines, branches and mutants that coverage and mutation testing found untested |
-| 1o | `test_esphome_setup_mode.cpp` | Wi-Fi setup mode: every phase against every event and input, the credential rules, the status display, every deadline across the clock wrap |
-| 1m | `fuzz/run.sh --smoke` | the fuzz corpus, the regressions and the hand-written framing edge cases replay clean, and every known failure still fails |
-| 1n | `test_esphome_config_matrix.py` | the configuration matrix (below). Skipped when `esphome` is not installed |
+| 1j | `test_esphome_uart_policy.cpp` | when the stock module's bus port is restarted |
+| 1k | `test_esphome_setup_edges.cpp` | every ordering of the two request bits, the lockout, link loss |
+| 1l | `test_esphome_bus_stress.cpp` | the scheduler through the clock wrap, damaged replies and seeded random runs |
+| 1m | `test_esphome_codec_gaps.cpp`, `test_esphome_map_gaps.cpp` | the lines, branches and mutants that coverage and mutation testing found untested |
+| 1n | `test_esphome_setup_mode.cpp` | Wi-Fi setup mode: every phase against every event and input, the credential rules, the status display, every deadline across the clock wrap |
+| 1o | `fuzz/run.sh --smoke` | the fuzz corpus, the regressions and the hand-written framing edge cases replay clean, and every known failure still fails |
+| 1p | `test_esphome_config_matrix.py` | the configuration matrix (below). Skipped when `esphome` is not installed |
 | 2 | inline Python | `virtual_ac.py` and `reverse-engineering/tools/decode_ac_frames.py` agree in both directions |
 | 3 | `test_image_chain.py` | the stock module's image signing chain (`amebaz2_image.py`): walk, verify, re-sign, and the stale-trailer defect that bricked a unit. Real images under `firmware/built-images/` and `dumps/` are checked when present (both are gitignored) |
 | 4 | `test_dev_release.py`, `test_matter_convert.py` | `dev.py` (build cache, board files, the command line) and `matter-convert.py` |
 | 5 | `version-lint.py`, `test_version_lint.py` | the version, the changelog and the ESPHome pin agree, and the lint fails on trees that have to fail |
-| 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py` | edge cases of the tooling: `dev.py`, the lint scripts, the hook, the clip flasher against a chip that is a bytearray, the restore path of the hardware test |
-
-The label `1o` is printed twice and the labels are not in running order. That is how the script
-is today.
+| 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py`, `test_mutate_limits.py` | edge cases of the tooling: `dev.py`, the lint scripts, the hook, the clip flasher against a chip that is a bytearray, the restore path of the hardware test, the limits `mutate.py` puts on a mutant |
 
 Run one test by compiling it the way the script does, from `firmware/test/`:
 
@@ -134,7 +131,7 @@ tests, to see what they add. It needs `gcovr` (fetched through `uvx` at the vers
 set `GCOVR`), takes about 15 s and writes nothing into the tree.
 
 ```bash
-python3 firmware/test/coverage/mutate.py [--target NAME ...] [--sample N] [--seed S] [--jobs J] [--out DIR]
+python3 firmware/test/coverage/mutate.py [--target NAME ...] [--sample N] [--seed S] [--jobs J] [--mem-limit MB] [--out DIR]
 ```
 
 Mutation testing changes the product code a little at a time (`universalmutator`, through `uvx`)
@@ -146,17 +143,27 @@ is a missing test. The score is killed over killed plus survivors. Targets are `
 and `uart_h`. `--survivors-of LABEL` re-runs only the survivors of an earlier run, and
 `--sanitize` builds the tests with the sanitizers, about three times slower. A run takes minutes.
 
-**Run it under a memory cap.** A mutant is broken code on purpose: a flipped loop condition can
-spin, and a changed size can allocate without bound. The script stops a test after 20 s. It does
-not limit memory, and with several jobs at once a few runaway mutants are enough to take a
-desktop down. Put the whole run in a scope with a limit, for example:
+**The script fences each mutant in.** A mutant is broken code on purpose: a flipped loop
+condition can spin while it prints, and a changed size can allocate without bound. So every
+mutated test binary runs with these limits, which the script prints when it starts:
 
-```bash
-systemd-run --user --scope -q -p MemoryMax=6G -p MemorySwapMax=0 -- \
-    python3 firmware/test/coverage/mutate.py --target confirm_h --sample 50 --jobs 4
-```
+| Limit | Default | How |
+|---|---|---|
+| memory | 512 MB per test binary (`--mem-limit MB`) | a `systemd-run --user --scope` with `MemoryMax` and no swap, so the kernel kills that one process. Where no user scope can be started, `RLIMIT_AS` on the process |
+| time | 20 s | the process is killed |
+| output | none is kept | stdout and stderr go to `/dev/null` and are never read into the script |
+| files | 16 MB, and no core file | `RLIMIT_FSIZE`, `RLIMIT_CORE` |
+| workers | 4 at once (`--jobs J`) | the run is refused when `--jobs` times `--mem-limit` is more than a quarter of the machine's memory |
 
-It is not in CI and not in `run_tests.sh`. What it found is in the two gap tests (layer 1l),
+A mutant stopped by a limit is killed, like one that fails a check. With `--sanitize` and no
+systemd scope there is no memory limit, because the sanitizers reserve more address space than
+`RLIMIT_AS` could allow: the script says so in a warning, and that run belongs in a container or
+a scope with a limit of its own. The compilers are not limited. Each worker runs one at a time.
+`firmware/test/test_mutate_limits.py` feeds the runner a program that allocates without bound,
+one that prints without end and one that writes a file without end, and is part of
+`run_tests.sh`.
+
+It is not in CI and not in `run_tests.sh`. What it found is in the two gap tests (layer 1m),
 where each block names the line or the mutant it is there for.
 
 What coverage and mutation cannot say: a covered line is a line that ran, not a line whose

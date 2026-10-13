@@ -632,13 +632,13 @@ code, out = wiki({"Home.md": PAGE})
 check(code == 0 and "no _Sidebar.md" in out, "no sidebar at all only warns")
 
 # The leak denylist.
-for body, why in (("See /home/alice/projects/x/ for it.", "a home path"), ("On node 14 it works.", "a node number below 20"),
-                  ("On node 80 it works.", "a node number of 20 or more"), ("Commission node 4660 again.", "a four-digit node number"),
+for body, why in (("See /home/alice/projects/x/ for it.", "a home path"), ("On node 7 it works.", "a node number below 20"),
+                  ("On node 45 it works.", "a node number of 20 or more"), ("Commission node 4660 again.", "a four-digit node number"),
                   ("Reach it at 172.16.4.20.", "a 172.16.0.0/12 address"), ("Reach it at 172.31.255.1.", "the last 172.16.0.0/12 network"),
                   ("Mail someone@gmail.com.", "a personal mail address"), ("`ssh me@10.0.0.5`", "an address in inline code: not exempt either"),
-                  ("Reach it at 192.168.4.114.", "a private address outside the placeholder range"),
+                  ("Reach it at 192.168.7.20.", "a private address outside the placeholder range"),
                   ("Reach it at 10.0.0.5.", "a 10.x address"), ("Open homeassistant.local.", "the Home Assistant host name"),
-                  ("```\nssh you@192.168.10.149\n```", "an address inside a code block: code is not exempt from the leak rules")):
+                  ("```\nssh you@192.168.20.30\n```", "an address inside a code block: code is not exempt from the leak rules")):
     code, errs = page_errors(body)
     check(code == 1 and any("public-ready leak" in e for e in errs), f"leak refused: {why}")
 for body, why in (("See /home/you/projects/x/ and /home/user/x/.", "the placeholder home paths"),
@@ -672,6 +672,68 @@ workflows = "".join(p.read_text() for p in (ROOT / ".github/workflows").glob("*.
 hooks = "".join(p.read_text() for p in (ROOT / "firmware/.githooks").iterdir())
 check("docs/guide/lint.py" in hooks, "the commit hook runs docs/guide/lint.py when a guide page is staged")
 check("guide/lint.py" in workflows, "and a workflow runs it, for a pull request from a clone without the hook")
+
+# ================================================================================================
+print("== assemble_docs_site.py: links that leave a page's directory ==")
+site = load("assemble_docs_site", ROOT / ".github/scripts/assemble_docs_site.py")
+BLOB = site.REPO_URL + "/blob/" + site.REPO_BRANCH + "/"
+
+
+def rewritten(line, src="firmware/docs/15-esphome-path.md"):
+    return site.rewrite_repo_links(line, src, root=str(ROOT))
+
+
+for line, want, why in (
+        ("[x](../../docs/guide/Recovery-and-Reflash.md#stock-module-ch341a-clip)", "[x](../guide/Recovery-and-Reflash.html#stock-module-ch341a-clip)",
+         "a guide page from a firmware note: the page on the site, anchor kept"),
+        ("[x](../../reverse-engineering/docs/03-rs485-ac-protocol.md)", "[x](../internals/03-rs485-ac-protocol.html)",
+         "a reverse-engineering page: its place under internals/"),
+        ("[x](../esphome/README.md#status-led)", "[x](" + BLOB + "firmware/esphome/README.md#status-led)",
+         "a file outside the three directories: its GitHub URL, anchor kept"),
+        ("[x](../../CONTRIBUTING.md) and [y](../scripts/README.md)", "[x](" + BLOB + "CONTRIBUTING.md) and [y](" + BLOB + "firmware/scripts/README.md)",
+         "two links on one line"),
+        ("[x](../esphome/components/hisense_ac)", "[x](" + site.REPO_URL + "/tree/" + site.REPO_BRANCH + "/firmware/esphome/components/hisense_ac)",
+         "a directory: the tree URL"),
+        ("[x](../../docs/guide/Home.md)", "[x](../)", "the guide's Home page is the site's landing page"),
+        ("[x](../../docs/guide/_README.md)", "[x](" + BLOB + "docs/guide/_README.md)", "a guide file the site skips: GitHub"),
+        ("[x](04-qa-strategy.md#the-layers) ![i](images/x.png)", None, "links inside the page's own directory are left alone"),
+        ("[x](https://example.com/a.md) [y](#here) [z](mailto:a@example.com)", None, "a URL, a bare anchor and a mail link are left alone"),
+        ("[x](../no/such/file.md)", None, "a path that does not exist is left for the linters to report"),
+        ("[x](../../../outside.md)", None, "a path that climbs out of the repository is left alone"),
+        ("`[x](../esphome/README.md)` then [y](../esphome/README.md)", "`[x](../esphome/README.md)` then [y](" + BLOB + "firmware/esphome/README.md)",
+         "a link inside inline code is not a link"),
+        ("```\n[x](../esphome/README.md)\n```", None, "nor is one inside a code block")):
+    got = rewritten(line)
+    check(got == (line if want is None else want), f"site link: {why}" + ("" if got == (line if want is None else want) else f" (got {got!r})"))
+check(rewritten("![q](../hardware/matter_qr.png)", "reverse-engineering/docs/02-matter-local-control.md")
+      == "![q](" + site.REPO_URL + "/raw/" + site.REPO_BRANCH + "/reverse-engineering/hardware/matter_qr.png)",
+      "site link: an image outside the directories is fetched raw, so it still shows")
+
+# Every page the site is built from: after the rewrite no relative link points outside the site.
+stranded = []
+site_dirs = {src: sub for src, sub, _label, _parent in site.SOURCES}
+for src_dir, sub in site_dirs.items():
+    for page in sorted((ROOT / src_dir).glob("*.md")):
+        if page.name in site.SKIP or page.name.startswith("_"):
+            continue
+        text = site.rewrite_repo_links(page.read_text(), f"{src_dir}/{page.name}", root=str(ROOT))
+        text = re.sub(r"```.*?```", "", text, flags=re.S)
+        text = re.sub(r"`[^`\n]*`", "", text)
+        for target in re.findall(r"\]\(([^)\s]+)\)", text):
+            path = target.partition("#")[0]
+            if not path or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", path):
+                continue
+            if path.startswith("../"):
+                parts = path.split("/")
+                there = len(parts) == 3 and parts[1] in site_dirs.values() and any(
+                    sub2 == parts[1] and (ROOT / src2 / (parts[2][:-5] + ".md" if parts[2].endswith(".html") else parts[2])).exists()
+                    for src2, sub2 in site_dirs.items())
+                if path != "../" and not there:
+                    stranded.append(f"{src_dir}/{page.name}: {target}")
+            elif not (ROOT / src_dir / path).exists() and not (ROOT / src_dir / (path + ".md")).exists():
+                stranded.append(f"{src_dir}/{page.name}: {target}")
+check(not stranded, "every relative link of every site page lands on the site after the rewrite"
+      + ("" if not stranded else ": " + "; ".join(stranded[:6])))
 
 # ================================================================================================
 print("== stop-slop.sh and the pre-commit hook ==")

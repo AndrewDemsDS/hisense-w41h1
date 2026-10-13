@@ -24,24 +24,27 @@ Each row names the marker in the sources where one exists. The files are under
 | 4 | Fan value `03` (quiet) at command byte 16 | Recorded by the DI tap. Sent by this project it put the unit on high. Quiet is reached through the mute flag | A DI tap of the stock module while the vendor app selects quiet, whole frame, to see what else the frame carries | `hisense_protocol.h`, `FAN_SPEED_QUIET`, and `hisense_entities.h` |
 | 5 | The single-field frame's other bytes | Only the named byte (mute at 35, sleep at 17) and the marker at byte 31 are confirmed. The rest is the smallest frame that worked | A DI tap of the stock module sending quiet or a sleep profile | `hisense_protocol.cpp`, `build_single_field` |
 | 6 | Vertical and horizontal swing in one command | Vertical is confirmed. The test units have no horizontal motor | A unit with a horizontal louvre: command both, read status byte 35 bits 6 and 7, and watch the louvres | `hisense_protocol.cpp`, `swing_byte` |
-| 7 | The reply to a command frame | The stock module expects the command's first two payload bytes echoed and `01` after them. Not captured here. The component logs its verdict and decides nothing on it | A `VERY_VERBOSE` log that shows the reply to a `0x65` frame, for a command that took and for one that did not | `hisense_bus.h`, `CMD_REPLY_ACK_OFFSET` |
+| 7 | The reply to a command frame | The stock module expects the command's first two payload bytes echoed and `01` after them. No reply frame is captured here. One stock module logged a verdict that agrees with the layout on 2026-10-10 ([`15-esphome-path.md`](../../firmware/docs/15-esphome-path.md)). The component logs its verdict and decides nothing on it | A `VERY_VERBOSE` log that shows the reply to a `0x65` frame, for a command that took and for one that did not | `hisense_bus.h`, `CMD_REPLY_ACK_OFFSET` |
 | 8 | Whether a unit ever raises request bit 3 (`08`) in its `0x1E` reply | The stock firmware handles it as reset and reconfigure. The units here raise bit 5 for the "77" gesture | A `DEBUG` log (it shows every change of the request bits) from another model during the gesture, or during a wired remote's reset | `hisense_protocol.h`, `LINK_REQ_RECONFIG` |
 | 9 | Heating or cooling while in auto | With the compressor running in auto the component reports cooling, also when the unit heats. No status byte is known to tell the two apart | Status captures in auto, once heating and once cooling, compared byte by byte | `hisense_mapping.h`, `climate_action` |
 | 10 | The `EC` placeholder in the outdoor and coil temperature after a power cut | Seen once, on one unit, 2026-10-10. How long it lasts, and whether both bytes leave it together, was not measured | A log of bytes 44 and 45 from mains power-on, on more than one unit | `hisense_telemetry.h` |
-| 11 | The beeper bit with the bit clear | [Doc 03](03-rs485-ac-protocol.md#command-frame-byte-map-class-65-50-bytes) records that a unit took commands silently on 2026-10-10. The codec's comment still asks for the check | Nothing on the bus. The comment and the record have to be brought into line by the maintainer | `hisense_protocol.h`, `stamp_beep` |
-| 12 | Class `67` | The stock module sends it after each ProductType exchange. Captured against a simulated A/C only | A tap on a stock module that is plugged into a real unit, for two minutes | none |
-| 13 | The minute encoding of the timer bytes 30 and 31 | Two readings, not enough for a rule | A sweep of known durations set on the remote | none |
-| 14 | Status byte 18 bit 7 | Not part of the mode. Its meaning is unknown | A capture of a frame with the bit set, and what the unit was doing | none |
-| 15 | Status byte 38 | Reads `05` on both units measured. No record of the capability table claims it | A unit where it differs | none |
-| 16 | The auxiliary heater relay bit (status byte 35 bit 4) | Position from the bus, never seen set: it needs cold weather or a defrost | A status capture in winter with the relay on | none |
-| 17 | Fault bytes 40, 64 and 66 | Decoded from the stock capability table. Only two bits of byte 39 were seen firing, with induced faults (doc 10 §7.6) | A fault of the outdoor unit or the electronics, with a status capture | none |
-| 18 | Commands for 8 °C heat, purify and the display unit | Predicted from the capability table: byte 37 `03` or `01`, byte 34 `C0` or `40`, byte 23 `03` or `01` (doc 10 §7.4b). The first driver's comments record an 8 °C heat test on 2026-07-19 and not the value that was sent | Each sent as a single field to a unit that reports the capability, and the status read back | none |
-| 19 | The three literal frames (power on, power off, status poll) | Taken from the community project. They work on every unit here. No capture of them from the owner's bus exists, and parts of the power-off frame are not understood | A DI tap of the stock module while the vendor app switches the unit on and off | comments at `FRAME_ON`, `FRAME_OFF`, `STATUS_REQUEST` |
+| 11 | Class `67` | The stock module sends it after each ProductType exchange. Captured against a simulated A/C only | A tap on a stock module that is plugged into a real unit, for two minutes | none |
+| 12 | The minute encoding of the timer bytes 30 and 31 | Two readings, not enough for a rule | A sweep of known durations set on the remote | none |
+| 13 | Status byte 18 bit 7 | Not part of the mode. Its meaning is unknown | A capture of a frame with the bit set, and what the unit was doing | none |
+| 14 | Status byte 38 | Reads `05` on both units measured. No record of the capability table claims it | A unit where it differs | none |
+| 15 | The auxiliary heater relay bit (status byte 35 bit 4) | Position from the bus, never seen set: it needs cold weather or a defrost | A status capture in winter with the relay on | none |
+| 16 | Fault bytes 40, 64 and 66 | Decoded from the stock capability table. Only two bits of byte 39 were seen firing, with induced faults (doc 10 §7.6) | A fault of the outdoor unit or the electronics, with a status capture | none |
+| 17 | Commands for 8 °C heat, purify and the display unit | Predicted from the capability table: byte 37 `03` or `01`, byte 34 `C0` or `40`, byte 23 `03` or `01` (doc 10 §7.4b). The first driver's comments record an 8 °C heat test on 2026-07-19 and not the value that was sent | Each sent as a single field to a unit that reports the capability, and the status read back | none |
+| 18 | The three literal frames (power on, power off, status poll) | Taken from the community project. They work on every unit here. No capture of them from the owner's bus exists, and parts of the power-off frame are not understood | A DI tap of the stock module while the vendor app switches the unit on and off | comments at `FRAME_ON`, `FRAME_OFF`, `STATUS_REQUEST` |
 
-One marker is out of date and needs no measurement: `devtype_reply_usable` in
-`hisense_protocol.h` says that no capture of a real device-type reply is in the repository. One
-is now, from 2026-10-12, and it confirms the length and the checksum
-([doc 03](03-rs485-ac-protocol.md#the-device-type-exchange)).
+## Answered
+
+Points that were on the list above and are settled. The sources no longer mark them `VERIFY`.
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Whether a real device-type reply has the length and the checksum the stock parser implies | Yes: 22 bytes, device type at bytes 16 and 17, bytes 18 and 19 the 16-bit sum of bytes 2 to 17 | A reply captured on 2026-10-12 from a unit driven by this project's firmware on an ESP32-C3 board ([doc 03](03-rs485-ac-protocol.md#the-device-type-exchange)). The comment at `devtype_reply_usable` in `hisense_protocol.h` cites it |
+| Whether the unit stays silent when the beeper bit (command byte 23 bit 2) is clear | Yes | The maintainer's check on an ESPHome node on 2026-10-10: with the Beeper switch off the unit took commands without a beep ([doc 03](03-rs485-ac-protocol.md#command-frame-byte-map-class-65-50-bytes), [`07-stock-parity-gaps.md`](../../firmware/docs/07-stock-parity-gaps.md)). The comment at `stamp_beep` in `hisense_protocol.h` cites it |
 
 ## Never run on a unit
 

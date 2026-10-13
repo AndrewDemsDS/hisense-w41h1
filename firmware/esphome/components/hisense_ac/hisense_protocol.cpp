@@ -276,7 +276,7 @@ static constexpr uint8_t FEATURE_BYTES[] = {
     0x04,  // FEATURE_NONE: neutral and turbo-off, confirmed
     0x30,  // FEATURE_ECO, confirmed on W41H1
     0x0C,  // FEATURE_TURBO, confirmed on W41H1
-    0x10,  // FEATURE_ECO_OFF. VERIFY
+    0x10,  // FEATURE_ECO_OFF. VERIFY, see the enum
 };
 static constexpr uint8_t DISPLAY_BYTES[] = {
     0x00,  // DISPLAY_NOCHANGE
@@ -287,7 +287,8 @@ static constexpr uint8_t DISPLAY_BYTES[] = {
 // Byte 32: vertical in bits 6-7, horizontal in bits 4-5, 0b11 = swing, 0b01 = move to a position.
 // Vertical is always commanded: "off" means hold the louvre (0b01), since emitting 0b00 left the
 // unit swinging. Horizontal off is 0b00. SwingMode's values are those bit patterns, so vertical is
-// the value with bit 0 set and horizontal the value itself. VERIFY the two combined.
+// the value with bit 0 set and horizontal the value itself. VERIFY the two combined: vertical is
+// confirmed, and the test units have no horizontal motor.
 static uint8_t swing_byte(SwingMode vswing, SwingMode hswing) {
   return static_cast<uint8_t>(((vswing | 0x1) << 6) | (hswing << 4));
 }

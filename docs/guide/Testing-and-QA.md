@@ -19,7 +19,7 @@ without an A/C or a board. Why the suite is shaped this way is in
 
 | Command | What it runs | Time | Needs |
 |---|---|---|---|
-| `firmware/test/run_tests.sh` | every host layer below | under a minute | `g++`, `python3`. With `esphome` installed it also runs the configuration matrix |
+| `firmware/test/run_tests.sh` | every host layer below | about a minute | `g++`, `python3`. With `esphome` installed it also runs the configuration matrix |
 | `firmware/test/sanitize.sh` | every C++ host test again under AddressSanitizer and UBSan, with `g++` and `clang++` | about 25 s | a missing compiler is skipped |
 | `firmware/test/fuzz/run.sh --smoke` | replays the fuzz seeds, corpus and regressions through every harness. Part of `run_tests.sh` | 10 to 20 s | `g++` or `clang++` |
 | `firmware/test/fuzz/run.sh <seconds> [harness...]` | fuzzes each harness for that long | as given | `clang++` with libFuzzer |
@@ -31,34 +31,37 @@ without an A/C or a board. Why the suite is shaped this way is in
 | `firmware/scripts/cpp-lint.sh check` | clang-format, the custom rules and clang-tidy | | installs its pinned tools on first use |
 
 The coverage and mutation scripts write to a temporary directory, never into the tree. Neither is
-part of the default suite.
+part of the default suite. `mutate.py` runs at most four mutants at once, each with a memory
+limit and a timeout of its own, and prints those limits when it starts
+(`firmware/docs/04-qa-strategy.md`).
 
 ## What run_tests.sh holds down
 
-It prints a heading per layer and ends with `ALL QA LAYERS PASSED`.
+It prints a heading per layer, in the order of this table, and ends with `ALL QA LAYERS PASSED`.
 
 | Layer | Test | What it holds down |
 |---|---|---|
-| 1a | `test_codec.cpp` | the reference driver's builders and parsers against captured frames |
+| 1a | `test_codec.cpp` | the reference driver's builders and parsers against golden frames |
 | 1b | `test_reference_map.cpp` | the reference fan ladder, setpoint clamp, running state and power estimate |
-| 1c | `test_esphome_map.cpp` | the reference mapping of modes, fan names and presets |
+| 1c | `test_esphome_map.cpp` | the reference driver's first ESPHome mapping of modes, fan names and presets (`reference-driver/esphome_aircon_map.h`) |
 | 1d | `test_esphome_codec_parity.cpp` | the component's codec equals the reference driver, byte for byte, over exhaustive and seeded random inputs |
 | 1e | `test_esphome_bus.cpp` | the bus scheduler against a simulated A/C: timing, link loss, retries |
 | 1f | `test_esphome_edge_cases.cpp` | shadow sync rules, boundaries, damaged byte streams |
-| 1g | `test_esphome_confirm.cpp` | confirm and retry, power and mode in one frame |
-| 1o | `test_esphome_entities.cpp`, `test_esphome_tables.py` | the climate request as a plan, what a status frame shows, the switches and the sleep select. The Python schema tables against the C++ constants they name |
-| 1i, 1j | `test_esphome_setup_request.cpp`, `test_esphome_setup_edges.cpp` | the remote's setup request: every ordering of the two request bits, the lockout, link loss |
-| 1h | `test_esphome_uart_policy.cpp` | when the stock module's bus port is restarted |
-| 1k | `test_esphome_bus_stress.cpp` | scheduler edge cases and stress: the clock wrap, damaged replies, seeded random runs |
-| 1l | `test_esphome_codec_gaps.cpp`, `test_esphome_map_gaps.cpp` | the gaps that coverage and mutation testing found |
-| | `test_esphome_setup_mode.cpp` | the decisions of Wi-Fi setup mode |
-| 1m | `fuzz/run.sh --smoke` | the fuzz corpus, the known failures and framing edge cases, under ASan and UBSan |
-| 1n | `test_esphome_config_matrix.py` | valid configurations validate with no warning, invalid ones (`firmware/esphome/tests/invalid/`) are rejected with the expected message, and every board file gives the same entities. Skipped without `esphome` |
+| 1g | `test_esphome_confirm.cpp` | each confirm and retry decision, then the real `CommandTracker` (the class the hub uses) against a model of a unit that loses frames and overrides values |
+| 1h | `test_esphome_entities.cpp`, `test_esphome_tables.py` | the climate request as a plan, what a status frame shows, the switches and the sleep select. The Python schema tables against the C++ constants they name |
+| 1i | `test_esphome_setup_request.cpp` | the remote's setup request: debounce, lockout, the heartbeat flag |
+| 1j | `test_esphome_uart_policy.cpp` | when the stock module's bus port is restarted |
+| 1k | `test_esphome_setup_edges.cpp` | every ordering of the two request bits, the lockout, link loss |
+| 1l | `test_esphome_bus_stress.cpp` | scheduler edge cases and stress: the clock wrap, damaged replies, seeded random runs |
+| 1m | `test_esphome_codec_gaps.cpp`, `test_esphome_map_gaps.cpp` | the gaps that coverage and mutation testing found |
+| 1n | `test_esphome_setup_mode.cpp` | the decisions of Wi-Fi setup mode |
+| 1o | `fuzz/run.sh --smoke` | the fuzz corpus, the known failures and framing edge cases, under ASan and UBSan |
+| 1p | `test_esphome_config_matrix.py` | valid configurations validate with no warning, invalid ones (`firmware/esphome/tests/invalid/`) are rejected with the expected message, and every board file gives the same entities. Skipped without `esphome` |
 | 2 | inline | `virtual_ac.py` and the frame decoder in `reverse-engineering/tools/` agree in both directions |
 | 3 | `test_image_chain.py` | the stock module's image signing chain (`amebaz2_image.py`): walk, verify, re-sign |
 | 4 | `test_dev_release.py`, `test_matter_convert.py` | `dev.py` (build cache, board files, command line) and `matter-convert.py` |
-| 5 | `test_version_lint.py` | the firmware version, the changelog and the ESPHome pin agree |
-| 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py` | edge cases of the tooling: `dev.py`, the scripts, the commit hook, the lint lists, the clip flasher's checks |
+| 5 | `version-lint.py`, `test_version_lint.py` | the firmware version, the changelog and the ESPHome pin agree, and the lint fails on trees that have to fail |
+| 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py`, `test_mutate_limits.py` | edge cases of the tooling: `dev.py`, the scripts, the commit hook, the lint lists, the clip flasher's checks, the limits `mutate.py` puts on a mutant |
 
 To run one C++ test alone, compile it from `firmware/test/` as `run_tests.sh` does:
 

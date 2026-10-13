@@ -123,9 +123,9 @@ protocol questions are in [`HIL-RUNBOOK.md`](HIL-RUNBOOK.md).
 
 - `raw` only sends. The reply is consumed by the driver and not shown. To see one, run a second
   board in tap mode, or paste captured bytes into `decode`.
-- `token` prints the two bytes under the label "link session token (reply [9]/[10])". The label
-  is from before the bytes were understood: they are the unit's device type, read from the
-  reply's inner `[3]/[4]`
+- `token` prints the unit's device type and sub-type, read from bytes 16 and 17 of its `0x0A`
+  reply (the reply's inner `[3]/[4]`). The command's name is from before the bytes were
+  understood, when they were taken for a session token
   ([`firmware/docs/16-esp32-board-notes.md`](../docs/16-esp32-board-notes.md#envelope-bytes-78-are-the-acs-device-type)).
 - Never define `HISENSE_HAL_UART_INTERNAL_LOOPBACK`. It loops UART1 TX to RX inside the chip and
   blinds the tool to the real bus.

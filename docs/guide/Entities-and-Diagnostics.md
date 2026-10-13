@@ -34,7 +34,7 @@ presets and the limits are in [Everyday Control](Everyday-Control#the-climate-en
 | Name | Entity id | Unit | What |
 |---|---|---|---|
 | Outdoor temperature | `sensor.air_conditioner_outdoor_temperature` | °C | from the outdoor unit |
-| Coil temperature | `sensor.air_conditioner_coil_temperature` | °C | the indoor coil |
+| Coil temperature | `sensor.air_conditioner_coil_temperature` | °C | the outdoor (condenser) coil |
 | Compressor frequency | `sensor.air_conditioner_compressor_frequency` | Hz | how hard the compressor runs |
 | Power | `sensor.air_conditioner_power` | W | an estimate. The bus carries a current reading that is a proxy and not amps, and the firmware computes power from it (`firmware/docs/09-energy-monitoring.md`) |
 | Voltage | `sensor.air_conditioner_voltage` | V | as the unit reports it |

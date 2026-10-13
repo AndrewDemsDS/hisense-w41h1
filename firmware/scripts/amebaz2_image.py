@@ -17,17 +17,26 @@ flash QE bit CLEARED -- the only reliable "did the bootloader reject this?" sign
         HMAC-SHA256(KEY, img[START:END]) == img[END:END+0x20]
      Sub-image 0 starts at 0, so its trailer covers the manifest signature AND the FWHS
      serial at 0xF4: patching the serial invalidates it. Recomputing only that one is
-     what bricked the office unit on 2026-07-21 (#75).
+     what bricked a unit on 2026-07-21 (#75).
   3. a 4-byte little-endian sum of every payload byte, appended after the payload.
 
 The chain is linked by u32le(img[H+4]): the next header sits at H + that value, and
 0xFFFFFFFF terminates it. Every image seen so far (custom and stock) carries three
 sub-images. KEY is the partition-table entry's hash_key (+0x20), identical for FW1/FW2.
+
+Command line (reads the file, writes nothing):
+
+    amebaz2_image.py verify <dump-or-image>
+
+prints every image found in the file with its serial, its chain and the verdict on each
+signature, and exits 0 when at least one image was found and all of them verify, 1 otherwise.
+The file is an application image as a build writes it, a raw slot, or a whole-chip dump.
 """
 
 import hashlib
 import hmac
 import struct
+import sys
 
 KEY = bytes.fromhex('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e5f')
 HDR0 = 0xE0            # first sub-image header, immediately after the manifest
@@ -37,6 +46,8 @@ SERIAL_OFF = 0xF4      # FWHS serial: what the bootloader A/B-selects on (docs/1
 LINK_END = 0xFFFFFFFF  # chain terminator in the u32 at H+4
 MAX_SUB_IMAGES = 8     # real images carry 3; cap so a corrupt chain cannot spin
 ERASED_RUN = b'\xff' * 4096   # end-of-image marker inside a raw slot / flash dump
+SECTOR = 0x1000        # the slots of every layout start on a sector boundary
+MAX_IMAGE = 0x1AC000   # the longest firmware slot of any layout
 
 
 class ImageFormatError(ValueError):
@@ -151,3 +162,62 @@ def split_payload(blob, min_len=0x100000, max_len=0x180000):
     if not min_len <= n <= max_len:
         return None
     return blob[:n], blob[n:n + 4]
+
+
+def find_images(blob):
+    """Offsets of every sector boundary where a signature-valid manifest starts. An image file
+    has one at 0, a whole-chip dump one per firmware slot that holds an image."""
+    head = HDR0 + HDR_LEN
+    return [off for off in range(0, max(0, len(blob) - head) + 1, SECTOR) if manifest_ok(blob[off:off + head])]
+
+
+def report(blob):
+    """What `verify` prints for a file's bytes: (all_ok, lines).
+
+    Each image is checked as verify() checks it: the manifest signature and every sub-image
+    trailer. The byte-sum is checked when the end of the image can be told: the file ends with
+    the image (a build's output), or erased flash follows it (a slot, a dump).
+    """
+    lines = []
+    offsets = find_images(blob)
+    if not offsets:
+        # Nothing with a valid manifest. Say what offset 0 looks like, which is the answer for an
+        # image file with a damaged manifest signature.
+        _ok, detail = verify(blob[:MAX_IMAGE])
+        lines.append("no image with a valid manifest signature at any sector boundary. At offset 0:")
+        lines += ["    " + ln for ln in detail]
+        return False, lines
+    all_ok = True
+    for off in offsets:
+        region = blob[off:off + MAX_IMAGE]
+        carved = split_payload(region, min_len=HDR0 + HDR_LEN, max_len=MAX_IMAGE)
+        if carved:
+            ok, detail = verify(*carved)
+        elif off == 0 and len(blob) <= MAX_IMAGE + 4:
+            ok, detail = verify(blob[:-4], blob[-4:])    # the file is the image and its byte-sum
+        else:
+            ok, detail = verify(region)
+            detail.append("byte-sum = not checked (the end of the image was not found)")
+        all_ok = all_ok and ok
+        lines.append(f"image at {off:#08x}  serial {read_serial(region)}  {'VALID' if ok else 'INVALID'}")
+        lines += ["    " + ln for ln in detail]
+    return all_ok, lines
+
+
+def main(argv):
+    if len(argv) != 2 or argv[0] != "verify":
+        print("usage: amebaz2_image.py verify <dump-or-image>", file=sys.stderr)
+        return 1
+    try:
+        with open(argv[1], "rb") as fh:
+            blob = fh.read()
+    except OSError as exc:
+        print(f"amebaz2_image.py: {exc}", file=sys.stderr)
+        return 1
+    ok, lines = report(blob)
+    print("\n".join(lines))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

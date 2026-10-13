@@ -67,7 +67,8 @@ static void check_status(const uint8_t *f, size_t n) {
                  st.heat_relay_on == ((f[35] & 0x10) != 0) && st.eco_on == ((f[35] & 0x04) != 0) &&
                  st.turbo_on == ((f[35] & 0x02) != 0) && st.mute_on == ((f[36] & 0x04) != 0),
              "flag bytes 35/36");
-  // Purify: the codec reads byte 36 bit 7 and marks it VERIFY. RE doc 03 and 05 say bit 5 (0x20).
+  // Purify: the codec reads byte 36 bit 7 (the stock capability table) and marks it VERIFY. The
+  // community map and RE doc 05 say bit 5 (0x20). RE doc 03 records both ("The purify bit").
   // The harness follows the codec here; the disagreement is in the findings, not asserted.
   FUZZ_CHECK(st.purify_on == ((f[36] & 0x80) != 0), "purify bit");
   FUZZ_CHECK(st.compressor_freq == f[42] && st.outdoor_temp_c == static_cast<int8_t>(f[44]), "compressor, outdoor");
@@ -153,7 +154,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     case 2: {
       uint8_t bits = 0xEE;
       FUZZ_CHECK(H::link_request_bits(got, n, &bits), "link_request_bits refused a good %zu byte 0x1E reply", n);
-      // Byte 17: bit 5 smart-config request, bit 3 reconfigure request (RE doc 03, "Recommission (77)").
+      // Byte 17: bit 5 smart-config request, bit 3 reconfigure request (RE doc 03, 'Recommission ("77")').
       FUZZ_CHECK(bits == (f[17] & 0x28), "request bits %02X from flags %02X", bits, f[17]);
       break;
     }

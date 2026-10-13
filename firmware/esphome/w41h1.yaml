@@ -23,8 +23,8 @@ substitutions:
   # name and friendly_name default to hisense-ac / Air Conditioner (packages/node.yaml). Set
   # both here for a second node on the same network.
   # Classic ESP32-D0WDQ6, the hardware-validated pin set. For an ESP32-C3 SuperMini use
-  # w41h1-esp32c3.yaml, or override here: board esp32-c3-devkitm-1 with tx 5 / rx 6 / de 10
-  # (`firmware/scripts/dev.py --board c3` passes exactly these as -s overrides).
+  # w41h1-esp32c3.yaml (what `firmware/scripts/dev.py --board c3` builds), or override here:
+  # board esp32-c3-devkitm-1 with tx 5 / rx 6 / de 10, as the first nodes were built.
   board: esp32dev
   tx_pin: "19"
   rx_pin: "18"

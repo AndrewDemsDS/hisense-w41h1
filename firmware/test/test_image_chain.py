@@ -3,7 +3,7 @@
 
 The bootloader verifies a manifest signature, one HMAC trailer PER SUB-IMAGE, and a
 byte-sum. The retired `revert --repackage` step recomputed only sub-image 0's trailer; a stale
-trailer anywhere hangs boot_load with no fall-back slot (the 2026-07-21 office brick).
+trailer anywhere hangs boot_load with no fall-back slot (the brick of 2026-07-21).
 This locks the recipe down two ways:
 
   SYNTHETIC (always runs, so CI covers it): build a multi-sub-image payload from scratch,
@@ -25,13 +25,15 @@ Archive files are graded, not all-or-nothing:
 """
 
 import pathlib
+import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "firmware/scripts"))
 
 import amebaz2_image as az  # noqa: E402
-from image_fixtures import signed_payload  # noqa: E402
+from image_fixtures import fake_image, signed_payload  # noqa: E402
 
 BUILT = ROOT / "firmware/built-images"
 DUMPS = ROOT / "dumps"
@@ -147,6 +149,68 @@ for f in sorted(DUMPS.glob("*.bin")) if DUMPS.is_dir() else []:
     grade(f, strict=False)
 if seen == 0:
     print("  --   SKIP: no archived images or dumps on this host")
+
+print("== the command line: amebaz2_image.py verify ==")
+CLI = pathlib.Path(az.__file__)
+
+
+def cli(*args):
+    r = subprocess.run([sys.executable, str(CLI), *args], capture_output=True, text=True, timeout=60)
+    return r.returncode, r.stdout, r.stderr
+
+
+with tempfile.TemporaryDirectory(prefix="image-cli-") as tmp:
+    tmp = pathlib.Path(tmp)
+    good = fake_image(serial=100)
+    (tmp / "image.bin").write_bytes(good)
+    before = (tmp / "image.bin").read_bytes()
+    code, out, err = cli("verify", str(tmp / "image.bin"))
+    check(code == 0 and "image at 0x000000  serial 100  VALID" in out and out.count("= OK") == 5,
+          "a build's image: exit 0, its serial, and OK for the manifest, three trailers and the byte-sum")
+    check((tmp / "image.bin").read_bytes() == before and sorted(p.name for p in tmp.iterdir()) == ["image.bin"],
+          "it writes nothing: the file is unchanged and nothing is created beside it")
+
+    stale = bytearray(good[:-4])                           # the defect of 2026-07-21 again
+    stale[az.SERIAL_OFF] ^= 0xFF
+    stale[0:az.MAC_LEN] = az.resign(bytes(stale))[0:az.MAC_LEN]
+    (tmp / "stale.bin").write_bytes(bytes(stale) + az.bytesum(bytes(stale)))
+    code, out, err = cli("verify", str(tmp / "stale.bin"))
+    check(code == 1 and "INVALID" in out and any(ln.strip().startswith("sub0 ") and "MISMATCH" in ln for ln in out.splitlines()),
+          "a stale sub-image 0 trailer under a fresh manifest signature: exit 1, and the line names sub0")
+
+    wrong_sum = good[:-4] + bytes(4)
+    (tmp / "sum.bin").write_bytes(wrong_sum)
+    code, out, err = cli("verify", str(tmp / "sum.bin"))
+    check(code == 1 and "byte-sum = MISMATCH" in out and out.count("= OK") == 4, "a wrong byte-sum alone: exit 1, the signatures still OK")
+
+    # A whole-chip dump: erased flash with one image per slot, as the factory layout has them.
+    dump = bytearray(b"\xff" * 0x400000)
+    second = fake_image(serial=101)
+    dump[0x010000:0x010000 + len(good)] = good
+    dump[0x190000:0x190000 + len(second)] = second
+    (tmp / "dump.bin").write_bytes(dump)
+    code, out, err = cli("verify", str(tmp / "dump.bin"))
+    check(code == 0 and "image at 0x010000  serial 100  VALID" in out and "image at 0x190000  serial 101  VALID" in out
+          and out.count("byte-sum = OK") == 2, "a dump with an image in each slot: both found, both checked to the byte-sum, exit 0")
+
+    dump[0x190000 + len(second) - 0x40] ^= 0xFF            # inside the last sub-image of slot 2
+    (tmp / "dump-bad.bin").write_bytes(dump)
+    code, out, err = cli("verify", str(tmp / "dump-bad.bin"))
+    check(code == 1 and "image at 0x010000  serial 100  VALID" in out and "image at 0x190000  serial 101  INVALID" in out,
+          "the same dump with one damaged slot: exit 1, and it says which slot")
+
+    (tmp / "blank.bin").write_bytes(b"\xff" * 0x20000)
+    code, out, err = cli("verify", str(tmp / "blank.bin"))
+    check(code == 1 and "no image with a valid manifest signature" in out and "manifest sig = MISMATCH" in out,
+          "erased flash: exit 1, no image, and what offset 0 looks like")
+    (tmp / "short.bin").write_bytes(b"abc")
+    code, out, err = cli("verify", str(tmp / "short.bin"))
+    check(code == 1 and "too short" in out, "a three-byte file: exit 1 and a message, not a traceback")
+    code, out, err = cli("verify", str(tmp / "missing.bin"))
+    check(code == 1 and "missing.bin" in err and "Traceback" not in err, "a file that is not there: exit 1 and the reason on stderr")
+    for args in ((), ("verify",), ("resign", "x"), ("verify", "a", "b")):
+        code, out, err = cli(*args)
+        check(code == 1 and err.startswith("usage: amebaz2_image.py verify"), f"arguments {args!r}: the usage line, exit 1")
 
 print()
 print("== IMAGE CHAIN OK ==" if not fails else f"== IMAGE CHAIN FAILED ({len(fails)}) ==")

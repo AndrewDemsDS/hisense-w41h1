@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# QA runner -- Layer 1 (codec golden tests) + Layer 2 (simulator self-check).
+# QA runner: every host layer, in the order of the labels it prints. Layers 1a to 1p are the
+# codec, the component's pure code, the fuzz replay and the configuration matrix. Layer 2 is the
+# simulator self-check, layer 3 the image signing chain, layers 4 to 6 the tooling. The table is
+# in firmware/docs/04-qa-strategy.md.
 # Host-only, no A/C, no chip. Exit non-zero on any failure (CI-friendly).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -47,33 +50,33 @@ g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_confirm.cpp
     ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_confirm
 ./test_esphome_confirm
 echo
-echo "== Layer 1o: ESPHome entities (the climate request as a plan, what a status frame shows, switches, the sleep select) =="
+echo "== Layer 1h: ESPHome entities (the climate request as a plan, what a status frame shows, switches, the sleep select) =="
 g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_entities.cpp \
     ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_entities.bin
 ./test_esphome_entities.bin
 python3 ./test_esphome_tables.py  # the Python schema tables against the C++ constants they name
 g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_setup_request.cpp ../esphome/components/hisense_ac/hisense_bus.cpp ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_setup_request.bin; ./test_esphome_setup_request.bin  # prints its own "Layer 1i" heading; .bin is gitignored
 echo
-echo "== Layer 1h: stock module under ESPHome, when the A/C bus serial port is restarted =="
+echo "== Layer 1j: stock module under ESPHome, when the A/C bus serial port is restarted =="
 g++ -std=c++17 -Wall -I../esphome/components/w41h1_module test_esphome_uart_policy.cpp -o test_esphome_uart_policy
 ./test_esphome_uart_policy
 
 echo
-echo "== Layer 1j: ESPHome setup request edge cases (every ordering of the two request bits, the lockout, link loss) =="
+echo "== Layer 1k: ESPHome setup request edge cases (every ordering of the two request bits, the lockout, link loss) =="
 g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_setup_edges.cpp \
     ../esphome/components/hisense_ac/hisense_bus.cpp ../esphome/components/hisense_ac/hisense_protocol.cpp \
     -o test_esphome_setup_edges.bin
 ./test_esphome_setup_edges.bin
 
 echo
-echo "== Layer 1k: ESPHome bus scheduler edge cases and stress (clock wrap, damaged replies, seeded random runs) =="
+echo "== Layer 1l: ESPHome bus scheduler edge cases and stress (clock wrap, damaged replies, seeded random runs) =="
 g++ -std=c++17 -Wall -O1 -I../esphome/components/hisense_ac test_esphome_bus_stress.cpp \
     ../esphome/components/hisense_ac/hisense_bus.cpp ../esphome/components/hisense_ac/hisense_protocol.cpp \
     -o test_esphome_bus_stress.bin
 ./test_esphome_bus_stress.bin
 
 echo
-echo "== Layer 1l: coverage and mutation gap tests (codec, map, serial port policy) =="
+echo "== Layer 1m: coverage and mutation gap tests (codec, map, serial port policy) =="
 g++ -std=c++17 -Wall -I../esphome/components/hisense_ac test_esphome_codec_gaps.cpp \
     ../esphome/components/hisense_ac/hisense_protocol.cpp -o test_esphome_codec_gaps.bin
 ./test_esphome_codec_gaps.bin
@@ -82,17 +85,17 @@ g++ -std=c++17 -Wall -I../esphome/components/hisense_ac -I../esphome/components/
 ./test_esphome_map_gaps.bin
 
 echo
-# Prints its own "Layer 1o" heading.
+# Prints its own "Layer 1n" heading.
 g++ -std=c++17 -Wall -I../esphome/components/wifi_setup_mode test_esphome_setup_mode.cpp \
     -o test_esphome_setup_mode.bin
 ./test_esphome_setup_mode.bin
 
 echo
-echo "== Layer 1m: fuzz corpus replay, known failures, framing edge cases (ASan + UBSan) =="
+echo "== Layer 1o: fuzz corpus replay, known failures, framing edge cases (ASan + UBSan) =="
 ./fuzz/run.sh --smoke
 
 echo
-echo "== Layer 1n: ESPHome configuration matrix (skipped when esphome is not installed) =="
+echo "== Layer 1p: ESPHome configuration matrix (skipped when esphome is not installed) =="
 python3 ./test_esphome_config_matrix.py
 
 echo
@@ -143,11 +146,12 @@ python3 ../scripts/version-lint.py
 python3 ./test_version_lint.py
 
 echo
-echo "== Layer 6: tooling edge cases (dev.py, the scripts, the hook, the lint lists, the clip flasher) =="
+echo "== Layer 6: tooling edge cases (dev.py, the scripts, the hook, the lint lists, the clip flasher, the mutation limits) =="
 python3 ./test_dev_edges.py
 python3 ./test_scripts_edges.py
 python3 ./test_flasher.py
 python3 ./test_hil_restore.py
+python3 ./test_mutate_limits.py
 
 echo
 echo "ALL QA LAYERS PASSED"
