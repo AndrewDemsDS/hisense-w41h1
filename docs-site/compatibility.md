@@ -2,18 +2,18 @@
 title: Will this work on my A/C?
 nav_order: 5
 description: >-
-  Which Hisense air conditioners and Wi-Fi modules this de-cloud firmware works on: confirmed
+  Which Hisense air conditioners and Wi-Fi modules this ESPHome firmware works on: confirmed
   hardware, the AEH-W41H1 and AEH-W4A1 modules, and how to check your own unit before buying
   anything.
 ---
 
 # Will this work on my A/C?
 
-Short version: **if your A/C uses a ConnectLife Wi-Fi module, the odds are good, and you can find
-out for certain in about a minute without opening anything.**
+If your A/C uses a ConnectLife Wi-Fi module on a 4-pin connector, the odds are good, and you can
+check in about a minute without opening anything.
 
 Two things have to be true. The bus protocol has to match, and the module has to be one you can
-either reflash or replace.
+replace or reflash.
 
 ## Confirmed working
 
@@ -22,10 +22,11 @@ either reflash or replace.
 | **Wi-Fi module** | `AEH-W41H1` (Realtek RTL8710C / AmebaZ2), secure boot off |
 | **App it came with** | ConnectLife |
 | **Bus** | RS-485, 9600 8N1, on the 4-pin module connector (5 V · GND · A · B) |
-| **Verified on** | two units, running continuously |
+| **Runs on** | the maintainer's units, every day, with an ESP32 board in place of the module |
 
-Both the protocol and the flashing route are proven on this hardware. Everything on this site was
-written from those units.
+The protocol is proven on this hardware, and so is the ESP32 board that replaces the module.
+Running ESPHome on the module itself is newer and less proven: one module, since 2026-10-10
+([The Stock Module](guide/Stock-Module-Build.html)).
 
 ## Very likely, not personally verified
 
@@ -39,8 +40,7 @@ protocol on AirconIntl hardware, which is why the codec here could be cross-chec
 sample frames before it ever touched an A/C. Hisense manufactures for several brands, so a
 rebadged unit may well be the same machine underneath.
 
-Being honest about the boundary: "should work" is not "does work". If you try it on something not
-listed above, [open an issue](https://github.com/AndrewDemsDS/hisense-w41h1/issues) with what you
+"Should work" is not "does work". If you try it on something not listed above, [open an issue](https://github.com/AndrewDemsDS/hisense-w41h1/issues) with what you
 find, working or not.
 
 ## How to check your own unit
@@ -56,17 +56,16 @@ targets.
 
 ## If your module is not supported, or is dead
 
-You do not need the original module. The [ESP32 route](guide/ESP32-Replacement-Build.html) puts an
-ESP32 plus an RS-485 transceiver in the module bay instead, speaking the same bus bytes. It costs
-about €5, needs no CH341A clip, and is the recommended path if you do not already have a working
-`AEH-W41H1`: those modules are fragile and increasingly hard to buy.
+You do not need the original module. The [ESP32 board](guide/ESP32-Replacement-Build.html) puts an
+ESP32 and an RS-485 transceiver in the module bay, speaking the same bus bytes. It costs about
+5 EUR, needs no clip, and is the recommended hardware whether or not you have a working
+`AEH-W41H1`: those modules are fragile and hard to buy.
 
-The board runs the [ESPHome build](guide/ESPHome-Build.html). The
-[hardware comparison](firmware/13-path-comparison.html) covers the tradeoffs against keeping the
-module, with figures measured on real hardware.
+The [User Guide](guide/User-Guide.html) compares it with keeping the module, and the
+[hardware comparison](firmware/13-path-comparison.html) has the measured figures.
 
 ## What you get either way
 
-Local control in Home Assistant with no cloud, over ESPHome: mode, setpoint, fan speeds, swing, and
-the Eco / Quiet / Turbo / Sleep special modes, plus temperature and energy telemetry. See
-[everyday control](guide/Everyday-Control.html).
+Local control in Home Assistant with no cloud, over ESPHome: mode, setpoint, six fan settings,
+vertical swing, the Eco, Quiet, Turbo and Sleep special modes, temperatures, and a power and
+energy estimate. See [Everyday Control](guide/Everyday-Control.html).
