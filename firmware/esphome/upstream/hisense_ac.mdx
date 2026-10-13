@@ -32,20 +32,20 @@ The indoor unit's module connector carries a half-duplex RS-485 bus at 9600 baud
 While the board is powered from USB, connect only A and B to the A/C. Joining the A/C's ground to a
 board that is grounded through a computer can brown the board out.
 
-This component requires a [UART bus](/components/uart) to be set up.
+This component requires a [UART bus](/components/uart/) to be set up.
 
 ```yaml
 # Example configuration entry
 uart:
   id: uart_bus
-  tx_pin: GPIO19
-  rx_pin: GPIO18
+  tx_pin: GPIOXX
+  rx_pin: GPIOXX
   baud_rate: 9600
 
 hisense_ac:
   id: ac_bus
   uart_id: uart_bus
-  de_pin: GPIO4
+  de_pin: GPIOXX
 
 climate:
   - platform: hisense_ac
@@ -53,18 +53,18 @@ climate:
     hisense_ac_id: ac_bus
 ```
 
-## Configuration variables
+## Configuration Variables
 
-- **id** (*Optional*, [ID](/guides/configuration-types#id)): Manually specify the ID of the hub.
-- **uart_id** (*Optional*, [ID](/guides/configuration-types#id)): ID of the UART bus connected to
+- **id** (*Optional*, [ID](/guides/configuration-types/#id)): Manually specify the ID of the hub.
+- **uart_id** (*Optional*, [ID](/guides/configuration-types/#id)): ID of the UART bus connected to
   the transceiver. The bus must be 9600 baud, 8 data bits, no parity, 1 stop bit.
-- **de_pin** (*Optional*, [Pin Schema](/guides/configuration-types#pin-schema)): The pin wired to
+- **de_pin** (*Optional*, [Pin Schema](/guides/configuration-types/#pin-schema)): The pin wired to
   the transceiver's DE (and RE) line. The component raises it 5 ms before each frame and lowers it
   25 ms after the last byte. It has to be an output. Leave it out only if the UART's
   `flow_control_pin` or the transceiver itself switches direction: setting both `de_pin` and
   `flow_control_pin` is refused, and setting neither gives a warning.
-- **on_setup_request** (*Optional*, [Automation](/automations)): An automation to perform when
-  the user asks for setup from the remote. See [`on_setup_request`](#hisense_ac-on_setup_request).
+- **on_setup_request** (*Optional*, [Automation](/automations/)): An automation to perform when
+  the user asks for setup from the remote. See [`on_setup_request`](#on_setup_request).
 
 ## Climate
 
@@ -77,7 +77,7 @@ climate:
     supports_horizontal_swing: false
 ```
 
-- **hisense_ac_id** (*Optional*, [ID](/guides/configuration-types#id)): ID of the hub. A hub
+- **hisense_ac_id** (*Optional*, [ID](/guides/configuration-types/#id)): ID of the hub. A hub
   takes one climate entity.
 - **supports_heat** (*Optional*, boolean): Set to `false` on a cooling-only unit. Defaults to `true`.
 - **supports_horizontal_swing** (*Optional*, boolean): Set to `true` if the unit has a left/right
@@ -90,7 +90,7 @@ climate:
   Defaults to `16 °C`.
 - **max_temperature** (*Optional*, temperature): Highest setpoint shown, not above `32 °C`
   (`90 °F`) and not below `min_temperature`. Defaults to `32 °C`.
-- All other options from [Climate](/components/climate#config-climate).
+- All other options from [Climate](/components/climate/#config-climate).
 
 The entity offers the modes off, auto, cool, heat, fan only and dry, six fan speeds (`auto`,
 `low`, `medium_low`, `medium`, `medium_high`, `high`) and vertical swing.
@@ -123,16 +123,16 @@ switch:
       name: Beeper
 ```
 
-- **eco** (*Optional*): Eco mode. All options from [Switch](/components/switch#config-switch).
-- **turbo** (*Optional*): Turbo mode. All options from [Switch](/components/switch#config-switch).
-- **quiet** (*Optional*): Quiet mode. All options from [Switch](/components/switch#config-switch).
+- **eco** (*Optional*): Eco mode. All options from [Switch](/components/switch/#config-switch).
+- **turbo** (*Optional*): Turbo mode. All options from [Switch](/components/switch/#config-switch).
+- **quiet** (*Optional*): Quiet mode. All options from [Switch](/components/switch/#config-switch).
 - **display** (*Optional*): The indoor unit's front panel display. The A/C does not report this
   setting, so the switch shows what was last commanded.
-  All options from [Switch](/components/switch#config-switch).
+  All options from [Switch](/components/switch/#config-switch).
 - **beeper** (*Optional*): Whether the indoor unit beeps when it takes a command from this node.
   Each command frame carries the request, so turning the switch off sends nothing and takes effect
   from the next command. The setting is stored on the node and restored at boot (on by default).
-  The remote control still beeps. All options from [Switch](/components/switch#config-switch).
+  The remote control still beeps. All options from [Switch](/components/switch/#config-switch).
 
 ## Select
 
@@ -145,7 +145,7 @@ select:
 ```
 
 - **sleep_profile** (*Optional*): The sleep profile: `Off`, `General`, `Old`, `Young` or `Kids`.
-  All options from [Select](/components/select#config-select).
+  All options from [Select](/components/select/#config-select).
 
 ## Sensor
 
@@ -180,11 +180,11 @@ sensor:
   last re-send the controls go back to what the unit reports, and a warning is logged.
 - **link_losses** (*Optional*): Number of times the bus link was declared lost since boot.
 
-Each takes all options from [Sensor](/components/sensor#config-sensor). Values are published when
+Each takes all options from [Sensor](/components/sensor/#config-sensor). Values are published when
 they change and at least once a minute.
 
 To get energy from the power estimate, add a
-[Total Daily Energy](/components/sensor/total_daily_energy) sensor and set its `method` to `left`.
+[Total Daily Energy](/components/sensor/total_daily_energy/) sensor and set its `method` to `left`.
 Power is published on change, so the value that held between two updates is the earlier one.
 
 ```yaml
@@ -228,7 +228,7 @@ binary_sensor:
   `capability_purify`, `capability_q_display`, `capability_enable_8heat`,
   `capability_trans_102_64`.
 
-Each takes all options from [Binary Sensor](/components/binary_sensor#config-binary_sensor).
+Each takes all options from [Binary Sensor](/components/binary_sensor/#config-binary_sensor).
 
 ## Text Sensor
 
@@ -241,11 +241,9 @@ text_sensor:
 ```
 
 - **link_token** (*Optional*): The two-byte device type the unit reports when the link comes up.
-  All options from [Text Sensor](/components/text_sensor#config-text_sensor).
+  All options from [Text Sensor](/components/text_sensor/#config-text_sensor).
 
 ## Automations
-
-<span id="hisense_ac-on_setup_request"></span>
 
 ### `on_setup_request`
 
@@ -267,8 +265,6 @@ hisense_ac:
 A request is ignored for 10 seconds after the previous one. A unit that raises `0x08` has to hold
 it for three replies in a row, and that bit is ignored while the panel indicator below is on.
 
-<span id="hisense_ac-set_setup_indicator_action"></span>
-
 ### `hisense_ac.set_setup_indicator` Action
 
 This action shows "77" on the unit's panel, or takes it off again. While it is on, the component
@@ -286,8 +282,8 @@ on_...:
         state: !lambda "return id(setup_active);"
 ```
 
-- **id** (*Optional*, [ID](/guides/configuration-types#id)): ID of the hub.
-- **state** (**Required**, boolean, [templatable](/automations/templates)): `true` to show "77",
+- **id** (*Optional*, [ID](/guides/configuration-types/#id)): ID of the hub.
+- **state** (**Required**, boolean, [templatable](/automations/templates/)): `true` to show "77",
   `false` to clear it.
 
 The same is available in lambdas as `id(ac_bus).set_setup_indicator(true)`, and
@@ -295,6 +291,6 @@ The same is available in lambdas as `id(ac_bus).set_setup_indicator(true)`, and
 
 ## See Also
 
-- [UART Bus](/components/uart)
+- [UART Bus](/components/uart/)
 - [Climate Component](/components/climate/)
 - <APIRef text="hisense_ac.h" path="hisense_ac/hisense_ac.h" />
