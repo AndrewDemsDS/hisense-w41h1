@@ -8,10 +8,13 @@
 // as "the statement that says this", since they move.
 //
 // The checks state what the code does today. Byte values are traced to where they come from:
-// "capture" is a frame captured from the vendor module and stored verbatim in hisense_protocol.h
-// (STATUS_REQUEST, LINK_INIT_0A, LINK_INIT_07, LINK_HEARTBEAT, and the two literal power frames in
-// hisense_protocol.cpp), "header" is a constant or a comment of hisense_protocol.h, "RE docs/03"
-// is reverse-engineering/docs/03-rs485-ac-protocol.md.
+// "capture" is a frame captured from the stock module's transmit line and stored verbatim in
+// hisense_protocol.h (LINK_INIT_0A, LINK_INIT_07, LINK_HEARTBEAT). "published" is one of the three
+// frames taken from the community project pslawinski/esphome_airconintl (STATUS_REQUEST in
+// hisense_protocol.h and the two literal power frames in hisense_protocol.cpp, see NOTICE.md): the
+// indoor unit acts on them, but no capture of them from this project's own bus is on record.
+// "header" is a constant or a comment of hisense_protocol.h, "RE docs/03" is
+// reverse-engineering/docs/03-rs485-ac-protocol.md.
 
 #include <cstdint>
 #include <cstdio>
@@ -140,7 +143,7 @@ static void test_defaults() {
             H::SUBTYPE_PRODUCT_TYPE == 0x40,
         "classes 0A, 1E, 65, 66 and subtype 40");
   CHECK(H::BUS_BAUD_RATE == 9600, "9600 baud");
-  // Each captured frame says its own length: LEN byte + 9 (header: poll 0x0C is 21, link 0x13 is
+  // Each literal frame says its own length: LEN byte + 9 (header: poll 0x0C is 21, link 0x13 is
   // 28, command 0x29 is 50).
   CHECK(H::STATUS_REQUEST[4] + 9 == (int) H::STATUS_REQUEST_LEN &&
             H::LINK_INIT_0A[4] + 9 == (int) H::LINK_INIT_0A_LEN &&
@@ -227,7 +230,8 @@ static void test_checksum() {
   CHECK(H::checksum_range(ramp.data(), 1, 2) == 0x007F && H::checksum_range(ramp.data(), 4, 5) == 0x00FF,
         "start is included, end is not");
 
-  // The captured frames carry their own checksums: 0x01B3, 0x0158, 0x0154, 0x0302 (capture).
+  // The literal frames carry their own checksums: the poll 0x01B3 (published), the three link
+  // frames 0x0158, 0x0154, 0x0302 (capture).
   CHECK(H::status_checksum_ok(H::STATUS_REQUEST, H::STATUS_REQUEST_LEN), "the captured status poll verifies");
   CHECK(H::status_checksum_ok(H::LINK_INIT_0A, H::LINK_INIT_0A_LEN), "the captured 0x0A frame verifies");
   CHECK(H::status_checksum_ok(H::LINK_INIT_07, H::LINK_INIT_07_LEN), "the captured 0x07 frame verifies");
@@ -285,7 +289,8 @@ static void test_builder_arguments() {
   CHECK(H::build_power_frame(true, nullptr, sizeof(out)) == 0, "power: no buffer");
   CHECK(H::build_power_frame(true, out, 49) == 0 && H::build_power_frame(false, out, 49) == 0, "power: 49 bytes");
   CHECK(H::build_power_frame(true, out, 50) == 50, "power: 50 bytes");
-  // Capture: on has byte 18 = 0x0C and checksum 01 DF, off has byte 18 = 0x04 and checksum 02 31.
+  // Published (esphome_airconintl, see NOTICE.md), not captured here: on has byte 18 = 0x0C and
+  // checksum 01 DF, off has byte 18 = 0x04 and checksum 02 31.
   CHECK(out[18] == 0x0C && out[46] == 0x01 && out[47] == 0xDF && H::status_checksum_ok(out, 50),
         "power on: byte 18 0x0C, checksum 01 DF, and it verifies");
   CHECK(H::build_power_frame(false, out, 50) == 50 && out[18] == 0x04 && out[46] == 0x02 && out[47] == 0x31 &&
@@ -293,7 +298,7 @@ static void test_builder_arguments() {
         "power off: byte 18 0x04, checksum 02 31, and it verifies");
 
   // build_producttype_request (line 222): 21 bytes, the poll with byte 14 = 0x40. The poll's
-  // checksum 0x01B3 (capture) plus 0x40 is 0x01F3.
+  // checksum 0x01B3 (published) plus 0x40 is 0x01F3.
   CHECK(H::build_producttype_request(nullptr, sizeof(out)) == 0, "product type: no buffer");
   CHECK(H::build_producttype_request(out, 20) == 0, "product type: 20 bytes");
   std::memset(out, 0xEE, sizeof(out));
@@ -671,7 +676,7 @@ static void test_stamps() {
   CHECK(H::stamp_beep(poll, poll_len, true, out, 22) == 0 && H::stamp_beep(poll, poll_len, true, out, 23) == 21,
         "beep: the same");
 
-  // Stamping the poll. It already carries 01 01 (capture), so stamping those is the identity.
+  // Stamping the poll. It already carries 01 01 (published), so stamping those is the identity.
   CHECK(H::stamp_link_token(poll, poll_len, 0x01, 0x01, out, sizeof(out)) == 21 && std::memcmp(out, poll, 21) == 0,
         "token 01 01 on the poll gives the poll back");
   // 0x01B3 - 2 + 0x02 + 0x03 = 0x01B6.
@@ -718,7 +723,7 @@ static void test_stamps() {
   CHECK(H::stamp_beep(odd, 50, false, out, sizeof(out)) == 50 && out[23] == 0xFB, "the other bits of byte 23 are kept");
   odd[23] = 0xFB;
   CHECK(H::stamp_beep(odd, 50, true, out, sizeof(out)) == 50 && out[23] == 0xFF, "both ways");
-  // The literal power-off frame (capture, checksum 02 31) with the buzzer cleared: 02 2D.
+  // The literal power-off frame (published, checksum 02 31) with the buzzer cleared: 02 2D.
   uint8_t off[50];
   H::build_power_frame(false, off, sizeof(off));
   CHECK(H::stamp_beep(off, 50, false, out, sizeof(out)) == 50 && out[23] == 0x00 && out[46] == 0x02 && out[47] == 0x2D,
@@ -1456,7 +1461,7 @@ static void test_assembler() {
     CHECK(feed_all(&fb, whole, &got) == 0, "a whole frame with direction 0x%02X is never returned", dir);
   }
   {
-    // The module's own poll (direction 0x00, capture) echoed, then the reply.
+    // The module's own poll (direction 0x00, published) echoed, then the reply.
     H::FrameAssembler fa;
     Bytes echo(H::STATUS_REQUEST, H::STATUS_REQUEST + H::STATUS_REQUEST_LEN);
     CHECK(feed_all(&fa, cat({echo, ok20}), &got) == 1 && got == ok20,
