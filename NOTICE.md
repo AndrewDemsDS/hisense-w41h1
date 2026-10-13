@@ -1,23 +1,40 @@
-# NOTICE: third-party components & licensing
+# NOTICE: third-party components and licensing
+
+What this project is licensed under, what it depends on, and what it took from earlier work.
 
 This project (the **original code** in `firmware/esphome/`, `firmware/test/`,
 `firmware/scripts/`, `firmware/flasher/`, `firmware/esp32-recon/`, the
 `reverse-engineering/tools/`, and all documentation) is licensed **MIT**: see
 [`LICENSE`](LICENSE).
 
-Nothing third-party is vendored. The build fetches its tools on your machine.
+No third-party source file or binary is vendored. The build fetches its tools on your machine.
+Two things in the tree do come from elsewhere, and both are described below: three literal bus
+frames and a 16-byte frame header that are the same bytes as in a community project, and lint
+configuration adapted from ESPHome's. The vendor's firmware, which the reverse-engineering pages
+analyse, is not in the repository in any form.
 
 ## Third-party dependencies (fetched, not redistributed)
 
 | Component | License | How it is used |
 |---|---|---|
-| **ESPHome** ([esphome/esphome](https://github.com/esphome/esphome)) | MIT (Python and tooling) / GPL-3.0 (C++ runtime), © ESPHome | Builds the firmware. `hisense_ac` is an external component in this repo. Version `2026.7.4` is pinned in `.github/workflows/qa.yaml` and `firmware/scripts/dev.py`. |
+| **ESPHome** ([esphome/esphome](https://github.com/esphome/esphome)) | MIT (Python and tooling) / GPL-3.0 (C++ runtime), © ESPHome | Builds the firmware. `hisense_ac` is an external component in this repo. Version `2026.7.4` is pinned in `.github/workflows/qa.yaml`, `.github/workflows/esphome-release.yaml`, `firmware/scripts/dev.py`, `firmware/scripts/esphome-upstream-check.sh` and `.github/ci/esphome/requirements.txt`. `firmware/scripts/version-lint.py` fails when they differ. |
 | **ESP-IDF** ([espressif/esp-idf](https://github.com/espressif/esp-idf)) | Apache-2.0, © Espressif | Downloaded by ESPHome for ESP32 builds. Also the SDK of `firmware/esp32-recon/`. |
 | **LibreTiny** ([libretiny-eu/libretiny](https://github.com/libretiny-eu/libretiny)) and the **Realtek AmebaZ2 SDK** it wraps | MIT (LibreTiny). The Realtek SDK is proprietary, © Realtek Semiconductor | Downloaded by ESPHome for the stock-module builds. No Realtek source or binary is in this repository. |
 | **connectedhomeip** ([project-chip/connectedhomeip](https://github.com/project-chip/connectedhomeip)) | Apache-2.0, © Project CHIP Authors | Only its `ota_image_tool.py`, and only for `matter-convert.py convert`, which wraps an image for a unit that still runs the retired Matter firmware. You point `OTA_TOOL` at your own checkout. |
 
 A firmware image you build links ESPHome's GPL-3.0 runtime. That matters if you distribute the
-binary. This repository distributes source only.
+binary. This repository distributes source only, and its releases attach no image.
+
+Smaller dependencies, each fetched under its own licence and none copied into the tree:
+
+| Where | What it fetches |
+|---|---|
+| `firmware/flasher/requirements.txt` | pyusb, for the CH341A clip tools |
+| `reverse-engineering/tools/requirements.txt` | capstone, qrcode and pyserial, for the analysis and capture scripts |
+| `firmware/esp32-recon/main/idf_component.yml` | Espressif's `mdns` component, from the ESP Component Registry |
+| `.github/ci/lint/requirements.txt`, `.github/ci/esphome/requirements.txt` | the lint and test tools CI installs (actionlint, zizmor, shellcheck, cppcheck, ruff, gcovr, uv, ESPHome) |
+| `firmware/scripts/cpp-lint.sh` | the pinned clang-format and clang-tidy wheels |
+| `docs-site/_config.yml` | the `just-the-docs` Jekyll theme, loaded as a remote theme when the docs site is built |
 
 ## Acknowledgements: earlier work on this A/C bus
 
