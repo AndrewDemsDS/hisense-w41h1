@@ -298,8 +298,9 @@ and every deadline across the wrap of the millisecond clock. `packages/node.yaml
 wiring only. How the mode behaves for a user is in
 [`firmware/esphome/README.md`](../esphome/README.md#wi-fi-setup-mode-and-the-77-gesture).
 
-> **Setup mode has not run on a unit.** The mode and the gesture have run in host tests and in
-> compiles only.
+> **Setup mode has run once on a unit, in part.** On 2026-10-13 the gesture opened the hotspot
+> on an ESP32-C3 and the timeout put the node back on its network. The portal, a second
+> gesture, the LED and the stock module have run in host tests and compiles only.
 
 The design decisions:
 

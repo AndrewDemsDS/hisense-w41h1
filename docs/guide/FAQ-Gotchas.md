@@ -52,8 +52,10 @@ this only bites an image that was re-signed by hand or built with a clock that w
 ### The node has to move to another Wi-Fi network
 
 Use [Wi-Fi setup mode](Wifi-Setup-Mode#setup-mode): the remote's gesture or the
-`Start Wi-Fi setup` button. It has not run on a unit yet. The way that is known to work is to put
-the new network in `secrets.yaml` and update the node while it is still on the old one.
+`Start Wi-Fi setup` button. On a unit, the gesture has opened the hotspot and the timeout has
+put the node back on its network (once, on an ESP32-C3), and no network has been entered in the
+portal yet. The way that is known to work is to put the new network in `secrets.yaml` and update
+the node while it is still on the old one.
 
 ### The LED on the board blinks, or the pixel is lit
 

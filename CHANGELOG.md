@@ -295,6 +295,9 @@ Nothing in this section changes what is on the wire, the entities or what they p
   `firmware/test/coverage/mutate.py` is safe to start as it is: four workers by default, a
   memory limit and a timeout on every mutated test binary, and a refusal of more workers than a
   quarter of the machine's memory allows.
+- Setup mode has had its first run on a unit (2026-10-13, ESP32-C3 SuperMini Plus). The
+  remote's gesture opened the hotspot and the timeout put the node back on the network it had.
+  The notices on the setup mode pages now say what was seen and what was not.
 
 ## Matter and ESPHome side by side - 2026-10-10
 
