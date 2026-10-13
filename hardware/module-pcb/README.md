@@ -104,8 +104,11 @@ check that DRC reports no unconnected items each time.
   ESP32-C3-WROOM-02 (pin table, pullups on GPIO2, GPIO8 and GPIO9, 10 k and 1 uF on EN,
   0.5 A supply) and the SP3485 (pin order, 3.3 V supply). The divider of 453 k over 100 k
   gives 3.32 V.
-- The SM712's pin order was not checked against its datasheet (the download failed). It
-  follows KiCad's library symbol and the usual SOT-23 arrangement for that part.
+- The SM712 against its datasheet: pins 1 and 2 are the two lines, pin 3 is ground, and it
+  clamps the +12 V to -7 V range RS-485 uses.
+- The inductor (`L1`, FTC252012S2R2MGCA) against the maker's catalogue: 2.2 uH, 65 mOhm
+  maximum, 2.7 A heating current and 3.3 A saturation current at worst, well above what this
+  board draws.
 - SPICE runs of the feedback divider, the EN delay and the decoupling networks pass.
 - The gerbers hold every layer and both drill files.
 
@@ -120,8 +123,6 @@ check that DRC reports no unconnected items each time.
 - Apart from the pre-routed parts, the routing came from an autorouter (Freerouting 2.1.0)
   with no manual cleanup. The tracks under the module on the bottom side are longer than a
   hand layout would make them, which is harmless at 9600 baud.
-- The inductor (`L1`, FTC252012S2R2MGCA) was picked by value and size. Its saturation current
-  was not checked against a datasheet: the regulator needs at least 1 A here.
 - Check each part's rotation in the assembly house's placement preview. The placement file
   passes KiCad's rotations through unchanged.
 - `J2` is a row of pads for programming and is marked as not fitted.
