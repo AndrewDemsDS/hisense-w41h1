@@ -381,7 +381,8 @@ TRACKED = {
     "firmware/esphome/components/hisense_ac/notes.md": "notes\n",
     "firmware/esphome/components/hisense_ac/__init__.py": "\n",
     "firmware/esphome/components/w41h1_module/m.cpp": "int m;\n",
-    "firmware/esphome/components/other/x.cpp": "int x;\n",
+    "firmware/esphome/components/later_one/x.cpp": "int x;\n",
+    "firmware/esphome/other/y.cpp": "int y;\n",
     "firmware/test/t.cpp": "int t;\n",
     "firmware/test/stubinc/s.h": "#include <x>\n",
     "firmware/test/build/gen.cpp": "int g;\n",
@@ -404,10 +405,13 @@ write(R / "firmware/test/untracked.cpp", "int u;\n")
 cpp.ROOT = R
 IN_SCOPE = ["firmware/esp32-recon/main/r.c", "firmware/esp32-recon/main/r.tcc",
             "firmware/esphome/components/hisense_ac/a.cpp", "firmware/esphome/components/hisense_ac/a.h",
+            "firmware/esphome/components/later_one/x.cpp",
             "firmware/esphome/components/w41h1_module/m.cpp", "firmware/test/late.cpp",
             "firmware/test/stubinc/s.h", "firmware/test/t.cpp"]
 check(cpp.select_files([]) == IN_SCOPE, "in scope: tracked C and C++ files of the four owned trees, subdirectories included")
-for rel, why in (("firmware/esphome/components/other/x.cpp", "another component"), ("firmware/scripts/tool.cpp", "a tree that is not owned"),
+check("firmware/esphome/components/later_one/x.cpp" in cpp.select_files([]),
+      "in scope: every directory under components/, so a component added later is linted without a change to the list")
+for rel, why in (("firmware/esphome/other/y.cpp", "a directory beside components/"), ("firmware/scripts/tool.cpp", "a tree that is not owned"),
                  ("top.cpp", "the repo root"), ("dumps/d.cpp", "dumps/"), ("firmware/test/build/gen.cpp", "a build directory"),
                  ("firmware/test/managed_components/v/v.c", "managed components"),
                  ("firmware/esphome/components/hisense_ac/notes.md", "not C or C++"),
@@ -851,6 +855,11 @@ echo "INFO Successfully compiled program."
 exit "${FAKE_RC:-0}"
 ''')
 CC = C / "firmware/scripts/esphome-compile-check.sh"
+# The script holds this repo's components clean and reads which they are from the directories
+# (esphome-components.sh), so the stand-in tree gets the directories the real one has.
+COMPONENTS = sorted(p.name for p in (ROOT / "firmware/esphome/components").iterdir() if p.is_dir())
+for name in COMPONENTS:
+    (C / "firmware/esphome/components" / name).mkdir(parents=True)
 
 
 def compile_check(*configs, **env):
@@ -878,10 +887,16 @@ check(code == 1 and "::error::w41h1.yaml does not compile" in out and "error: bo
 WARN = "src/esphome/components/hisense_ac/hisense_bus.cpp:10:5: warning: unused variable 'x' [-Wunused-variable]"
 code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN)
 check(code == 1 and "does not compile cleanly" in out, "a compiler warning from hisense_ac fails the gate")
-code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace("hisense_ac/hisense_bus", "w41h1_module/w41h1_module"))
-check(code == 1, "and one from w41h1_module")
+for name in COMPONENTS:
+    code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace("hisense_ac/hisense_bus", f"{name}/{name}"))
+    check(code == 1 and "does not compile cleanly" in out, f"and one from {name}")
+check("wifi_setup_mode" in COMPONENTS and len(COMPONENTS) >= 3, f"which is every component directory of the tree ({', '.join(COMPONENTS)})")
 code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="src/esphome/components/wifi/wifi_component.cpp:1:1: warning: theirs")
-check(code == 0, "a warning from another component passes: only this repo's two are held clean")
+check(code == 0, "a warning from another component passes: only this repo's own are held clean")
+(C / "firmware/esphome/components/later_one").mkdir()
+code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace("hisense_ac/hisense_bus", "later_one/later_one"))
+check(code == 1, "a component directory added later is held clean without a change to the script")
+(C / "firmware/esphome/components/later_one").rmdir()
 code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT=WARN.replace(": warning:", ": error:"))
 check(code == 1, "an error line that names a component file fails it too (a build that went on after one)")
 code, out, log = compile_check("w41h1.yaml", FAKE_OUTPUT="\\033[01m\\033[Ksrc/esphome/components/hisense_ac/hisense_bus.cpp:10:5:\\033[m\\033[K "
@@ -952,6 +967,35 @@ check(all(f"{b[14:-5]}:0x" in qa for b in groups["amebaz2"]) and "board-groups.s
 check("board-groups.sh other" in nightly, "nightly.yaml compiles the board files qa.yaml does not")
 r = subprocess.run(["bash", str(GROUPS)], capture_output=True, text=True, env=GIT_ENV)
 check(r.returncode == 2 and "usage:" in r.stderr, "board-groups.sh with no group prints its usage and exits 2")
+
+# No gate holds a list of this repo's components: esphome-components.sh reads the directories and
+# the gates ask it. A name written into a gate is how wifi_setup_mode stayed outside two of them.
+LIST = SCRIPTS / "esphome-components.sh"
+r = subprocess.run(["bash", str(LIST)], capture_output=True, text=True, env=GIT_ENV)
+check(r.returncode == 0 and r.stdout.split() == COMPONENTS, f"esphome-components.sh prints every component directory ({len(COMPONENTS)})")
+r = subprocess.run(["bash", str(LIST), "regex"], capture_output=True, text=True, env=GIT_ENV)
+check(r.stdout.strip() == "|".join(COMPONENTS), "and the same names as one alternation for grep -E")
+r = subprocess.run(["bash", str(LIST), "nonsense"], capture_output=True, text=True, env=GIT_ENV)
+check(r.returncode == 2 and "usage:" in r.stderr, "an unknown argument prints its usage and exits 2")
+E = TMP / "no-components"
+shutil.copytree(SCRIPTS, E / "firmware/scripts", ignore=shutil.ignore_patterns("__pycache__", "*.env"))
+(E / "firmware/esphome/components").mkdir(parents=True)
+r = subprocess.run(["bash", str(E / "firmware/scripts/esphome-components.sh"), "regex"], capture_output=True, text=True, env=GIT_ENV)
+check(r.returncode == 1 and not r.stdout and "no component directory" in r.stderr,
+      "no component at all is an error, so a gate cannot pass on an empty list")
+gates = {"esphome-compile-check.sh": (SCRIPTS / "esphome-compile-check.sh").read_text()}
+for job in ("lint-extra", "esphome-amebaz2"):
+    gates[f"qa.yaml, job {job}"] = re.search(rf"(?ms)^  {job}:\n.*?(?=^  [\w-]+:\n|\Z)", qa).group(0)
+for where, text in gates.items():
+    code_lines = re.sub(r"(?m)^\s*#.*$", "", text)
+    check("esphome-components.sh" in code_lines, f"{where} asks esphome-components.sh which components are this repo's")
+    # A warning pattern (components/(a|b)/, components/a/) or an include path (-I "$c/a").
+    named = [n for n in COMPONENTS if re.search(rf"components/\(?[\w|]*\b{n}\b[\w|]*\)?/\W|-I\s*\S*/{n}\b", code_lines)]
+    check(not named, f"{where} writes no component into a warning pattern or an include path itself ({', '.join(named) or 'none'})")
+check(all(cpp.owned(f"firmware/esphome/components/{n}/x.cpp") for n in COMPONENTS), "the lint scope of cpp-lint.py takes in every component directory")
+upstream = (SCRIPTS / "esphome-upstream-check.sh").read_text()
+check("esphome-components.sh" not in re.sub(r"(?m)^\s*#.*$", "", upstream) and "hisense_ac alone, on purpose" in upstream,
+      "esphome-upstream-check.sh takes hisense_ac alone, and says that it is on purpose")
 
 pin_sh = (SCRIPTS / "cpp-lint.sh").read_text()
 fmt_pin = re.search(r"^CLANG_FORMAT_VERSION=(\S+)$", pin_sh, re.M).group(1)

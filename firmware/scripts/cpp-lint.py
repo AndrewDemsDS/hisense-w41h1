@@ -40,12 +40,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 CPP_EXT = (".c", ".cc", ".cpp", ".h", ".hpp", ".tcc")
 
-# Trees we own. Everything else is out of scope.
+# Trees we own. Everything else is out of scope. Every directory under components/ is a component
+# of this repo (esphome-components.sh lists them for the other gates), so one added later is
+# linted without a change here.
 INCLUDE = [
     "firmware/esp32-recon/*",
-    "firmware/esphome/components/hisense_ac/*",
-    "firmware/esphome/components/w41h1_module/*",
-    "firmware/esphome/components/wifi_setup_mode/*",
+    "firmware/esphome/components/*",
     "firmware/test/*",
 ]
 
