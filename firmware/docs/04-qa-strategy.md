@@ -54,24 +54,21 @@ The layers, in the order they run, with the label each prints:
 | 1e | `test_esphome_bus.cpp` | the bus scheduler against a simulated unit: reply windows, DE timing, hold-off, link loss, re-sends, a blocking write, a coarse loop |
 | 1f | `test_esphome_edge_cases.cpp` | shadow sync rules, boundaries, damaged byte streams |
 | 1g | `test_esphome_confirm.cpp` | each confirm and retry decision, then the command tracker against a model of a unit that loses frames and overrides values |
-| 1o | `test_esphome_entities.cpp` | the climate request as a plan, what a status frame shows, the switches, the sleep select |
-| (none) | `test_esphome_tables.py` | the option tables in the Python schemas against the C++ constants they name |
+| 1h | `test_esphome_entities.cpp` | the climate request as a plan, what a status frame shows, the switches, the sleep select |
+| 1h | `test_esphome_tables.py` | the option tables in the Python schemas against the C++ constants they name. It runs under the 1h heading and prints one of its own |
 | 1i | `test_esphome_setup_request.cpp` | the remote's setup request: debounce, lockout, the heartbeat flag |
-| 1h | `test_esphome_uart_policy.cpp` | when the stock module's bus port is restarted |
-| 1j | `test_esphome_setup_edges.cpp` | every ordering of the two request bits, the lockout, link loss |
-| 1k | `test_esphome_bus_stress.cpp` | the scheduler through the clock wrap, damaged replies and seeded random runs |
-| 1l | `test_esphome_codec_gaps.cpp`, `test_esphome_map_gaps.cpp` | the lines, branches and mutants that coverage and mutation testing found untested |
-| 1o | `test_esphome_setup_mode.cpp` | Wi-Fi setup mode: every phase against every event and input, the credential rules, the status display, every deadline across the clock wrap |
-| 1m | `fuzz/run.sh --smoke` | the fuzz corpus, the regressions and the hand-written framing edge cases replay clean, and every known failure still fails |
-| 1n | `test_esphome_config_matrix.py` | the configuration matrix (below). Skipped when `esphome` is not installed |
+| 1j | `test_esphome_uart_policy.cpp` | when the stock module's bus port is restarted |
+| 1k | `test_esphome_setup_edges.cpp` | every ordering of the two request bits, the lockout, link loss |
+| 1l | `test_esphome_bus_stress.cpp` | the scheduler through the clock wrap, damaged replies and seeded random runs |
+| 1m | `test_esphome_codec_gaps.cpp`, `test_esphome_map_gaps.cpp` | the lines, branches and mutants that coverage and mutation testing found untested |
+| 1n | `test_esphome_setup_mode.cpp` | Wi-Fi setup mode: every phase against every event and input, the credential rules, the status display, every deadline across the clock wrap |
+| 1o | `fuzz/run.sh --smoke` | the fuzz corpus, the regressions and the hand-written framing edge cases replay clean, and every known failure still fails |
+| 1p | `test_esphome_config_matrix.py` | the configuration matrix (below). Skipped when `esphome` is not installed |
 | 2 | inline Python | `virtual_ac.py` and `reverse-engineering/tools/decode_ac_frames.py` agree in both directions |
 | 3 | `test_image_chain.py` | the stock module's image signing chain (`amebaz2_image.py`): walk, verify, re-sign, and the stale-trailer defect that bricked a unit. Real images under `firmware/built-images/` and `dumps/` are checked when present (both are gitignored) |
 | 4 | `test_dev_release.py`, `test_matter_convert.py` | `dev.py` (build cache, board files, the command line) and `matter-convert.py` |
 | 5 | `version-lint.py`, `test_version_lint.py` | the version, the changelog and the ESPHome pin agree, and the lint fails on trees that have to fail |
 | 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py` | edge cases of the tooling: `dev.py`, the lint scripts, the hook, the clip flasher against a chip that is a bytearray, the restore path of the hardware test |
-
-The label `1o` is printed twice and the labels are not in running order. That is how the script
-is today.
 
 Run one test by compiling it the way the script does, from `firmware/test/`:
 
@@ -156,7 +153,7 @@ systemd-run --user --scope -q -p MemoryMax=6G -p MemorySwapMax=0 -- \
     python3 firmware/test/coverage/mutate.py --target confirm_h --sample 50 --jobs 4
 ```
 
-It is not in CI and not in `run_tests.sh`. What it found is in the two gap tests (layer 1l),
+It is not in CI and not in `run_tests.sh`. What it found is in the two gap tests (layer 1m),
 where each block names the line or the mutant it is there for.
 
 What coverage and mutation cannot say: a covered line is a line that ran, not a line whose

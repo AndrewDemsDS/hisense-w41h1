@@ -870,7 +870,7 @@ static void test_wraparound() {
 }
 
 int main() {
-  printf("== Layer 1o: Wi-Fi setup mode (state machine, credentials, status display) ==\n");
+  printf("== Layer 1n: Wi-Fi setup mode (state machine, credentials, status display) ==\n");
   test_exhaustive();
   test_table();
   test_plain_session();

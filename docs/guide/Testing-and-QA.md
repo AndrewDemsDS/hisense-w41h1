@@ -35,7 +35,7 @@ part of the default suite.
 
 ## What run_tests.sh holds down
 
-It prints a heading per layer and ends with `ALL QA LAYERS PASSED`.
+It prints a heading per layer, in the order of this table, and ends with `ALL QA LAYERS PASSED`.
 
 | Layer | Test | What it holds down |
 |---|---|---|
@@ -46,14 +46,15 @@ It prints a heading per layer and ends with `ALL QA LAYERS PASSED`.
 | 1e | `test_esphome_bus.cpp` | the bus scheduler against a simulated A/C: timing, link loss, retries |
 | 1f | `test_esphome_edge_cases.cpp` | shadow sync rules, boundaries, damaged byte streams |
 | 1g | `test_esphome_confirm.cpp` | confirm and retry, power and mode in one frame |
-| 1o | `test_esphome_entities.cpp`, `test_esphome_tables.py` | the climate request as a plan, what a status frame shows, the switches and the sleep select. The Python schema tables against the C++ constants they name |
-| 1i, 1j | `test_esphome_setup_request.cpp`, `test_esphome_setup_edges.cpp` | the remote's setup request: every ordering of the two request bits, the lockout, link loss |
-| 1h | `test_esphome_uart_policy.cpp` | when the stock module's bus port is restarted |
-| 1k | `test_esphome_bus_stress.cpp` | scheduler edge cases and stress: the clock wrap, damaged replies, seeded random runs |
-| 1l | `test_esphome_codec_gaps.cpp`, `test_esphome_map_gaps.cpp` | the gaps that coverage and mutation testing found |
-| | `test_esphome_setup_mode.cpp` | the decisions of Wi-Fi setup mode |
-| 1m | `fuzz/run.sh --smoke` | the fuzz corpus, the known failures and framing edge cases, under ASan and UBSan |
-| 1n | `test_esphome_config_matrix.py` | valid configurations validate with no warning, invalid ones (`firmware/esphome/tests/invalid/`) are rejected with the expected message, and every board file gives the same entities. Skipped without `esphome` |
+| 1h | `test_esphome_entities.cpp`, `test_esphome_tables.py` | the climate request as a plan, what a status frame shows, the switches and the sleep select. The Python schema tables against the C++ constants they name |
+| 1i | `test_esphome_setup_request.cpp` | the remote's setup request: debounce, lockout, the heartbeat flag |
+| 1j | `test_esphome_uart_policy.cpp` | when the stock module's bus port is restarted |
+| 1k | `test_esphome_setup_edges.cpp` | every ordering of the two request bits, the lockout, link loss |
+| 1l | `test_esphome_bus_stress.cpp` | scheduler edge cases and stress: the clock wrap, damaged replies, seeded random runs |
+| 1m | `test_esphome_codec_gaps.cpp`, `test_esphome_map_gaps.cpp` | the gaps that coverage and mutation testing found |
+| 1n | `test_esphome_setup_mode.cpp` | the decisions of Wi-Fi setup mode |
+| 1o | `fuzz/run.sh --smoke` | the fuzz corpus, the known failures and framing edge cases, under ASan and UBSan |
+| 1p | `test_esphome_config_matrix.py` | valid configurations validate with no warning, invalid ones (`firmware/esphome/tests/invalid/`) are rejected with the expected message, and every board file gives the same entities. Skipped without `esphome` |
 | 2 | inline | `virtual_ac.py` and the frame decoder in `reverse-engineering/tools/` agree in both directions |
 | 3 | `test_image_chain.py` | the stock module's image signing chain (`amebaz2_image.py`): walk, verify, re-sign |
 | 4 | `test_dev_release.py`, `test_matter_convert.py` | `dev.py` (build cache, board files, command line) and `matter-convert.py` |
