@@ -104,7 +104,7 @@ way with its own board file, and has no USB to fall back on
 
 The firmware version is written once, in `firmware/esphome/packages/version.yaml`, and built into
 every node. Home Assistant shows it on the device page as the firmware, for example
-`2.0.0 (ESPHome 2026.7.4)`. There is nothing to bump for your own node: the version is that of the
+`2.0.0 (ESPHome 2026.9.1)`. There is nothing to bump for your own node: the version is that of the
 tree you build from. Between two releases the tree keeps the number of the last one.
 
 A release is the git tag `vX.Y.Z` on `main`, with a section in `CHANGELOG.md` and a GitHub release

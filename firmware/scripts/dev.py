@@ -68,7 +68,7 @@ ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2-* has test and build. A first f
 # host test holds this equal to firmware/esphome/components/w41h1_module/layout-*.json.
 ESPHOME_AMEBAZ2_SLOTS = {"amebaz2-factory": (0x010000, 0x170000), "amebaz2-sdk": (0x00C000, 0x1AC000),
                          "amebaz2-native": (0x010000, 0x1AC000)}
-ESPHOME_PIN = "2026.7.4"   # the release CI builds with; version-lint.py fails when the pins differ
+ESPHOME_PIN = "2026.9.1"   # the release CI builds with; version-lint.py fails when the pins differ
 
 # Line-buffer stdout so our own lines stay in order with the stderr warnings and with the output
 # of the tools we run. Without it, piping or logging dev.py (tee, CI) shows "doctor found gaps

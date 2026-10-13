@@ -4,7 +4,7 @@
 # "Releasing".
 #
 # node.yaml includes this file, so every node built from the packages carries the version: Home
-# Assistant shows it as the device's firmware ("2.0.0 (ESPHome 2026.7.4)") and the ESPHome
+# Assistant shows it as the device's firmware ("2.0.0 (ESPHome 2026.9.1)") and the ESPHome
 # dashboard beside the node. Between two releases the number is that of the last release. The
 # build time in the log's "compiled on" line tells two builds of one version apart.
 #
