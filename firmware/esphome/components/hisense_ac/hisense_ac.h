@@ -51,6 +51,8 @@ class HisenseAC final : public Component,
 
   /// Optional: without it the UART's flow_control_pin (or the transceiver) owns DE.
   void set_de_pin(GPIOPin *pin) { this->de_pin_ = pin; }
+  /// The `max_power` option, in watts: a power estimate above it is published as unknown.
+  void set_max_power(uint32_t watts) { this->max_power_w_ = watts; }
 
   void set_climate(HisenseClimate *climate) { this->climate_ = climate; }
   void add_status_listener(StatusListener *listener) { this->listeners_.push_back(listener); }
@@ -223,6 +225,7 @@ class HisenseAC final : public Component,
   TelemetryRefresh telemetry_refresh_{};
   // Whether the outdoor and coil bytes have held a real reading since the link came up.
   OutdoorTempGate outdoor_gate_{};
+  uint32_t max_power_w_{POWER_LIMIT_W_DEFAULT};
   // Defaults to ON to match the switch's boot state; the A/C ships with the panel lit.
   Display display_pref_{DISPLAY_ON};
   bool beeper_{true};

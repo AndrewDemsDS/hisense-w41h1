@@ -37,7 +37,7 @@ and works without them.
                     +-- hisense_confirm.h   what a command asks, what the unit can be
                                             expected to show, the verdict on a status
 
-  hisense_telemetry.h        power estimate, when a sensor is published,
+  hisense_telemetry.h        power estimate and its limit, when a sensor is published,
                              the outdoor temperature placeholder (includes nothing)
 
   hisense_map.h              includes the six above and declares nothing
@@ -232,7 +232,9 @@ Sensor values are published when they change and at least once a minute
 (`telemetry_publish_due()`, `TELEMETRY_REFRESH_MS`).
 
 Power is `4.15 W * raw^2` of status byte 55, with a power factor of 0.95 folded in. The
-calibration is in [`09-energy-monitoring.md`](09-energy-monitoring.md).
+calibration is in [`09-energy-monitoring.md`](09-energy-monitoring.md). An estimate above the
+hub's `max_power` (5 kW unless configured) is published as unknown, and the current derived from
+it too (`power_reading()`): the glue passes the limit in and publishes what comes back.
 
 **The outdoor and coil placeholder.** Right after mains power returns, the unit fills status
 bytes 44 and 45 with `0xEC`, which decodes to -20 C, until it has real readings. Seen on one unit

@@ -3,6 +3,7 @@ from esphome.components import sensor
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_CURRENT,
+    CONF_DISABLED_BY_DEFAULT,
     CONF_OUTDOOR_TEMPERATURE,
     CONF_POWER,
     CONF_VOLTAGE,
@@ -37,12 +38,15 @@ CONF_LINK_LOSSES = "link_losses"
 
 
 def _counter(icon: str) -> cv.Schema:
+    # Disabled by default in Home Assistant: a counter is for the day the bus misbehaves.
+    # `disabled_by_default: false` on the entity turns that round. Home Assistant reads the
+    # flag when it first registers an entity, so one it already knows stays as it is.
     return sensor.sensor_schema(
         accuracy_decimals=0,
         state_class=STATE_CLASS_TOTAL_INCREASING,
         entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         icon=icon,
-    )
+    ).extend({cv.Optional(CONF_DISABLED_BY_DEFAULT, default=True): cv.boolean})
 
 
 def _temperature(icon: str | None = None) -> cv.Schema:

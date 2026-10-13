@@ -36,10 +36,10 @@ presets and the limits are in [Everyday Control](Everyday-Control#the-climate-en
 | Outdoor temperature | `sensor.air_conditioner_outdoor_temperature` | °C | from the outdoor unit |
 | Coil temperature | `sensor.air_conditioner_coil_temperature` | °C | the outdoor (condenser) coil |
 | Compressor frequency | `sensor.air_conditioner_compressor_frequency` | Hz | how hard the compressor runs |
-| Power | `sensor.air_conditioner_power` | W | an estimate. The bus carries a current reading that is a proxy and not amps, and the firmware computes power from it (`firmware/docs/09-energy-monitoring.md`) |
+| Power | `sensor.air_conditioner_power` | W | an estimate. The bus carries a current reading that is a proxy and not amps, and the firmware computes power from it (`firmware/docs/09-energy-monitoring.md`). Unknown when the estimate is above `max_power` (5 kW unless set), which the firmware takes for a bad byte on the bus |
 | Voltage | `sensor.air_conditioner_voltage` | V | as the unit reports it |
-| Current | `sensor.air_conditioner_current` | A | derived from the power estimate and the voltage |
-| Energy today | `sensor.air_conditioner_energy_today` | kWh | the power estimate summed over the day. The day rolls over on Home Assistant's clock |
+| Current | `sensor.air_conditioner_current` | A | derived from the power estimate and the voltage. Unknown when the power is |
+| Energy today | `sensor.air_conditioner_energy_today` | kWh | the power estimate summed over the day. An unknown power value adds nothing of its own. The day rolls over on Home Assistant's clock |
 | Aux heat relay | `binary_sensor.air_conditioner_aux_heat_relay` | | on while the auxiliary heater runs |
 | Fault | `binary_sensor.air_conditioner_fault` | | on while the unit reports any fault |
 
@@ -60,6 +60,12 @@ presets and the limits are in [Everyday Control](Everyday-Control#the-climate-en
 | Uptime, WiFi signal, Reset reason | | the node itself. The wording of the reset reason is the chip's own and differs between platforms |
 | Start Wi-Fi setup | a button | opens [Wi-Fi setup mode](Wifi-Setup-Mode) |
 | Serial port restarts, Flash layout | | the stock module only ([The Stock Module](Stock-Module-Build#after-the-first-boot)) |
+
+The six bus counters and the per-bit `Fault ...` sensors are disabled by default: a node added
+to Home Assistant shows them under "disabled entities" on the device page, and you enable the
+ones you want there. The summary `Fault` sensor and `AC bus link` are always enabled. Home
+Assistant applies this only when it first sees an entity, so on a node it already knows they
+stay enabled.
 
 The node's own diagnostics and the button come from `packages/node.yaml`, and the stock module's
 two from `packages/amebaz2.yaml`. They are not in the golden file, which covers the A/C's
@@ -108,7 +114,8 @@ A unit was heard to stay silent with the switch off (maintainer's check, 2026-10
 
 ## Bus counters
 
-The counters start at 0 at boot and return to 0 on a restart.
+The counters start at 0 at boot and return to 0 on a restart. On a newly added node they are
+disabled in Home Assistant until you enable them on the device page ([Diagnostics](#diagnostics)).
 
 | Counter | Counts |
 |---|---|

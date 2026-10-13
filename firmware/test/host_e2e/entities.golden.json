@@ -64,7 +64,7 @@
       "name": "Fault condensate tray full",
       "icon": "",
       "entity_category": "diagnostic",
-      "disabled_by_default": false,
+      "disabled_by_default": true,
       "device_class": "problem"
     },
     {
@@ -73,7 +73,7 @@
       "name": "Fault indoor temp sensor",
       "icon": "",
       "entity_category": "diagnostic",
-      "disabled_by_default": false,
+      "disabled_by_default": true,
       "device_class": "problem"
     },
     {
@@ -82,7 +82,7 @@
       "name": "Fault indoor to outdoor comms",
       "icon": "",
       "entity_category": "diagnostic",
-      "disabled_by_default": false,
+      "disabled_by_default": true,
       "device_class": "problem"
     },
     {
@@ -91,7 +91,7 @@
       "name": "Fault outdoor temp sensor",
       "icon": "",
       "entity_category": "diagnostic",
-      "disabled_by_default": false,
+      "disabled_by_default": true,
       "device_class": "problem"
     },
     {
@@ -170,7 +170,7 @@
       "name": "Bus checksum errors",
       "icon": "mdi:alert-circle-outline",
       "entity_category": "diagnostic",
-      "disabled_by_default": false,
+      "disabled_by_default": true,
       "device_class": "",
       "unit_of_measurement": "",
       "accuracy_decimals": 0,
@@ -182,7 +182,7 @@
       "name": "Bus link losses",
       "icon": "mdi:lan-disconnect",
       "entity_category": "diagnostic",
-      "disabled_by_default": false,
+      "disabled_by_default": true,
       "device_class": "",
       "unit_of_measurement": "",
       "accuracy_decimals": 0,
@@ -194,7 +194,7 @@
       "name": "Bus reply timeouts",
       "icon": "mdi:timer-alert-outline",
       "entity_category": "diagnostic",
-      "disabled_by_default": false,
+      "disabled_by_default": true,
       "device_class": "",
       "unit_of_measurement": "",
       "accuracy_decimals": 0,
@@ -218,7 +218,7 @@
       "name": "Command retries",
       "icon": "mdi:repeat",
       "entity_category": "diagnostic",
-      "disabled_by_default": false,
+      "disabled_by_default": true,
       "device_class": "",
       "unit_of_measurement": "",
       "accuracy_decimals": 0,
@@ -278,7 +278,7 @@
       "name": "Failed commands",
       "icon": "mdi:message-off-outline",
       "entity_category": "diagnostic",
-      "disabled_by_default": false,
+      "disabled_by_default": true,
       "device_class": "",
       "unit_of_measurement": "",
       "accuracy_decimals": 0,
@@ -314,7 +314,7 @@
       "name": "Unanswered commands",
       "icon": "mdi:message-alert-outline",
       "entity_category": "diagnostic",
-      "disabled_by_default": false,
+      "disabled_by_default": true,
       "device_class": "",
       "unit_of_measurement": "",
       "accuracy_decimals": 0,

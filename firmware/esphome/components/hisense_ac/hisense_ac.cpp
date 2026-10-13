@@ -238,12 +238,13 @@ void HisenseAC::publish_telemetry_(const AcState &state) {
   this->publish_sensor_(this->coil_temperature_sensor_, outdoor_measured ? state.coil_temp_c : NAN, refresh);
   this->publish_sensor_(this->compressor_frequency_sensor_, state.compressor_freq, refresh);
   // The bus carries a current PROXY, not amps: active power is 4.15 * raw^2, calibrated against
-  // a panel meter. hisense_telemetry.h owns that maths and works in milli-units, so scale back
-  // here. Byte 50 is whole volts as it is.
-  this->publish_sensor_(this->power_sensor_, active_power_mw(state.current_raw) / 1000.0f, refresh);
+  // a panel meter. hisense_telemetry.h owns that maths, and the rule that an estimate above
+  // max_power is unknown, for power and for the current computed from it. Byte 50 is whole volts
+  // as it is.
+  const PowerReading reading = power_reading(state.current_raw, state.voltage_raw, this->max_power_w_);
+  this->publish_sensor_(this->power_sensor_, reading.power_w, refresh);
   this->publish_sensor_(this->voltage_sensor_, state.voltage_raw, refresh);
-  this->publish_sensor_(this->current_sensor_, active_current_ma(state.current_raw, state.voltage_raw) / 1000.0f,
-                        refresh);
+  this->publish_sensor_(this->current_sensor_, reading.current_a, refresh);
   this->publish_bus_counters_(refresh);
 #endif
 #ifdef USE_BINARY_SENSOR

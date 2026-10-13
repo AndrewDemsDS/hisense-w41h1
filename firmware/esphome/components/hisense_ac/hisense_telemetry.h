@@ -1,9 +1,10 @@
 #pragma once
-// Telemetry: the power estimate, when a sensor value is worth publishing, and the outdoor
-// temperature placeholder. Pure, no ESPHome types.
+// Telemetry: the power estimate and its plausibility limit, when a sensor value is worth
+// publishing, and the outdoor temperature placeholder. Pure, no ESPHome types.
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace esphome::hisense_ac {
 
@@ -12,20 +13,45 @@ namespace esphome::hisense_ac {
 // is supply voltage in whole volts, about 6% low.
 static constexpr uint64_t POWER_MW_PER_COUNT2 = 4150;  // milliwatts per byte-55 count squared
 static constexpr int64_t POWER_PF_PERMIL = 950;        // assumed inverter power factor * 1000
-// A bound on the arithmetic, not a plausibility filter: 50 kW is about 14 times what a split unit
-// draws, and every byte value from 110 up publishes exactly this.
-static constexpr int64_t POWER_MW_MAX = 50000000;
 
-inline int64_t active_power_mw(uint8_t raw55) {
-  auto p = static_cast<int64_t>(POWER_MW_PER_COUNT2 * raw55 * raw55);
-  return p > POWER_MW_MAX ? POWER_MW_MAX : p;
-}
+// The estimate as the byte gives it, up to 269.9 kW at raw 255. Whether that is a reading is
+// power_reading's decision, below.
+inline int64_t active_power_mw(uint8_t raw55) { return static_cast<int64_t>(POWER_MW_PER_COUNT2 * raw55 * raw55); }
 
 // I = P / (V * PF), back-computed since byte 55 is a power proxy. 0 when the voltage is unknown.
 inline int64_t active_current_ma(uint8_t raw55, uint8_t raw50) {
   if (raw50 == 0)
     return 0;
   return (active_power_mw(raw55) * 1000) / (static_cast<int64_t>(raw50) * POWER_PF_PERMIL);
+}
+
+// ---- Power plausibility -------------------------------------------------------------------------
+// Nothing but the frame checksum guards byte 55, and the estimate squares it: a wrong byte is a
+// confident reading of tens of kilowatts, and total_daily_energy integrates whatever the power
+// sensor publishes. An estimate above the limit is therefore not a reading. Power goes out as
+// unknown (NaN), and so does current, which is computed from it.
+//
+// The limit is the hub's `max_power` option, in whole watts. The default is generous for a
+// single-split residential unit: the highest calibration point is 934 W (raw 15,
+// firmware/docs/09-energy-monitoring.md). The schema takes nothing above POWER_LIMIT_W_MAX, which
+// every byte value from 110 up exceeds (test_esphome_tables.py holds the two Python numbers equal
+// to these).
+static constexpr uint32_t POWER_LIMIT_W_DEFAULT = 5000;
+static constexpr uint32_t POWER_LIMIT_W_MAX = 50000;
+
+struct PowerReading {
+  float power_w;    // NaN when the estimate is above the limit
+  float current_a;  // NaN with it
+};
+
+inline PowerReading power_reading(uint8_t raw55, uint8_t raw50, uint32_t limit_w) {
+  const int64_t power_mw = active_power_mw(raw55);
+  if (power_mw > static_cast<int64_t>(limit_w) * 1000) {
+    const float unknown = std::numeric_limits<float>::quiet_NaN();
+    return {unknown, unknown};
+  }
+  // The maths above is in milli-units. The sensors are watts and amps.
+  return {power_mw / 1000.0f, active_current_ma(raw55, raw50) / 1000.0f};
 }
 
 // ---- Telemetry pacing ---------------------------------------------------------------------------
