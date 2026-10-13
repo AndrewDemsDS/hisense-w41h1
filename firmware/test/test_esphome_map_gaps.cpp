@@ -483,30 +483,33 @@ static void test_special_plan() {
       }
     }
   }
-  // Sleep off, a byte 33 write, a mute write: three at most. PRESET_PLAN_MAX (5) has room.
-  CHECK(longest == 3, "the longest plan is three writes (got %zu)", longest);
-  // DEFECT (reported, not fixed here). With eco and turbo both reported (the unit shows the pair
-  // for a second or two while it arbitrates), a plan to a preset without either sends only the
-  // eco clear (byte 33 = 0x10). Per the Feature enum that value does not switch turbo off (0x04
-  // does), so by the plan's own model (special_apply) turbo stays on.
-  KNOWN_DEFECT(missed == 0,
-               "%d plans do not reach their target, e.g. eco=%d turbo=%d mute=%d sleep=%u to eco=%d turbo=%d mute=%d "
-               "sleep=%u",
-               missed, miss_now.eco, miss_now.turbo, miss_now.mute, miss_now.sleep, miss_want.eco, miss_want.turbo,
-               miss_want.mute, miss_want.sleep);
-  // The plans that miss are exactly those from eco + turbo to a target with neither.
-  int from_pair = 0;
-  for (int mute = 0; mute < 2; mute++)
-    for (uint8_t sleep = 0; sleep <= 4; sleep++)
-      for (uint8_t target = 0; target < H::PRESET_COUNT; target++)
-        if (!H::PRESETS[target].eco && !H::PRESETS[target].turbo)
-          from_pair++;
-  CHECK(missed == from_pair, "all of them start from eco + turbo and aim at neither (%d of %d)", missed, from_pair);
+  // Sleep off, the two byte 33 clears, a mute write: four at most. PRESET_PLAN_MAX (5) has room.
+  CHECK(longest == 4, "the longest plan is four writes (got %zu)", longest);
+  // Was a DEFECT, fixed. With eco and turbo both reported (the unit shows the pair for a second or
+  // two while it arbitrates), a plan to a preset without either sent only the eco clear (byte 33 =
+  // 0x10). Per the Feature enum that value does not switch turbo off (0x04 does), so turbo stayed
+  // on: 60 of the 2,600 plans, all from that start. The plan now sends both clears.
+  CHECK(missed == 0,
+        "%d plans do not reach their target, e.g. eco=%d turbo=%d mute=%d sleep=%u to eco=%d turbo=%d mute=%d "
+        "sleep=%u",
+        missed, miss_now.eco, miss_now.turbo, miss_now.mute, miss_now.sleep, miss_want.eco, miss_want.turbo,
+        miss_want.mute, miss_want.sleep);
 
   H::SpecialOp ops[H::PRESET_PLAN_MAX];
   CHECK(H::preset_plan(special(true, false, true, 2), H::PRESET_COUNT, ops) == 0 &&
             H::preset_plan(special(true, false, true, 2), 255, ops) == 0,
         "a preset index past the table plans nothing");
+
+  // Eco and turbo both on, to neither: the eco clear, then the turbo clear.
+  size_t pair = H::special_plan(special(true, true, false, 0), NO_SPECIAL, ops);
+  CHECK(pair == 2 && ops[0].kind == H::SPECIAL_OP_FEATURE && ops[0].value == H::FEATURE_ECO_OFF &&
+            ops[1].kind == H::SPECIAL_OP_FEATURE && ops[1].value == H::FEATURE_NONE,
+        "eco + turbo to none: both clears (%zu writes)", pair);
+  // To one of the two it stays one write: setting either clears the other.
+  pair = H::special_plan(special(true, true, false, 0), special(true, false, false, 0), ops);
+  CHECK(pair == 1 && ops[0].value == H::FEATURE_ECO, "eco + turbo to eco: one write");
+  pair = H::special_plan(special(true, true, false, 0), special(false, true, false, 0), ops);
+  CHECK(pair == 1 && ops[0].value == H::FEATURE_TURBO, "eco + turbo to turbo: one write");
 
   // The single writes, value by value.
   size_t n = H::special_plan(special(true, false, false, 0), NO_SPECIAL, ops);

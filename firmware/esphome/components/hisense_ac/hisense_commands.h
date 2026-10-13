@@ -174,6 +174,8 @@ class CommandTracker {
   /// against what the unit is expected to be once already-sent ops land. False when it was not
   /// taken.
   bool request_preset(uint8_t target, uint32_t now) {
+    if (target >= PRESET_COUNT)
+      return false;  // no such row: nothing is planned, and nobody indexes PRESETS with it
     if (this->refused_link_down_())
       return false;
     // Plan from where the unit will be once everything already SENT lands. Queued-but-unsent ops

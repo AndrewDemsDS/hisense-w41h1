@@ -703,6 +703,13 @@ struct Rig : H::CommandSink {
   }
   int refuse = 0;  // sends the bus will not queue from now on
   int sends = 0;   // frames handed to the bus, heard by the unit or not
+  int preset_events = 0;
+  void on_command_event(H::CommandEvent event, uint16_t row, uint16_t) override {
+    if (event == H::CommandEvent::PRESET_QUEUED) {
+      preset_events++;
+      CHECK(row < H::PRESET_COUNT, "the row a preset event names is in the table (%u)", row);
+    }
+  }
   bool lost_edge = false;
   bool link_up = true;
   H::UnitView shown;  // what the entities show
@@ -1065,6 +1072,15 @@ static void test_scenarios() {
     CHECK(t.send_user_power_off(1000) && sink.sends == 1, "off is sent before the first status frame");
     H::AcCommand wanted = t.cmd();
     CHECK(!t.send_user_command(wanted, H::CONFIRM_MODE, false, 1000), "a combined frame is not");
+  }
+  {  // A preset row past the table is refused before anything looks it up.
+    Unit u = running();
+    u.v.special.eco = true;
+    Rig h(&u);
+    h.user_special({H::SPECIAL_OP_MUTE, 1});
+    CHECK(!h.user_preset((uint8_t) H::PRESET_COUNT) && !h.user_preset(255), "refused");
+    CHECK(h.t.special_queued() == 1 && h.preset_events == 0, "the queue is left alone and no preset is announced");
+    CHECK(h.user_preset(H::PRESET_NONE) && h.preset_events == 1, "a real row is planned and announced once");
   }
   {  // A user command the bus does not queue changes nothing.
     Unit u = running();

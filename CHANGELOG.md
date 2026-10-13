@@ -35,6 +35,9 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   command shadow takes the status frame's own setpoint byte. It used to go through whole Celsius
   and back, which changed 13 of the 30 values (62 F became 63), and the next fan, swing or mode
   change from Home Assistant sent the changed value. Celsius panels are unaffected.
+- **A preset chosen while the unit reports eco and turbo together clears both.** A plan to a
+  preset with neither sent only the eco clear and left turbo on. It now sends the eco clear and
+  then the turbo clear, 10 s apart like every special-mode write.
 
 ### Board files, the stock-module component and CI (2026-10-12)
 - **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air

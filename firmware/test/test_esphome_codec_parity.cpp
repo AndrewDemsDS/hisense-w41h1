@@ -26,6 +26,9 @@
 //     value (H::command_enums_valid), where the original packs whatever it is given, and the
 //     port's build_single_field refuses an offset outside the body (16 to 45), where the
 //     original's static helper has no guard. Inside those ranges the bytes are the same.
+//  4. Eco and turbo both on, to a preset with neither. The original's plan sends the eco clear
+//     alone, which by its own special_apply leaves turbo on. The port sends the turbo clear
+//     (FEATURE_NONE) right after it. Every other plan is the same write for write.
 
 #include <cmath>
 #include <cstdint>
@@ -647,9 +650,19 @@ static void test_presets() {
         H::SpecialOp no[H::PRESET_PLAN_MAX];
         uint8_t co = esphome_preset_plan(&os, (uint8_t) target, oo);
         size_t cn = H::preset_plan(ns, (uint8_t) target, no);
-        bool same = co == cn;
+        // Intended difference 4: the original's plan with the turbo clear put in after the eco clear.
+        HisenseSpecialOp want[H::PRESET_PLAN_MAX];
+        size_t cw = 0;
+        const bool both_to_neither = os.eco && os.turbo && target < (int) H::PRESET_COUNT && !H::PRESETS[target].eco &&
+                                     !H::PRESETS[target].turbo;
+        for (size_t k = 0; k < co; k++) {
+          want[cw++] = oo[k];
+          if (both_to_neither && oo[k].kind == H::SPECIAL_OP_FEATURE && oo[k].value == H::FEATURE_ECO_OFF)
+            want[cw++] = {(uint8_t) H::SPECIAL_OP_FEATURE, (uint8_t) H::FEATURE_NONE};
+        }
+        bool same = cw == cn && (cw == co) != both_to_neither;
         for (size_t k = 0; same && k < cn; k++)
-          same = oo[k].kind == no[k].kind && oo[k].value == no[k].value;
+          same = want[k].kind == no[k].kind && want[k].value == no[k].value;
         CHECK(same, "preset_plan bits=%d sleep=%d target=%d", bits, sleep, target);
       }
       for (int kind = 0; kind < 4; kind++) {

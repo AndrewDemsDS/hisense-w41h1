@@ -131,7 +131,7 @@ static constexpr uint32_t SPECIAL_SETTLE_MS = 10000;
 // Ordered writes taking the unit from `now` to the special-mode state `want`; only writes that
 // change something.
 //   1. sleep off first when the target has none (quiet and sleep drop whichever came first).
-//   2. clears: byte 33 to neutral (ECO_OFF if eco was on), then mute off.
+//   2. clears: byte 33 (ECO_OFF if eco was on, NONE if turbo was, both if both), then mute off.
 //   3. sets: byte 33 to ECO or TURBO (one write switches between them), then mute on.
 //   4. sleep profile last, and re-sent after any byte 33 write: the combined frame re-asserts the
 //      fan while a profile owns it (measured: eco then sleep keeps both, sleep then eco does not).
@@ -142,8 +142,15 @@ inline size_t special_plan(const SpecialState &now, const SpecialState &want, Sp
 
   if (want.sleep == 0 && now.sleep != 0)
     out[n++] = {SPECIAL_OP_SLEEP, 0};
-  if (feature_change && !feature_set)
-    out[n++] = {SPECIAL_OP_FEATURE, static_cast<uint8_t>(now.eco ? FEATURE_ECO_OFF : FEATURE_NONE)};
+  if (feature_change && !feature_set) {
+    // Each has its own clear: ECO_OFF does not switch turbo off and NONE does not switch eco off
+    // (see Feature). The unit reports both for a second or two while it arbitrates an illegal
+    // pair, and a plan made then has to clear both or turbo stays on.
+    if (now.eco)
+      out[n++] = {SPECIAL_OP_FEATURE, FEATURE_ECO_OFF};
+    if (now.turbo)
+      out[n++] = {SPECIAL_OP_FEATURE, FEATURE_NONE};
+  }
   if (now.mute && !want.mute)
     out[n++] = {SPECIAL_OP_MUTE, 0};
   if (feature_set)
