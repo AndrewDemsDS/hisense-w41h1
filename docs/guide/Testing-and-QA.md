@@ -18,6 +18,7 @@ sniffed frames are the ground truth.
 |---|---|---|---|---|
 | 1 | Host unit tests | the codec, the mapping, the bus scheduler and the retry rules produce and accept the right bytes | no | `firmware/test/test_*.cpp` |
 | 2 | Device simulation | the command and status loop against a modeled A/C | no | `firmware/test/virtual_ac.py` + sniffed golden frames |
+| 2b | Host end-to-end | the hub and the entities themselves: what Home Assistant sees and which bytes reach the A/C | no | `firmware/test/host_e2e/` |
 | 3 | Build checks | the YAML, every platform schema, and a real compile for the ESP32 boards and the stock module | no | `esphome config`, `esphome compile` in CI |
 | 4 | Bench | the flashed node against the simulator on a USB adapter | a board | `dev.py bench esphome` |
 | 5 | HIL, hardware in the loop | timing, RF, the real A/C | yes | `hil_esphome_actuation.py`, a tap on the bus |
@@ -45,8 +46,9 @@ it and then `esphome config`.
 | 3 | `test_image_chain.py` | the AmebaZ2 image signing chain (`amebaz2_image.py`): walk, verify, re-sign, and the stale-trailer bug that bricked a unit |
 | 4 | `test_dev_release.py` | `dev.py`: the conversion image re-signing, provider staging rules, the slot table against the layout files, the command line |
 
-One caveat on Layer 1g: the ESPHome hub cannot be built on a host, so the test repeats its glue.
-That copy can drift from the hub.
+One caveat on Layer 1g: the test does not include the hub, it repeats the hub's glue, and that
+copy can drift. The [host end-to-end test](#the-host-end-to-end-test) runs the same cases through
+the hub itself.
 
 Run a single layer by compiling its `.cpp` directly, from `firmware/test/`:
 
@@ -78,6 +80,60 @@ line whenever a command changes its state. Status polls are answered silently.
 
 `dev.py bench esphome` flashes a board and runs it against the simulator. Wiring and passing
 output live in one place: [Build, Flash and Test](Build-Flash-Test#bench-stage-no-ac).
+
+## The host end-to-end test
+
+`firmware/test/host_e2e/` runs the component as it ships, hub and entities included, with no
+board. `host.yaml` includes `packages/hisense-ac.yaml` unchanged and builds it for ESPHome's `host`
+platform: a Linux program whose UART is a pseudo-terminal. `run.py` puts the virtual A/C on the
+other end, connects over the native API with `aioesphomeapi` as Home Assistant does, and checks
+two things for every action: what the entities show, and which bytes reached the A/C.
+
+```
+python3 firmware/test/host_e2e/run.py              # build, then the default scenarios
+python3 firmware/test/host_e2e/run.py --full       # the long ones too
+python3 firmware/test/host_e2e/run.py --list       # every scenario and what it takes
+python3 firmware/test/host_e2e/run.py holdoff      # one scenario
+python3 firmware/test/host_e2e/run.py --coverage   # which lines and functions the scenarios reach
+python3 firmware/test/host_e2e/run.py --tidy       # clang-tidy over the hub and the entities, no scenarios
+```
+
+`--tidy` exists because `cpp-lint.sh` cannot reach those files: they need ESPHome's headers, and
+this build has a compile database for them. CI prints its findings without failing on them.
+
+It needs `esphome` and `g++`. The API client comes with esphome, so the script runs itself under
+the Python esphome is installed in. Without esphome it prints that it was skipped. The first
+build downloads PlatformIO's `native` platform, which is why this is not part of `run_tests.sh`.
+CI runs it in the `esphome-host-e2e` job of the QA workflow whenever the firmware or the test
+changed, and the nightly workflow runs `--full`.
+
+| Scenario | What it holds down |
+|---|---|
+| `boot` | the handshake, the device type learned and stamped into every frame, a state from every entity, and the entity list against `entities.golden.json` |
+| `telemetry`, `faults` | sensors, the -20 C placeholder, the climate action, fault and capability bits |
+| `climate_modes`, `climate_values`, `fahrenheit` | the command frame for every mode, setpoint (rounding, limits), fan step and swing, byte for byte |
+| `switch_*`, `presets` | eco, turbo, quiet, sleep, display and beeper, the 10 s pacing between special-mode frames |
+| `holdoff` | a status that contradicts a command does not move the entity for 4 s |
+| `retry_main`, `retry_special`, `deaf_unit` | a command the unit ignores or does not hear: the re-sends, then the give-up and the entity reverting |
+| `queue_full`, `link_never_up`, `link_loss` | dropped and refused frames, a silent unit, the link sensor and the counters |
+| `setup_request` | the remote's setup gesture fires `on_setup_request` once, `set_setup_indicator` shows in the heartbeat |
+| `damaged_traffic` | bad checksums, truncated replies and noise are counted and never shown |
+| `presets_all`, `deaf_unit_forever`, `periodic` | `--full` only: every preset, nine frames to a unit that never answers, the once-a-minute refresh |
+
+Things to know before changing it:
+
+- **The timers are real.** The hub runs its 1 s bus cycle, 4 s hold-off and 10 s special-mode
+  pacing on the wall clock, and the host platform has no clock to turn forward. Each scenario has
+  its own program, pseudo-terminal, API port and temporary directory, so they run side by side:
+  four of them run at a time (`--jobs`). The default set takes about two minutes, `--full` about three.
+- **The entity list is a golden file.** A changed name, object id, unit, device class, category,
+  icon or climate trait fails `boot`. After a change that is meant, run
+  `run.py --update-golden boot` and commit `entities.golden.json` with it.
+- **Known failures.** A defect the test found or reproduces is a `known_failure(...)` in
+  `scenarios.py`: green while the defect is there, red on the day it is fixed, with a message
+  that says to turn it into a plain check.
+- **The A/C** is `ac_model.py`: `virtual_ac.py` plus what a test has to switch on (a silent or
+  deaf unit, damaged replies, the setup request bits, fault bytes).
 
 ## C/C++ lint
 
@@ -142,6 +198,7 @@ clang-tidy) and only warns if the pinned tools are not installed yet.
   running when it connects is taken to be in use and is not touched without `--allow-running`.
 - **A tap on the bus**: `reverse-engineering/tools/decode_ac_frames.py --port <tap>` decodes what
   is on the wire, and `firmware/esp32-recon/` is a console on the bus for byte-level questions.
-- **Standing rule for glue code**: the ESPHome hub cannot run on the host, so any glue *decision*
-  goes into a pure, tested function in `hisense_map.h`. A feedback-loop bug once escaped review
-  because it lived in a layer no test could reach.
+- **Standing rule for glue code**: the ESPHome hub only runs in the host end-to-end test, on real
+  timers, where one case costs seconds. So any glue *decision* goes into a pure, tested function
+  in `hisense_map.h`. A feedback-loop bug once escaped review because it lived in a layer no test
+  could reach.
