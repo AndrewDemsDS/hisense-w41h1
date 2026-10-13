@@ -3,8 +3,8 @@
 built for ESPHome's `host` platform, against a model of the A/C on a pseudo-terminal, driven over
 the native API as Home Assistant drives a node.
 
-    python3 firmware/test/host_e2e/run.py              build, then the default scenarios (about a minute)
-    python3 firmware/test/host_e2e/run.py --full       adds the long ones (about three minutes)
+    python3 firmware/test/host_e2e/run.py              build, then the default scenarios (about two minutes)
+    python3 firmware/test/host_e2e/run.py --full       adds the long ones (about five minutes in all)
     python3 firmware/test/host_e2e/run.py --list       the scenarios and what each takes
     python3 firmware/test/host_e2e/run.py boot faults  only these
     python3 firmware/test/host_e2e/run.py --no-build   use the binary from the last build
@@ -14,7 +14,8 @@ the native API as Home Assistant drives a node.
 What is built is host.yaml: packages/hisense-ac.yaml unmodified, on a UART that is a device path.
 The scenarios are in scenarios.py and the A/C in ac_model.py (firmware/test/virtual_ac.py plus the
 faults a test needs). Each scenario starts its own binary on its own pseudo-terminal, API port
-(picked free, on 127.0.0.1) and temporary directory, so they run side by side.
+(picked free, on 127.0.0.1) and temporary directory, so they run side by side, four at a time
+unless --jobs says otherwise.
 
 Needs esphome and a C++ compiler. ESPHOME names the esphome command (default: the one on PATH);
 the Python that runs it also has aioesphomeapi, and this script re-runs itself under it. Without
@@ -36,6 +37,8 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 COMPONENT = ROOT / "firmware" / "esphome" / "components" / "hisense_ac"
+BUILD_TIMEOUT = 1800  # seconds for `esphome compile`
+DEFAULT_JOBS = 4  # scenarios, and so host programs, at a time
 NODE_NAME = "hisense-ac"  # esphome: name: in host.yaml
 GLUE = ("hisense_ac.cpp", "hisense_ac.h", "hisense_climate.cpp", "hisense_switch.cpp", "hisense_select.cpp")
 
@@ -182,11 +185,19 @@ def build(args, esphome: str) -> pathlib.Path:
         return binary
     started = time.monotonic()
     env = {**CLEAN_ENV, "ESPHOME_DATA_DIR": str(data_dir(args))}
-    proc = subprocess.run([esphome, "compile", config], cwd=HERE, env=env, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True)
-    if proc.returncode != 0 or not binary.exists():
-        print(proc.stdout[-6000:])
-        sys.exit(f"== host e2e FAILED: `esphome compile {config}` ended with {proc.returncode} ==")
+    data_dir(args).mkdir(parents=True, exist_ok=True)
+    log = data_dir(args) / "compile.log"
+    with open(log, "wb") as out:
+        try:
+            code = subprocess.run([esphome, "compile", config], cwd=HERE, env=env, stdout=out,
+                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=BUILD_TIMEOUT).returncode
+        except subprocess.TimeoutExpired:
+            code = f"no result in {BUILD_TIMEOUT} s"
+    if code != 0 or not binary.exists():
+        with open(log, "rb") as f:
+            f.seek(max(0, log.stat().st_size - 6000))
+            print(f.read().decode(errors="replace"))
+        sys.exit(f"== host e2e FAILED: `esphome compile {config}` ended with {code} ==")
     print(f"built {config} in {time.monotonic() - started:.0f} s", flush=True)
     return binary
 
@@ -206,13 +217,15 @@ def coverage_report(args):
     if not gcda:
         print("  no coverage data was written")
         return
-    proc = subprocess.run(["gcov", "--json-format", "--stdout", "--demangled-names", *map(str, gcda)], cwd=build_dir,
-                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    report = data_dir(args) / "gcov.jsonl"
+    with open(report, "wb") as out:
+        subprocess.run(["gcov", "--json-format", "--stdout", "--demangled-names", *map(str, gcda)], cwd=build_dir,
+                       stdout=out, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=300)
     # A header is compiled into several objects: a line or a function counts as reached when any
     # of them ran it.
     lines: dict[str, dict[int, int]] = {}
     functions: dict[str, dict[str, int]] = {}
-    for doc in proc.stdout.splitlines():
+    for doc in open(report, encoding="utf-8", errors="replace"):  # one document per object, read one at a time
         if not doc.startswith("{"):
             continue
         for f in json.loads(doc).get("files", []):
@@ -250,7 +263,8 @@ def main() -> int:
     ap.add_argument("--no-build", action="store_true", help="use the binary of the last build")
     ap.add_argument("--build-dir", type=pathlib.Path, default=HERE / "build",
                     help="where esphome builds (default: build/ beside this file, which git ignores)")
-    ap.add_argument("--jobs", type=int, default=0, help="scenarios at a time (default: all of them)")
+    ap.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
+                    help=f"scenarios at a time (default: {DEFAULT_JOBS}; 0: all of them at once)")
     ap.add_argument("--keep", action="store_true", help="keep the temporary directory with every node's log")
     ap.add_argument("--coverage", action="store_true", help="build host-coverage.yaml and report what was reached")
     ap.add_argument("--update-golden", action="store_true", help="rewrite entities.golden.json from this build (run boot)")
@@ -268,6 +282,8 @@ def main() -> int:
         sys.exit(f"no such scenario: {', '.join(unknown)} (see --list)")
     selected = [known[n] for n in args.names] if args.names else [s for s in scenarios.SCENARIOS if args.full or not s.full]
     args.jobs = args.jobs or len(selected)
+    # The longest first, so that the last slot to free up is not left with the longest scenario.
+    selected.sort(key=lambda sc: -sc.seconds)
 
     esphome = esphome_command()
     if esphome is None and not args.no_build:

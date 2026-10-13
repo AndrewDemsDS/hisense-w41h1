@@ -70,7 +70,7 @@ hub and fails when the behaviour moves.
 What it costs is time. The host platform has no clock to turn forward, and the hub's rules are in
 seconds (a 4 s hold-off, 10 s between special-mode writes, three sends before a command is given
 up). The scenarios run side by side, each on its own node, which brings the default set to about
-a minute. That is the reason the standing rule below still holds: a decision tested here takes
+two minutes. That is the reason the standing rule below still holds: a decision tested here takes
 seconds per case, the same decision as a pure function takes microseconds and can be tested
 exhaustively.
 

@@ -496,8 +496,8 @@ jobs:
   # Assistant does: every entity, every command frame, the hold-off, the re-sends, link loss, the
   # setup request, damaged replies. This is the only test that runs the hub and the entities
   # (hisense_ac.cpp, hisense_climate.cpp, hisense_switch.cpp, hisense_select.cpp); the host tests
-  # compile the pure layers under them. The scenarios run side by side in about a minute and a
-  # half, on the hub's real timers. The long ones (--full) run in nightly.yaml.
+  # compile the pure layers under them. The scenarios run four at a time, in about
+  # two minutes, on the hub's real timers. The long ones (--full) run in nightly.yaml.
   esphome-host-e2e:
     needs: changes
     if: ${{ needs.changes.outputs.e2e == 'true' }}

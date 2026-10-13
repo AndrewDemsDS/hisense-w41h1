@@ -27,6 +27,9 @@ from ac_model import CLASS_COMMAND, Bus, Unit, seal, unstuff
 
 # Every host binary started and not yet reaped, so that no exit path leaves one behind.
 _LIVE: set[subprocess.Popen] = set()
+# Bounds on what one node's output may take: on disk, and of the searchable part in memory.
+LOG_FILE_MAX = 64 * 1024 * 1024
+LOG_MEMORY_MAX = 4 * 1024 * 1024
 _ANSI = re.compile(rb"\x1b\[[0-9;]*m")
 
 
@@ -183,6 +186,8 @@ class Node:
         self.log_master, self.log_slave = os.openpty()
         os.set_blocking(self.log_master, False)
         self._log = bytearray()
+        self._log_partial = b""
+        self._log_written = 0
         self._log_file = None
         self.info: dict[str, object] = {}  # "domain.object_id" -> entity info
         self.by_key: dict[int, str] = {}
@@ -258,9 +263,19 @@ class Node:
             data = os.read(self.log_master, 65536)
         except (BlockingIOError, OSError):
             return
-        data = _ANSI.sub(b"", data).replace(b"\r", b"")
-        self._log += data
-        self._log_file.write(data)
+        data = self._log_partial + _ANSI.sub(b"", data).replace(b"\r", b"")
+        whole, _, self._log_partial = data.rpartition(b"\n")
+        if not whole:
+            return
+        whole += b"\n"
+        # Everything goes to the file, up to a limit. In memory only what a scenario searches: at
+        # VERY_VERBOSE the raw frames and the DE pin are most of the output, and nothing reads them.
+        if self._log_written < LOG_FILE_MAX:
+            self._log_file.write(whole)
+            self._log_written += len(whole)
+        if len(self._log) < LOG_MEMORY_MAX:
+            self._log += b"".join(line for line in whole.splitlines(keepends=True)
+                                  if b"[VV]" not in line and b"[host:" not in line and b"][V][" not in line)
 
     def _on_state(self, state):
         ident = self.by_key.get(state.key)
@@ -364,16 +379,14 @@ class Node:
         return self.info[ident].key
 
     def log_text(self) -> str:
+        """The node's log without the VERBOSE and VERY_VERBOSE lines; node.log has all of it."""
         return self._log.decode(errors="replace")
 
     def log_count(self, needle: str) -> int:
         return self.log_text().count(needle)
 
     def log_tail(self, lines: int = 25) -> str:
-        """The last lines that say something: without the raw frames and the DE pin."""
-        said = [line for line in self.log_text().splitlines() if "[VV]" not in line and "[host:" not in line
-                and "][V][hisense_ac" not in line]
-        return "\n".join("      | " + line for line in said[-lines:])
+        return "\n".join("      | " + line for line in self.log_text().splitlines()[-lines:])
 
     # -- acting, as Home Assistant does --
     def climate_command(self, **kwargs):
