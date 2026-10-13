@@ -121,7 +121,7 @@ Things to know before changing it:
 - **The timers are real.** The hub runs its 1 s bus cycle, 4 s hold-off and 10 s special-mode
   pacing on the wall clock, and the host platform has no clock to turn forward. Each scenario has
   its own program, pseudo-terminal, API port and temporary directory, so they run side by side:
-  four of them run at a time (`--jobs`). The default set takes about two minutes, `--full` about five.
+  four of them run at a time (`--jobs`). The default set takes about two minutes, `--full` about three.
 - **The entity list is a golden file.** A changed name, object id, unit, device class, category,
   icon or climate trait fails `boot`. After a change that is meant, run
   `run.py --update-golden boot` and commit `entities.golden.json` with it.

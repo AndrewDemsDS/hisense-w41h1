@@ -4,7 +4,7 @@ built for ESPHome's `host` platform, against a model of the A/C on a pseudo-term
 the native API as Home Assistant drives a node.
 
     python3 firmware/test/host_e2e/run.py              build, then the default scenarios (about two minutes)
-    python3 firmware/test/host_e2e/run.py --full       adds the long ones (about five minutes in all)
+    python3 firmware/test/host_e2e/run.py --full       adds the long ones (about three minutes)
     python3 firmware/test/host_e2e/run.py --list       the scenarios and what each takes
     python3 firmware/test/host_e2e/run.py boot faults  only these
     python3 firmware/test/host_e2e/run.py --no-build   use the binary from the last build

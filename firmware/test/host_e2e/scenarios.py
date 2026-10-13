@@ -746,10 +746,11 @@ async def retry_unrelated_frame(ctx):
     r.check(len(frames) >= 3 and frames[1].frame == display and frames[2].frame == display,
             "the display frame goes out, and the re-send of the setpoint follows", f"{len(frames)} frame(s)")
     if len(frames) >= 3:
+        # Was a known failure (static-analysis W3) until the command tracker credited a finished
+        # frame to its own command only: the re-send used to come 3.9 s after the display frame.
         gap = frames[2].at - first
-        ctx.r.known_failure(gap < 5.5, f"the re-send comes 3.9 s after the command, not after the display frame "
-                            f"(it came after {gap:.1f} s)", "static-analysis W3: on_bus_command credits every waiting "
-                            "command with any frame that left the queue")
+        r.check(3.9 <= gap < 5.5, "the re-send comes 3.9 s and one status after the command, whatever else was sent",
+                f"{gap:.1f} s")
 
 
 @scenario(24)
@@ -853,12 +854,11 @@ async def queue_full(ctx):
     status = polls(node, CLASS_STATUS, 0, mark)
     gaps = [b.at - a.at for a, b in zip(status, status[1:])]
     r.check(max(gaps) <= 1.6, "the status poll kept its pace while the queue drained", f"longest gap {max(gaps):.2f} s")
-    shown_last = [s.target_temperature for t, k, s in node.history if k == CLIMATE][-3:]
-    in_between = {s.target_temperature for t, k, s in node.history if k == CLIMATE}
-    r.known_failure(asked[-1] == float(sent[-1]) or asked[-1] not in in_between,
-                    f"a target whose frame was dropped is not shown (the entity showed {asked[-1]:g}, "
-                    f"the last frame sent carried {sent[-1]}; it ended on {shown_last[-1]:g})",
-                    "static-analysis W4: the climate entity publishes a request whose frame was not queued")
+    # Was a known failure (static-analysis W4) until a request whose frame could not be queued
+    # stopped being published: the entity used to show the last target asked for, for four seconds.
+    shown = [s.target_temperature for t, k, s in node.history if k == CLIMATE and not math.isnan(s.target_temperature)]
+    never_sent = sorted(set(shown) - {float(v) for v in sent} - {24.0})
+    r.check(not never_sent, "the entity never showed a target whose frame was dropped", str(never_sent))
 
 
 # ---- The link ----------------------------------------------------------------------------------------
@@ -889,8 +889,9 @@ async def link_never_up(ctx):
     r.equal(command_frames(node, mark), [], "eco on before the first status: nothing is sent")
     r.check("Command not sent: no status from the unit yet" in node.log_text(), "the refused frame is logged")
     r.known_failure(node.value("switch.eco") is not True, "a switch whose frame was refused does not show on",
-                    "static-analysis W4: the special-mode queue consumes an op whose send was refused and the "
-                    "switch publishes the request")
+                    "what is left of static-analysis W4: before the first link verdict after boot the command "
+                    "tracker takes a special-mode write (refused_link_down_ is false), the switch publishes it, "
+                    "and the frame is then not sent for want of a status (SPECIAL_NOT_SENT)")
 
     # Switching off needs no shadow, so it is let through.
     await act_and_expect(ctx, node, "mode off before the first status", lambda: node.climate_command(mode=Mode.OFF),
@@ -976,18 +977,19 @@ async def link_loss(ctx):
     mark = node.mark()
     node.climate_command(target_temperature=21.0)
     await asyncio.sleep(2.5)
-    # Not checks: a fix may refuse the command outright or send it once and leave it at that.
-    r.note(f"a target asked for while the link is down: {len(node.bus.commands(mark))} frame(s) went into the "
-           f"silence, the entity shows {c().target_temperature:g}")
+    # Was a known failure (bus-stress D2) until such a command was refused: it used to go out once
+    # into the silence and be sent again, and taken, when the unit returned.
+    r.equal((len(node.bus.commands(mark)), c().target_temperature), (0, 24.0),
+            "a target asked for while the link is down is refused: nothing is sent, the entity is left alone")
+    r.check("Command refused: the unit is not answering" in node.log_text(), "the refusal is logged")
+    node.switch("eco", True)
+    await asyncio.sleep(1.0)
+    r.equal(node.value("switch.eco"), False, "a switch flipped while the link is down is refused as well")
     unit.silent = False
     r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is True, 5), "the unit is back")
-    await node.wait(lambda: unit.setpoint == 21, 9)
-    r.known_failure(unit.setpoint == 24,
-                    f"a command issued while the link was down is not carried out when the unit returns "
-                    f"(the unit is on {unit.setpoint} after {len(node.bus.commands(mark))} frame(s))",
-                    "bus-stress D2: pending commands are dropped on the link-lost edge only")
-    r.check(await node.wait(lambda: c().target_temperature == float(unit.setpoint), 8),
-            "in the end the entity shows what the unit is on")
+    await asyncio.sleep(8.0)
+    r.equal((unit.setpoint, unit.eco, len(node.bus.commands(mark)), c().target_temperature), (24, False, 0, 24.0),
+            "and nothing asked for during the outage is carried out after it")
     await expect_counters(ctx, node, {"bus_link_losses": 2}, "two link losses in all")
 
 
