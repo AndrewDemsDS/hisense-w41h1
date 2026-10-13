@@ -316,7 +316,7 @@ jobs:
       # nothing. (The key used to be the run id: each push to main saved the whole tree again.)
       - name: Restore the PlatformIO tree
         id: tree
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
           key: pio-amebaz2-tree-${{ env.ESPHOME_VERSION }}
@@ -326,7 +326,7 @@ jobs:
 
       - name: Restore the build cache
         id: objects
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/pio-objects
           key: pio-amebaz2-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1-amebaz2-*.yaml') }}
@@ -427,14 +427,14 @@ jobs:
 
       - name: Save the PlatformIO tree
         if: ${{ github.ref == 'refs/heads/main' && steps.tree.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
           key: pio-amebaz2-tree-${{ env.ESPHOME_VERSION }}
 
       - name: Save the build cache
         if: ${{ github.ref == 'refs/heads/main' && steps.objects.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/pio-objects
           key: pio-amebaz2-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1-amebaz2-*.yaml') }}
@@ -465,7 +465,7 @@ jobs:
       # (capped below). Every run restores, only main saves, and only a key that is new.
       - name: Restore the ESP-IDF tree
         id: tree
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/esphome/idf
           key: idf-esp32-tree-${{ env.ESPHOME_VERSION }}
@@ -475,7 +475,7 @@ jobs:
 
       - name: Restore the ccache
         id: ccache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/ccache
           key: idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1*.yaml', 'firmware/esphome/tests/build.hub-only.*.yaml') }}
@@ -532,14 +532,14 @@ jobs:
 
       - name: Save the ESP-IDF tree
         if: ${{ github.ref == 'refs/heads/main' && steps.tree.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/esphome/idf
           key: idf-esp32-tree-${{ env.ESPHOME_VERSION }}
 
       - name: Save the ccache
         if: ${{ github.ref == 'refs/heads/main' && steps.ccache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/ccache
           key: idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1*.yaml', 'firmware/esphome/tests/build.hub-only.*.yaml') }}
@@ -570,14 +570,14 @@ jobs:
       # content. Every run restores, only main saves, and only a key that is new.
       - name: Restore the PlatformIO tree
         id: tree
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
           key: pio-host-tree-${{ env.ESPHOME_VERSION }}
 
       - name: Restore the build cache
         id: objects
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/pio-host-objects
           key: pio-host-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/test/host_e2e/*.yaml') }}
@@ -648,14 +648,14 @@ jobs:
 
       - name: Save the PlatformIO tree
         if: ${{ github.ref == 'refs/heads/main' && steps.tree.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
           key: pio-host-tree-${{ env.ESPHOME_VERSION }}
 
       - name: Save the build cache
         if: ${{ github.ref == 'refs/heads/main' && steps.objects.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/pio-host-objects
           key: pio-host-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/test/host_e2e/*.yaml') }}
