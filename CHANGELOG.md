@@ -14,47 +14,128 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 This becomes 2.0.0, the first release of the ESPHome firmware under a version number of its own.
 The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 
-### Housekeeping for an upstream submission, and credits (2026-10-13)
-- **Nothing changes on the wire, in the entities or in what they publish.** The hub no longer
-  calls the deprecated `check_uart_settings` (validation already refuses a UART that is not
-  9600 8N1, so `dump_config` does not repeat the check) and no longer overrides the setup
-  priority with the default. The bus scheduler takes ESPHome's loop time, which at the top of
-  the hub's `loop()` is `millis()` or one millisecond behind it. The Python files have type
-  hints, the component tests include `common.yaml` as a named package, and the docs draft
-  follows the esphome.io format rules.
-- **`NOTICE.md` credits `pslawinski/esphome_airconintl` and `deiger/AirCon`.** It says what came
-  from each and lists the three literal frames (power on, power off, the status poll) that are
-  the same bytes as in `esphome_airconintl`. The READMEs and the comments at those frames point
-  to it.
+Everything below was merged between 2026-10-12 and 2026-10-13. The first section is what the
+owner of a node has to do or will see change. Read it before you rebuild a node.
 
-### The hub, the mapping and the entities (2026-10-13)
+### Needs action, or behaves differently
+
+- **The Matter firmwares are retired. ESPHome is the only firmware (#182).** Removed: the AmebaZ2
+  Matter build (the SDK setup scripts, `patches/`, `versions.env`, the `.zap` and
+  `firmware/src/sdk-edits/`, `firmware/src/version.txt` and its CI rule), the ESP32 Matter build
+  (`firmware/esp32-matter/`), the Matter release steps of `dev.py` (`dev.py ota ...`), the
+  matter-server helper scripts, the release and SDK-pin workflows, the Renovate config and the
+  `hisense-unified-ac` submodule. The last tree with all of it is the signed tag `matter-final`.
+  A unit that still runs a Matter build keeps working and gets no fixes. The way over to ESPHome
+  is `firmware/scripts/matter-convert.py` (see Tooling below).
+- **`secrets.yaml` needs one more entry, `wifi_ap_password`** (at least 8 characters). The node's
+  hotspot has a password now. A build without it stops with a message naming the missing secret.
+- **Configurations that cannot work are refused when they are validated.** A second `hisense_ac`
+  climate entity on one hub, `min_temperature` above `max_temperature`, a setpoint range outside
+  16 to 32 °C (61 to 90 °F), a `de_pin` in input mode, and `de_pin` together with the UART's
+  `flow_control_pin`. Neither of the two gives a warning. A second hub and
+  `hisense_ac.set_setup_indicator` without `state` now say what is wrong. A configuration that
+  one of these rules refuses did validate before: it has to be corrected to build again.
+- **Home Assistant shows another manufacturer and model for the device at its next build.** With
+  a project set (see "The firmware has a version" below), Home Assistant takes them from the
+  project name, so they read `AndrewDemsDS` and `hisense-w41h1` where they read the chip maker
+  and the board. The node also announces the project in its mDNS record. No entity name, object
+  id or unique id changes: the entity registration in the generated code is the same line for
+  line on all eight board files. As with any change of configuration, a network saved through
+  the setup portal is dropped at the update and the node comes up on the Wi-Fi in `secrets.yaml`.
 - **Eco or turbo switched before the first status frame after boot is refused.** The write was
   taken, the switch showed on, and the frame was then not sent, because it is built from a
   status the node did not have yet (up to about 16 s on a boot with a silent unit). Now the
   switch stays off, the log says `Command not sent: no status from the unit yet`, and nothing
   counts as a failed command. Quiet and the sleep profile have frames of their own and are sent
   as before. Nothing changes once a status frame has arrived.
-- **A healthy unit is no longer logged as reporting a fault.** The log tested the fault bitmap,
-  whose valid bit is always set, so every boot logged `A/C reports a fault: bitmap 0x80000000`
-  at WARN on the first status frame and a fault that cleared logged the same line. Now the WARN
-  line appears for a real fault only, with its bitmap, and a fault that clears logs
-  `A/C fault cleared`. The fault entities were right all along.
-- **A finished frame is credited to the command it belongs to.** A display-preference frame or a
-  special-mode write no longer restarts the wait of another command, so a lost command is sent
-  again after about 4 s where an unrelated frame used to push that to 7 s.
+- **A command made while the unit is not answering is refused.** It used to go out once into the
+  silence and was then carried out if the unit came back within 20 s. Now the entity keeps its
+  state and the log says `Command refused: the unit is not answering`. A special-mode write
+  whose turn came in the loop pass that reported the link lost is no longer sent either.
 - **A command that could not be queued is no longer shown as sent.** The climate entity, the eco,
   turbo and quiet switches and the sleep select keep their state when the hub refuses a request
   (transmit queue full, special-mode queue full), where they showed it for 4 s and then went
   back. The refused values no longer stay in the command shadow, and a special-mode write that
   could not be queued is counted in `failed_commands` and no longer starts the 10 s pacing.
-- **A command made while the unit is not answering is refused.** It used to go out once into the
-  silence and was then carried out if the unit came back within 20 s. Now the entity keeps its
-  state and the log says `Command refused: the unit is not answering`. A special-mode write
-  whose turn came in the loop pass that reported the link lost is no longer sent either.
-- **Special-mode requests that undo each other before they are sent merge.** Eco, turbo, quiet
-  or the sleep profile changed several times within the 10 s pacing now cost one frame for the
-  final value, where every change was queued and sent 10 s apart. A request the queue cannot
-  take is refused and the entity keeps its state.
+- **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air
+  Conditioner`), and the board files no longer repeat the two lines. A file that sets them keeps
+  its names. A file that includes the package and sets no `name` now builds as `hisense-ac` where
+  it was refused before.
+- **`dev.py --board c3` builds another node than before.** It compiled `w41h1.yaml` with the C3
+  board and pins as `-s` overrides, which is the node of `w41h1-esp32c3.yaml` without its status
+  LED. Every `--board` value now names one board file, so `--board c3` builds
+  `w41h1-esp32c3.yaml` and the node gains the status LED on GPIO8 (the SuperMini's blue LED: dark
+  when healthy, blinking while Wi-Fi, Home Assistant or the A/C bus is down). No entity changes.
+  `--board classic` is unchanged. `--board c3-plus` is new and builds and flashes
+  `w41h1-esp32c3-plus.yaml`.
+
+### Added
+
+- **The firmware has a version.** It is written once, in
+  `firmware/esphome/packages/version.yaml`: semver, starting at 2.0.0. `packages/node.yaml`
+  includes that file, so every node built from the packages carries it as ESPHome's `project:`
+  without a change to its own YAML. Home Assistant shows it as the device's firmware, "2.0.0
+  (ESPHome 2026.7.4)", and the ESPHome dashboard shows it beside the node.
+- **A release is the tag `vX.Y.Z`.** Pushing it runs `.github/workflows/esphome-release.yaml`:
+  the tag has to equal the version and sit on `main`, the host tests run, every board file
+  compiles with the components free of warnings, and the GitHub release gets this file's section
+  for that version as its text. No firmware image is attached: one built in CI holds the
+  placeholder secrets, which are public. The workflow also has a dry run
+  (`gh workflow run esphome-release.yaml`): every gate and compile, no tag and no release. Its
+  board matrix comes from the board files. Steps: `CONTRIBUTING.md`, "Releasing".
+- **The packages work from git.** `packages/hisense-ac.yaml` and `packages/amebaz2.yaml` take the
+  source of the components from a substitution, `w41h1_components`, whose default is the local
+  `components/` directory as before. A configuration outside this repository can now include the
+  packages as ESPHome remote packages pinned to a release tag and point that substitution at the
+  same tag (`firmware/esphome/README.md`, "Using a release from your own configuration").
+- **Wi-Fi setup mode on the remote's "77" gesture (#189).** Horizontal airflow pressed six times
+  on the remote puts "77" on the panel and opens the node's hotspot, `<name>-setup`, with
+  ESPHome's captive portal to enter a new network. A `Start Wi-Fi setup` button in Home Assistant
+  does the same. It ends in a restart: when the new network has connected, when the gesture is
+  repeated, or after `wifi_setup_timeout` (10 minutes, to be set between 30 s and 24 h). Not run
+  on hardware yet. In detail:
+  - Nothing is written to flash on the way in. A network entered in the portal that never
+    connected is always undone: at the end of the mode, when the node restarts for another
+    reason, and at the next boot after a power cut. For that the previous SSID and password sit
+    in a preference while the mode is on, zeroed when it ends.
+  - A network entered just before the timeout gets 90 s to connect. A gesture while the fallback
+    hotspot is already open lights "77" and does not restart the node.
+  - With `fast_connect`, a hidden network or an enterprise login the hotspot cannot be opened on
+    demand: the build warns, and the node logs why and stays on its network.
+  - It is the `wifi_setup_mode` component. Its decisions are a pure state machine with host
+    tests, and `packages/node.yaml` only wires it. The log tag is `wifi_setup_mode`. The ids
+    `wifi_setup_active`, `wifi_setup_enter` and `wifi_setup_leave`, which the first version of
+    2026-10-12 had as YAML, are gone.
+- **The hub has the trigger `on_setup_request` and the action `hisense_ac.set_setup_indicator`**,
+  and sets its warning status while the bus link is down.
+- **Optional status LED**, dark while the node is healthy: `packages/status-led.yaml` for a plain
+  LED on a GPIO and `packages/status-pixel.yaml` for one WS2812 pixel on an ESP32.
+  `w41h1-esp32c3.yaml` now includes the first (the SuperMini's blue LED on GPIO8). The new
+  `w41h1-esp32c3-plus.yaml` is the same node for the SuperMini Plus, which has an RGB pixel on
+  that pin. The pixel has not been checked on a board. The LED and the pixel show setup mode from
+  the request to the restart, by one shared rule.
+- **The stock module's glue is a component, `w41h1_module` (#188).** What the stock module needs
+  on top of a plain `rtl87xx` node moved out of YAML lambdas and a header into
+  `firmware/esphome/components/w41h1_module/`: the three flash layouts and their build-time and
+  boot-time checks, the reboot workaround for LibreTiny issue 396, the serial port recovery for
+  the A/C bus, and the `Flash layout` and `Serial port restarts` diagnostics.
+  `packages/amebaz2.yaml` is configuration only. The entities and their object ids are the same.
+  The component validates only on `rtl87xx` with the RTL8710C family and has its own
+  upstream-shaped test under `tests/components/w41h1_module/`. It uses nothing outside its
+  directory, so it also works from a git source. Listing it twice is refused with a message that
+  says so, where ESPHome's own said "expected a dictionary".
+- **`NOTICE.md` credits `pslawinski/esphome_airconintl` and `deiger/AirCon`.** It says what came
+  from each and lists the three literal frames (power on, power off, the status poll) that are
+  the same bytes as in `esphome_airconintl`. The READMEs and the comments at those frames point
+  to it.
+
+### Fixed
+
+- **A healthy unit is no longer logged as reporting a fault.** The log tested the fault bitmap,
+  whose valid bit is always set, so every boot logged `A/C reports a fault: bitmap 0x80000000`
+  at WARN on the first status frame and a fault that cleared logged the same line. Now the WARN
+  line appears for a real fault only, with its bitmap, and a fault that clears logs
+  `A/C fault cleared`. The fault entities were right all along.
 - **Fahrenheit panels: a setpoint chosen on the remote is no longer moved by one degree.** The
   command shadow takes the status frame's own setpoint byte. It used to go through whole Celsius
   and back, which changed 13 of the 30 values (62 F became 63), and the next fan, swing or mode
@@ -62,128 +143,17 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 - **A preset chosen while the unit reports eco and turbo together clears both.** A plan to a
   preset with neither sent only the eco clear and left turbo on. It now sends the eco clear and
   then the turbo clear, 10 s apart like every special-mode write.
-
-- **Configurations that cannot work are refused when they are validated.** A second
-  `hisense_ac` climate entity on one hub, `min_temperature` above `max_temperature`, a setpoint
-  range outside 16 to 32 °C (61 to 90 °F), a `de_pin` in input mode, and `de_pin` together with
-  the UART's `flow_control_pin`. Neither of the two gives a warning. A second hub and
-  `hisense_ac.set_setup_indicator` without `state` now say what is wrong. A configuration that
-  one of these rules refuses did validate before: it has to be corrected to build again.
-
-- **`dump_config` of the hub prints what is fixed at setup** (the DE pin and the UART check). The
-  link state, the "77" indication and the last status left it: they are in the log when they
-  change. The hub's timing other than the bus itself now runs on ESPHome's loop time.
-### Wi-Fi setup mode as a tested component (2026-10-13)
-- **Setup mode is the new `wifi_setup_mode` component.** Its decisions are a pure state machine
-  with host tests, and `packages/node.yaml` only wires it. Same button, same gesture, same
-  entities. The ids `wifi_setup_active`, `wifi_setup_enter` and `wifi_setup_leave` are gone.
-- **A network entered in the portal that never connected is always undone:** also when the node
-  restarts for another reason, and at the next boot after a power cut. For that the previous
-  SSID and password sit in a preference while the mode is on, zeroed when it ends.
-- A network entered just before the timeout gets 90 s to connect. A gesture while the fallback
-  hotspot is already open lights "77" and no longer restarts the node.
-- With `fast_connect`, a hidden network or an enterprise login the hotspot cannot be opened on
-  demand: the build warns, and the node logs why and stays on its network.
-- The status LED and pixel show setup from the request to the restart, by one shared rule.
-  `wifi_setup_timeout` has to be between 30 s and 24 h. The log tag is `wifi_setup_mode`.
-
-### Board files, the stock-module component and CI (2026-10-12)
-- **`packages/node.yaml` names the node by default** (`name: hisense-ac`, `friendly_name: Air
-  Conditioner`), and the board files no longer repeat the two lines. A file that sets them keeps
-  its names. A file that includes the package and sets no `name` now builds as `hisense-ac` where
-  it was refused before.
-- **Board files hold the chip, the pins and the extras, nothing else.** The stock module's fixed
-  pins (PA14 / PA13 / PA17) are defaults in `packages/amebaz2.yaml`, and the `esp32:` block of the
-  three ESP32 files is `packages/esp32.yaml`. No entity, id or generated line of code changes.
-- **`w41h1_module` listed twice** is refused with a message that says so, where ESPHome's own
-  said "expected a dictionary".
-- **`w41h1_module` tidied, same behaviour:** the port is looked at from `loop()` once a second
-  where a scheduler lambda did it, the hub is the component's parent (`Parented`), a missing
-  update server is logged and no longer dereferenced, and `W41h1UartWatch` is `W41H1UartWatch`.
-- **CI:** a newer push cancels the run before it, a change that touches no firmware skips the
-  three compile jobs, and the caches are saved when their inputs change and not on every push.
-  New `lint-extra` job (actionlint, zizmor, the guide linter, cppcheck) and a coverage table on
-  `main`. A nightly workflow fuzzes each harness for ten minutes, compiles the ESP8266 and RP2040
-  files, builds `esp32-recon` and runs ESPHome's dev-branch gates, which left the pull requests.
-- **The release workflow has a dry run** (`gh workflow run esphome-release.yaml`): every gate and
-  compile, no tag and no release. Its board matrix comes from the board files.
-
-### The firmware has a version, releases are tags, and CI compiles the ESP32 boards (2026-10-12)
-- **The version is written once**, in `firmware/esphome/packages/version.yaml`: semver, starting
-  at 2.0.0. `packages/node.yaml` includes that file, so every node built from the packages
-  carries it as ESPHome's `project:` without a change to its own YAML. Home Assistant shows it
-  as the device's firmware, "2.0.0 (ESPHome 2026.7.4)", and the ESPHome dashboard shows it beside
-  the node.
-- **Changes existing nodes at their next build:** with a project set, Home Assistant takes the
-  device's manufacturer and model from the project name, so they read `AndrewDemsDS` and
-  `hisense-w41h1` where they read the chip maker and the board. The node also announces the
-  project in its mDNS record. No entity name, object id or unique id changes: the entity
-  registration in the generated code is the same line for line on all eight board files. As
-  with any change of configuration, a network saved through the setup portal is dropped at the
-  update and the node comes up on the Wi-Fi in `secrets.yaml`.
-- **A release is the tag `vX.Y.Z`.** Pushing it runs `.github/workflows/esphome-release.yaml`:
-  the tag has to equal the version and sit on `main`, the host tests run, every board file
-  compiles with the components free of warnings, and the GitHub release gets this file's section
-  for that version as its text. No firmware image is attached: one built in CI holds the
-  placeholder secrets, which are public. Steps: `CONTRIBUTING.md`, "Releasing".
-- **`firmware/scripts/version-lint.py`** holds it together and runs in `run_tests.sh`, the
-  pre-commit hook and CI: the version is `MAJOR.MINOR.PATCH`, this file has a section for it or
-  an Unreleased one, the version is not below the newest release tag, and every pin of the
-  ESPHome release names the same one. In a pull request, CI fails when a file under
-  `firmware/esphome/components/` or `firmware/esphome/packages/` changed and this file did not.
-  A version bump is not required per change. The number moves when a release is cut.
-- **The packages work from git.** `packages/hisense-ac.yaml` and `packages/amebaz2.yaml` take the
-  source of the components from a substitution, `w41h1_components`, whose default is the local
-  `components/` directory as before. A configuration outside this repository can now include the
-  packages as ESPHome remote packages pinned to a release tag and point that substitution at the
-  same tag (`firmware/esphome/README.md`, "Using a release from your own configuration").
-- **Fixed: a configuration with the `hisense_ac` hub and no `climate:` platform did not
-  compile** (`esphome/components/climate/climate.h: No such file or directory`). The climate
-  sources are now compiled only when the climate platform is in the configuration, as the switch
-  and select sources already were. `tests/build.hub-only.esp32-c3-idf.yaml` covers it.
-- CI: a new `esphome-esp32` job compiles `w41h1.yaml`, `w41h1-esp32c3.yaml`,
-  `w41h1-esp32c3-plus.yaml` and the hub-only test, fails on a compiler warning from the
-  components and checks that each board image carries the version. Until now the ESP32 files
-  only went through `esphome config`. A `version` job runs the version and changelog rules with
-  the full history. The ESPHome release is pinned once per workflow, and every job states its
-  own permissions.
-- `dev.py --board c3-plus` builds and flashes `w41h1-esp32c3-plus.yaml`.
-
-### Wi-Fi setup mode on the remote's "77" gesture, and a status LED (2026-10-12, #189)
-- **Setup mode.** Horizontal airflow pressed six times on the remote puts "77" on the panel and
-  opens the node's hotspot, `<name>-setup`, with ESPHome's captive portal to enter a new network.
-  A `Start Wi-Fi setup` button in Home Assistant does the same. It ends in a restart: when the
-  new network has connected, when the gesture is repeated, or after `wifi_setup_timeout` (10
-  minutes). Nothing is written to flash on the way in, and credentials that did not connect are
-  replaced by the ones the node had. Not run on hardware yet.
-- **Changes existing nodes: the hotspot has a password and `secrets.yaml` needs one more
-  entry**, `wifi_ap_password` (at least 8 characters). A build without it stops with a message
-  naming the missing secret.
-- The hub gains the trigger `on_setup_request` and the action `hisense_ac.set_setup_indicator`,
-  and sets its warning status while the bus link is down.
-- **Optional status LED**, dark while the node is healthy: `packages/status-led.yaml` for a plain
-  LED on a GPIO and `packages/status-pixel.yaml` for one WS2812 pixel on an ESP32.
-  `w41h1-esp32c3.yaml` now includes the first (the SuperMini's blue LED on GPIO8). The new
-  `w41h1-esp32c3-plus.yaml` is the same node for the SuperMini Plus, which has an RGB pixel on
-  that pin. The pixel has not been checked on a board.
-
-### The stock module's glue is a component, `w41h1_module` (2026-10-12, #188)
-- What the stock module needs on top of a plain `rtl87xx` node moved out of YAML lambdas and a
-  header into `firmware/esphome/components/w41h1_module/`: the three flash layouts and their
-  build-time and boot-time checks, the reboot workaround for LibreTiny issue 396, the serial port
-  recovery for the A/C bus, and the `Flash layout` and `Serial port restarts` diagnostics.
-  `packages/amebaz2.yaml` is configuration only. The entities and their object ids are the same.
-- The component validates only on `rtl87xx` with the RTL8710C family and has its own
-  upstream-shaped test under `tests/components/w41h1_module/`. It uses nothing outside its
-  directory, so it also works from a git source.
-
-### Codec and bus scheduler: defects found by the edge-case tests (2026-10-12)
-- **A short frame is no longer read into its own trailer.** The parsers took a payload byte when
-  the frame was merely long enough to hold that offset, so in a short frame a checksum byte or the
-  `F4 FB` tag was read as data. A status frame now needs 49 bytes, a ProductType reply 40 (44 for
-  the extended tier) and a DevType reply 22. The frames real units send (160, 45 and at least 22
-  bytes) decode as before.
-
+- **Special-mode requests that undo each other before they are sent merge.** Eco, turbo, quiet
+  or the sleep profile changed several times within the 10 s pacing now cost one frame for the
+  final value, where every change was queued and sent 10 s apart. A request the queue cannot
+  take is refused and the entity keeps its state.
+- **A finished frame is credited to the command it belongs to.** A display-preference frame or a
+  special-mode write no longer restarts the wait of another command, so a lost command is sent
+  again after about 4 s where an unrelated frame used to push that to 7 s.
+- **Commands no longer hold up the heartbeat and the status poll.** Queued command frames went
+  out back to back until the queue was empty, however long that took. A cycle now carries the
+  frames that start within its first 600 ms (about four) and the rest follow in the next cycle,
+  in order.
 - **A damaged DevType reply is no longer believed.** The device type the unit reports in its
   `0x0A` reply is stamped into bytes 7/8 of every later frame, and it was taken from that reply
   without a look at its checksum: one flipped bit and the unit rejected every frame until the
@@ -191,6 +161,11 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   probe goes out again 500 ms later), and it no longer counts as "heard the unit" in the
   heartbeat. The "Checksum errors" sensor counts every damaged frame, of any class, where it
   counted status frames only.
+- **A short frame is no longer read into its own trailer.** The parsers took a payload byte when
+  the frame was merely long enough to hold that offset, so in a short frame a checksum byte or the
+  `F4 FB` tag was read as data. A status frame now needs 49 bytes, a ProductType reply 40 (44 for
+  the extended tier) and a DevType reply 22. The frames real units send (160, 45 and at least 22
+  bytes) decode as before.
 - **Noise ahead of a reply no longer costs the reply.** A stray `F4 F5` in front of a frame, or a
   frame cut short, made the receiver miss the frame that followed (one "Reply timeouts" count and
   a missed status poll each time). It now looks again at the byte that broke a frame and follows
@@ -200,31 +175,25 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   that stayed up, and once more after a lost link. It now fires once per unbroken run of replies
   that ask. A unit that sends one pulse per gesture, as the one on the bench does, behaves as
   before.
-- **Commands no longer hold up the heartbeat and the status poll.** Queued command frames went
-  out back to back until the queue was empty, however long that took. A cycle now carries the
-  frames that start within its first 600 ms (about four) and the rest follow in the next cycle,
-  in order.
+- **A configuration with the `hisense_ac` hub and no `climate:` platform did not compile**
+  (`esphome/components/climate/climate.h: No such file or directory`). The climate sources are
+  now compiled only when the climate platform is in the configuration, as the switch and select
+  sources already were. `tests/build.hub-only.esp32-c3-idf.yaml` covers it.
 
-### The Matter firmwares are retired, ESPHome is the only firmware (2026-10-12, #182)
-- **Removed** the AmebaZ2 Matter build (the SDK setup scripts, `patches/`, `versions.env`, the
-  `.zap` and `firmware/src/sdk-edits/`, `firmware/src/version.txt` and its CI rule), the ESP32
-  Matter build (`firmware/esp32-matter/`), the Matter release steps of `dev.py` (`dev.py ota ...`),
-  the matter-server helper scripts, the release and SDK-pin workflows, the Renovate config and the
-  `hisense-unified-ac` submodule. The last tree with all of it is the signed tag `matter-final`.
-- **Kept, moved:** the old bus driver is now a frozen test reference under
-  `firmware/test/reference-driver/`, and the codec parity test still compares the ESPHome
-  component with it. `firmware/esp32-recon/` builds from it and owns its ESP-IDF HAL.
-- **`dev.py` is ESPHome-only.** `convert` stays for a stock module that still runs the Matter
-  firmware. The two read-only probes of such a unit are now `dev.py matter-slots <ip>` and
-  `dev.py matter-backup <ip>` (they were `ota amebaz2 revert --slots` and `--backup`).
-- **Docs** describe one firmware on three kinds of hardware. Hardware facts from the Matter
-  documents moved to `firmware/docs/10-stock-module-boot-and-recovery.md` and
-  `firmware/docs/16-esp32-board-notes.md`.
+### Tooling and CI
 
-### Tooling: the scripts refuse more, and say why (2026-10-12)
-- **The Matter conversion left `dev.py`.** `dev.py convert esphome ...`, `dev.py matter-slots` and
-  `dev.py matter-backup` are now `firmware/scripts/matter-convert.py convert ...`, `slots` and
-  `backup`. The settings file is still `firmware/scripts/ota-release.env`.
+- **`dev.py` is ESPHome-only.** The command line is `argparse` now: a wrong word gets a message
+  that names it, each command has `--help`, and the word `esphome` after the command is optional.
+  The `ota`, `amebaz2` and `esp32` words no longer answer with a pointer to `matter-final`.
+  `$ESPHOME` is split into words and never run by a shell, so `ESPHOME="uvx esphome"` works and
+  text after a `;` in it is no longer executed. Tool lookups need no bash. `dev.py erase` passes
+  `--chip` for the board, so esptool refuses a port that leads to another kind of ESP.
+- **The Matter conversion is `firmware/scripts/matter-convert.py`**, for a stock module that
+  still runs the Matter firmware: `convert ...` wraps an ESPHome image for it, and `slots <ip>`
+  and `backup <ip>` are the two read-only probes of such a unit. They were
+  `dev.py ota amebaz2 revert --slots` and `--backup` in the Matter tree, and for one day
+  `dev.py convert esphome ...`, `dev.py matter-slots` and `dev.py matter-backup`. The settings
+  file is still `firmware/scripts/ota-release.env`.
 - **The clip writers check what they write** (`firmware/flasher/`). `ch341flash-full.py` took any
   file of any size and wrote it over the whole chip. It now wants exactly 4 MB that hold a
   verifying firmware image and the module's system data, a `--backup <dump>`, and a typed
@@ -232,26 +201,69 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   `0x0..0x140000` (the range of the retired Matter clip image): it writes one firmware slot,
   `--layout <layout> --slot <1|2>`, after verifying the image the way the bootloader does.
   `ch341dump.py` reads twice and compares. A chip that stays busy is no longer written to.
+- **`firmware/scripts/version-lint.py`** holds the version, this file and the release tag
+  together and runs in `run_tests.sh`, the pre-commit hook and CI: the version is
+  `MAJOR.MINOR.PATCH`, this file has a section for it or an Unreleased one, the version is not
+  below the newest release tag, and every pin of the ESPHome release names the same one. In a
+  pull request, CI fails when a file under `firmware/esphome/components/` or
+  `firmware/esphome/packages/` changed and this file did not. A version bump is not required per
+  change. The number moves when a release is cut.
 - **The pre-commit hook** no longer skips the host tests on a commit with more than about 64 KB of
   file names, runs them for any file under `firmware/scripts/`, `firmware/flasher/` and the hook
   itself, and runs `docs/guide/lint.py` when a guide page is staged. `stop-slop.sh` also reads
   renamed files, files with non-ASCII names and `.mdx`.
-- **`dev.py`**: `$ESPHOME` is split into words and never run by a shell, so `ESPHOME="uvx esphome"`
-  works and text after a `;` in it is no longer executed. Tool lookups need no bash. The command line
-  is `argparse` now: a wrong word gets a message that names it, each command has `--help`, and
-  the word `esphome` after the command is optional. The `ota`, `amebaz2` and `esp32` words no
-  longer answer with a pointer to `matter-final`. `dev.py erase` passes `--chip` for the
-  board, so esptool refuses a port that leads to another kind of ESP.
 - **`hil_esphome_actuation.py`** puts the unit back in a `finally` (a failed step, Ctrl-C and a new
   hard timeout included), now also restores the fan, reads the unit back at the end and fails
   when it is not as found, and does not touch a unit that is running unless `--allow-running` is
   given. Its default `--secrets` is this checkout's file.
-- **Changes what `dev.py --board c3` builds:** it compiled `w41h1.yaml` with the C3 board and pins
-  as `-s` overrides, which is the node of `w41h1-esp32c3.yaml` without its status LED. Every
-  `--board` value now names one board file, so `--board c3` builds `w41h1-esp32c3.yaml` and the
-  node gains the status LED on GPIO8 (the SuperMini's blue LED: dark when healthy, blinking while
-  Wi-Fi, Home Assistant or the A/C bus is down). No entity changes. `--board classic` is
-  unchanged.
+- **CI compiles the ESP32 boards.** A new `esphome-esp32` job compiles `w41h1.yaml`,
+  `w41h1-esp32c3.yaml`, `w41h1-esp32c3-plus.yaml` and the hub-only test, fails on a compiler
+  warning from the components and checks that each board image carries the version. Until now
+  the ESP32 files only went through `esphome config`. A `version` job runs the version and
+  changelog rules with the full history. The ESPHome release is pinned once per workflow, and
+  every job states its own permissions.
+- **CI does less on a push that needs less.** A newer push cancels the run before it, a change
+  that touches no firmware skips the three compile jobs, and the caches are saved when their
+  inputs change and not on every push. New `lint-extra` job (actionlint, zizmor, the guide
+  linter, cppcheck) and a coverage table on `main`. A nightly workflow fuzzes each harness for
+  ten minutes, compiles the ESP8266 and RP2040 files, builds `esp32-recon` and runs ESPHome's
+  dev-branch gates, which left the pull requests.
+
+### Internals
+
+Nothing in this section changes what is on the wire, the entities or what they publish.
+
+- **Housekeeping for an upstream submission.** The hub no longer calls the deprecated
+  `check_uart_settings` (validation already refuses a UART that is not 9600 8N1) and no longer
+  overrides the setup priority with the default. The Python files have type hints, the component
+  tests include `common.yaml` as a named package, and the docs draft follows the esphome.io
+  format rules.
+- **The hub's timing runs on ESPHome's loop time**, the bus scheduler included. At the top of
+  the hub's `loop()` that is `millis()` or one millisecond behind it. Only
+  `hisense_ac.set_setup_indicator` takes a fresh reading, because it is called from actions and
+  lambdas outside the hub's loop.
+- **`dump_config` of the hub prints what is fixed at setup**, which is the DE pin. It does not
+  repeat the UART check that validation already makes. The link state, the "77" indication and
+  the last status left it: they are in the log when they change.
+- **Board files hold the chip, the pins and the extras, nothing else.** The stock module's fixed
+  pins (PA14 / PA13 / PA17) are defaults in `packages/amebaz2.yaml`, and the `esp32:` block of the
+  three ESP32 files is `packages/esp32.yaml`. No entity, id or generated line of code changes.
+- **`w41h1_module` tidied, same behaviour:** the port is looked at from `loop()` once a second
+  where a scheduler lambda did it, the hub is the component's parent (`Parented`), a missing
+  update server is logged and no longer dereferenced, and `W41h1UartWatch` is `W41H1UartWatch`.
+- **The old bus driver is a frozen test reference** under `firmware/test/reference-driver/`, and
+  the codec parity test still compares the ESPHome component with it. `firmware/esp32-recon/`
+  builds from it and owns its ESP-IDF HAL.
+
+### Documentation
+
+- The docs describe one firmware on three kinds of hardware. Hardware facts from the Matter
+  documents moved to `firmware/docs/10-stock-module-boot-and-recovery.md` and
+  `firmware/docs/16-esp32-board-notes.md`.
+- The reverse-engineering pages say per page how each fact is known and whether the page is
+  reference or history, and `reverse-engineering/docs/14-open-questions.md` lists what is
+  unsettled. The protocol reference has a real device-type reply (captured 2026-10-12) and the
+  receive rules the firmware applies.
 
 ## Matter and ESPHome side by side - 2026-10-10
 
@@ -531,16 +543,16 @@ Built and host-tested. Both targets have since run it on a unit.
 ## Diagnostics exposed to Home Assistant - 2026-07-22
 
 ### Firmware
-- ESP32 (node 35) 1.1.3 -> 1.1.6: decode CompressorHz, Features1, and Faults1 from the ep1
+- ESP32 1.1.3 -> 1.1.6: decode CompressorHz, Features1, and Faults1 from the ep1
   manufacturer cluster (#82); extend the Wi-Fi TX-power throttle from the HTTP break-glass path to
   the Matter (BDX) OTA path via a `HisenseOTARequestorDriver` (#84); add an RX checksum helper with
   an observe-only mismatch counter, a heap-watermark task, and bus-task-scoped WDT panic (#87).
-- AmebaZ2 (node 14) 1.3.20 -> 1.3.22: adopt the shared checksum observe-only change (1.3.21) and
+- AmebaZ2 1.3.20 -> 1.3.22: adopt the shared checksum observe-only change (1.3.21) and
   surface the mismatch counter on the `:2323` console (1.3.22, #88).
 
 ### Home Assistant
 - The `hisense-unified-ac` integration renders four diagnostic entities per node (compressor
-  frequency, capabilities, faults, bus link) on nodes 14, 35, and 62. Closes #38 and #39.
+  frequency, capabilities, faults, bus link) on three units. Closes #38 and #39.
 
 ### Fixed
 - #83: the ESP32 module that would not join Wi-Fi was hitting a brownout crash loop at `phy_init`
