@@ -522,7 +522,10 @@ fan-ladder mapping, presets, the power estimate, and the remote's "77" request w
 heartbeat flag that shows "77" on the panel. It leaves out the rest of the stock module's cloud
 pairing (smart-config itself and the binding token). The code is an ESPHome-style port of the
 project's first bus driver, which ran in the retired Matter firmwares and is kept, frozen, as a
-test reference in `firmware/test/reference-driver/`.
+test reference in `firmware/test/reference-driver/`. That driver started from the community
+project [`pslawinski/esphome_airconintl`](https://github.com/pslawinski/esphome_airconintl), and
+three literal frames are still its bytes: see the acknowledgements in
+[`NOTICE.md`](../../NOTICE.md#acknowledgements-earlier-work-on-this-ac-bus).
 
 `firmware/test/test_esphome_codec_parity.cpp` runs every builder and parser of both over the same
 inputs (the full command cartesian product, exhaustive small domains, and seeded random frames)

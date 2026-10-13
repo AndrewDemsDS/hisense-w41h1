@@ -8,6 +8,7 @@ from esphome.const import (
     CONF_SUPPORTS_HEAT,
 )
 import esphome.final_validate as fv
+from esphome.types import ConfigType
 
 from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA, hisense_ac_ns
 
@@ -37,7 +38,7 @@ SETPOINT_MAX_C = 32
 SETPOINT_MAX_F = 90
 
 
-def _setpoint_range(config):
+def _setpoint_range(config: ConfigType) -> ConfigType:
     low = config[CONF_MIN_TEMPERATURE]
     high = config[CONF_MAX_TEMPERATURE]
     if low > high:
@@ -80,7 +81,7 @@ CONFIG_SCHEMA = cv.All(
 )
 
 
-def _one_climate_per_hub(config):
+def _one_climate_per_hub(config: ConfigType) -> ConfigType:
     # The hub hands each status frame to one climate entity. A second one would never update.
     hub = config[CONF_HISENSE_AC_ID]
     on_this_hub = [
@@ -100,7 +101,7 @@ def _one_climate_per_hub(config):
 FINAL_VALIDATE_SCHEMA = _one_climate_per_hub
 
 
-async def to_code(config):
+async def to_code(config: ConfigType) -> None:
     var = await climate.new_climate(config)
     await cg.register_component(var, config)
 

@@ -14,7 +14,31 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 This becomes 2.0.0, the first release of the ESPHome firmware under a version number of its own.
 The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 
+### Housekeeping for an upstream submission, and credits (2026-10-13)
+- **Nothing changes on the wire, in the entities or in what they publish.** The hub no longer
+  calls the deprecated `check_uart_settings` (validation already refuses a UART that is not
+  9600 8N1, so `dump_config` does not repeat the check) and no longer overrides the setup
+  priority with the default. The bus scheduler takes ESPHome's loop time, which at the top of
+  the hub's `loop()` is `millis()` or one millisecond behind it. The Python files have type
+  hints, the component tests include `common.yaml` as a named package, and the docs draft
+  follows the esphome.io format rules.
+- **`NOTICE.md` credits `pslawinski/esphome_airconintl` and `deiger/AirCon`.** It says what came
+  from each and lists the three literal frames (power on, power off, the status poll) that are
+  the same bytes as in `esphome_airconintl`. The READMEs and the comments at those frames point
+  to it.
+
 ### The hub, the mapping and the entities (2026-10-13)
+- **Eco or turbo switched before the first status frame after boot is refused.** The write was
+  taken, the switch showed on, and the frame was then not sent, because it is built from a
+  status the node did not have yet (up to about 16 s on a boot with a silent unit). Now the
+  switch stays off, the log says `Command not sent: no status from the unit yet`, and nothing
+  counts as a failed command. Quiet and the sleep profile have frames of their own and are sent
+  as before. Nothing changes once a status frame has arrived.
+- **A healthy unit is no longer logged as reporting a fault.** The log tested the fault bitmap,
+  whose valid bit is always set, so every boot logged `A/C reports a fault: bitmap 0x80000000`
+  at WARN on the first status frame and a fault that cleared logged the same line. Now the WARN
+  line appears for a real fault only, with its bitmap, and a fault that clears logs
+  `A/C fault cleared`. The fault entities were right all along.
 - **A finished frame is credited to the command it belongs to.** A display-preference frame or a
   special-mode write no longer restarts the wait of another command, so a lost command is sent
   again after about 4 s where an unrelated frame used to push that to 7 s.

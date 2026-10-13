@@ -4,9 +4,10 @@
 
 namespace esphome::hisense_ac {
 
-// Literal power frames. Several bytes of `off` differ from every other single-purpose command and
-// are not understood field by field, only that this exact sequence powers the unit off. Neither
-// checksum low byte is 0xF4, so no stuffing.
+// Literal power frames. Source: on[] and off[] in components/airconintl/messages.h of the community
+// project https://github.com/pslawinski/esphome_airconintl, byte for byte. Several bytes of `off`
+// differ from every other single-purpose command and are not understood field by field, only that
+// this exact sequence powers the unit off. Neither checksum low byte is 0xF4, so no stuffing.
 static const uint8_t FRAME_ON[CMD_FRAME_LEN] = {
     0xF4, 0xF5, 0x00, 0x40, 0x29, 0x00, 0x00, 0x01, 0x01, 0xFE, 0x01, 0x00, 0x00, 0x65, 0x00, 0x00, 0x00,
     0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

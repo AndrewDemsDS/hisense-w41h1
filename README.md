@@ -103,3 +103,8 @@ I built this with AI assistance across the code, reverse-engineering, and docs. 
 
 Original code and docs: **MIT** ([`LICENSE`](LICENSE)). Third-party tools the build fetches and
 what was adapted from them: [`NOTICE.md`](NOTICE.md).
+
+Credits: the protocol work started from
+[`pslawinski/esphome_airconintl`](https://github.com/pslawinski/esphome_airconintl) and
+[`deiger/AirCon`](https://github.com/deiger/AirCon). What came from each is in
+[`NOTICE.md`](NOTICE.md#acknowledgements-earlier-work-on-this-ac-bus).

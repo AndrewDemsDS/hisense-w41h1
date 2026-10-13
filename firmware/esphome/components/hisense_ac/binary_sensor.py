@@ -17,6 +17,7 @@ from esphome.const import (
     DEVICE_CLASS_PROBLEM,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
+from esphome.types import ConfigType
 
 from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA, hisense_ac_ns
 
@@ -104,7 +105,7 @@ CAPABILITY_BITS = {
 }
 
 
-def _diagnostic(device_class: str | None = None, icon: str | None = None):
+def _diagnostic(device_class: str | None = None, icon: str | None = None) -> cv.Schema:
     kwargs = {"entity_category": ENTITY_CATEGORY_DIAGNOSTIC}
     if device_class is not None:
         kwargs["device_class"] = device_class
@@ -137,22 +138,22 @@ CONFIG_SCHEMA = (
 )
 
 
-async def to_code(config):
+async def to_code(config: ConfigType) -> None:
     parent = await cg.get_variable(config[CONF_HISENSE_AC_ID])
 
     for key in (CONF_AUX_HEAT, CONF_BUS_LINK, CONF_PROBLEM):
-        if key in config:
-            var = await binary_sensor.new_binary_sensor(config[key])
+        if conf := config.get(key):
+            var = await binary_sensor.new_binary_sensor(conf)
             cg.add(getattr(parent, f"set_{key}_binary_sensor")(var))
 
     for key, (constant, _) in FAULT_BITS.items():
-        if key in config:
-            var = await binary_sensor.new_binary_sensor(config[key])
+        if conf := config.get(key):
+            var = await binary_sensor.new_binary_sensor(conf)
             bit = cg.RawExpression(f"{hisense_ac_ns}::{constant}")
             cg.add(parent.add_fault_binary_sensor(bit, var))
 
     for key, (constant, _, _) in CAPABILITY_BITS.items():
-        if key in config:
-            var = await binary_sensor.new_binary_sensor(config[key])
+        if conf := config.get(key):
+            var = await binary_sensor.new_binary_sensor(conf)
             bit = cg.RawExpression(f"{hisense_ac_ns}::{constant}")
             cg.add(parent.add_capability_binary_sensor(bit, var))

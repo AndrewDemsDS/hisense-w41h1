@@ -19,6 +19,7 @@ from esphome.const import (
     UNIT_VOLT,
     UNIT_WATT,
 )
+from esphome.types import ConfigType
 
 from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA
 
@@ -35,7 +36,7 @@ CONF_FAILED_COMMANDS = "failed_commands"
 CONF_LINK_LOSSES = "link_losses"
 
 
-def _counter(icon: str):
+def _counter(icon: str) -> cv.Schema:
     return sensor.sensor_schema(
         accuracy_decimals=0,
         state_class=STATE_CLASS_TOTAL_INCREASING,
@@ -44,7 +45,7 @@ def _counter(icon: str):
     )
 
 
-def _temperature(icon: str | None = None):
+def _temperature(icon: str | None = None) -> cv.Schema:
     kwargs = {
         "unit_of_measurement": UNIT_CELSIUS,
         "accuracy_decimals": 0,
@@ -121,10 +122,9 @@ SENSORS = [
 ]
 
 
-async def to_code(config):
+async def to_code(config: ConfigType) -> None:
     parent = await cg.get_variable(config[CONF_HISENSE_AC_ID])
     for key in SENSORS:
-        if key not in config:
-            continue
-        var = await sensor.new_sensor(config[key])
-        cg.add(getattr(parent, f"set_{key}_sensor")(var))
+        if conf := config.get(key):
+            var = await sensor.new_sensor(conf)
+            cg.add(getattr(parent, f"set_{key}_sensor")(var))

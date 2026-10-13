@@ -60,6 +60,13 @@ vendor firmware and the provisioned Wi-Fi credentials. It's kept locally and git
 All analysis here is derived from it. Reverse engineering is for **interoperability with
 hardware you own**.
 
+## Credits
+
+The payload tables in `docs/05` and the first bus driver started from two community projects,
+[`pslawinski/esphome_airconintl`](https://github.com/pslawinski/esphome_airconintl) and
+[`deiger/AirCon`](https://github.com/deiger/AirCon). What came from each, and which frames are
+still their bytes, is in [`NOTICE.md`](../NOTICE.md#acknowledgements-earlier-work-on-this-ac-bus).
+
 ## AI assistance
 
 Parts of this reverse-engineering and documentation were produced with AI assistance.

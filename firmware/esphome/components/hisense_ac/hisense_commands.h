@@ -155,7 +155,7 @@ class CommandTracker {
   /// toggled back and forth costs one frame and one wait, not one of each per toggle.
   /// False when the op was not taken: the caller must not show the request.
   bool enqueue_special(const SpecialOp &op, uint32_t now) {
-    if (this->refused_link_down_())
+    if (this->refused_link_down_() || this->refused_no_status_(op))
       return false;
     size_t len = this->special_len_;
     if (!special_queue_push(this->projected_, this->special_queue_, &len, SPECIAL_QUEUE_CAP, op)) {
@@ -184,6 +184,10 @@ class CommandTracker {
     // watch: if the unit did not take it, the plan is made again from what it reports.
     SpecialOp ops[PRESET_PLAN_MAX];
     size_t n = preset_plan(this->projected_, target, ops);
+    for (size_t i = 0; i < n; i++) {
+      if (this->refused_no_status_(ops[i]))
+        return false;  // before anything queued is dropped for it
+    }
     this->special_len_ = 0;
     this->special_resends_ = 0;
     this->event_(CommandEvent::PRESET_QUEUED, target, static_cast<uint16_t>(n));
@@ -244,11 +248,23 @@ class CommandTracker {
   // The unit has stopped answering and has not been heard since. A request made now would go out
   // once into the silence and then be carried out if the unit came back within CONFIRM_STALE_MS,
   // long after the user saw nothing happen. It is refused, and the caller shows nothing of it.
-  // Before the first link verdict after boot nothing is refused: that is the unit's first second.
+  // Before the first link verdict after boot this refuses nothing: that is the unit's first second
+  // (refused_no_status_ covers the writes that cannot be sent yet).
   bool refused_link_down_() {
     if (!this->link_lost_)
       return false;
     this->event_(CommandEvent::REFUSED_LINK_DOWN);
+    return true;
+  }
+
+  // Eco and turbo ride the combined frame, which is not built before the first status frame
+  // (combined_frame_allowed). Taken then, the write would be shown by its switch and not sent.
+  // Quiet and sleep have frames of their own and are not held back. Once a status has been
+  // decoded this refuses nothing.
+  bool refused_no_status_(const SpecialOp &op) {
+    if (op.kind != SPECIAL_OP_FEATURE || combined_frame_allowed(this->last_.valid))
+      return false;
+    this->event_(CommandEvent::COMBINED_REFUSED_NO_STATUS);
     return true;
   }
 

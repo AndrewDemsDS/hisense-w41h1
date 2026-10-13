@@ -48,7 +48,6 @@ class HisenseAC final : public Component,
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
 
   /// Optional: without it the UART's flow_control_pin (or the transceiver) owns DE.
   void set_de_pin(GPIOPin *pin) { this->de_pin_ = pin; }
@@ -61,10 +60,10 @@ class HisenseAC final : public Component,
   /// keeps the request until the unit's status agrees with it: a frame the unit did not take is
   /// sent again. False when the frame could not be queued: show nothing of the request then.
   bool send_user_command(const AcCommand &wanted, uint16_t fields, bool power_on) {
-    return this->commands_.send_user_command(wanted, fields, power_on, loop_time_());
+    return this->commands_.send_user_command(wanted, fields, power_on, this->loop_time_());
   }
   /// Switch the unit off, checked and re-sent the same way. False when the frame was not queued.
-  bool send_user_power_off() { return this->commands_.send_user_power_off(loop_time_()); }
+  bool send_user_power_off() { return this->commands_.send_user_power_off(this->loop_time_()); }
   /// Build and send the combined command frame from the current shadow, unchecked. For frames
   /// that only carry something the status does not report (the display preference).
   bool send_command() { return this->commands_.send_combined(); }
@@ -72,9 +71,9 @@ class HisenseAC final : public Component,
   /// Special modes (eco/turbo byte33, mute, sleep) go through the tracker's paced queue, never
   /// straight to the bus (see CommandTracker::enqueue_special).
   /// False when the op was not taken: show nothing of the request then.
-  bool enqueue_special(const SpecialOp &op) { return this->commands_.enqueue_special(op, loop_time_()); }
+  bool enqueue_special(const SpecialOp &op) { return this->commands_.enqueue_special(op, this->loop_time_()); }
   /// Replace whatever is still queued with the plan for preset `target` (a row index).
-  bool request_preset(uint8_t target) { return this->commands_.request_preset(target, loop_time_()); }
+  bool request_preset(uint8_t target) { return this->commands_.request_preset(target, this->loop_time_()); }
   /// Queue not yet drained, or the last write not yet confirmed: preset/switch readbacks would
   /// show intermediate states.
   bool special_busy() const { return this->commands_.special_busy(); }
@@ -96,8 +95,8 @@ class HisenseAC final : public Component,
 
   /// A user command just went out, so ignore the A/C's echo of the PREVIOUS state for a moment
   /// (see CommandTracker::note_user_command).
-  void note_user_command() { this->commands_.note_user_command(loop_time_()); }
-  bool in_command_holdoff() const { return this->commands_.in_holdoff(loop_time_()); }
+  void note_user_command() { this->commands_.note_user_command(this->loop_time_()); }
+  bool in_command_holdoff() const { return this->commands_.in_holdoff(this->loop_time_()); }
 
   /// The unit's power once every power frame already sent has landed. Status alone lags a power
   /// frame by a poll or two.
@@ -176,12 +175,14 @@ class HisenseAC final : public Component,
 #endif
 
  protected:
-  /// The time for everything that is not bus timing: the hold-off, the confirm and retry clock,
-  /// the special-mode pacing, the telemetry refresh. It is the start of the loop pass that is
-  /// running (the hub's, or the API's when a user command arrives), as ESPHome asks of
-  /// components. The scheduler is the exception and gets a fresh millis(): DE settle and hold
-  /// are a few milliseconds and a pass can be longer than that.
-  static uint32_t loop_time_() { return App.get_loop_component_start_time(); }
+  /// The time for the hub's clocks: the bus scheduler, the hold-off, the confirm and retry clock,
+  /// the special-mode pacing, the telemetry refresh. It is the time ESPHome read right before
+  /// it called the loop() that is running (the hub's, or the API's when a user command
+  /// arrives), as ESPHome asks of components. For the hub's own loop() that is the reading taken
+  /// when the component before it returned, a few instructions earlier: at the top of loop() it
+  /// equals millis(), or is one behind when a tick lands in between. DE settle and hold are
+  /// timed from it.
+  uint32_t loop_time_() const { return App.get_loop_component_start_time(); }
 
   BusTicket send_frame_(const uint8_t *frame, size_t len);
 

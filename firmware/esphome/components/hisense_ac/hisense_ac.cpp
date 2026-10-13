@@ -77,7 +77,7 @@ void HisenseAC::on_bus_command(bool answered, uint8_t reply_class) {
   } else {
     ESP_LOGW(TAG, "Command frame got no reply from the unit, not sent again");
   }
-  this->commands_.on_command_done(this->bus_.command_ticket(), answered, loop_time_());
+  this->commands_.on_command_done(this->bus_.command_ticket(), answered, this->loop_time_());
 }
 
 void HisenseAC::on_bus_link(bool up) {
@@ -98,6 +98,9 @@ void HisenseAC::set_setup_indicator(bool on) {
   if (on == this->bus_.setup_indicator())
     return;
   ESP_LOGI(TAG, "Panel setup indication (\"77\") %s", on ? LOG_STR_LITERAL("on") : LOG_STR_LITERAL("off"));
+  // A fresh millis(), not the loop start time: this is called from actions, lambdas and other
+  // components, part-way through a loop() or from the scheduler, where the loop start time can
+  // be many milliseconds old. The stamp starts the lockout that poll() counts down.
   this->bus_.set_setup_indicator(on, millis());
 }
 
@@ -111,8 +114,9 @@ void HisenseAC::setup() {
 }
 
 void HisenseAC::loop() {
-  // A fresh millis(), not the loop start time: this is the DE timing path.
-  this->bus_.poll(millis());
+  // First thing in loop(), where the loop start time is still current: this is the DE timing
+  // path (see loop_time_()).
+  this->bus_.poll(this->loop_time_());
   // DE settle and drain are a few ms each; the default ~16 ms loop would stretch them, so ask for
   // a tight loop only while they run.
   if (this->bus_.wants_fast_loop()) {
@@ -152,7 +156,7 @@ void HisenseAC::loop() {
   // The command tracker takes the link-lost edge, the special-mode queue and the status frame in
   // the one order that is right (CommandTracker::loop_pass). Nothing is re-sent into a dead bus,
   // and nothing still waiting is sent when it comes back.
-  this->commands_.loop_pass(link_edge && !this->link_up_, have_state ? &state : nullptr, loop_time_());
+  this->commands_.loop_pass(link_edge && !this->link_up_, have_state ? &state : nullptr, this->loop_time_());
   // No status frame arrives while the link is down, so the edge is the one moment the counters
   // can still go out.
   if (link_edge)
@@ -225,7 +229,7 @@ void HisenseAC::publish_telemetry_(const AcState &state) {
 #ifdef USE_SENSOR
   // An unchanged value is still republished once per refresh period: integrating sensors such as
   // total_daily_energy only advance when their source publishes.
-  const bool refresh = telemetry_refresh_due(&this->telemetry_refresh_, loop_time_());
+  const bool refresh = telemetry_refresh_due(&this->telemetry_refresh_, this->loop_time_());
   this->publish_sensor_(this->indoor_temperature_sensor_, state.indoor_temp_c, refresh);
   // Both read -20 C for a while after mains power returns: the unit's "not measured yet" value.
   // Those frames go out as unknown (see outdoor_temps_measured in hisense_telemetry.h).
@@ -266,13 +270,16 @@ void HisenseAC::publish_diagnostics_() {
   AcFaults faults;
   if (this->bus_.faults(&faults)) {
     uint32_t bitmap = faults_to_bitmap32(faults);
-    if (bitmap != this->logged_faults_) {
-      if (bitmap != 0) {
+    // The bitmap always carries its valid bit, so it is never 0: `any` says whether a fault is
+    // set. A healthy unit is remembered as 0, the value before the first status frame.
+    const uint32_t reported = faults.any ? bitmap : 0;
+    if (reported != this->logged_faults_) {
+      if (reported != 0) {
         ESP_LOGW(TAG, "A/C reports a fault: bitmap 0x%08" PRIX32, bitmap);
       } else {
         ESP_LOGI(TAG, "A/C fault cleared");
       }
-      this->logged_faults_ = bitmap;
+      this->logged_faults_ = reported;
     }
 #ifdef USE_BINARY_SENSOR
     if (this->problem_binary_sensor_ != nullptr)
@@ -466,7 +473,6 @@ void HisenseAC::dump_config() {
   if (this->de_pin_ == nullptr) {
     ESP_LOGCONFIG(TAG, "  DE: owned by the UART (flow_control_pin) or the transceiver");
   }
-  this->check_uart_settings(BUS_BAUD_RATE, 1, uart::UART_CONFIG_PARITY_NONE, 8);
 }
 
 // ---- BusIO ------------------------------------------------------------------------------------
