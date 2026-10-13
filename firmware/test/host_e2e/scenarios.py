@@ -879,10 +879,10 @@ async def link_never_up(ctx):
     await asyncio.sleep(2.5)
     r.equal(command_frames(node, mark), [], "eco on before the first status: nothing is sent")
     r.check("Command not sent: no status from the unit yet" in node.log_text(), "the refused frame is logged")
-    r.known_failure(node.value("switch.eco") is not True, "a switch whose frame was refused does not show on",
-                    "what is left of static-analysis W4: before the first link verdict after boot the command "
-                    "tracker takes a special-mode write (refused_link_down_ is false), the switch publishes it, "
-                    "and the frame is then not sent for want of a status (SPECIAL_NOT_SENT)")
+    # Was a known failure (what was left of static-analysis W4) until the command tracker refused
+    # an eco or turbo write that cannot be sent for want of a status.
+    r.check(node.value("switch.eco") is not True, "a switch whose frame was refused does not show on",
+            repr(node.value("switch.eco")))
 
     # Switching off needs no shadow, so it is let through.
     await act_and_expect(ctx, node, "mode off before the first status", lambda: node.climate_command(mode=Mode.OFF),

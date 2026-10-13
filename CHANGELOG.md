@@ -28,6 +28,12 @@ The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
   to it.
 
 ### The hub, the mapping and the entities (2026-10-13)
+- **Eco or turbo switched before the first status frame after boot is refused.** The write was
+  taken, the switch showed on, and the frame was then not sent, because it is built from a
+  status the node did not have yet (up to about 16 s on a boot with a silent unit). Now the
+  switch stays off, the log says `Command not sent: no status from the unit yet`, and nothing
+  counts as a failed command. Quiet and the sleep profile have frames of their own and are sent
+  as before. Nothing changes once a status frame has arrived.
 - **A healthy unit is no longer logged as reporting a fault.** The log tested the fault bitmap,
   whose valid bit is always set, so every boot logged `A/C reports a fault: bitmap 0x80000000`
   at WARN on the first status frame and a fault that cleared logged the same line. Now the WARN

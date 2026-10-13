@@ -1073,6 +1073,18 @@ static void test_scenarios() {
     CHECK(t.send_user_power_off(1000) && sink.sends == 1, "off is sent before the first status frame");
     H::AcCommand wanted = t.cmd();
     CHECK(!t.send_user_command(wanted, H::CONFIRM_MODE, false, 1000), "a combined frame is not");
+    // Eco and turbo ride the combined frame. Taken here, the switch would show on and the frame
+    // would then not be sent.
+    CHECK(!t.enqueue_special({H::SPECIAL_OP_FEATURE, H::FEATURE_ECO}, 1000),
+          "eco before the first status frame is refused");
+    CHECK(!t.request_preset(H::PRESET_ECO, 1000), "and so is a preset that needs it");
+    t.loop_pass(false, nullptr, 1100);
+    CHECK(t.special_queued() == 0 && !t.special_busy() && t.failed_commands() == 0 && sink.sends == 1,
+          "nothing is queued, nothing is sent and nothing counts as failed");
+    // Quiet has a frame of its own, which needs no status: it goes out as before.
+    CHECK(t.enqueue_special({H::SPECIAL_OP_MUTE, 1}, 1100), "quiet is still taken");
+    t.loop_pass(false, nullptr, 1200);
+    CHECK(sink.sends == 2, "and sent");
   }
   {  // The pacing does not come back when the 32-bit clock does.
     Unit u = running();
