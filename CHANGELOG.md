@@ -14,6 +14,19 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 This becomes 2.0.0, the first release of the ESPHome firmware under a version number of its own.
 The Matter firmwares were 1.x, under the tags `amebaz2-v*` and `esp32-v*`.
 
+### Housekeeping for an upstream submission, and credits (2026-10-13)
+- **Nothing changes on the wire, in the entities or in what they publish.** The hub no longer
+  calls the deprecated `check_uart_settings` (validation already refuses a UART that is not
+  9600 8N1, so `dump_config` does not repeat the check) and no longer overrides the setup
+  priority with the default. The bus scheduler takes ESPHome's loop time, which at the top of
+  the hub's `loop()` is `millis()` or one millisecond behind it. The Python files have type
+  hints, the component tests include `common.yaml` as a named package, and the docs draft
+  follows the esphome.io format rules.
+- **`NOTICE.md` credits `pslawinski/esphome_airconintl` and `deiger/AirCon`.** It says what came
+  from each and lists the three literal frames (power on, power off, the status poll) that are
+  the same bytes as in `esphome_airconintl`. The READMEs and the comments at those frames point
+  to it.
+
 ### The hub, the mapping and the entities (2026-10-13)
 - **A finished frame is credited to the command it belongs to.** A display-preference frame or a
   special-mode write no longer restarts the wait of another command, so a lost command is sent
