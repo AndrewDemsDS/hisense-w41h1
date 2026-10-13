@@ -1,11 +1,15 @@
 # esp32-recon runbook: settling the open bus and protocol questions
 
 Procedures for the questions that need a real unit, using [`esp32-recon`](README.md). Each one
-is: wire it, flash it, run these commands, record the result on the issue. None needs Home
+is: wire it, flash it, run these commands, record the result. None needs Home
 Assistant. Read the warning about the tool's network console in its README first.
 
-The issue numbers in the headings are the ones each question was filed under when the section
-was written.
+The numbers in the headings (#55, #52, #50, #49, #15, #16, and the `I` numbers beside them) are
+the ones each question was filed under when the section was written. They are not references
+into this repository's GitHub tracker: there, as looked up on 2026-10-13, #49, #50, #52, #55 and
+#16 are pull requests about other things and #15 is an issue on another subject. Record a result
+in [`reverse-engineering/docs/14-open-questions.md`](../../reverse-engineering/docs/14-open-questions.md)
+or in a new issue.
 
 ## Setup (once)
 

@@ -54,6 +54,7 @@ Design notes and hardware reference behind the guide.
   side by side, with measured figures
 - [The ESPHome firmware: design, and the stock module](firmware/15-esphome-path.html)
 - [The stock module: how it boots, and recovery](firmware/10-stock-module-boot-and-recovery.html)
+- [Component architecture](firmware/01-component-architecture.html): the layers of the component and what each file holds
 - [ESP32 board notes](firmware/16-esp32-board-notes.html) · [QA strategy](firmware/04-qa-strategy.html) · [Energy monitoring](firmware/09-energy-monitoring.html)
 - [Stock parity gaps](firmware/07-stock-parity-gaps.html): what the vendor firmware does that this one does not
 
@@ -65,7 +66,8 @@ claims:
 - [RS-485 A/C protocol](internals/03-rs485-ac-protocol.html): framing, checksum, every byte offset
 - [Stock firmware init and comms](internals/10-stock-fw-init-and-comms.html): disassembly of the vendor module
 - [Device-type to capability map](internals/11-model-capability-map.html): how the A/C advertises its own features
-- [Hardware](internals/01-hardware.html) · [Cloud and firewall](internals/04-cloud-and-firewall.html) · [ESP32 replacement](internals/05-esp32-replacement.html)
+- [Open questions](internals/14-open-questions.html): what is not settled, and what would settle each point
+- [Hardware](internals/01-hardware.html) · [The vendor firmware's Matter interface](internals/02-matter-local-control.html) · [Cloud and firewall](internals/04-cloud-and-firewall.html) · [The community tables](internals/05-esp32-replacement.html)
 
 ## Retired: the Matter firmware
 

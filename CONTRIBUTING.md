@@ -118,7 +118,9 @@ pull request and add it there.
 The protocol code of the component has no ESPHome dependency and runs on the host: the codec
 (`hisense_protocol.*`), the bus scheduler (`hisense_bus.*`) and the decision headers
 (`hisense_mapping.h`, `hisense_special.h`, `hisense_confirm.h`, `hisense_telemetry.h`,
-`hisense_commands.h`, `hisense_entities.h`). Put a new decision there as a pure function and add a
+`hisense_commands.h`, `hisense_entities.h`). `hisense_map.h` declares nothing: it only includes
+them. The decisions of Wi-Fi setup mode are pure in the same way, in
+`wifi_setup_mode/setup_mode_logic.h`. Put a new decision there as a pure function and add a
 test for it. The ESPHome glue only runs in the host end-to-end test, where one case costs
 seconds.
 

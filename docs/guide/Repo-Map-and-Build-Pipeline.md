@@ -129,8 +129,15 @@ and nothing is tagged or published.
 
 **`pages.yaml`** builds and publishes the docs site when a doc changes.
 
-No workflow lists the board files. `.github/scripts/board-groups.sh` sorts them by the package
-they include, so a new board file is compiled without a workflow change.
+The workflows' own helpers are in `.github/scripts/`:
+
+| Script | Does |
+|---|---|
+| `board-groups.sh esp32\|amebaz2\|other\|matrix` | sorts the board files by the package they include. No workflow lists the board files, so a new one is compiled without a workflow change |
+| `upstream_gate_report.py <log>` | turns the log of `esphome-upstream-check.sh` into Markdown with the failed gates only, for the nightly job |
+| `upstream-dev-issue.sh fail <report.md>\|pass` | keeps the one tracking issue of the nightly `esphome-upstream-dev` job: opened or rewritten while ESPHome's development-branch gates fail on the component, closed the first night they pass |
+| `assemble_docs_site.py` | builds the docs site (below) |
+| `indexnow_ping.py` | tells IndexNow that the site changed, after a deploy |
 
 Dependabot proposes updates for the GitHub Actions, the pinned Python requirements, the lint
 tools and the ESPHome release. The ESPHome release is written in four more places that

@@ -155,8 +155,8 @@ its reply to the ~1 Hz `0x1E` heartbeat**. Static RE inferred bit3 (`0x08`); the
 truth** is that "77" pulses **`payload[4] = 0x20` (bit5, smart-config)** for a single ~1 Hz
 frame, then clears. Conversely, the A/C lights "77" iff the module reports `prov_status` in its
 **outbound** `0x1E`, so the display tracks the module's pairing state. Both directions are
-**proven on hardware**. Full bitfields and the outbound builder are in doc 03's "Recommission"
-section.
+**proven on hardware**. Full bitfields and the outbound builder are in doc 03, section
+`Recommission ("77"): the request bits in the 0x1E reply`.
 
 The vendor firmware uses the request to reset Wi-Fi and start pairing. This firmware has no
 pairing step. Its component reports the request as the `on_setup_request` trigger and can light

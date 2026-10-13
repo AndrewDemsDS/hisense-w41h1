@@ -78,12 +78,16 @@ programmer.
 
 | Script | Does |
 |---|---|
-| `ch341dump.py <out.bin>` | reads the whole 4 MB chip twice and writes the file only when both reads agree. Do it before every write |
-| `ch341_readverify.py <dump.bin>` | read-only: spot-checks that the chip matches a full dump on an even grid of points, and reports the QE bit |
-| `ch341_sr.py` | reads the status registers. The QE bit (SR2 bit 1) is cleared when the bootloader rejected an image, and set after a healthy boot |
+| `ch341dump.py` | reads the whole chip twice into a file. Do it before every write |
+| `ch341_readverify.py` | read-only: spot-checks that the chip matches a full dump |
+| `ch341_sr.py` | reads the status registers and says whether the QE bit is set |
 | `ch341_setqe.py` | sets the QE bit again |
-| `ch341flash-full.py <dump.bin> --backup <dump.bin>` | writes the whole chip and sets QE at the end. For putting a unit's own full dump back |
-| `ch341flash.py <image.bin> --layout <layout> --slot <1 or 2> --backup <dump.bin>` | writes one firmware slot and leaves the rest of the chip alone. **Not run on a module yet** |
+| `ch341flash-full.py` | writes the whole chip. For putting a unit's own full dump back |
+| `ch341flash.py` | writes one firmware slot. **Not run on a module yet** |
+
+The arguments of each tool, what has run on a module, every check that stands before an erase and
+what to do after an interrupted write are in
+`firmware/flasher/README.md`, which is the reference. In short:
 
 Both writers refuse before the first erase unless all of this holds:
 

@@ -264,6 +264,16 @@ Nothing in this section changes what is on the wire, the entities or what they p
   reference or history, and `reverse-engineering/docs/14-open-questions.md` lists what is
   unsettled. The protocol reference has a real device-type reply (captured 2026-10-12) and the
   receive rules the firmware applies.
+- The guide is grouped by what a reader is doing (start, build and install, use, when something
+  is wrong, developer, retired), with pages of their own for the stock module, Wi-Fi setup mode
+  and the retired Matter firmware. `firmware/scripts/` and `firmware/flasher/` each have a README
+  that says what protects every write. A page that moved leaves a pointer.
+- Loose ends after that revamp: on the docs site, a link from a firmware or reverse-engineering
+  page to a file outside the documentation now opens that file on GitHub (it was a dead link),
+  the API key in `secrets.yaml.example` is 32 zero bytes so that nobody takes it for a key (the
+  earlier example value is public: a node built with it unchanged needs a key of its own),
+  `dev.py fetch` names all four secrets the build reads, and `run_tests.sh` labels its layers in
+  the order they run.
 
 ## Matter and ESPHome side by side - 2026-10-10
 
