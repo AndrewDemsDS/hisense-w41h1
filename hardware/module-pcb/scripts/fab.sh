@@ -25,7 +25,7 @@ kicad-cli pcb export drill --format excellon --drill-origin plot --excellon-sepa
 
 echo "assembly files"
 kicad-cli sch export bom --fields 'Value,Reference,Footprint,LCSC,MPN,Manufacturer' \
-    --labels 'Comment,Designator,Footprint,LCSC,MPN,Manufacturer' --group-by Value,Footprint,LCSC \
+    --labels 'Comment,Designator,Footprint,LCSC,MPN,Manufacturer' --group-by Value,Footprint,LCSC --ref-range-delimiter '' \
     --exclude-dnp -o "$out/$name-bom.csv" "$name.kicad_sch" >/dev/null 2>&1
 kicad-cli pcb export pos --format csv --units mm --side both --use-drill-file-origin --exclude-dnp \
     -o "$out/$name-pos-kicad.csv" "$name.kicad_pcb" >/dev/null 2>&1

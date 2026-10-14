@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Two-part case for the replacement module PCB (hardware/module-pcb).
 
-The outer length and width are estimates of the stock module's housing, scaled off the
-internal photo in the FCC filing (FCC ID 2AGCCAEH-W41H1) with the 40 mm board as the ruler.
-The filing has no side view, so the thickness is not the stock one: it is what this board
-needs. Change the numbers below and run the script again.
+Sized around the board: the board's outline plus clearance and walls, with room at the
+connector end for the lead's plug. Change the numbers below and run the script again.
 
 Frame: the board's STEP export. X runs from the connector end to the antenna end, the
 board's bottom face is Z = 0 and its parts point up.
@@ -20,22 +18,22 @@ from pathlib import Path
 import cadquery as cq
 
 # Board (keep in step with ../module-pcb/scripts/place.py)
-BOARD_L = 40.0
-BOARD_W = 20.5
+BOARD_L = 52.0
+BOARD_W = 22.0
 BOARD_T = 1.6
 HOLE_X = 2.7
-HOLE_PITCH = 16.6
-
-# Stock housing, estimated from the photo
-CASE_L = 53.0
-CASE_W = 25.0
+HOLE_PITCH = BOARD_W - 5.4
 
 # What this board needs
 CLEARANCE = 0.3  # board edge to wall
 END_WALL = 1.6
+SIDE_WALL = 1.8
+PLUG_ROOM = 9.5  # connector face to the end wall: the plug and the bend in its wires
+CASE_L = BOARD_L + CLEARANCE + PLUG_ROOM + 2 * END_WALL
+CASE_W = BOARD_W + 2 * CLEARANCE + 2 * SIDE_WALL
 FLOOR = 1.2
 ROOF = 1.2
-STANDOFF = 2.2  # tallest bottom-side part is the SOIC-8 at 1.75 mm
+STANDOFF = 2.2  # the connector's pins stand 1.5 mm out of the bottom
 HEADROOM = 5.3  # the JST PH header stands 4.8 mm above the board
 CABLE_D = 5.5  # opening for the 4-wire lead
 CABLE_Z = BOARD_T + 2.4  # the header's wire axis above the board's bottom face
@@ -52,7 +50,6 @@ MID = BOARD_W / 2
 X1 = BOARD_L + CLEARANCE  # inner face of the antenna-end wall
 X0 = X1 + END_WALL - CASE_L  # outer face of the connector-end wall
 Y0 = MID - CASE_W / 2
-SIDE_WALL = -CLEARANCE - Y0
 Z0 = -(STANDOFF + FLOOR)
 Z_SPLIT = CABLE_Z
 Z1 = BOARD_T + HEADROOM + ROOF
@@ -140,7 +137,7 @@ def main():
             tolerance=0.02,
             angularTolerance=0.1,
         )
-    print(f"case {CASE_L} x {CASE_W} x {CASE_T:.1f} mm, side wall {SIDE_WALL:.2f} mm")
+    print(f"case {CASE_L:.1f} x {CASE_W:.1f} x {CASE_T:.1f} mm, side wall {SIDE_WALL:.2f} mm")
     overlap = parts["base"].intersect(parts["lid"]).val()
     print(f"base and lid overlap: {overlap.Volume():.3f} mm3")
     if len(sys.argv) > 1:

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Place the footprints, draw the outline and pour the ground zones.
 
-The outline numbers are estimates scaled off the FCC internal photo (FCC ID
-2AGCCAEH-W41H1), not caliper readings. Change BOARD_L, BOARD_W and HOLE_* here
-and run the script again: every position below is derived from them or from the
-connector end of the board.
+Every assembled part sits on the top side, so the board can go through JLCPCB's single-sided
+"Economic" assembly. Only bare pads (programming and test points) are on the bottom. The
+outline is sized for that, not for the stock module's bay: change BOARD_L and BOARD_W here and
+run the script again. Every position below is derived from them or from the connector end.
 
 Usage: python3 scripts/place.py [--unroute] [board.kicad_pcb]
 Routing is kept unless --unroute is given. Tracks that no longer reach a moved pad show up in DRC.
@@ -16,10 +16,10 @@ from pathlib import Path
 import pcbnew
 
 # Outline, in mm. Origin is the corner next to pin 1 of the A/C connector.
-BOARD_L = 40.0  # estimate, stock board measures about 39.7 in the photo
-BOARD_W = 20.5  # estimate, about 20.6 in the photo
-HOLE_X = 2.7  # estimate
-HOLE_PITCH = 16.6  # estimate, centre to centre
+BOARD_L = 52.0
+BOARD_W = 22.0
+HOLE_X = 2.7
+HOLE_PITCH = BOARD_W - 5.4  # centre to centre, 2.7 mm in from each long edge
 EDGE_KEEPOUT = 0.6  # no tracks this close to the edge
 ORIGIN = (100.0, 100.0)  # where the board corner sits on the sheet
 
@@ -28,6 +28,8 @@ MID = BOARD_W / 2
 # origin and has to sit at the board edge.
 MODULE_X = BOARD_L - 13.1
 REG = (11.6, 4.6)  # centre of the buck regulator
+COL_A = MODULE_X - 8.7  # column of small parts just left of the module
+COL_B = MODULE_X - 10.7
 
 NOT_FITTED = {"J2"}  # bare pads for programming, no part goes on them
 
@@ -37,7 +39,7 @@ PLACEMENT = {
     "H2": (HOLE_X, MID + HOLE_PITCH / 2, 0, "F"),
     "J1": (6.5, MID - 3.0, 270, "F"),
     "U1": (MODULE_X, MID, 270, "F"),
-    # 5 V to 3.3 V buck, top side, laid out around the regulator at REG
+    # 5 V to 3.3 V buck, laid out around the regulator at REG
     "U2": (REG[0], REG[1], 0, "F"),
     "C1": (REG[0], REG[1] + 2.8, 180, "F"),
     "L1": (REG[0], REG[1] + 5.9, 270, "F"),
@@ -46,30 +48,34 @@ PLACEMENT = {
     "C8": (REG[0] + 3.7, REG[1] + 1.7, 0, "F"),
     "R2": (REG[0] + 3.7, REG[1] - 0.95, 0, "F"),
     "R1": (REG[0] + 3.7, REG[1] - 2.7, 180, "F"),
-    # status LED, top side
-    "D1": (12.0, 18.9, 0, "F"),
-    "R6": (15.5, 18.9, 0, "F"),
-    # RS-485, bottom side
-    "U3": (16.0, MID, 90, "B"),
-    "D2": (10.5, MID, 0, "B"),
-    "C7": (19.6, 7.8, 90, "B"),
-    "R9": (19.6, 11.0, 90, "B"),
-    "R8": (16.0, 15.4, 0, "B"),
-    # module strapping and decoupling, bottom side under the module
-    "R4": (MODULE_X - 4.5, 4.2, 90, "B"),
-    "R5": (MODULE_X - 2.7, 4.2, 90, "B"),
-    "C6": (MODULE_X + 1.7, 4.2, 90, "B"),
-    "R3": (MODULE_X + 3.5, 4.2, 90, "B"),
-    "C4": (MODULE_X + 5.3, 4.2, 90, "B"),
-    "C5": (MODULE_X + 5.3, 7.6, 90, "B"),
-    "R7": (MODULE_X + 3.0, 16.3, 90, "B"),
-    # programming pads, bottom side
-    "J2": (MODULE_X - 3.1, 16.2, 90, "B"),
-    "TP1": (MODULE_X + 4.6, 13.5, 0, "B"),
-    "TP2": (MODULE_X + 4.6, 11.5, 0, "B"),
-    "TP3": (9.0, 15.5, 0, "B"),
-    "TP4": (9.0, 17.5, 0, "B"),
+    # status LED, next to its pin on the module
+    "D1": (COL_B, 6.3, 90, "F"),
+    "R6": (COL_B, 9.4, 90, "F"),
+    # RS-485: protection next to the connector, transceiver between it and the module
+    "D2": (10.6, MID + 5.5, 0, "F"),
+    "U3": (21.5, MID + 5.0, 90, "F"),
+    "C7": (25.6, MID + 2.0, 90, "F"),
+    "R9": (25.6, MID + 5.5, 90, "F"),
+    "R8": (COL_B, MID + 7.7, 90, "F"),
+    # module strapping and decoupling, in two columns beside the module
+    "R4": (COL_A, 3.2, 90, "F"),
+    "R5": (COL_A, 6.3, 90, "F"),
+    "R3": (COL_A, 9.4, 90, "F"),
+    "C6": (COL_A, 12.5, 90, "F"),
+    "R7": (COL_A, 15.6, 90, "F"),
+    "C5": (COL_A, 18.7, 90, "F"),
+    "C4": (COL_B, 3.2, 90, "F"),
+    # bare pads on the bottom, nothing to assemble there
+    "J2": (MODULE_X - 3.1, MID + 6.0, 90, "B"),
+    "TP1": (MODULE_X + 4.6, MID + 3.25, 0, "B"),
+    "TP2": (MODULE_X + 4.6, MID + 1.25, 0, "B"),
+    "TP3": (9.0, MID + 4.5, 0, "B"),
+    "TP4": (9.0, MID + 6.5, 0, "B"),
 }
+
+# The module footprint has 13 vias of 0.2 mm under its ground pad. JLCPCB charges extra for
+# anything under 0.3 mm, so four of them become 0.3 mm vias and the rest become plain copper.
+THERMAL_VIAS_KEPT = {(0.41, -0.9), (1.51, -0.9), (0.41, 1.3), (1.51, 1.3)}
 
 
 def reg(*points):
@@ -77,7 +83,7 @@ def reg(*points):
 
 
 # Connections laid down before the autorouter runs, because it gets them wrong: it gave the
-# regulator's feedback node a long detour and left the module's supply pin on an island.
+# regulator's feedback node a long detour.
 # The regulator follows the datasheet's advice: input capacitor, inductor and output
 # capacitor next to the part, a short switch node, a short feedback node.
 # (net, width, layer, points, via at the last point)
@@ -102,6 +108,8 @@ PREROUTE = [
     ("/FB", 0.2, "F", reg((1.14, -0.95), (2.875, -0.95), (2.875, -2.7)), False),
     # inductor to the output capacitors
     ("/+3V3", 0.5, "F", reg((0, 6.97), (2.35, 6.97), (2.35, 9.1)), False),
+    # the reset capacitor's ground pad, which the routing boxes in otherwise
+    ("/GND", 0.4, "F", [(COL_A, 11.725), (COL_A - 1.2, 11.725)], True),
     # module ground pin to the bottom pour
     (
         "/GND",
@@ -110,16 +118,30 @@ PREROUTE = [
         [(MODULE_X - 6.0, MID - 8.75), (MODULE_X - 6.0, MID - 7.0)],
         True,
     ),
-    # 3.3 V from the pullups (R5) across to the module's decoupling (R3, C4, C5), on the top
-    # layer in the lane the under-module keepout leaves free
-    ("/+3V3", 0.5, "B", [(MODULE_X - 2.7, 5.025), (MODULE_X - 2.7, 6.3)], True),
-    ("/+3V3", 0.5, "F", [(MODULE_X - 2.7, 6.3), (MODULE_X + 3.5, 6.3)], True),
-    ("/+3V3", 0.5, "B", [(MODULE_X + 3.5, 6.3), (MODULE_X + 3.5, 5.025)], False),
 ]
 
 
 def mm(x, y):
     return pcbnew.VECTOR2I(pcbnew.FromMM(ORIGIN[0] + x), pcbnew.FromMM(ORIGIN[1] + y))
+
+
+def standard_thermal_vias(fp):
+    for pad in fp.Pads():
+        if pad.GetAttribute() != pcbnew.PAD_ATTRIB_PTH:
+            continue
+        rel = pad.GetFPRelativePosition()
+        at = (round(pcbnew.ToMM(rel.x), 2), round(pcbnew.ToMM(rel.y), 2))
+        if at in THERMAL_VIAS_KEPT:
+            pad.SetDrillSize(pcbnew.VECTOR2I(pcbnew.FromMM(0.3), pcbnew.FromMM(0.3)))
+            pad.SetSize(
+                pcbnew.F_Cu, pcbnew.VECTOR2I(pcbnew.FromMM(0.6), pcbnew.FromMM(0.6))
+            )
+        else:
+            pad.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+            pad.SetDrillSize(pcbnew.VECTOR2I(0, 0))
+            layers = pcbnew.LSET()
+            layers.AddLayer(pcbnew.F_Cu)
+            pad.SetLayerSet(layers)
 
 
 def place(fps):
@@ -137,6 +159,8 @@ def place(fps):
         fp.SetOrientationDegrees(rot)
         # The board is too small for legible designators: they stay on the fab layer only.
         fp.Reference().SetVisible(False)
+        if ref == "U1":
+            standard_thermal_vias(fp)
         if ref in NOT_FITTED:
             fp.SetAttributes(
                 fp.GetAttributes() | pcbnew.FP_DNP | pcbnew.FP_EXCLUDE_FROM_POS_FILES
@@ -213,9 +237,8 @@ def keepouts(board):
     for name, corners in strips.items():
         track_keepout(board, name, both, corners)
     # Module body: 18 mm wide, pads on the two long sides. Leave a lane inside each pad row
-    # for the vias that take the signals to the bottom layer, wider on the side that also
-    # carries the pre-routed 3.3 V link.
-    y0, y1 = MID - 9.0 + 5.9, MID + 9.0 - 3.6
+    # for the vias that take the signals to the bottom layer.
+    y0, y1 = MID - 9.0 + 3.6, MID + 9.0 - 3.6
     x0, x1 = MODULE_X - 6.9, MODULE_X + 7.1
     track_keepout(
         board,
@@ -249,20 +272,20 @@ def preroute(board):
 
 # Silkscreen: (text, x, y, side, height)
 LABELS = [
-    ("W41H1-C3 rev A", 14.0, 16.2, "F", 0.8),
+    ("W41H1-C3 rev B", 21.0, MID - 1.5, "F", 0.8),
     ("5V", 8.9, MID - 3.0, "F", 0.8),
     ("A", 8.7, MID - 1.0, "F", 0.8),
     ("B", 8.7, MID + 1.0, "F", 0.8),
     ("G", 8.7, MID + 3.0, "F", 0.8),
-    ("PROG", 14.8, 16.9, "B", 0.8),
-    ("1 GND 2 3V3", 14.8, 17.95, "B", 0.8),
-    ("3 EN 4 IO9", 14.8, 19.0, "B", 0.8),
-    ("5 TX 6 RX", 14.8, 20.05, "B", 0.8),
-    ("1", MODULE_X + 1.3, 18.9, "B", 0.8),
-    ("D-", MODULE_X + 6.3, 13.5, "B", 0.8),
-    ("D+", MODULE_X + 6.3, 11.5, "B", 0.8),
-    ("5V", 7.3, 15.5, "B", 0.8),
-    ("GND", 6.9, 17.5, "B", 0.8),
+    ("PROG", MODULE_X - 12.5, MID + 4.2, "B", 0.8),
+    ("1 GND 2 3V3", MODULE_X - 12.5, MID + 5.25, "B", 0.8),
+    ("3 EN 4 IO9", MODULE_X - 12.5, MID + 6.3, "B", 0.8),
+    ("5 TX 6 RX", MODULE_X - 12.5, MID + 7.35, "B", 0.8),
+    ("1", MODULE_X + 1.3, MID + 8.65, "B", 0.8),
+    ("D-", MODULE_X + 6.3, MID + 3.25, "B", 0.8),
+    ("D+", MODULE_X + 6.3, MID + 1.25, "B", 0.8),
+    ("5V", 7.3, MID + 4.5, "B", 0.8),
+    ("GND", 6.9, MID + 6.5, "B", 0.8),
 ]
 
 
