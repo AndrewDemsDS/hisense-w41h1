@@ -3019,7 +3019,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "22u 10V"
+		(property "Value" "22u"
 			(at 82.55 49.53 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3564,7 +3564,7 @@
 				(justify left)
 			)
 		)
-		(property "Value" "22u 6.3V"
+		(property "Value" "22u"
 			(at 198.12 49.53 0)
 			(show_name no)
 			(do_not_autoplace no)

@@ -3013,7 +3013,7 @@
 				)
 			)
 		)
-		(property "Value" "22u 6.3V"
+		(property "Value" "22u"
 			(at 0 1.68 0)
 			(layer "F.Fab")
 			(uuid "a0897233-4947-4513-811a-9424301db001")
@@ -3160,7 +3160,7 @@
 				)
 			)
 		)
-		(property "Value" "22u 10V"
+		(property "Value" "22u"
 			(at 0 1.68 180)
 			(layer "F.Fab")
 			(uuid "1d3416ae-59f1-4d4e-9fc6-780f223488b8")

@@ -1,6 +1,5 @@
 "Comment","Designator","Footprint","LCSC","MPN","Manufacturer"
-"22u 10V","C1","Capacitor_SMD:C_0805_2012Metric","C45783","CL21A226MAQNNNE","Samsung"
-"22u 6.3V","C2","Capacitor_SMD:C_0805_2012Metric","C45783","CL21A226MAQNNNE","Samsung"
+"22u","C1,C2","Capacitor_SMD:C_0805_2012Metric","C45783","CL21A226MAQNNNE","Samsung"
 "10u","C3","Capacitor_SMD:C_0805_2012Metric","C15850","CL21A106KAYNNNE","Samsung"
 "100n","C4,C7,C8","Capacitor_SMD:C_0603_1608Metric","C14663","CC0603KRX7R9BB104","Yageo"
 "10u","C5","Capacitor_SMD:C_0603_1608Metric","C19702","CL10A106KP8NNNC","Samsung"
