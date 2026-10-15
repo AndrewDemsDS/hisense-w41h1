@@ -445,10 +445,15 @@ DevType only after five unanswered polls.
   500 ms only for the DevType probe and the 15 s stream. [PROVEN]
 - Driver change, made 2026-10-15: ProductType is polled the way stock does it, once after each
   handshake (first heard cycle, and again after a `RECOVER` re-handshake); the 60-cycle re-poll
-  and `BUS_PRODUCTTYPE_CYCLES` are gone. The test is the reply-timeout counter on the ESP32 nodes
-  after the flash: if the 75.5 s timeouts were the re-poll, the counter stops advancing on a quiet
-  link. If it keeps advancing at that period, the candidate was wrong and the stock loop offers no
-  other minute-scale send to compare with.
+  and `BUS_PRODUCTTYPE_CYCLES` are gone.
+- Field result, same day, three ESP32 nodes: the counters kept advancing at the old per-unit
+  rate, so the re-poll was not the cause. A VERY_VERBOSE capture on office-ac (475 status polls)
+  showed 3 unanswered, two of them exactly 122 s apart: the heartbeat 16 ms before each was
+  answered, then nothing arrived at all. A second capture with the stock 3000 ms window had no
+  reply later than 500 ms and the same total silence. The mainboard skips the status reply on a
+  fixed period of its own (about 122 s on the office unit, about 90 s on the secondary bedroom
+  one); whether a 1 Hz poll lands in that interval is a matter of phase. Reply latency otherwise:
+  median 228 ms, p99 253 ms, max 400 ms. Link losses stayed at 0. Details on issue #186.
 
 ## History: the original plan and what became of it
 
