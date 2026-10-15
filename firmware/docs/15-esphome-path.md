@@ -356,6 +356,101 @@ Still open on the ESP32 boards:
 - every preset set from Home Assistant reading back as itself, from each starting preset;
 - everything about Wi-Fi setup mode ([`firmware/esphome/README.md`](../esphome/README.md#the-check-on-a-unit)).
 
+## Stock main loop, read from the 2026-08-19 dump
+
+Read on 2026-10-15 from `dumps/stock-w41h1-2026-08-19.bin` (fw1 slot, rizin through the REA MCP)
+for the last open item of issue #186: the ESP32 nodes log one reply timeout about every 75.5 s
+and never lose the link. Offsets below are file offsets in that dump; the raw listings are in the
+local note `dumps/main-loop-cadence-analysis.md` (not in the repository). Everything tagged
+[PROVEN] was read from the instructions at the offset given; [INFERRED] is deduced from them.
+
+### One function, one task, for the life of the link
+
+`uart_ctl_process_main` (0x25f08) is the body of the stock module's `uart_thread` task (created
+at 0x27294 with a 0x800 stack, priority 3; the run flag is `[0x1000ac90]`, set by the start
+function at 0x27190 and cleared through the stop function at 0x272f4). The function never returns
+while the link holds: after bring-up it enters a loop at 0x26666 that only exits when the flag is
+no longer 1. [PROVEN]
+
+Bring-up, once per task start, in this order: baud toggle and DevType probe (0x25ffc, 500 ms
+window), `07 01 00` (0x26064), the 15 s heartbeat stream at 1 Hz (0x26078 to 0x26138, deadline
+`tick + 0x3a98`), model finalise, ProductType `66 40` (0x265d2, routine 0x251a8: 7 tries, each
+a 100 ms delay then a 3000 ms window), device ID `67 00 00` (0x265dc, 2 tries of 3000 ms, result
+ignored), the sub-device enumeration (0x20de8, only when the ProductType reply's byte 0x16 has
+bits set), then the status template `66 00 00 00 00` is built and stored (0x26618) and the loop
+begins. [PROVEN]
+
+### The steady-state loop
+
+The loop is a message pump. Each pass (0x268cc) waits on a semaphore for up
+to 1000 ms (`xSemaphoreTake([0x1000ae9c], 0x3e8)`), which a posted message ends early. Messages
+come from the cloud and Matter sides (id 0xc9, a raw payload to send) and from the loop itself
+(id 0x387, "send the status poll"). After every message the loop sleeps `vTaskDelay(1000)`
+(0x26e48) before looking for the next one. When the queue is empty the loop runs its periodic
+work on a pass counter `cnt` (0x26954, modulo 100):
+
+| `(cnt+1) & 3` | what happens | offset |
+|---|---|---|
+| 1 | `uart_process_num30_cmd` (0x24ec8): if at least 3 s passed since the last heartbeat (`0x1de38`, default 3), 100 ms delay, send `0x1E`, wait up to 3000 ms | 0x2696e |
+| 2 | nothing | |
+| 3 | post message 0x387 unless `[0x1000a83c]` is set (meaning not followed) | 0x270d2 |
+| 0 | the posted 0x387 is popped at once: 100 ms delay, send `66 00`, wait up to 3000 ms, decode, then the 1000 ms post-message sleep | 0x269de, 0x26a3c |
+
+On every empty pass, independent of the counter: when `[0x10027e08] == 2` a status poll is posted
+(0x268ee), and when more than 300 s have passed since the stamp at `[0x1000aea8]` the loop logs
+"every 5 minutes report" and posts one more status poll (0x26904 to 0x2694c). That stamp is only
+written at bring-up and in this path, so the extra poll comes every 301 s whatever else happens.
+[PROVEN]
+
+Timeline of one group of four passes with an idle queue, tick = 1 ms [INFERRED durations,
+PROVEN order]:
+
+| time | module sends | window | notes |
+|---|---|---|---|
+| 0.0 s | | | pass 1 starts: 1000 ms wait runs out |
+| 1.1 s | `0x1E` heartbeat (28 B) | 3000 ms | after the 100 ms pre-send delay; the gate of 3 s since the last heartbeat is always met at this spacing |
+| 2.2 s | | | pass 2: nothing |
+| 3.2 s | | | pass 3: 0x387 posted, semaphore given |
+| 3.3 s | `66 00` status poll (21 B) | 3000 ms | pass 4 starts at once; 100 ms delay, 160 B reply takes about 200 ms with the A/C's latency |
+| 3.5 to 4.5 s | | | decode, 1000 ms post-message sleep, counter advances |
+| 4.5 s | | | next group |
+
+So in steady state the stock module sends one heartbeat and one status poll about every 4.5 s,
+not at 1 Hz; 1 Hz is the 15 s stream at bring-up only. Slow repeats: an extra `66 00` every
+301 s. Nothing else is periodic. `0x0A`, `0x07`, `66 40` and `0x67` are sent once per task
+start and never again while the link holds. [PROVEN for the sends; the 4.5 s is INFERRED from a
+1 ms tick]
+
+Failure handling is mild. A heartbeat with no reply counts in `[0x1000ac84]`; after four in a row
+`[0x1000093c]` is cleared, which only changes a bit in the next heartbeat payload. A status poll
+with no reply logs "CMD process fail..!! %d" and the loop goes on. No path in this function
+re-sends DevType or restarts the link: the ProductType plus device-ID pair that the bench saw about
+once a minute (issue #110) can only come from the task being stopped and started again from
+outside this function, which the bench setup (no cloud) presumably provokes. [INFERRED]
+
+### The 75.5 s reply timeout on the ESP32 nodes
+
+The driver's periodic sends (`hisense_bus.h`, `BUS_CYCLE_MS` 1000): `0x1E` every cycle, `66 00`
+every cycle, `66 40` on the first heard cycle and every `BUS_PRODUCTTYPE_CYCLES` = 60 cycles
+after that (`product_done_`), DevType only after five unanswered polls.
+
+- Candidate: our `66 40` ProductType re-poll, period 60 cycles. It is the only send on a
+  minute scale. The observed 75.5 s against a nominal 60 s is not explained by the code: `PACE`
+  absorbs each cycle's work, so a cycle is 1000 ms plus one loop tick. And `on_bus_timeout()`
+  reports `expect_class` 0x66 for the status poll and the ProductType poll alike, so the
+  VERBOSE log cannot tell the two apart today. [INFERRED]
+- Stock: sends `66 40` once per link bring-up (7 tries), never again. Whether an A/C answers a
+  second `66 40` on a live link is something the stock module never finds out. [PROVEN]
+- Stock window: 3000 ms, after a 100 ms pre-send delay, for every steady-state transaction;
+  500 ms only for the DevType probe and the 15 s stream. [PROVEN]
+- Recommended driver change (not made here): poll ProductType the way stock does, once after
+  each handshake (first heard cycle, and again after a `RECOVER` re-handshake), and drop the
+  60-cycle re-poll; the capability flags do not change on a live link. Before that, one build
+  that names the step in `on_bus_timeout()` (or a run with `BUS_PRODUCTTYPE_CYCLES` set to 20)
+  settles whether the 75.5 s timeouts are the ProductType poll: the period should follow the
+  constant. If they do not, the candidate is wrong and the stock loop offers no other
+  minute-scale send to compare with.
+
 ## History: the original plan and what became of it
 
 > **Retired on 2026-10-12.** This section describes the design of August 2026 (issue #13), when ESPHome
