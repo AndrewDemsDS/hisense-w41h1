@@ -431,8 +431,8 @@ outside this function, which the bench setup (no cloud) presumably provokes. [IN
 ### The 75.5 s reply timeout on the ESP32 nodes
 
 The driver's periodic sends (`hisense_bus.h`, `BUS_CYCLE_MS` 1000): `0x1E` every cycle, `66 00`
-every cycle, `66 40` on the first heard cycle and every `BUS_PRODUCTTYPE_CYCLES` = 60 cycles
-after that (`product_done_`), DevType only after five unanswered polls.
+every cycle, `66 40` once per handshake (it was re-sent every 60 cycles until the change below),
+DevType only after five unanswered polls.
 
 - Candidate: our `66 40` ProductType re-poll, period 60 cycles. It is the only send on a
   minute scale. The observed 75.5 s against a nominal 60 s is not explained by the code: `PACE`
@@ -443,13 +443,12 @@ after that (`product_done_`), DevType only after five unanswered polls.
   second `66 40` on a live link is something the stock module never finds out. [PROVEN]
 - Stock window: 3000 ms, after a 100 ms pre-send delay, for every steady-state transaction;
   500 ms only for the DevType probe and the 15 s stream. [PROVEN]
-- Recommended driver change (not made here): poll ProductType the way stock does, once after
-  each handshake (first heard cycle, and again after a `RECOVER` re-handshake), and drop the
-  60-cycle re-poll; the capability flags do not change on a live link. Before that, one build
-  that names the step in `on_bus_timeout()` (or a run with `BUS_PRODUCTTYPE_CYCLES` set to 20)
-  settles whether the 75.5 s timeouts are the ProductType poll: the period should follow the
-  constant. If they do not, the candidate is wrong and the stock loop offers no other
-  minute-scale send to compare with.
+- Driver change, made 2026-10-15: ProductType is polled the way stock does it, once after each
+  handshake (first heard cycle, and again after a `RECOVER` re-handshake); the 60-cycle re-poll
+  and `BUS_PRODUCTTYPE_CYCLES` are gone. The test is the reply-timeout counter on the ESP32 nodes
+  after the flash: if the 75.5 s timeouts were the re-poll, the counter stops advancing on a quiet
+  link. If it keeps advancing at that period, the candidate was wrong and the stock loop offers no
+  other minute-scale send to compare with.
 
 ## History: the original plan and what became of it
 

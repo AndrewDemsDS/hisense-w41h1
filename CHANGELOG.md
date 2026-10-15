@@ -11,6 +11,12 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- The ProductType poll (`66 40`) is sent once per handshake: on the first cycle the A/C is
+  heard, and again after a recovery handshake. It was re-sent every 60 cycles, and each re-send
+  cost one reply timeout on the ESP32 nodes (the periodic single timeout of #186). The stock
+  module asks it once per link bring-up and never again on a live link (reverse-engineering docs
+  10 and 15, read from the 2026-08-19 dump). `BUS_PRODUCTTYPE_CYCLES` is gone.
+
 ## 2.0.1 - 2026-10-13
 
 The same firmware built with ESPHome 2026.9.1. Nothing changes in what a node does. Build

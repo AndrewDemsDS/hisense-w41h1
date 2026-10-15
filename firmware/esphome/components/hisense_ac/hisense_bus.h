@@ -84,7 +84,6 @@ static constexpr uint32_t BUS_CYCLE_MS = 1000;  // the vendor module paces at 0x
 static constexpr uint32_t BUS_BOOT_RETRY_MS = 500;
 static constexpr uint8_t BUS_BOOT_TRIES = 10;
 static constexpr uint8_t BUS_LINK_LOST_POLLS = 5;
-static constexpr uint8_t BUS_PRODUCTTYPE_CYCLES = 60;
 static constexpr size_t BUS_TX_QUEUE_LEN = 8;
 
 // Bytes of wire time for `len` bytes at 9600 8N1 (10 bits each), rounded up.
@@ -225,7 +224,7 @@ class BusScheduler {
     HEARTBEAT,     // 0x1E
     COMMANDS,      // the queue, one frame per transaction, while command_slot_open()
     STATUS,        // 0x66 poll
-    PRODUCT,       // 0x66/40 poll, on the first heard cycle and every BUS_PRODUCTTYPE_CYCLES
+    PRODUCT,       // 0x66/40 poll, once per handshake: the first heard cycle, and again after a recovery
     PACE,          // sends nothing: waits out the rest of BUS_CYCLE_MS
   };
   // Called when a step's reply window closes. `reply_len` is the length of the reply in rx_, 0
@@ -302,7 +301,6 @@ class BusScheduler {
   bool setup_started_{false};
   bool setup_indicator_{false};
   uint8_t link_request_{0};
-  uint8_t pt_poll_{0};
   uint32_t chk_mismatch_{0};
   uint32_t reply_timeouts_{0};
   uint32_t unanswered_commands_{0};

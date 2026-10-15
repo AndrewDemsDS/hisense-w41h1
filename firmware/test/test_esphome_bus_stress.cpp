@@ -579,7 +579,6 @@ struct Probe : H::BusScheduler {
   unsigned head_sends() const { return this->head_sends_; }
   unsigned boot_tries() const { return this->boot_tries_; }
   unsigned link_miss() const { return this->link_miss_; }
-  unsigned pt_poll() const { return this->pt_poll_; }
   bool link_down() const { return this->link_down_; }
 };
 
@@ -802,7 +801,6 @@ void Rig::check_(uint32_t dt) {
         bus.head());
   CHECK(bus.head_sends() <= H::COMMAND_SENDS_MAX, "head sends %u", bus.head_sends());
   CHECK(bus.boot_tries() <= H::BUS_BOOT_TRIES, "boot tries %u", bus.boot_tries());
-  CHECK(bus.pt_poll() < H::BUS_PRODUCTTYPE_CYCLES, "ProductType counter %u", bus.pt_poll());
   uint8_t hi = 0, lo = 0;
   bus.link_token(&hi, &lo);
   CHECK(hi != 0 || lo != 0, "device type is never 00 00");

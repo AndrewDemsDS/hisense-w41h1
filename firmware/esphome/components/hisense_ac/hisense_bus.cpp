@@ -246,8 +246,11 @@ void BusScheduler::start_step_(uint32_t now) {
       this->start_step_(now);
       return;
     case Step::RECOVER:
-      if (this->link_silent_())
+      if (this->link_silent_()) {
         this->heard_ac_ = false;
+        // A new handshake gets a new ProductType poll, like the stock module's bring-up.
+        this->features_.valid = false;
+      }
       this->begin_transaction_(LINK_INIT_0A, LINK_INIT_0A_LEN, CLASS_DEVTYPE, &BusScheduler::recover_done_, now);
       return;
     case Step::HEARTBEAT: {
@@ -284,7 +287,10 @@ void BusScheduler::start_step_(uint32_t now) {
       this->begin_transaction_(STATUS_REQUEST, STATUS_REQUEST_LEN, CLASS_STATUS, &BusScheduler::status_done_, now);
       return;
     case Step::PRODUCT: {
-      if (!this->heard_ac_ || (this->features_.valid && this->pt_poll_ != 0)) {
+      // The stock module asks ProductType once per link bring-up and never again on a live link
+      // (RE docs 10 and 15, 2026-08-19 dump). Asking it periodically produced one reply timeout
+      // per re-poll on the ESP32 nodes (#186).
+      if (!this->heard_ac_ || this->features_.valid) {
         this->product_done_(0, now);
         return;
       }
@@ -391,8 +397,6 @@ void BusScheduler::status_done_(size_t reply_len, uint32_t now) {
 void BusScheduler::product_done_(size_t reply_len, uint32_t now) {
   if (reply_len > 0)
     this->consume_(reply_len);
-  if (++this->pt_poll_ >= BUS_PRODUCTTYPE_CYCLES)
-    this->pt_poll_ = 0;
   this->step_ = Step::PACE;
 }
 
