@@ -454,8 +454,8 @@ static void test_command_bytes() {
   }
   // Every value of every enum field, one field at a time: a named value builds, any other is
   // refused with nothing written. The packing rules would otherwise turn it into a byte no capture
-  // backs: mode 8 into 0x10 (fan-only), fan 2 to 4 into 0x05 to 0x09, hswing 2 into byte 37 = 0x14
-  // with no direction bits.
+  // backs: mode 8 into 0x10 (fan-only), fan 2 to 4 into 0x05 to 0x09, hswing 2 into no direction
+  // bits at all.
   for (int field = 0; field < 6; field++) {
     int built = 0;
     for (int v = 0; v < 256; v++) {
@@ -499,13 +499,14 @@ static void test_command_bytes() {
     CHECK(built == NAMED[field], "enum field %d has %d named values (%d built)", field, NAMED[field], built);
   }
   // Byte 32: vertical in bits 6-7 (0x3 swing, 0x1 hold), horizontal in bits 4-5 (0x3 swing, 0x1
-  // direction, 0 off). Byte 37 = 0x14 whenever horizontal is not off. SwingMode has no value 2:
-  // vertical treats it as hold, horizontal sends no bits.
+  // direction, 0 off). Byte 37 stays 0 whatever the swing: the vendor writer uses it for
+  // 8-degree heat (RE doc 09), the 0x14 of the first driver was a guess. SwingMode has no
+  // value 2: vertical treats it as hold, horizontal sends no bits.
   struct {
     int v, h;
     uint8_t byte32, byte37;
-  } swings[] = {{0, 0, 0x40, 0x00}, {3, 0, 0xC0, 0x00}, {1, 0, 0x40, 0x00}, {0, 3, 0x70, 0x14},
-                {0, 1, 0x50, 0x14}, {3, 3, 0xF0, 0x14}, {3, 1, 0xD0, 0x14}};
+  } swings[] = {{0, 0, 0x40, 0x00}, {3, 0, 0xC0, 0x00}, {1, 0, 0x40, 0x00}, {0, 3, 0x70, 0x00},
+                {0, 1, 0x50, 0x00}, {3, 3, 0xF0, 0x00}, {3, 1, 0xD0, 0x00}};
   for (const auto &r : swings) {
     H::AcCommand c;
     c.vswing = (H::SwingMode) r.v;
@@ -515,8 +516,8 @@ static void test_command_bytes() {
           out[32], out[37]);
     CHECK(out[31] == 0x01, "byte 31 is the marker");
   }
-  // Values SwingMode does not have (2, and anything past 3) used to be packed: horizontal as
-  // "active" in byte 37 with no direction bits in byte 32. They are refused.
+  // Values SwingMode does not have (2, and anything past 3) used to be packed with no direction
+  // bits in byte 32. They are refused.
   for (int odd : {2, 4, 255}) {
     H::AcCommand c;
     c.hswing = (H::SwingMode) odd;

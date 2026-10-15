@@ -316,13 +316,13 @@ size_t build_command(const AcCommand &cmd, uint8_t *out, size_t out_cap) {
   frame[19] = carries_setpoint ? static_cast<uint8_t>(cmd.setpoint * 2 + 1) : 0x00;
   // 23: baseline 0x04 in every non-unit-switch sample.
   frame[23] = 0x04;
-  // 31: the marker every combined frame writes. 37: 0x14 whenever horizontal is commanded.
+  // 31: the marker every combined frame writes. Byte 37 stays 0: it is the 8-degree-heat field
+  // in the vendor firmware's writer (RE doc 09), not a horizontal-swing companion as the first
+  // driver assumed; horizontal swing is bits 4-5 of byte 32 alone.
   frame[31] = 0x01;
   frame[32] = swing_byte(cmd.vswing, cmd.hswing);
   frame[33] = FEATURE_BYTES[cmd.feature];
   frame[36] = DISPLAY_BYTES[cmd.display];
-  if (cmd.hswing != SWING_MODE_OFF)
-    frame[37] = 0x14;
   return seal_frame(frame, CMD_FRAME_LEN, out, out_cap);
 }
 
