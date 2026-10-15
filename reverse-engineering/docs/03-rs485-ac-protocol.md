@@ -133,7 +133,7 @@ Source: firmware for the builders and handlers (doc 10 §3.3), bus where noted.
 | `66` sub `00` | status | poll and 160-byte reply | the unit's state |
 | `66` sub `40` | ProductType | request and 45-byte reply | capability flags ([11-model-capability-map.md](11-model-capability-map.md)) |
 | `65` | command | module to A/C, and a reply the stock module does not read | set power, mode, setpoint, fan and the rest ([the reply](#the-reply-to-a-command-frame-class-65)) |
-| `1D` | reconfigure, OTA | A/C to module | the A/C can answer the device-type request with it. Not seen on a unit here |
+| `1D` | mainboard image request | A/C to module | the A/C can answer the device-type request with it; the module then runs its mainboard OTA engine ("[DOTA]" in its logs) to send the A/C the image it holds, and queues a fault code if it has none ([doc 13](13-stock-fw-feature-map.md#the-0x1e-heartbeat-and-the-request-bits-2026-08-19-dump)). Not seen on a unit here |
 | `67` | device ID | request and 60-byte reply | payload `67 00 00`. Sent by the stock module once after each ProductType exchange; the reply carries a 23-character device id ([below](#the-device-id-exchange-class-67)) |
 
 The stock firmware's error strings name three reply kinds, `link resp`, `net resp` and
@@ -494,7 +494,7 @@ which is frame byte 17 (firmware):
 | 0 | `01` | store: the A/C hands the module 8 or 2 bytes of a binding token |
 | 6 | `40` | an action code |
 
-A reply of class `1D` in place of `1E` is the request to reboot for an update of the mainboard.
+A reply of class `1D` in place of `1E` is the A/C asking the module for a mainboard image (the module's "[DOTA]" engine answers it; doc 13).
 The handler also reads payload bytes 5 and 11 (doc 10 §6.5).
 
 Bus, 2026-07-20: the gesture sets bit 5, not bit 3. The reply carries `20` at byte 17 for one
