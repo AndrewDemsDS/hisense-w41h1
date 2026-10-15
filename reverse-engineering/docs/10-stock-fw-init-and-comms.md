@@ -994,3 +994,89 @@ first:
    status frame.
 5. **On success**, promote the fault-map language in `hisense_rs485.h` and the `:2323` `faults`
    help text from "decode confirmed, bits hardware-unvalidated" to fully validated, and close #38.
+
+---
+
+## 8. Timing, windows and retries (2026-08-19 dump) [PROVEN unless marked]
+
+Read from `dumps/stock-w41h1-2026-08-19.bin` (fw1 slot, file offsets, pointer base
+`0x9b6dc000`) on 2026-10-15. The older sections above quote addresses from the May 2025 dump;
+the structure is the same, the offsets are not. Section 4.6 ("every main call site uses a
+500 ms window") holds for the bring-up path only. The steady-state senders use 3000 ms and a
+different primitive. The evidence listings are in `dumps/stock-bus-timing-analysis.md` (local,
+not in git).
+
+### 8.1 The two send primitives
+
+| Primitive | Pre-delay | TX path | Window | Reply check | Return |
+|---|---|---|---|---|---|
+| `0x20cc4` wrapper (stack: mode, timeout) over `0x2509c` | none | mode 1: framed send `0x249e4`; mode 0: raw `DEVWRITE` path | caller's, 500 or 3000 ms | decoder `0x20768`; with verify=1 also `memcmp(cmd, inner, 2)==0 && inner[2]==1` | inner length, or 0 for timeout, bad frame and verify mismatch alike |
+| `0x24fd8` / `0x24a50` raw | `vTaskDelay(100 ms)` (`0x6d5f8`) before TX | raw, mode 0 | 3000 ms (`0xbb8`) | none (caller decodes) | 0, or 7 on timeout or empty RX |
+
+Timeout status 7 comes from `xSemaphoreTake(rx_sem, window) != 1` at `0x250ca` / `0x24ffa` /
+`0x24a78`. Callers of `0x20cc4` cannot tell a timeout from a rejected reply.
+
+### 8.2 Per-class policy
+
+Driver values are from `firmware/esphome/components/hisense_ac/hisense_bus.h` as of this
+commit (`BUS_REPLY_TIMEOUT_MS` 500, `BUS_CYCLE_MS` 1000, `BUS_BOOT_TRIES` 10 at
+`BUS_BOOT_RETRY_MS` 500, `BUS_LINK_LOST_POLLS` 5, `BUS_PRODUCTTYPE_CYCLES` 60,
+`COMMAND_SENDS_MAX` 3).
+
+| Frame | Sender | Window | verify / mode | Attempts, spacing | When all attempts fail | Driver today |
+|---|---|---|---|---|---|---|
+| `0A 04 00` DevType probe | `uart_ctl_process_main` `0x25ffc` | 500 ms | 0 / 1 | one per baud; toggle 9600/115200 (`0x25fa6`) and send again, no attempt limit, no counter | never gives up. Exception: if the stored product string matches one of 22 known names (`0x244dc` on `[0x10009be4]`) the module proceeds without a reply [INFERRED purpose] | 500 ms, 10 tries 500 ms apart |
+| alternate DevType (`0x204c4` builder, `0x1fc20` flag) | `0x25440`, reached when the probe reply was neither `0x1D` nor `0x0A`, or on the string match above | 3000 ms raw (`0x24fd8`) | none / raw | 2 passes (`r4` 0, 1), 100 ms pre-delay each | continue to `07 01 00` regardless | none |
+| `07 01 00` version query | `0x2516c` at `0x2518a` | 500 ms | 1 / 1 | 1 | returns -1; caller `0x26064` ignores it | sent once after DevType |
+| `0x1E` heartbeat, bring-up stream | `0x26110` | 500 ms | 1 / 1 | one per 1000 ms slot (`0x3e8` pacing) for 15 s (`0x3a80 + 0x18` ms) | no per-frame handling; the loop runs to its deadline | 1 per 1 s cycle |
+| `0x1E` heartbeat, steady state (`uart_process_num30_cmd` `0x24ec8`) | main loop every 4th wake (`(n & 3) == 1`, `0x26966`), then only if `now_s - last_s >= period_s` | 3000 ms raw (`0x24a50`) | none / raw | 1 per period; period global `[period]` via `0x1de38`, default 3 s, forced to 1 s during bring-up and after link loss | miss counter `[0x1000ac84]++`; more than 3 consecutive misses clears `recv_num30_flag [0x1000093c]`, sets period to 1 s, fires a one-shot event `0x1cac4(3)` guarded by `[0x1000aea0]`. A reply resets the counter to 0, sets the flag to 1, re-arms the event | 1 per 1 s cycle, no miss counter on the heartbeat |
+| `66 00` status poll | queue item id `0x387`, enqueued by `0x1b8b0`: every 4th wake (`(n & 3) == 3`, `0x270d2`) while `[0x1000a83c] == 0`; every wake while `[0x10027e08] == 2` (`0x268ee`); and at least every 300 s (`0x12c`, "every 5 minutes report", `0x26902`) | 3000 ms raw (`0x24a50`), 100 ms pre-delay | none; main loop checks `inner[0] == 0x66 && inner[1] == 0` (`0x26a64`) | 1 | item flagged failed (`+0x20 = 1`, "CMD process fail..!! %d" line `0x6cc`), freed, `vTaskDelay(1000)`, next item. no retry, no counter, no relink | 500 ms, one per 1 s cycle, 5 misses in a row = link lost, DevType re-handshake |
+| `0x65` command | queue item id `0xa8` built by `0x259d8` from `0x205c8`; sent by the same loop | 3000 ms raw (`0x24a50`), 100 ms pre-delay | none; `item+0x20 = (reply[2] != 1)` | 1 | as above: flagged failed, freed, 1000 ms delay. the module never resends a command on its own | 500 ms, up to `COMMAND_SENDS_MAX` 3 sends while the unit answers its poll |
+| `66 40` ProductType | `0x251a8` (once, gated by `[0x1000a828]`; also from `0x20e1a`) | 3000 ms raw (`0x24fd8`), 100 ms pre-delay | none; decoder + `0x27810` | 7 back to back (`r5` 0..6, `0x25268`) | log "product type is not got, set it to the default" (line `0x22c`), continue with a default model | `BUS_PRODUCTTYPE_CYCLES` 60 |
+| `67 00 00` device ID | `0x253f0` at `0x25410`, `0x25424` | 3000 ms | 1 / 1 | 2, no delay | returns -1, caller `0x265dc` ignores it | not sent |
+| `1C 20 00 ..` subsystem version query (0xc bytes, `0x20a88`) | `0x20de8`, once after bring-up when the DevType reply was `0x0A` (`0x2660c`), and from the DOTA path; one query per set bit of ProductType `inner[0x16]`, up to 8 | 3000 ms | 1 / 1 | 5 back to back per bit (`r6`, `0x20eb8`) | skip that bit, go on to the next; logs "[DOTA] INFO: subsystem byte %02x" on success | not sent |
+| DOTA flash transfer (XMODEM-style: start frame, NAK wait, 0x80-byte chunks, SOH, CAN) | `0x21560`, from `0x21a90` after a `0x1D` reply and from the DOTA task `0x21bbc` | 3000 ms at all five sites (`0x21672`, `0x216da`, `0x21758`, `0x21954` after a 5000 ms delay, `0x21a24`) | 1 / mode = `strncmp(board, "2266964", 7) != 0` ("japan board, not fill 0xf4" uses raw mode) | start frame: loop with a retry log and no bound seen; NAK wait: 5; each chunk: 5, `reply[10] == 6` ACK, `0x18` CAN restarts the OTA | result code `0xbb9..0xbbc` mapped by `0x21a90` to `0x20edc(r, 3)`, else `(r, 1)` [INFERRED meaning of the codes] | not implemented |
+
+Main-loop wake: `xSemaphoreTake([0x1000ae9c], 1000 ms)` at `0x268cc`, so an idle loop turns
+once a second and the counters above count wakes. While the DOTA task is alive
+(`[0x100097b8] != 0`, `0x268d6`) the loop sends nothing. After each sent item the loop delays
+1000 ms (`0x26e42`) before taking the next one, with no semaphore wait in between.
+
+### 8.3 The link-lost rule, as the stock module has it
+
+- The only consecutive-miss counter on the bus is `[0x1000ac84]` in `uart_process_num30_cmd`
+  (`0x24f80..0x24f96`): incremented on each heartbeat with status 7, compared with 3, reset to 0
+  on any heartbeat reply (`0x24f40`). Nothing else on the bus is counted.
+- Crossing it (4 misses in a row, at the default period 3 s that is 12 s or more of silence)
+  does three things: `recv_num30_flag [0x1000093c] = 0`, which the next heartbeat carries as
+  byte[3] bit6 (section 6.3 names the bit; the flag's meaning in this build is "a heartbeat
+  reply has been received recently", not the scan flag of section 6.4); the heartbeat period
+  drops to 1 s (`0x1de4c(1)`); and `0x1cac4(3)` runs once until the next reply (guard
+  `[0x1000aea0]`). `0x1cac4` hands the event to the cloud/Matter layer (`0x1ae70`); what it
+  reports was not read.
+- There is no relink. After bring-up the module never sends DevType again: the baud probe
+  loop at `0x25fa6` runs once per task start, and the steady-state loop at `0x2666a` only ends
+  when `[0x1000ac90]` stops being 1 (uart server stop). Status polls and commands that time
+  out are dropped one by one.
+- Bring-up does depend on a reply: the DevType probe retries forever, toggling baud each
+  time, so a silent A/C keeps the module in the probe loop, with nothing else on the bus.
+
+### 8.4 What this means for the driver (recommendations, not changes)
+
+- Windows: 500 ms is stock only for DevType, `07` and the bring-up heartbeat. Everything the
+  module sends in steady state waits 3000 ms, after a 100 ms pause with DE low. A status reply
+  measured at about 260 ms fits either; a command-busy A/C that answers late is where the
+  difference would show, and that has not been measured.
+- Link loss: stock counts missed heartbeats (4, at a 3 s period), not missed status polls, and
+  its reaction is to tell the A/C (flag bit), speed the heartbeat up and report upward. It
+  does not re-probe. The driver's 5-poll rule plus DevType re-handshake is stricter than
+  stock, and the A/C never sees a re-probe from the stock module.
+- Retries: stock retries ProductType 7 times and the subsystem query 5 times, both back to
+  back, and never retries a status poll or a command. `COMMAND_SENDS_MAX` 3 has no stock
+  counterpart.
+- The 300 s floor on status polls (`0x26902`) is a cloud reporting cadence, not a bus one.
+
+Not established: who sets `[0x10027e08]` to 2 and `[0x1000a83c]` (pools point into
+`CloudJson_processMsg` and `uap_recv_data`); what `0x1cac4(3)` reports; the tail of the DOTA
+transfer after the 5000 ms delay; whether the stock task is ever restarted after a stop; and
+all of it on hardware, since this is static analysis only.
