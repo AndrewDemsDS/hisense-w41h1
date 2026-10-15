@@ -132,7 +132,7 @@ Source: firmware for the builders and handlers (doc 10 §3.3), bus where noted.
 | `1E` | link heartbeat | request about once a second, and reply | the module reports its Wi-Fi state. The A/C's reply carries request bits ([the "77" request](#recommission-77-the-request-bits-in-the-0x1e-reply)) |
 | `66` sub `00` | status | poll and 160-byte reply | the unit's state |
 | `66` sub `40` | ProductType | request and 45-byte reply | capability flags ([11-model-capability-map.md](11-model-capability-map.md)) |
-| `65` | command | module to A/C | set power, mode, setpoint, fan and the rest |
+| `65` | command | module to A/C, and a reply the stock module does not read | set power, mode, setpoint, fan and the rest ([the reply](#the-reply-to-a-command-frame-class-65)) |
 | `1D` | reconfigure, OTA | A/C to module | the A/C can answer the device-type request with it. Not seen on a unit here |
 | `67` | unknown | module to A/C | payload `67 00 00`. Sent by the stock module after each ProductType exchange. Captured on a bench against a simulated A/C only (project issue 110) |
 
@@ -404,13 +404,41 @@ moment. The component sends special-mode frames 10 s apart for this reason.
 
 After quiet is switched on and off again, the fan is left at `0A` (low) and not `01` (auto).
 
-### Command replies
+### The reply to a command frame (class `65`)
 
-The stock module accepts a reply to a command when it repeats the command's first two payload
-bytes and carries `01` in the third (firmware, doc 10 §4.2). That layout has not been captured on
-this bus. The component logs the verdict and decides nothing on it. What tells a command that
-took from one that did not is the next status frame
-([`hisense_bus.h`](../../firmware/esphome/components/hisense_ac/hisense_bus.h)).
+Source: firmware, the stock dump of 2026-08-19, read 2026-10-15 (file offsets in that image).
+Nothing here is from the bus: no reply to a `65` frame has been captured.
+
+The echo rule that doc 10 §4.2 describes (reply repeats the command's first two payload bytes
+and carries `01` in the third) lives in the verified transaction wrapper (file `0x20cc4`) and is
+applied only to frames sent through it with the verify flag: the `0x1E` heartbeat, `07 01 00`,
+`67 00 00` and the `0x1C` probe. A `65` command never goes through that wrapper [PROVEN]: the
+builder `matter_pack_devType_cmd` (`0x205c8`) wraps its own frame and has one caller, which puts
+the frame on the command queue (`uart_process_handle_cmd`, `0x24c18`). The queue is drained by
+`uart_ctl_process_main` (`0x268e4` onwards), which sends through `uart_process_cmd` (`0x24a50`):
+
+| Step | What the stock module does | Site |
+|---|---|---|
+| send | writes the frame, waits up to 3000 ms for the RX interrupt's end-of-frame signal. Bytes that arrived after the window closed still count as a reply on the next pass | `0x24a50` |
+| no bytes at all | logs, marks the queue node failed, frees it, sleeps 1 s, takes the next command. The command is not re-sent | `0x27098` to `0x270d0` |
+| any bytes | logs "CMD process success", records `reply[2] != 01` as the only verdict (frame byte 2, the direction byte), base64-encodes the raw reply. No class compare, no echo compare, no length gate; the frame decoder (`device_package_get_cmd`, `0x20768`) is not run on it | `0x26a2a`, `0x26fc4` |
+| after any reply | sends one `0x1E` heartbeat at once and decodes that reply as usual | `0x24e66` |
+| result | `send_cloud_server_result` (`0x1bbcc`). Cloud commands (queue kind `0xc9`): the base64 reply and the byte-2 flag go into the result JSON. Matter commands (kind `0xa8`): no case, the reply is logged and freed | `0x1bbcc`, `0x1bc60` to `0x1bca2` |
+
+So the stock module does not confirm a command from its reply, and does not retry a command
+whose reply is missing or wrong. Confirmation comes from the status frames that follow, which
+is also what this component does (`confirm_decision` in
+[`hisense_confirm.h`](../../firmware/esphome/components/hisense_ac/hisense_confirm.h)).
+
+Two things the image does say about layout, for whoever captures the reply: the decoder places
+the payload of an A/C frame at frame byte 13 (class byte), so a reply that followed the echo
+rule would carry the command's class and byte 14 at bytes 13 and 14 and `01` at byte 15. That
+is what `CMD_REPLY_ACK_OFFSET` in
+[`hisense_bus.h`](../../firmware/esphome/components/hisense_ac/hisense_bus.h) assumes, and it
+stays `VERIFY`: the stock image never checks it for a `65`, so the layout is a guess until a
+capture backs it. The component logs its verdict and decides nothing on it. What it does
+differently from stock is the re-send of a frame that got no reply at all
+(`COMMAND_SENDS_MAX`), which stock does not do.
 
 ## ProductType (class `66` sub `40`)
 

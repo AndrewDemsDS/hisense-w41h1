@@ -128,15 +128,18 @@ inline bool command_slot_open(uint8_t sent_this_cycle, uint32_t cycle_elapsed_ms
   return sent_this_cycle == 0 || cycle_elapsed_ms < BUS_COMMAND_SLOT_MS;
 }
 
-// What the reply to a command frame says. The stock transaction primitive accepts a reply as verified
+// What the reply to a command frame says. The stock transaction wrapper accepts a reply as verified
 // when its payload repeats the first two payload bytes of the command and carries 1 in the third
 // (RE docs/10 section 4.2 step 6). Payload byte N is frame byte 13 + N, so that is frame bytes 13
 // and 14 echoed, and the value 1 at frame offset 15.
 // VERIFY: the layout is read from the stock image and no reply frame has been captured on this bus.
-// One stock module logged a verdict that agrees with it on 2026-10-10 (firmware/docs/15), which is
-// a log line and not the frame. Until a capture backs it the verdict is logged and nothing is
-// decided on it: the hub's status check (confirm_decision in hisense_confirm.h) is what tells a
-// command that took from one that did not.
+// The stock module never applies that rule to a 0x65. Its command queue sends the frame on another
+// path, keeps the raw reply for the cloud, decides nothing on it, and drops a command that got no
+// reply within 3 s instead of re-sending it (RE docs/03, "The reply to a command frame"). One stock
+// module logged a verdict that agrees with the layout on 2026-10-10 (firmware/docs/15), which is a
+// log line and not the frame. Until a capture backs it the verdict is logged and nothing is decided
+// on it: the hub's status check (confirm_decision in hisense_confirm.h) is what tells a command that
+// took from one that did not, which is where stock gets its answer too.
 static constexpr size_t CMD_REPLY_ACK_OFFSET = 15;
 static constexpr uint8_t CMD_REPLY_ACK_VALUE = 0x01;
 
