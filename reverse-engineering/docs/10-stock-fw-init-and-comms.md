@@ -180,7 +180,9 @@ Byte-stuffing: a literal `0xF4` inside dir…checksum is escaped `F4 F4`; the en
 | **0x65** | Control / set | M→AC | pack `0x9b6f2c60` ("DevTypeCMD1"), emit `0x9b6f8658` | `65` + 33 B body | Device-type-gated control write |
 | **0x1D** (num29) | Reconfig / OTA request | AC→M | handled `0x9b6f4108`; reconfig `0x9b6f3bf8` | – | A/C answers DevType with 0x1D to demand re-provisioning / OTA reboot |
 
-**Cloud-JSON opcodes, not the bus dispatch:** the compares against `0x65/0x66/0x67` at `0x9b6ef158/1b4/1b8/1bc` are in the cloud-JSON handler. `handle_deviceID_result` (`0x9b6f0aa2`) matches sub-header bytes (`byte[3]==0x10 && byte[4]==0x24`), not a top-level class. **[PROVEN]**
+**Cloud-JSON opcodes, not the bus dispatch:** the compares against `0x65/0x66/0x67` at `0x9b6ef158/1b4/1b8/1bc` are in the cloud-JSON handler (message types 101 to 103 of the TCP channel). `handle_deviceID_cmd_result` (`0x9b6f0aa2`), which matches sub-header bytes (`byte[3]==0x10 && byte[4]==0x24`), is a different thing: it parses the bus reply to class **`0x67`**, the device-ID query. **[PROVEN]**
+
+| **0x67** | Device-ID query | M→AC once after each ProductType exchange, AC→M 60 B reply | send `0x253ec`, parse `handle_deviceID_cmd_result` `0x1e4e4` (file offsets in the 2026-08-19 dump, base `0x9b6dc000`) | `67 00 00` | 23-char device id, inner sum; feeds `g_device_id` and the cloud identity ([doc 03](03-rs485-ac-protocol.md#the-device-id-exchange-class-67)) |
 
 > **Correction (2026-10, issue #110).** This paragraph used to say that `0x67` "never appears on
 > the A/C bus", tagged PROVEN. That was an inference from the disassembly (no bus-side compare
@@ -194,10 +196,10 @@ Byte-stuffing: a literal `0xF4` inside dir…checksum is escaped `F4 F4`; the en
 > MOD->AC  f4 f5 00 40 0b 00 00 01 01 fe 01 00 00 67 00 00 01 b3 f4 fb   class 0x67, payload 67 00 00
 > ```
 >
-> What is established: the stock module emits `0x67` on the bus. What is not: its meaning, what a
-> real unit replies, and whether it is normal traffic or a reaction to the synthetic ProductType
-> reply. It has not been captured against a real A/C. This project's firmware never sends `0x67`,
-> and the units run normally without it.
+> Settled 2026-10-15 from the 2026-08-19 stock dump: it is the device-ID query, normal traffic,
+> issued by `uart_ctl_process_main` straight after the ProductType query, result ignored. The
+> reply layout is in doc 03. What a real unit replies is still not captured. This project's
+> firmware never sends `0x67`, and the units run normally without it.
 
 **⚖ Resolved (0x66 subtypes):** the bus-protocol thread's two-subtype model (`66 00`=status poll, `66 40`=ProductType) is authoritative, two distinct builders (`0x9b6f2bac` emits `66 00`, `0x9b6f2b0c` emits `66 40`). The field-maps thread's flag table (§5a) is the parser for the **`66 40`** response (`handle_producttype_cmd_result` guards `payload[1]==0x40` @ `0x9b6f0c74`); the `66 00` poll response is consumed inline (`f_electricity`/`f_ecm`/`f_power_display`). Both large responses carry a transparent tail the module forwards to cloud without decoding. **[PROVEN builders; INFERRED that the two large responses share the transparent-tail structure.]**
 

@@ -127,6 +127,15 @@ check(ac3.mode=="auto", "cmd byte18=0x90 -> mode auto")
 cmd=bytearray(50); cmd[13]=0x65; cmd[33]=0x30; ac4=vac.VirtualAC(); ac4.apply_command(cmd)
 check(ac4.eco, "cmd byte33=0x30 -> eco on")
 
+# `67 00 00` device-ID reply (issue #110): layout the stock parser checks
+ac5=vac.VirtualAC(); ac5.device_id="abc"
+f = list(dec.split_frames(ac5.deviceid_frame()))[0]; n=len(f)
+check(n == 60 and f[4] == 0x33, f"device-ID reply is 60 bytes with LEN 0x33 (got {n}, 0x{f[4]:02X})")
+check(f[13] == 0x67 and f[16] == 0x10 and f[17] == 0x24, "device-ID reply class 67 and inner[3..4] = 10 24")
+check(f[31:54] == b"abc" + b"0"*20, "device-ID padded to 23 bytes at frame 31..53")
+check(((f[54]<<8)|f[55]) == (sum(f[16:54]) & 0xFFFF), "device-ID inner sum over bytes 16..53 at 54..55")
+check(dec.checksum(f, n-4) == ((f[n-4]<<8)|f[n-3]), "device-ID reply frame checksum valid")
+
 print("== ROUND-TRIP OK ==" if ok else "== ROUND-TRIP FAILED ==")
 sys.exit(0 if ok else 1)
 PY

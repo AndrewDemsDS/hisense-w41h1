@@ -134,14 +134,36 @@ Source: firmware for the builders and handlers (doc 10 §3.3), bus where noted.
 | `66` sub `40` | ProductType | request and 45-byte reply | capability flags ([11-model-capability-map.md](11-model-capability-map.md)) |
 | `65` | command | module to A/C | set power, mode, setpoint, fan and the rest |
 | `1D` | reconfigure, OTA | A/C to module | the A/C can answer the device-type request with it. Not seen on a unit here |
-| `67` | unknown | module to A/C | payload `67 00 00`. Sent by the stock module after each ProductType exchange. Captured on a bench against a simulated A/C only (project issue 110) |
+| `67` | device ID | request and 60-byte reply | payload `67 00 00`. Sent by the stock module once after each ProductType exchange; the reply carries a 23-character device id ([below](#the-device-id-exchange-class-67)) |
 
 The stock firmware's error strings name three reply kinds, `link resp`, `net resp` and
 `trans resp`. They are nested checks on the reply's sub-header, not three classes.
 
 On `67`: an earlier statement in doc 10 that this class never appears on the bus was wrong and is
-corrected there (doc 10 §3.3). What a real unit answers to it is unknown. The component does not
-send it, and the units run normally without it.
+corrected there (doc 10 §3.3). The component does not send it, and the units run normally without
+it. What a real unit answers has not been captured; the layout the stock module expects is below.
+
+### The device-ID exchange (class 67)
+
+Source: the stock image of 2026-08-19, read with rizin (`dumps/issue-110-class-0x67-analysis.md`,
+local only). The module's init routine `uart_ctl_process_main` sends `67 00 00` right after the
+ProductType query, with a 3 s window and one retry, and ignores the result. The reply handler,
+`handle_deviceID_cmd_result` (named by its own log string), accepts a reply only when:
+
+| Frame byte | Content |
+|---|---|
+| whole frame | 60 bytes, LEN `33` (inner payload of 43 bytes from byte 13) |
+| 13 | class `67` |
+| 16, 17 | `10 24` |
+| 31 to 53 | the device id, 23 ASCII bytes. The module folds `A` to `Z` to lowercase |
+| 54, 55 | 16-bit sum of bytes 16 to 53, high byte first (a second checksum, inside the payload) |
+| 56, 57 | the frame checksum |
+
+Anything else is logged ("invalid device id length or code format", "device id checksum
+mismatch") and dropped. The id goes to the module's cloud identity (`g_device_id`,
+`set_device_id_to_flash`). `firmware/test/virtual_ac.py` answers the query in this layout
+(`--device-id`), so a stock module on the bench sees the same exchange as on a unit. Bytes 5 to 12
+of that reply copy the status reply; a real unit's reply has not been seen and may differ there.
 
 The module is the only initiator. The A/C sends nothing unasked.
 
