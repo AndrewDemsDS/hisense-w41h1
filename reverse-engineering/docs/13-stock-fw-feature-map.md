@@ -264,6 +264,136 @@ per-model gating ([11-model-capability-map.md](11-model-capability-map.md)).
    an older module generation with zero overlap. Official image IDs can only be
    harvested by MITM-ing the phone app (doc 08); the device never asks for them.
 
+## The 0x1E heartbeat and the request bits (2026-08-19 dump)
+
+A re-read of the heartbeat exchange in the 2026-08-19 flash dump (`dumps/stock-w41h1-2026-08-19.bin`,
+slot fw1, not in the repository). It answers doc 14 open question 8 as far as the firmware can
+answer it and corrects doc 10 §5c, §6.3 and §6.5 on three points. Offsets below are file offsets in that
+dump, unlike the runtime addresses above. Pool pointers resolve with file = XIP − `0x9b6dc000`.
+Every claim is tagged [PROVEN] (read from the code at the offset cited) or [INFERRED]. The raw listings are in the dump's own folder, with the dump.
+
+### The outbound payload
+
+Payload index N is frame byte 13 + N. The builder is `0x1fc34`, with three status structs as
+arguments: A (7 bytes) for payload byte 3, B (5 bytes) for byte 4, C (3 bytes) for byte 5
+[PROVEN, `0x1fc44` to `0x1fca4`].
+
+| Payload | Frame | Value | Source |
+|---|---|---|---|
+| 0 to 2 | 13 to 15 | `1E 00 00` | constants |
+| 3 | 16 | `0x80` \| (no reply yet) << 6 \| connect << 4 \| control << 2 | A[0] = 1, A[1] = (`0x1000093c` == 0), A[2] = getter `0x1dc74` (connect, byte `0x100092ac`), A[4] = getter `0x1dc68` (control, byte `0x100092a7`); A[3], A[5], A[6] = 0 |
+| 4 | 17 | `0x80` \| self test << 5 \| scan << 4 \| provisioning << 3 | B[0] = 1, B[2] = `0x1dccc` (`0x100092ae`), B[3] = `0x1dd24` (`0x100092b0`), B[4] = `0x1dd7c` (`0x100092af`); B[1] = 0 |
+| 5 | 18 | work << 5 \| route << 1 | C[0] = `0x1ddd4` (`0x100092b1`), C[1] = `0x1de2c` (`0x100092ad`), C[2] = 0. Written only when the protocol version word `0x10000540` is 0 or above `0x214` |
+| 6 to 8 | 19 to 21 | `00 00 00` | never written |
+| 9 | 22 | `0x40` | `payload[9] |= 0x40` at `0x1fca6` |
+| 10 | 23 | `00` | never written |
+
+The getters are one-byte reads; the setter names come from the log calls next to them:
+`wifi_set_self_test_mode` (`0x1dc80`), `wifi_set_wifi_scan_status` (`0x1dcd8`),
+`wifi_set_wifi_prov_status` (`0x1dd30`), `wifi_set_work_status` (`0x1dd88`) [PROVEN]. Connect and
+control sit where the older dump's seven-byte layout puts them (doc 10 §6.1: control is self
+test − 7, connect is self test − 2) [INFERRED from the layout, no name string read for them].
+
+Byte 16 bit 6 is not "scan not yet finished" (doc 10 §6.4). The flag `0x1000093c` has three
+writers: the scan thread sets it to 1 after "scan test finish" (`0x1ffe8`), the steady-state
+sender sets it to 1 after every heartbeat the A/C answered (`0x24f48`), and clears it after four
+unanswered heartbeats in a row (`0x24f9e`, counter `0x1000ac84`). On the bus it reads as "no 0x1E
+reply received, or the link was lost" [PROVEN]. The driver's reading of the bit is the right one.
+
+The version gate is a truncation, not a zero byte: when `0 < version <= 0x214` the builder returns
+5 before it writes payload byte 5 or ORs `0x40` into byte 9, and both callers pass that return
+value on as the payload length. An old-protocol mainboard gets a five-byte payload `1E 00 00 b3 b4`
+[PROVEN, `0x1fc8a` to `0x1fcba`]. Doc 10 §6.3 said byte 5 is sent as zero.
+
+### Two call sites, and the one that sends a wrong byte 17
+
+**Bring-up stream** (inline at `0x260ae` to `0x26110`, inside `uart_ctl_process_main`): a 15 s
+window after the device-type and version exchanges, paced at 1 s. It fills A and C from the
+getters, calls the self-test, scan and provisioning getters, and then passes the payload buffer
+itself as the B argument: `add r0, sp, 0xd0` (bytes `34 a8`) for the memset, `add r2, sp, 0xd0`
+(bytes `34 aa`) for the call at `0x260fc`, with the three getter results left in r0 and never
+stored. In this window frame byte 17 is `(payload[3] << 4) & 0xFF`, which is `(control & 3) << 6`:
+the self-test, scan and provisioning flags are not on the wire at all, and with control 0 the byte
+is `00`, not `80` [PROVEN from the bytes above; that the dead stores belong to a local whose
+address was never passed is INFERRED]. The window also sets the heartbeat period to 1 s
+(`0x1de4c(1)` at `0x2608e`) and restores the saved value after it (`0x261b2`).
+
+**Steady state** (`0x24dbc`, called from `uart_process_num30_cmd` at `0x24ec8`, from the
+report-restart path `0x24e44`, and from a cloud-side path `0x24e66`): fills all three structs from
+the getters, A from a template at file `0x129dfc` (`01 00 00 00 01 00 00`) with connect and control
+written over it, then `0x20578` (which mallocs 12 bytes, builds, frames, frees) [PROVEN]. This is
+the builder that makes the captured `B0 80 20 ... 40` heartbeat of doc 03, with connect = 3
+(`0xB0` = `0x80 | 3 << 4`): the module in that capture reported itself not connected, which is
+what a bench module without a network does [INFERRED].
+
+`uart_process_num30_cmd` runs from the main loop on every fourth pass (`0x2696e`) and sends only
+when `tick / 1000 − last >= period`, with `period` the word `0x100092a8`, 3 s when unset
+(`0x1de38`), 1 s during the bring-up window, during a factory test and after a run of failures
+[PROVEN, `0x24ed6` to `0x24f78`]. Doc 03's "about once a second" was measured in a 22-frame run,
+which fits the bring-up window; the 3 s steady-state period was not measured on a bus
+[INFERRED].
+
+### The request bits the A/C can set
+
+The reply handler is `handle_num30_cmd_result` at `0x20140` (name string at file `0x12700f`,
+pool `0x20344`). It takes the inner payload and its length, rejects payload[0] != `0x1E` with −1
+and payload[1] != 0 with −2, reads payload[4] (frame byte 17), payload[5] (frame 18) only when the
+length is above 5, and payload[11] (frame 24) only when the length is above 11 [PROVEN,
+`0x20144` to `0x2016a`, `0x2026e`]. Tests run in this order:
+
+| Byte | Bit | Mask | What the module does | Where |
+|---|---|---|---|---|
+| 17 | 5 | `20` | **Smart-config reset and reboot.** Log "smart config reboot"; `0x23e18(1)` sets a config byte (`0x1000a088 + 4`) and writes the config sector to flash (`write_data_to_flash`); `0x100092a4` := 3; then `0x20118`: heap statistics log, `cloud_mode := 0` (flash), 2000 ms delay, `app_reset_configured_network` ("clear ssid saved in flash"), `enter_provisioning_reset` (`0x1fd30`), `wifi_reboot(1)` (`0x1df6c`). Never returns | `0x20162`, `0x202ba`, `0x20118` |
+| 17 | 3 | `08` | **Reset and reconfigure**, unless the device type (`0x1000931f`) is `0x15` (dehumidifier). Log "reset need reboot"; `app_reset_configured_network`; `del_device_from_cloud_server(0)` (`0x1bbc8`); `enter_provisioning_reset`; 2000 ms delay; `wifi_reboot(1)`. Never returns | `0x20178` to `0x201ca` |
+| 17 | 0 | `01` | **Store a token**: `n` = 8 when the protocol version is 0 or above `0x214`, else 2; `memcpy(0x10009368, payload + 3, n)`, `0x10009364 := n`. No other action | `0x201ce` to `0x201f2` |
+| 17 | 6 | `40` | Nothing. It becomes the handler's return code, which all three callers drop | `0x20174` |
+| 18 | 7 | `80` | **Report restart**: builds a heartbeat with `0x24dbc` and sends it without waiting (`0x24e44`) | `0x201f6` |
+| 18 | 6 | `40` | **Factory test**: if the self-test flag is already set, log "already in factory test mode"; else log "start factory test", `wifi_set_self_test_mode(1)`, heartbeat period := 1 s, `0x2bf38` ("[FTEST] INFO: start factory test"). The same branch runs when the byte `0x10009320` is 1; it is cleared afterwards | `0x20200` to `0x20262` |
+| 18 | 5 | `20` | Nothing (return code 7) | `0x20266` |
+| 24 | 4 to 7 | `F0` | **Mainboard OTA info**: log "need update device ota info", `0x20de8` ("[DOTA] INFO: read subsystem version"), store `payload[11] & 0xF0` at `0x10009bc4` | `0x2026e` to `0x202b0` |
+
+Bit 5 is tested first and its branch reboots, so a reply with both bits set is a smart-config
+reset. The byte `0x10009378` == 1 takes the same branch without any request bit; its writer was not
+found. `enter_provisioning_reset` writes connect := 3, control := 0, provisioning := 1, work := 5,
+route := 0, then report-restart, then `0x1cac4(1)` [PROVEN, `0x1fd30` to `0x1fd5a`], as doc 03
+records. Both reset paths send one last heartbeat with byte 17 bit 3 set (through the correct
+builder) before the 2 s delay and the reboot.
+
+### Class 0x1D
+
+The handler never sees `0x1D`: it rejects anything but `0x1E`. The "`0x1D` sibling" of doc 10 §6.5
+is the caller's check. In the link bring-up, a reply of class `0x1D` to the device-type request
+goes to `0x21a90` (`0x2603c` to `0x2604c`), which runs the device-OTA engine `0x21560` (strings
+"[DOTA] INFO: start send flash ota to device : type %02d, version %s", "no ota in flash, abort
+ota", "send 1#0 0 frame", "wait 2 NAK", "recv CAN, retry OTA", "wait for mcu reboot timeout") and
+then queues the result as a fault code (`0x20edc`, "[DOTA] INFO: add %d fault code %d to queue")
+[PROVEN]. `0x21a90` is also called from the cloud-driven device-OTA task (`0x21ab0`, at `0x21bbc`).
+So `0x1D` from the A/C means "send me the mainboard image you hold in flash", an XMODEM-style
+transfer (SOH, NAK, CAN), not a request for the module to reboot [PROVEN from the strings and the
+caller, INFERRED on the transfer protocol]. Without an image in flash the engine aborts at once.
+
+### What the driver does with each of these
+
+`firmware/esphome/components/hisense_ac/hisense_protocol.h` and `.cpp`, read only:
+
+| Stock behaviour | Driver | Same or different |
+|---|---|---|
+| Byte 17 bit 5: reset and reboot into provisioning | `LINK_REQ_SMARTCFG`, taken on one reply, 10 s lockout, opens the Wi-Fi setup mode | Same trigger, different action by design (no reboot, no credential wipe) |
+| Byte 17 bit 3: reset and reconfigure, skipped on device type `0x15` | `LINK_REQ_RECONFIG`, counted after three replies in a row and only while the module's own flag is off the wire | Same trigger with a debounce the stock code lacks: the stock module acts on the first reply. No device-type exception, and none is needed without dehumidifier support |
+| Byte 17 bit 0: store a token from payload bytes 3 to 10 | Not read | Not handled. Nothing in the driver needs the token; what the stock module does with `0x10009368` later was not traced |
+| Byte 17 bit 6, byte 18 bit 5 | Return codes only | Not read; nothing lost |
+| Byte 18 bit 7: send a heartbeat at once | Not read | Not handled. The next 1 s cycle sends one anyway |
+| Byte 18 bit 6: factory self-test mode | Not read | Not handled, and should stay so |
+| Byte 24 bits 4 to 7: mainboard OTA info | Not read | Not handled; the driver holds no mainboard image |
+| Class `0x1D` reply: mainboard OTA transfer | No `0x1D` anywhere in the component | Not handled; the driver cannot serve it. A unit that asks gets silence |
+| Outbound byte 16: `B0` with bit 6 = no reply yet | `build_link_heartbeat` sends `B0` once a reply was heard, `F0` before | Same, and the comment matches the flag's writers |
+| Outbound byte 17: `80` plus provisioning bit 3 | Same, from the steady-state builder's layout | Same. The bring-up builder's wrong byte is not copied, which is right |
+| Outbound byte 18: `20` (work = 1) | Literal `20` | Same. Doc 03's prose says `22` (route = 1); the captured frame and the driver both carry `20` |
+| Heartbeat period | 1 s always | Stock: 1 s for 15 s, then the `0x100092a8` period (3 s unless changed) |
+
+Nothing in this table asks for a driver change. The one open bus question stays open: no unit
+here has raised bit 3, and the firmware cannot say which models do.
+
 ## Open questions
 
 Also listed, with what would settle each, in [14-open-questions.md](14-open-questions.md).
