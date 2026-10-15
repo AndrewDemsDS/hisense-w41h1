@@ -421,6 +421,17 @@ static void test_link_loss_and_recovery() {
   run(bus, 4000);
   CHECK(rec.links.size() == 2 && rec.links[1].second, "exactly one link-restored edge");
   CHECK(bus.link_losses() == 1, "one link loss counted (%u)", (unsigned) bus.link_losses());
+  // The recovery handshake is a new bring-up: ProductType is asked once more, and only once.
+  {
+    size_t pt_before = 0, pt_after = 0;
+    for (size_t i = 0; i < ac.writes.size(); i++)
+      if (cls(ac.writes[i]) == 0x66 && ac.writes[i].bytes[14] == 0x40)
+        (i < before ? pt_before : pt_after)++;
+    CHECK(pt_before == 1 && pt_after == 1, "one ProductType poll per handshake (%zu before, %zu after)", pt_before,
+          pt_after);
+    H::AcFeatures ft;
+    CHECK(bus.features(&ft) && ft.valid && rec.features == 2, "features re-read after the recovery (%d)", rec.features);
+  }
   CHECK((int) bus.reply_timeouts() == rec.timeouts && bus.unanswered_commands() == 0,
         "every timeout counted (%u), none of them a command", (unsigned) bus.reply_timeouts());
 }
@@ -646,7 +657,7 @@ static void test_command_tickets() {
 // The small things around the cycle: the accessors the hub reads, a poll before setup, the
 // ProductType poll coming round again, and a unit whose DevType reply says 00 00.
 static void test_accessors_and_corners() {
-  printf("-- accessors, a poll before setup, ProductType every 60 cycles, device type 00 00\n");
+  printf("-- accessors, a poll before setup, ProductType once per handshake, device type 00 00\n");
   {
     H::BusScheduler idle;
     for (uint32_t t = 0; t < 3000; t += 7)
@@ -675,21 +686,18 @@ static void test_accessors_and_corners() {
   bus.set_setup_indicator(true, g_now + 5);
   CHECK(bus.setup_indicator(), "on stays on");
   bus.set_setup_indicator(false, g_now);
-  // The ProductType poll: once on the first heard cycle, then every BUS_PRODUCTTYPE_CYCLES.
+  // The ProductType poll: once on the first heard cycle, and never again while the link holds
+  // (the stock module asks once per bring-up; a periodic re-poll cost one timeout each, #186).
   size_t polls = 0;
   for (auto &w : ac.writes)
     polls += cls(w) == 0x66 && w.bytes[14] == 0x40 ? 1 : 0;
   CHECK(polls == 1, "one ProductType poll in the first 5 s (%zu)", polls);
   run(bus, 125000);
-  std::vector<uint32_t> at;
+  polls = 0;
   for (auto &w : ac.writes)
-    if (cls(w) == 0x66 && w.bytes[14] == 0x40)
-      at.push_back(w.t);
-  CHECK(at.size() == 3, "three ProductType polls in 130 s (%zu)", at.size());
-  if (at.size() == 3)
-    CHECK(at[1] - at[0] == 60000 && at[2] - at[1] == 60000, "60 cycles apart (%u, %u ms)", (unsigned) (at[1] - at[0]),
-          (unsigned) (at[2] - at[1]));
-  CHECK(rec.features == 3 && rec.timeouts == 0, "each answered");
+    polls += cls(w) == 0x66 && w.bytes[14] == 0x40 ? 1 : 0;
+  CHECK(polls == 1, "still one ProductType poll after 130 s (%zu)", polls);
+  CHECK(rec.features == 1 && rec.timeouts == 0, "answered once");
   {
     // 00 00 in a whole DevType reply is "not linked yet" to the stock module: the handshake is
     // answered, the pair is not adopted, the seeded 01 01 stays.
