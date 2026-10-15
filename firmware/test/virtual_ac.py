@@ -79,6 +79,16 @@ CAPS = {
     "q_display": (39, 0x40),
 }
 
+# ---- Device ID (`67 00 00`) ------------------------------------------------
+# Source: dumps/issue-110-class-0x67-analysis.md (stock dump of 2026-08-19, rizin).
+# The stock module sends `67 00 00` once after every ProductType exchange and
+# parses the reply in handle_deviceID_cmd_result: inner payload (frame byte 13
+# onwards) of exactly 43 bytes, inner[3]=0x10, inner[4]=0x24, a 23-byte ASCII id
+# at inner[0x12..0x28] and the big-endian 16-bit sum of inner[3..0x28] at
+# inner[0x29..0x2a]. A missing reply is harmless: the module logs and carries on.
+DEVICE_ID_LEN = 23
+DEVICE_ID_FRAME_LEN = 13 + 43 + 4  # envelope + inner payload + checksum + end tag
+
 # command index (2n+1 on the wire) <-> names
 CMD_MODE = {1: "fan", 3: "heat", 5: "cool", 7: "dry", 9: "auto"}  # byte18 nibble
 CMD_FAN = {
@@ -135,6 +145,7 @@ class VirtualAC:
         self.sleep = 0  # 0 off, 1..4 profile
         self.comp = 0  # compressor Hz
         self.caps = set()  # advertised in the `66 40` ProductType reply
+        self.device_id = "virtual-ac-00000000000"  # 23 chars, `67` reply
         self._t0 = None
 
     def _sim_physics(self, now):
@@ -203,6 +214,31 @@ class VirtualAC:
         # because both ends share the tolerant splitter; the bench module did not.
         return bytes([STX1, STX2]) + stuff(bytes(s[2:158])) + bytes([ETX1, ETX2])
 
+    def deviceid_frame(self):
+        """Reply to the module's `67 00 00` device-ID query.
+
+        Layout from the stock parser (see the DEVICE_ID_* note above). Frame bytes:
+        16/17 = 10 24, 31..53 = the id, 54/55 = big-endian sum of bytes 16..53,
+        then the usual frame checksum and end tag. 60 bytes in all, LEN 0x33.
+        No real unit's reply has been captured yet; the envelope bytes 5..12 copy
+        the status reply, which the module demonstrably accepts.
+        """
+        n = DEVICE_ID_FRAME_LEN
+        s = bytearray(n)
+        s[0:16] = STATUS_HDR
+        s[4] = n - 9  # LEN: the whole frame is LEN + 9 bytes long (doc 03)
+        s[13] = 0x67
+        s[16], s[17] = 0x10, 0x24
+        did = self.device_id.encode("ascii", "replace")[:DEVICE_ID_LEN]
+        did = did.ljust(DEVICE_ID_LEN, b"0")
+        s[31 : 31 + DEVICE_ID_LEN] = did
+        inner = sum(s[16:54]) & 0xFFFF
+        s[54], s[55] = inner >> 8, inner & 0xFF
+        ck = checksum(s, n - 4)
+        s[n - 4], s[n - 3] = ck >> 8, ck & 0xFF
+        s[n - 2], s[n - 1] = ETX1, ETX2
+        return bytes([STX1, STX2]) + stuff(bytes(s[2 : n - 2])) + bytes([ETX1, ETX2])
+
     def apply_command(self, f):
         """f is an un-stuffed command frame (0x65). Update state from the fields set."""
         before = self._snapshot()
@@ -258,9 +294,11 @@ class VirtualAC:
         )
 
 
-def run(read_fn, write_fn, caps=frozenset()):
+def run(read_fn, write_fn, caps=frozenset(), device_id=None):
     ac = VirtualAC()
     ac.caps = set(caps)
+    if device_id is not None:
+        ac.device_id = device_id
     if ac.caps:
         print(f"# advertising ProductType capabilities: {sorted(ac.caps)}")
     print(f"# virtual A/C up. initial: {ac._snapshot()}")
@@ -286,6 +324,10 @@ def run(read_fn, write_fn, caps=frozenset()):
                     print(
                         f"  [66 40] ProductType query -> advertised {sorted(ac.caps) or 'none'}"
                     )
+                elif cls == 0x67:
+                    # device-ID query, sent once after each ProductType exchange
+                    write_fn(ac.deviceid_frame())
+                    print(f"  [67 00] device-ID query -> replied {ac.device_id!r}")
                 elif cls == 0x66 and len(f) < 30:  # status-request poll
                     ac._sim_physics(time.time())
                     write_fn(ac.status_frame())
@@ -332,6 +374,12 @@ def main():
         help="comma-separated flags to advertise in the `66 40` ProductType reply "
         "(e.g. ai,swing_direction_8). Known: " + ",".join(sorted(CAPS)),
     )
+    ap.add_argument(
+        "--device-id",
+        default=None,
+        help="23-character id returned to the module's `67 00 00` device-ID query "
+        "(shorter values are padded with 0, longer ones cut)",
+    )
     a = ap.parse_args()
     caps = {c.strip() for c in a.capabilities.split(",") if c.strip()}
     unknown = caps - set(CAPS)
@@ -354,7 +402,7 @@ def main():
             except BlockingIOError:
                 return b""
 
-        run(rd, lambda d: sk.sendall(d), caps)
+        run(rd, lambda d: sk.sendall(d), caps, a.device_id)
         return
 
     if a.pty:
@@ -375,12 +423,12 @@ def main():
         def wr(d):
             os.write(master, d)
 
-        run(rd, wr, caps)
+        run(rd, wr, caps, a.device_id)
     else:
         import serial
 
         s = serial.Serial(a.port, a.baud, timeout=0.02)
-        run(lambda: s.read(512), lambda d: s.write(d), caps)
+        run(lambda: s.read(512), lambda d: s.write(d), caps, a.device_id)
 
 
 if __name__ == "__main__":

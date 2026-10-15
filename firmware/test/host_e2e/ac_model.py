@@ -41,6 +41,7 @@ CLASS_VERSION = 0x07
 CLASS_LINK = 0x1E
 CLASS_COMMAND = 0x65
 CLASS_STATUS = 0x66
+CLASS_DEVICE_ID = 0x67  # `67 00 00`, once after each ProductType exchange
 SUB_PRODUCT = 0x40
 
 
@@ -283,6 +284,8 @@ class Bus:
             reply = u.link_frame(f)
         elif cls == CLASS_STATUS and sub == SUB_PRODUCT:
             reply = u.producttype_frame()
+        elif cls == CLASS_DEVICE_ID:
+            reply = u.deviceid_frame()
         elif cls == CLASS_STATUS:
             reply = u.status_frame()
         elif cls == CLASS_COMMAND:
