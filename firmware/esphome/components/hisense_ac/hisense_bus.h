@@ -191,10 +191,10 @@ class BusScheduler {
   // an isolated one (below); a queued command among those (each send counts); a command frame
   // sent again for that reason; a link-lost edge.
   uint32_t reply_timeouts() const { return this->reply_timeouts_; }
-  // A heartbeat or status poll that went unanswered on a live link with no other miss in that
-  // cycle or the one before. The mainboard skips one status reply on a period of its own (about
-  // every two minutes on the units measured, 2026-10-15) and answers the next poll; that is the
-  // unit's habit, not a fault of the link, so it is kept apart from reply_timeouts.
+  // A heartbeat or status poll met by total silence (not one byte in the window) on a live link,
+  // with no other miss in that cycle or the one before. The mainboard skips one status reply on a period of its own
+  // (about every two minutes on the units measured, 2026-10-15) and answers the next poll; that is the unit's habit,
+  // not a fault of the link, so it is kept apart from reply_timeouts.
   uint32_t skipped_replies() const { return this->skipped_replies_; }
   uint32_t unanswered_commands() const { return this->unanswered_commands_; }
   uint32_t command_resends() const { return this->command_resends_; }
@@ -312,6 +312,7 @@ class BusScheduler {
   uint32_t reply_timeouts_{0};
   uint32_t skipped_replies_{0};
   bool cycle_missed_{false};
+  bool window_heard_{false};  // a byte arrived in the current reply window
   bool prev_cycle_missed_{false};
   uint32_t unanswered_commands_{0};
   uint32_t command_resends_{0};

@@ -109,6 +109,7 @@ void BusScheduler::begin_transaction_(const uint8_t *frame, size_t len, uint8_t 
     this->io_->bus_write(this->tx_, this->tx_len_);
     this->phase_ = Phase::LISTEN;
     this->phase_until_ = now + BUS_REPLY_TIMEOUT_MS;
+    this->window_heard_ = false;
     this->tx_done_at_ = now + bus_tx_time_ms(this->tx_len_);
   }
   this->transmitting_ = true;
@@ -164,6 +165,7 @@ bool BusScheduler::advance_(uint32_t now) {
       this->transmitting_ = false;
       this->phase_ = Phase::LISTEN;
       this->phase_until_ = now + BUS_REPLY_TIMEOUT_MS;
+      this->window_heard_ = false;
       return true;
 
     case Phase::LISTEN:
@@ -183,17 +185,19 @@ bool BusScheduler::advance_(uint32_t now) {
 bool BusScheduler::listen_(uint32_t now) {
   int c;
   while ((c = this->io_->bus_read()) >= 0) {
+    this->window_heard_ = true;
     const size_t n = this->rx_.feed(static_cast<uint8_t>(c));
     if (n != 0 && this->frame_received_(n, now))
       return true;
   }
   if (!reached(now, this->phase_until_))
     return false;
-  // One unanswered poll on a live link, with the cycle before and this one otherwise answered,
-  // is the unit skipping a reply (see skipped_replies()). Anything else is a timeout.
+  // One poll met by total silence on a live link, with the cycle before and this one otherwise
+  // answered, is the unit skipping a reply (see skipped_replies()). A window in which bytes did
+  // arrive (a cut or damaged reply, noise) is a timeout, and so is anything else.
   const bool poll = this->step_ == Step::HEARTBEAT || this->step_ == Step::STATUS;
-  const bool isolated =
-      poll && this->status_seen_ && !this->link_down_ && !this->cycle_missed_ && !this->prev_cycle_missed_;
+  const bool isolated = poll && !this->window_heard_ && this->status_seen_ && !this->link_down_ &&
+                        !this->cycle_missed_ && !this->prev_cycle_missed_;
   if (isolated) {
     this->skipped_replies_++;
   } else {

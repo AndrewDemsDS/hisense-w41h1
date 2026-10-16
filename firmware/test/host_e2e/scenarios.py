@@ -1106,7 +1106,9 @@ async def damaged_traffic(ctx):
     unit.damage[(CLASS_LINK, 0)] = ["bad_checksum"]
     await step("a heartbeat reply with a bad checksum: one checksum error", bus_checksum_errors=1)
     unit.damage[(CLASS_LINK, 0)] = ["drop"]
-    await step("a missing heartbeat reply: one reply timeout", bus_reply_timeouts=1)
+    # Total silence to one poll on a live link is the unit skipping a reply: counted apart
+    # (skipped_replies, no entity), not as a timeout.
+    await step("a missing heartbeat reply: a skipped reply, not a timeout")
 
     # Bytes nobody asked for, between two transactions: flushed before the next frame goes out.
     await asyncio.sleep(0.45)
@@ -1120,9 +1122,10 @@ async def damaged_traffic(ctx):
 
     unit.damage[(CLASS_STATUS, 0)] = ["drop"] * 4
     await node.quiet_cycles(6, 10)
-    for k, v in (("bus_reply_timeouts", 4),):
+    # The first of the four is a skipped reply; the three after it are timeouts.
+    for k, v in (("bus_reply_timeouts", 3),):
         want[k] += v
-    await expect_counters(ctx, node, dict(want), "four status polls in a row unanswered: four timeouts, and the link holds")
+    await expect_counters(ctx, node, dict(want), "four status polls in a row unanswered: one skipped, three timeouts, and the link holds")
     r.equal(node.value("binary_sensor.ac_bus_link"), True, "the link sensor stayed on")
     r.check(not any(s.state is False and not s.missing_state for t, k, s in node.history
                     if k == "binary_sensor.ac_bus_link"), "at every moment")

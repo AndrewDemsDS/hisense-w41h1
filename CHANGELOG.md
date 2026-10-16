@@ -11,8 +11,9 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
-- "Bus reply timeouts" no longer counts an isolated miss: one heartbeat or status poll unanswered on
-  a live link, with the cycle before and the rest of that cycle answered. The mainboard skips one
+- "Bus reply timeouts" no longer counts an isolated miss: one heartbeat or status poll met by total
+  silence on a live link, with the cycle before and the rest of that cycle answered. A cut or
+  damaged reply, or noise, still counts. The mainboard skips one
   status reply on a period of its own (about every two minutes on the units measured on
   2026-10-15) and answers the next poll, which had the counter climbing by hundreds a day on a
   healthy unit. Those are kept in a separate `skipped_replies` counter of the scheduler (no
