@@ -808,15 +808,15 @@ void Rig::check_(uint32_t dt) {
   CHECK(hi != 0 || lo != 0, "device type is never 00 00");
 
   // Counters only go up, and agree with what the listener was told.
-  CHECK(bus.reply_timeouts() >= c_timeouts && bus.unanswered_commands() >= c_unanswered &&
+  CHECK(bus.reply_timeouts() + bus.skipped_replies() >= c_timeouts && bus.unanswered_commands() >= c_unanswered &&
             bus.command_resends() >= c_resends && bus.link_losses() >= c_losses && bus.checksum_mismatches() >= c_chk,
         "a counter went backwards");
-  c_timeouts = bus.reply_timeouts();
+  c_timeouts = bus.reply_timeouts() + bus.skipped_replies();  // the listener hears both kinds
   c_unanswered = bus.unanswered_commands();
   c_resends = bus.command_resends();
   c_losses = bus.link_losses();
   c_chk = bus.checksum_mismatches();
-  CHECK(c_timeouts == rec.timeouts, "timeouts: counter %u, listener %u", (unsigned) c_timeouts,
+  CHECK(c_timeouts == rec.timeouts, "timeouts: counter (with skipped) %u, listener %u", (unsigned) c_timeouts,
         (unsigned) rec.timeouts);
   CHECK(c_chk == rec.checksum_errors, "checksum errors: counter %u, listener %u", (unsigned) c_chk,
         (unsigned) rec.checksum_errors);

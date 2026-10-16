@@ -11,6 +11,14 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- "Bus reply timeouts" no longer counts an isolated miss: one heartbeat or status poll unanswered on
+  a live link, with the cycle before and the rest of that cycle answered. The mainboard skips one
+  status reply on a period of its own (about every two minutes on the units measured on
+  2026-10-15) and answers the next poll, which had the counter climbing by hundreds a day on a
+  healthy unit. Those are kept in a separate `skipped_replies` counter of the scheduler (no
+  entity). A second miss in a row, a miss while the link is down, and an unanswered command all
+  count as before.
+
 - The reply window is 1000 ms (was 500). A capture of 475 polls on an ESP32 node put the
   median reply at 230 ms and one at 400 ms; the vendor module waits 3000 ms. A link that goes
   silent now shows as lost after about 10 s instead of 5 (five unanswered polls, two windows each).

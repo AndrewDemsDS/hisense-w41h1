@@ -94,9 +94,11 @@ class SimAC : public H::BusIO {
   bool stale_1e_before_ack = false;  // a late 0x1E lands in the command's window, ahead of its ack
   uint32_t ack_starts = 0, ack_ends = 0;
   bool truncate_next_status = false;  // one status reply cut off after 60 bytes
-  bool deaf_to_devtype = false;       // hears everything except the 0x0A probe
-  int corrupt_devtype_left = 0;       // this many DevType replies arrive with one flipped bit in byte 17
-  bool corrupt_link_reply = false;    // every 0x1E reply arrives with one flipped bit in its checksum
+  int skip_status_every = 0;          // leaves every Nth status poll unanswered, as the mainboard does
+  int status_polls_seen = 0;
+  bool deaf_to_devtype = false;     // hears everything except the 0x0A probe
+  int corrupt_devtype_left = 0;     // this many DevType replies arrive with one flipped bit in byte 17
+  bool corrupt_link_reply = false;  // every 0x1E reply arrives with one flipped bit in its checksum
   // Time of the last byte of the newest reply queued, to tell whether a write overlaps a reply.
   uint32_t reply_ends = 0;
   uint32_t reply_delay = 40;
@@ -176,6 +178,8 @@ class SimAC : public H::BusIO {
       f[f.size() - 3] = (uint8_t) s;
       queue_(f, at);
     } else if (cls == 0x66) {
+      if (skip_status_every > 0 && ++status_polls_seen % skip_status_every == 0)
+        return;
       if (stale_1e_before_status) {
         queue_(ac_frame(28, 0x1E, 0x00), at);
         at += 40;
@@ -432,8 +436,40 @@ static void test_link_loss_and_recovery() {
     H::AcFeatures ft;
     CHECK(bus.features(&ft) && ft.valid && rec.features == 2, "features re-read after the recovery (%d)", rec.features);
   }
-  CHECK((int) bus.reply_timeouts() == rec.timeouts && bus.unanswered_commands() == 0,
-        "every timeout counted (%u), none of them a command", (unsigned) bus.reply_timeouts());
+  // The first miss of the silence (a heartbeat, in a cycle that was answered so far) is an
+  // isolated one; everything after it is a timeout.
+  CHECK((int) (bus.reply_timeouts() + bus.skipped_replies()) == rec.timeouts && bus.skipped_replies() == 1 &&
+            bus.unanswered_commands() == 0,
+        "every timeout counted (%u + %u skipped), none of them a command", (unsigned) bus.reply_timeouts(),
+        (unsigned) bus.skipped_replies());
+}
+
+// The mainboard skips one status reply now and then and answers the next poll. That is not a
+// timeout of the link: it is counted apart, and nothing else moves.
+static void test_skipped_reply() {
+  printf("-- one status reply skipped every 50 polls, as the mainboard does\n");
+  SimAC ac;
+  ac.skip_status_every = 50;
+  Recorder rec;
+  H::BusScheduler bus;
+  bus.setup(&ac, &rec, true);
+  run(bus, 212000);  // the handshake, then 200 polls
+  CHECK(rec.timeouts == 4, "four windows closed empty (%d)", rec.timeouts);
+  CHECK(bus.skipped_replies() == 4 && bus.reply_timeouts() == 0,
+        "all four are skipped replies (%u skipped, %u timeouts)", (unsigned) bus.skipped_replies(),
+        (unsigned) bus.reply_timeouts());
+  CHECK(rec.links.empty() && bus.link_losses() == 0, "the link never wavers");
+  CHECK(rec.statuses >= 190, "the other polls are answered (%d)", rec.statuses);
+  // Two cycles without an answer: the first miss is isolated, the three that follow are timeouts.
+  ac.skip_status_every = 0;
+  ac.responsive = false;
+  run(bus, 2 * (2 * H::BUS_REPLY_TIMEOUT_MS + 300));
+  ac.responsive = true;
+  run(bus, 3000);
+  CHECK(bus.skipped_replies() == 5 && bus.reply_timeouts() >= 3,
+        "a run of misses: one skipped, the rest timeouts (%u skipped, %u timeouts)", (unsigned) bus.skipped_replies(),
+        (unsigned) bus.reply_timeouts());
+  CHECK(rec.links.empty(), "two silent cycles do not lose the link");
 }
 
 static void test_correlation_and_checksum() {
@@ -1146,6 +1182,7 @@ int main() {
   test_boot_and_cycle();
   test_queue();
   test_link_loss_and_recovery();
+  test_skipped_reply();
   test_correlation_and_checksum();
   test_boot_retries();
   test_damaged_frames_are_not_believed();

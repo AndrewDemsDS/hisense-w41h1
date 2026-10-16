@@ -189,7 +189,17 @@ bool BusScheduler::listen_(uint32_t now) {
   }
   if (!reached(now, this->phase_until_))
     return false;
-  this->reply_timeouts_++;
+  // One unanswered poll on a live link, with the cycle before and this one otherwise answered,
+  // is the unit skipping a reply (see skipped_replies()). Anything else is a timeout.
+  const bool poll = this->step_ == Step::HEARTBEAT || this->step_ == Step::STATUS;
+  const bool isolated =
+      poll && this->status_seen_ && !this->link_down_ && !this->cycle_missed_ && !this->prev_cycle_missed_;
+  if (isolated) {
+    this->skipped_replies_++;
+  } else {
+    this->reply_timeouts_++;
+  }
+  this->cycle_missed_ = true;
   if (this->listener_ != nullptr)
     this->listener_->on_bus_timeout(this->expect_class_);
   this->finish_transaction_(0, now);  // timeout, no reply
@@ -240,6 +250,8 @@ void BusScheduler::start_step_(uint32_t now) {
     case Step::CYCLE_BEGIN:
       this->cycle_start_ = now;
       this->cycle_commands_ = 0;
+      this->prev_cycle_missed_ = this->cycle_missed_;
+      this->cycle_missed_ = false;
       // Cooperative link recovery: one DevType handshake per cycle while the A/C is silent, and
       // one after it if the unit came back without having answered any.
       this->step_ = this->link_silent_() || this->handshake_owed_ ? Step::RECOVER : Step::HEARTBEAT;
