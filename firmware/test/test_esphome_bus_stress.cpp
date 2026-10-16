@@ -595,8 +595,10 @@ struct Rig {
   Probe bus;
   bool has_de = true;
   bool begun = false;
-  int burst = 1;                // polls per step, all at the same time
-  uint32_t progress_ms = 1400;  // longest stretch without a frame that a regular loop may show
+  int burst = 1;  // polls per step, all at the same time
+  // Longest stretch without a frame that a regular loop may show: a reply window plus the DE timing,
+  // the retry wait and some slack.
+  uint32_t progress_ms = H::BUS_REPLY_TIMEOUT_MS + 900;
 
   std::map<uint16_t, TagInfo> tags;
   uint16_t next_tag = 1;
@@ -806,15 +808,15 @@ void Rig::check_(uint32_t dt) {
   CHECK(hi != 0 || lo != 0, "device type is never 00 00");
 
   // Counters only go up, and agree with what the listener was told.
-  CHECK(bus.reply_timeouts() >= c_timeouts && bus.unanswered_commands() >= c_unanswered &&
+  CHECK(bus.reply_timeouts() + bus.skipped_replies() >= c_timeouts && bus.unanswered_commands() >= c_unanswered &&
             bus.command_resends() >= c_resends && bus.link_losses() >= c_losses && bus.checksum_mismatches() >= c_chk,
         "a counter went backwards");
-  c_timeouts = bus.reply_timeouts();
+  c_timeouts = bus.reply_timeouts() + bus.skipped_replies();  // the listener hears both kinds
   c_unanswered = bus.unanswered_commands();
   c_resends = bus.command_resends();
   c_losses = bus.link_losses();
   c_chk = bus.checksum_mismatches();
-  CHECK(c_timeouts == rec.timeouts, "timeouts: counter %u, listener %u", (unsigned) c_timeouts,
+  CHECK(c_timeouts == rec.timeouts, "timeouts: counter (with skipped) %u, listener %u", (unsigned) c_timeouts,
         (unsigned) rec.timeouts);
   CHECK(c_chk == rec.checksum_errors, "checksum errors: counter %u, listener %u", (unsigned) c_chk,
         (unsigned) rec.checksum_errors);
@@ -972,7 +974,7 @@ static void script_healthy_burst(Rig &r) {
   script_healthy(r);
 }
 
-// Silent from boot: ten probes 1051 ms apart (5 settle + 21 wire + 25 drain + 500 window + 500
+// Silent from boot: ten probes 1551 ms apart (5 settle + 21 wire + 25 drain + 1000 window + 500
 // wait, the last two being BUS_REPLY_TIMEOUT_MS and BUS_BOOT_RETRY_MS), then 0x07, then cycles that
 // time out twice each. The link is reported lost once, on the fifth unanswered status poll, and
 // the unit coming back is reported once.
@@ -980,14 +982,15 @@ static void script_silent_boot(Rig &r) {
   r.ac.silent = true;
   r.ac.strict_link = true;  // powered up later: it wants the probe before it answers a poll
   r.ac.linked = false;
-  r.run(24000);
+  r.run(36000);  // ten tries, the 0x07 window, then five cycles of two unanswered windows
   size_t probes = 0;
   while (probes < r.ac.writes.size() && cls_of(r.ac.writes[probes]) == 0x0A)
     probes++;
   CHECK(probes == H::BUS_BOOT_TRIES, "%zu boot probes", probes);
   for (size_t i = 1; i < probes; i++)
-    CHECK(r.ac.writes[i].t - r.ac.writes[i - 1].t == 1051, "probe %zu after %u ms", i,
-          (unsigned) (r.ac.writes[i].t - r.ac.writes[i - 1].t));
+    CHECK(r.ac.writes[i].t - r.ac.writes[i - 1].t ==
+              5 + H::bus_tx_time_ms(20) + 25 + H::BUS_REPLY_TIMEOUT_MS + H::BUS_BOOT_RETRY_MS,
+          "probe %zu after %u ms", i, (unsigned) (r.ac.writes[i].t - r.ac.writes[i - 1].t));
   CHECK(probes < r.ac.writes.size() && cls_of(r.ac.writes[probes]) == 0x07, "then 0x07");
   CHECK(r.rec.links.size() == 1 && !r.rec.links[0].up && r.bus.link_losses() == 1, "one link-lost edge");
   size_t polls = 0;
@@ -1030,9 +1033,10 @@ static void script_deaf_command(Rig &r) {
   for (size_t i = from; i < r.ac.writes.size(); i++)
     if (cls_of(r.ac.writes[i]) == 0x65)
       at.push_back(r.ac.writes[i].t);
+  // The unanswered command holds its window open, so the cycle runs long by about the window.
   for (size_t i = 1; i < at.size() && i < 3; i++)
-    CHECK(at[i] - at[i - 1] >= 1000 && at[i] - at[i - 1] <= 1100, "re-send %zu after %u ms", i,
-          (unsigned) (at[i] - at[i - 1]));
+    CHECK(at[i] - at[i - 1] >= 1000 && at[i] - at[i - 1] <= 1100 + H::BUS_REPLY_TIMEOUT_MS, "re-send %zu after %u ms",
+          i, (unsigned) (at[i] - at[i - 1]));
   CHECK(r.bus.unanswered_commands() == 6 && r.bus.command_resends() == 4 && r.rec.links.empty(),
         "six unanswered, four re-sends, link not blamed");
   CHECK(r.ac.setpoint == 22, "the unit never took either");
@@ -1138,7 +1142,7 @@ static void script_late_loop(Rig &r) {
 // The unit answers the first handshake step and then nothing.
 static void script_first_step_only(Rig &r) {
   r.ac.only_devtype = true;
-  r.run(9000);
+  r.run(14000);  // the 0x07 window, then five cycles of two unanswered windows
   CHECK(r.count(0x0A) >= 2 && cls_of(r.ac.writes[0]) == 0x0A && cls_of(r.ac.writes[1]) == 0x07,
         "one probe answered, then 0x07");
   uint8_t hi = 0, lo = 0;
@@ -1156,6 +1160,9 @@ static void script_first_step_only(Rig &r) {
 // Silent for `gap` ms after a healthy start, then back.
 static uint32_t g_gap = 0;
 static uint32_t g_gap_dt = 1;
+// A silence at least this long loses the link: five unanswered status polls, each cycle costing a
+// heartbeat window and a status window plus the frames, and up to one more cycle of slack.
+static const uint32_t LINK_LOST_BY_MS = 5 * (2 * H::BUS_REPLY_TIMEOUT_MS + 300) + 1000;
 static void script_gap(Rig &r) {
   r.run(3200);
   uint16_t before = 0, during = 0;
@@ -1167,7 +1174,7 @@ static void script_gap(Rig &r) {
   uint32_t statuses = r.rec.statuses;
   uint32_t left = g_gap > 2500 ? g_gap - 2500 : 0;
   r.run(left, left > 60000 ? g_gap_dt : 1);
-  bool lost = g_gap >= 6000;
+  bool lost = g_gap >= LINK_LOST_BY_MS;
   CHECK(r.rec.statuses == statuses, "no status while silent");
   CHECK(r.rec.links.size() == (lost ? 1u : 0u), "%zu link edge(s) after %u ms of silence", r.rec.links.size(),
         (unsigned) g_gap);
@@ -1186,8 +1193,8 @@ static void script_gap(Rig &r) {
   // counts on it. One that was still queued when the unit returned goes out then, once, and is
   // answered.
   CHECK(r.tags[before].sends >= 1 && r.tags[during].sends == 1, "each accepted command was sent");
-  CHECK(during_sent == 1 || g_gap < 6000, "a silence long enough to lose the link carries both commands (%u ms)",
-        (unsigned) g_gap);
+  CHECK(during_sent == 1 || g_gap < LINK_LOST_BY_MS,
+        "a silence long enough to lose the link carries both commands (%u ms)", (unsigned) g_gap);
   CHECK(r.count(0x65, writes) == (during_sent == 1 ? 0u : 1u), "after the unit came back: only what was still queued");
   size_t unanswered = 0;
   for (auto &c : r.rec.commands)
@@ -1213,10 +1220,10 @@ static void script_cut_mid_reply(Rig &r) {
   r.run(5 + H::bus_tx_time_ms(r.ac.writes.back().bytes.size()) + r.ac.reply_delay + g_cut);
   r.ac.silent = true;
   r.ac.cut();
-  r.run(9000);
+  r.run(LINK_LOST_BY_MS + 1000);
   CHECK(r.rec.links.size() == 1 && !r.rec.links[0].up, "link lost once");
   r.ac.silent = false;
-  r.run(4000);
+  r.run(4000 + 2 * H::BUS_REPLY_TIMEOUT_MS);  // the open windows of the silent cycle, then a recovery cycle
   CHECK(r.rec.links.size() == 2 && r.rec.links[1].up, "restored once");
   CHECK(r.bus.checksum_mismatches() == 0, "a cut frame is not a checksum error");
   r.audit_commands();
@@ -1276,7 +1283,7 @@ static void test_reply_faults() {
   printf("-- one damaged reply, per class and kind of damage\n");
   static const uint8_t CLASSES[] = {0x1E, 0x66, 0x65};
   static const FaultSpec FAULTS[] = {
-      {FAULT_DROP, 0},    {FAULT_LATE, 470},   {FAULT_LATE, 520},    {FAULT_LATE, 700},      {FAULT_LATE, 990},
+      {FAULT_DROP, 0},    {FAULT_LATE, 470},   {FAULT_LATE, 900},    {FAULT_LATE, 1020},     {FAULT_LATE, 1400},
       {FAULT_BAD_SUM, 0}, {FAULT_TRUNCATE, 3}, {FAULT_TRUNCATE, 17}, {FAULT_WRONG_CLASS, 0}, {FAULT_DUPLICATE, 0},
       {FAULT_GARBAGE, 1}, {FAULT_GARBAGE, 40}, {FAULT_LONE_F4, 0},
   };
@@ -1323,8 +1330,8 @@ static void test_reply_faults() {
       if (cls == 0x65) {
         if (f.kind == FAULT_DROP || f.kind == FAULT_TRUNCATE) {
           CHECK(!answered && sends == 2, "unanswered once, then sent again and answered (%d sends)", sends);
-        } else if (f.kind == FAULT_LATE && f.arg > 460) {
-          // The acknowledgement comes after the 500 ms window: the unit took the frame, the
+        } else if (f.kind == FAULT_LATE && f.arg + 40 > H::BUS_REPLY_TIMEOUT_MS) {
+          // The acknowledgement comes after the reply window: the unit took the frame, the
           // scheduler cannot know, and sends it again. Commands are absolute, so the second copy
           // is harmless apart from a second beep.
           CHECK(!answered && sends == 2, "late ack: sent twice (%d)", sends);
@@ -1380,10 +1387,13 @@ static void script_truncate_sweep(Rig &r) {
       return FaultSpec{FAULT_NONE, 0};
     };
     uint32_t timeouts = r.rec.timeouts, statuses = r.rec.statuses;
-    r.run(2000);
+    // The cut reply holds its window open, so the cycle with it runs long by the window; the next
+    // cycle's poll is the one delivered in this stretch.
+    r.run(2000 + H::BUS_REPLY_TIMEOUT_MS);
     CHECK(left == 0 && r.rec.timeouts == timeouts + 1, "cut at %u: one window lost (%u)", (unsigned) cut,
           (unsigned) (r.rec.timeouts - timeouts));
-    CHECK(r.rec.statuses == statuses + 1, "cut at %u: the other poll in these 2 s is delivered", (unsigned) cut);
+    CHECK(r.rec.statuses >= statuses + 1, "cut at %u: the other poll in this stretch is delivered (%u)", (unsigned) cut,
+          (unsigned) (r.rec.statuses - statuses));
   }
   CHECK(r.rec.links.empty() && r.bus.checksum_mismatches() == 0, "no link edge, no checksum error");
 }
@@ -1423,7 +1433,7 @@ static void script_token_change(Rig &r) {
   r.bus.link_token(&hi, &lo);
   CHECK(lo == 0x02, "old device type kept");
   r.ac.silent = true;
-  r.run(8000);
+  r.run(LINK_LOST_BY_MS + 1000);
   for (size_t i = 0; i < r.ac.writes.size(); i++)
     if (cls_of(r.ac.writes[i]) != 0x0A)
       CHECK(r.ac.writes[i].bytes[8] == 0x02, "frame %zu still carries the old device type", i);
@@ -1441,7 +1451,7 @@ static void script_token_change(Rig &r) {
   r.ac.dev_hi = 0x03;
   r.ac.dev_lo = 0x07;
   r.ac.silent = true;
-  r.run(8000);
+  r.run(LINK_LOST_BY_MS + 1000);
   r.ac.silent = false;
   r.ac.linked = false;
   size_t from = r.ac.writes.size();
@@ -1463,7 +1473,7 @@ static void script_token_change(Rig &r) {
 // followed, until the link had been lost and the recovery probe was answered cleanly.
 // hisense_protocol.cpp says of the wrong pair in that place that it "kills the link on hardware".
 // Now the damaged reply is a failed try: it is counted, nothing is adopted from it, and the probe
-// goes out again 500 ms later.
+// goes out again BUS_BOOT_RETRY_MS later.
 static void script_devtype_bad_checksum(Rig &r) {
   int left = 1;
   r.ac.fault = [&left](uint8_t cls, uint8_t) {
@@ -1617,10 +1627,11 @@ static void script_queue_ring(Rig &r) {
     CHECK(r.bus.queued() == H::BUS_TX_QUEUE_LEN, "full");
     if (round % 3 == 1)
       r.ac.deaf_commands = 2;
-    // Let a random part of it drain, so the head moves around the ring.
-    r.run(300 + rng.below(1500));
+    // Let a random part of it drain, so the head moves around the ring. A deaf round holds a
+    // window open per re-send, so give it the window on top.
+    r.run(300 + H::BUS_REPLY_TIMEOUT_MS + rng.below(1500));
   }
-  r.run(12000);
+  r.run(12000 + 8 * H::BUS_REPLY_TIMEOUT_MS);  // the last ring drains, re-sends holding their windows open
   CHECK(r.next_tag > 30 && r.bus.queued() == 0, "%u frames went through", (unsigned) (r.next_tag - 1));
   r.audit_commands();
   uint8_t f[H::TX_FRAME_MAX + 1] = {0xF4, 0xF5};
@@ -1671,7 +1682,7 @@ static size_t g_coarse_fifo = 0;
 static void script_coarse(Rig &r) {
   r.has_de = false;
   r.ac.fifo_cap = g_coarse_fifo;
-  r.progress_ms = 1400 + 4 * g_coarse_dt;
+  r.progress_ms = H::BUS_REPLY_TIMEOUT_MS + 900 + 4 * g_coarse_dt;
   r.run(3000, g_coarse_dt);
   CHECK(r.send_setpoint(26), "enqueue");
   r.run(12000, g_coarse_dt);
@@ -1690,7 +1701,7 @@ static void script_overrun(Rig &r) {
   r.has_de = false;
   r.run(3000);
   r.ac.fifo_cap = 128;
-  r.progress_ms = 2200;
+  r.progress_ms = H::BUS_REPLY_TIMEOUT_MS + 1700;
   uint32_t statuses = r.rec.statuses;
   r.run(12000, 250);
   CHECK(r.ac.overruns > 0, "bytes were lost to the buffer (%u)", (unsigned) r.ac.overruns);
@@ -1944,7 +1955,8 @@ static void script_exhaustion(Rig &r) {
   CHECK(hub.failed == 1 && hub.retries == H::COMMAND_RESEND_MAX && hub.done == 0, "given up once after %d retries",
         hub.retries);
   CHECK(sends == (g_exhaust_deaf ? 9u : 3u), "%zu frames on the wire", sends);
-  CHECK(gave_up > 0 && gave_up < 26000, "given up %u ms after the request", (unsigned) gave_up);
+  CHECK(gave_up > 0 && gave_up < 24500 + 3 * H::BUS_REPLY_TIMEOUT_MS, "given up %u ms after the request",
+        (unsigned) gave_up);
   CHECK(!hub.pending.active && r.bus.queued() == 0, "nothing left waiting");
   CHECK(r.rec.links.empty(), "the link is not blamed");
   CHECK(r.ac.setpoint == 22, "the unit is where it was");
@@ -1986,7 +1998,7 @@ static void script_command_while_down(Rig &r) {
   hub.run(3000);
   r.ac.silent = true;
   r.ac.cut();
-  hub.run(8000);
+  hub.run(13000);  // five unanswered polls, two windows per cycle
   CHECK(!hub.link_up && r.rec.links.size() == 1, "link down");
   hub.user(30);
   CHECK(!hub.pending.active, "the command is refused while the link is down");
@@ -2219,7 +2231,11 @@ int main(int argc, char **argv) {
 
   // Link.
   everywhere("unit answers the first handshake step only", script_first_step_only);
-  static const uint32_t GAPS[] = {3000, 9000, 5 * 60000u, 2 * 3600000u};
+  // The short gap has to swallow two cycles: the command's first send and its one re-send both
+  // go into the silence (each cycle a heartbeat window, a command window, a status window). The
+  // second gap is the shortest silence that loses the link.
+  static const uint32_t GAPS[] = {2 * (3 * H::BUS_REPLY_TIMEOUT_MS + 300) + 500, LINK_LOST_BY_MS + 1500, 5 * 60000u,
+                                  2 * 3600000u};
   for (uint32_t gap : GAPS) {
     static char name[64];
     snprintf(name, sizeof(name), "silent for %u s, then back", (unsigned) (gap / 1000));
@@ -2277,8 +2293,8 @@ int main(int argc, char **argv) {
   everywhere("confirm and retry exhausted: acknowledged, not applied", script_exhaustion);
   g_exhaust_deaf = true;
   everywhere("confirm and retry exhausted: never acknowledged", script_exhaustion);
-  g_gap = 9000;
-  everywhere("command unconfirmed when the link drops, back after 9 s", script_pending_at_link_loss);
+  g_gap = 14000;
+  everywhere("command unconfirmed when the link drops, back after 14 s", script_pending_at_link_loss);
   g_gap = 5 * 60000u;
   everywhere("command unconfirmed when the link drops, back after 5 min", script_pending_at_link_loss);
   g_gap = 4000;

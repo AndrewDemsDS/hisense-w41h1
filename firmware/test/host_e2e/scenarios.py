@@ -904,7 +904,8 @@ async def link_never_up(ctx):
     await act_and_expect(ctx, node, "mode off before the first status", lambda: node.climate_command(mode=Mode.OFF),
                          power_frame(False, token=(1, 1)), timeout=12)
 
-    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is False, 20),
+    # Ten boot probes of a 1000 ms window and a 500 ms wait, then five silent cycles of two windows.
+    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is False, 32),
             "after five unanswered status polls the link sensor reads off")
     probes = [x for x in node.bus.rx if x.cls == CLASS_DEVTYPE]
     first_07 = next(i for i, x in enumerate(node.bus.rx) if x.cls == 0x07)
@@ -912,13 +913,13 @@ async def link_never_up(ctx):
             "boot tried the DevType probe ten times before going on")
     r.check(all(x.frame[7:9] == b"\x01\x01" for x in node.bus.rx if x.cls != CLASS_DEVTYPE),
             "with no device type learned, frames carry the seeded 01 01")
-    r.check(len(probes) > 10 or await node.wait(lambda: len([x for x in node.bus.rx if x.cls == CLASS_DEVTYPE]) > 10, 3),
+    r.check(len(probes) > 10 or await node.wait(lambda: len([x for x in node.bus.rx if x.cls == CLASS_DEVTYPE]) > 10, 5),
             "while the link is down every cycle starts with a DevType probe")
     await expect_counters(ctx, node, {"bus_link_losses": 1}, "a unit that was never there counts as one link loss")
     r.check("A/C bus link lost" in node.log_text(), "the loss is logged")
 
     unit.silent = False
-    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is True, 5), "the unit answers: link on")
+    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is True, 8), "the unit answers: link on")
     r.check(await node.wait(lambda: c().current_temperature == 27.0 and c().mode == Mode.COOL, 6),
             "and the climate shows the unit: cool, 27 in the room", repr(c()))
     r.check(await node.wait(lambda: node.value("text_sensor.ac_device_type") == "01 02", 4),
@@ -949,9 +950,12 @@ async def link_loss(ctx):
     await node.wait(lambda: unit.silent, 3)
     t_silent = node.bus.now()
     unit.on_command = None
-    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is False, 12), "the link sensor goes off")
+    # A silent cycle is a heartbeat window and a status window of 1000 ms each, plus the frames:
+    # five of them, behind the command's own window, put the loss about 12 s after the silence.
+    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is False, 18), "the link sensor goes off")
     lost = node.bus.now() - t_silent
-    r.check(5.0 <= lost <= 9.0, "five unanswered status polls: lost 5 to 9 s after the unit went silent", f"{lost:.1f} s")
+    r.check(10.0 <= lost <= 15.0, "five unanswered status polls: lost 10 to 15 s after the unit went silent",
+            f"{lost:.1f} s")
     # The first send saw no reply while the status poll had not missed yet, so the bus re-sent it
     # once, in the next cycle. By then a poll had gone unanswered and it was left at that.
     r.frames([f.frame for f in node.bus.commands(mark)], [combined_frame("cool", 22)] * 2,
@@ -966,12 +970,13 @@ async def link_loss(ctx):
             "the climate keeps its last values, with the unconfirmed target: it does not become unavailable")
     r.equal(node.value("sensor.power"), 1660.0, "the sensors keep their last values too")
     probes = len([x for x in node.bus.rx if x.cls == CLASS_DEVTYPE])
-    await node.wait(lambda: len([x for x in node.bus.rx if x.cls == CLASS_DEVTYPE]) >= probes + 2, 4)
+    # With the link down a cycle also carries the probe's window: about 3.3 s each.
+    await node.wait(lambda: len([x for x in node.bus.rx if x.cls == CLASS_DEVTYPE]) >= probes + 2, 8)
     r.check(len([x for x in node.bus.rx if x.cls == CLASS_DEVTYPE]) >= probes + 2,
             "while the link is down every cycle starts with a DevType probe")
 
     unit.silent = False
-    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is True, 5), "the unit answers again: link on")
+    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is True, 8), "the unit answers again: link on")
     r.check(await node.wait(lambda: c().target_temperature == 24.0, 6),
             "the target falls back to what the unit reports: 24")
     await asyncio.sleep(5.0)
@@ -980,7 +985,7 @@ async def link_loss(ctx):
 
     # A command issued while the link is already down.
     unit.silent = True
-    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is False, 12), "silent again: link off")
+    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is False, 18), "silent again: link off")
     mark = node.mark()
     node.climate_command(target_temperature=21.0)
     await asyncio.sleep(2.5)
@@ -993,7 +998,7 @@ async def link_loss(ctx):
     await asyncio.sleep(1.0)
     r.equal(node.value("switch.eco"), False, "a switch flipped while the link is down is refused as well")
     unit.silent = False
-    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is True, 5), "the unit is back")
+    r.check(await node.wait(lambda: node.value("binary_sensor.ac_bus_link") is True, 8), "the unit is back")
     await asyncio.sleep(8.0)
     r.equal((unit.setpoint, unit.eco, len(node.bus.commands(mark)), c().target_temperature), (24, False, 0, 24.0),
             "and nothing asked for during the outage is carried out after it")
@@ -1101,7 +1106,9 @@ async def damaged_traffic(ctx):
     unit.damage[(CLASS_LINK, 0)] = ["bad_checksum"]
     await step("a heartbeat reply with a bad checksum: one checksum error", bus_checksum_errors=1)
     unit.damage[(CLASS_LINK, 0)] = ["drop"]
-    await step("a missing heartbeat reply: one reply timeout", bus_reply_timeouts=1)
+    # Total silence to one poll on a live link is the unit skipping a reply: counted apart
+    # (skipped_replies, no entity), not as a timeout.
+    await step("a missing heartbeat reply: a skipped reply, not a timeout")
 
     # Bytes nobody asked for, between two transactions: flushed before the next frame goes out.
     await asyncio.sleep(0.45)
@@ -1115,9 +1122,10 @@ async def damaged_traffic(ctx):
 
     unit.damage[(CLASS_STATUS, 0)] = ["drop"] * 4
     await node.quiet_cycles(6, 10)
-    for k, v in (("bus_reply_timeouts", 4),):
+    # The first of the four is a skipped reply; the three after it are timeouts.
+    for k, v in (("bus_reply_timeouts", 3),):
         want[k] += v
-    await expect_counters(ctx, node, dict(want), "four status polls in a row unanswered: four timeouts, and the link holds")
+    await expect_counters(ctx, node, dict(want), "four status polls in a row unanswered: one skipped, three timeouts, and the link holds")
     r.equal(node.value("binary_sensor.ac_bus_link"), True, "the link sensor stayed on")
     r.check(not any(s.state is False and not s.missing_state for t, k, s in node.history
                     if k == "binary_sensor.ac_bus_link"), "at every moment")

@@ -2,7 +2,7 @@
 //
 // The scheduler replaces the original driver's FreeRTOS bus task, so these checks encode that
 // task's contract (hisense_rs485.cpp hisense_bus_task / hisense_transact) as observable wire
-// behaviour: frame order and content, envelope stamping, DE timing, the 500 ms reply window, the
+// behaviour: frame order and content, envelope stamping, DE timing, the reply window, the
 // 1 s cycle, link loss and recovery, reply-class correlation and checksum rejection. Time advances
 // in 1 ms steps; the simulated A/C answers each frame after a configurable delay.
 
@@ -94,9 +94,11 @@ class SimAC : public H::BusIO {
   bool stale_1e_before_ack = false;  // a late 0x1E lands in the command's window, ahead of its ack
   uint32_t ack_starts = 0, ack_ends = 0;
   bool truncate_next_status = false;  // one status reply cut off after 60 bytes
-  bool deaf_to_devtype = false;       // hears everything except the 0x0A probe
-  int corrupt_devtype_left = 0;       // this many DevType replies arrive with one flipped bit in byte 17
-  bool corrupt_link_reply = false;    // every 0x1E reply arrives with one flipped bit in its checksum
+  int skip_status_every = 0;          // leaves every Nth status poll unanswered, as the mainboard does
+  int status_polls_seen = 0;
+  bool deaf_to_devtype = false;     // hears everything except the 0x0A probe
+  int corrupt_devtype_left = 0;     // this many DevType replies arrive with one flipped bit in byte 17
+  bool corrupt_link_reply = false;  // every 0x1E reply arrives with one flipped bit in its checksum
   // Time of the last byte of the newest reply queued, to tell whether a write overlaps a reply.
   uint32_t reply_ends = 0;
   uint32_t reply_delay = 40;
@@ -176,6 +178,8 @@ class SimAC : public H::BusIO {
       f[f.size() - 3] = (uint8_t) s;
       queue_(f, at);
     } else if (cls == 0x66) {
+      if (skip_status_every > 0 && ++status_polls_seen % skip_status_every == 0)
+        return;
       if (stale_1e_before_status) {
         queue_(ac_frame(28, 0x1E, 0x00), at);
         at += 40;
@@ -381,13 +385,13 @@ static void test_link_loss_and_recovery() {
   size_t before = ac.writes.size();
   uint32_t silent_at = g_now;
   int frames_before = rec.frames, timeouts_before = rec.timeouts;
-  run(bus, 12000);
+  run(bus, 24000);
   CHECK(rec.frames == frames_before, "a silent A/C reports no frames");
   CHECK(rec.timeouts - timeouts_before >= 10, "and every unanswered transaction reports a timeout (%d)",
         rec.timeouts - timeouts_before);
   CHECK(rec.links.size() == 1 && !rec.links[0].second, "exactly one link-lost edge");
-  // Five status polls unanswered: each costs heartbeat 500 + status 500 (+ TX), so the edge lands
-  // after the fifth poll, ~5 cycles in.
+  // Five status polls unanswered: each costs a heartbeat window and a status window (+ TX), so
+  // the edge lands after the fifth poll, ~5 cycles in.
   CHECK(!rec.links.empty() && rec.links[0].first - silent_at >= 4000, "lost after 5 missed polls (%u ms)",
         rec.links.empty() ? 0u : (unsigned) (rec.links[0].first - silent_at));
   // The edge fires on exactly the fifth unanswered status poll: count the polls sent after the
@@ -408,14 +412,14 @@ static void test_link_loss_and_recovery() {
     }
   }
   CHECK(saw_recover && saw_f0, "recovery DevType probe, then a not-heard heartbeat");
-  // Reply window: with the A/C silent, the next frame never starts before DE-low + 500 ms.
+  // Reply window: with the A/C silent, the next frame never starts before DE-low + the window.
   for (size_t i = before + 1; i < ac.writes.size(); i++) {
     uint32_t fell = 0;
     for (auto &e : ac.de)
       if (!e.high && e.t < ac.writes[i].t)
         fell = e.t;
     uint32_t gap = ac.writes[i].t - fell;
-    CHECK(gap >= 500 + 5, "gap before frame %zu is %u ms", i, (unsigned) gap);
+    CHECK(gap >= H::BUS_REPLY_TIMEOUT_MS + 5, "gap before frame %zu is %u ms", i, (unsigned) gap);
   }
   ac.responsive = true;
   run(bus, 4000);
@@ -432,8 +436,40 @@ static void test_link_loss_and_recovery() {
     H::AcFeatures ft;
     CHECK(bus.features(&ft) && ft.valid && rec.features == 2, "features re-read after the recovery (%d)", rec.features);
   }
-  CHECK((int) bus.reply_timeouts() == rec.timeouts && bus.unanswered_commands() == 0,
-        "every timeout counted (%u), none of them a command", (unsigned) bus.reply_timeouts());
+  // The first miss of the silence (a heartbeat, in a cycle that was answered so far) is an
+  // isolated one; everything after it is a timeout.
+  CHECK((int) (bus.reply_timeouts() + bus.skipped_replies()) == rec.timeouts && bus.skipped_replies() == 1 &&
+            bus.unanswered_commands() == 0,
+        "every timeout counted (%u + %u skipped), none of them a command", (unsigned) bus.reply_timeouts(),
+        (unsigned) bus.skipped_replies());
+}
+
+// The mainboard skips one status reply now and then and answers the next poll. That is not a
+// timeout of the link: it is counted apart, and nothing else moves.
+static void test_skipped_reply() {
+  printf("-- one status reply skipped every 50 polls, as the mainboard does\n");
+  SimAC ac;
+  ac.skip_status_every = 50;
+  Recorder rec;
+  H::BusScheduler bus;
+  bus.setup(&ac, &rec, true);
+  run(bus, 212000);  // the handshake, then 200 polls
+  CHECK(rec.timeouts == 4, "four windows closed empty (%d)", rec.timeouts);
+  CHECK(bus.skipped_replies() == 4 && bus.reply_timeouts() == 0,
+        "all four are skipped replies (%u skipped, %u timeouts)", (unsigned) bus.skipped_replies(),
+        (unsigned) bus.reply_timeouts());
+  CHECK(rec.links.empty() && bus.link_losses() == 0, "the link never wavers");
+  CHECK(rec.statuses >= 190, "the other polls are answered (%d)", rec.statuses);
+  // Two cycles without an answer: the first miss is isolated, the three that follow are timeouts.
+  ac.skip_status_every = 0;
+  ac.responsive = false;
+  run(bus, 2 * (2 * H::BUS_REPLY_TIMEOUT_MS + 300));
+  ac.responsive = true;
+  run(bus, 3000);
+  CHECK(bus.skipped_replies() == 5 && bus.reply_timeouts() >= 3,
+        "a run of misses: one skipped, the rest timeouts (%u skipped, %u timeouts)", (unsigned) bus.skipped_replies(),
+        (unsigned) bus.reply_timeouts());
+  CHECK(rec.links.empty(), "two silent cycles do not lose the link");
 }
 
 static void test_correlation_and_checksum() {
@@ -483,10 +519,11 @@ static void test_damaged_frames_are_not_believed() {
       probes++;
     CHECK(probes == 4, "three damaged replies are three failed tries, the fourth is answered (%zu probes)", probes);
     for (size_t k = 1; k < probes; k++) {
-      // A damaged reply ends its window when it arrives, then the usual 500 ms before the next try.
+      // A damaged reply ends its window when it arrives, then the usual retry wait before the next try.
       uint32_t gap = ac.writes[k].t - ac.writes[k - 1].t;
-      CHECK(gap > 500 && gap < 5 + H::bus_tx_time_ms(20) + 25 + 500 + 500, "try %zu follows after %u ms", k,
-            (unsigned) gap);
+      CHECK(gap > H::BUS_BOOT_RETRY_MS &&
+                gap < 5 + H::bus_tx_time_ms(20) + 25 + H::BUS_REPLY_TIMEOUT_MS + H::BUS_BOOT_RETRY_MS,
+            "try %zu follows after %u ms", k, (unsigned) gap);
     }
     uint8_t hi = 0, lo = 0;
     CHECK(bus.link_token(&hi, &lo) && hi == 0x01 && lo == 0x02, "device type from the whole reply (%02X %02X)", hi, lo);
@@ -559,7 +596,7 @@ static void test_return_between_probe_and_poll() {
     bus.setup(&ac, &rec, true);
     run(bus, 2500);
     ac.responsive = false;
-    run(bus, 9000);
+    run(bus, 13000);  // five unanswered polls, two windows per cycle
     CHECK(rec.links.size() == 1 && !rec.links[0].second, "silent: link lost");
     // Run to the next recovery probe, let it go unanswered, then bring the unit back as another
     // model (or one that does not answer the probe at all).
@@ -724,7 +761,7 @@ static void test_boot_retries() {
   Recorder rec;
   H::BusScheduler bus;
   bus.setup(&ac, &rec, true);
-  run(bus, 12000);
+  run(bus, 18000);  // ten tries, each a window plus the retry wait
   size_t probes = 0;
   size_t i = 0;
   while (i < ac.writes.size() && cls(ac.writes[i]) == 0x0A) {
@@ -735,7 +772,7 @@ static void test_boot_retries() {
   CHECK(i < ac.writes.size() && cls(ac.writes[i]) == 0x07, "then 0x07");
   for (size_t k = 1; k < probes; k++) {
     uint32_t gap = ac.writes[k].t - ac.writes[k - 1].t;
-    uint32_t want = 5 + H::bus_tx_time_ms(20) + 25 + 500 + 500;
+    uint32_t want = 5 + H::bus_tx_time_ms(20) + 25 + H::BUS_REPLY_TIMEOUT_MS + H::BUS_BOOT_RETRY_MS;
     CHECK(gap == want, "try %zu gap %u ms (want %u)", k, (unsigned) gap, (unsigned) want);
   }
   uint8_t hi, lo;
@@ -809,8 +846,9 @@ static void test_command_fate() {
       }
     }
     for (size_t i = 1; i < at.size(); i++) {
-      CHECK(at[i] - at[i - 1] >= 900 && at[i] - at[i - 1] <= 1200, "send %zu is one cycle after the last (%u ms)", i,
-            (unsigned) (at[i] - at[i - 1]));
+      // An unanswered command holds its window open, so that cycle runs long by about the window.
+      CHECK(at[i] - at[i - 1] >= 900 && at[i] - at[i - 1] <= 1200 + H::BUS_REPLY_TIMEOUT_MS,
+            "send %zu is one cycle after the last (%u ms)", i, (unsigned) (at[i] - at[i - 1]));
       CHECK(cls(ac.writes[idx[i] - 1]) == 0x1E, "and sits in the command slot, behind the heartbeat");
     }
     CHECK(bus.unanswered_commands() == 3 && bus.reply_timeouts() == 3 && bus.command_resends() == 2 &&
@@ -871,10 +909,10 @@ static void test_command_fate() {
     bus.setup(&ac, &rec, true);
     run(bus, 2500);
     ac.responsive = false;
-    run(bus, 1500);  // one status poll has gone unanswered
+    run(bus, 3000);  // one status poll has gone unanswered (a heartbeat window and a status window)
     size_t before = ac.writes.size();
     CHECK(bus.enqueue(cmd, n), "enqueue into a unit that stopped answering");
-    run(bus, 12000);
+    run(bus, 14000);
     CHECK(count_cls(ac, before, 0x65) == 1, "sent once, not again (%zu)", count_cls(ac, before, 0x65));
     CHECK(bus.command_resends() == 0, "no re-send counted");
     CHECK(!rec.links.empty() && !rec.links.back().second, "the link is reported lost");
@@ -960,7 +998,7 @@ static void test_command_fate() {
     run(bus, 1000);
     CHECK(bus.enqueue(pwr, pn) && bus.enqueue(cmd, n), "enqueue during boot");
     CHECK(count_cls(ac, 0, 0x65) == 0, "nothing sent before the handshake is over");
-    run(bus, 14000);
+    run(bus, 26000);  // ten tries of a window plus the retry wait, then two cycles with a command each
     CHECK(count_cls(ac, 0, 0x65) == 2, "both sent once the handshake gives up (%zu)", count_cls(ac, 0, 0x65));
     CHECK(rec.commands.size() == 2 && !rec.commands[0].first && !rec.commands[1].first, "both reported unanswered");
   }
@@ -1144,6 +1182,7 @@ int main() {
   test_boot_and_cycle();
   test_queue();
   test_link_loss_and_recovery();
+  test_skipped_reply();
   test_correlation_and_checksum();
   test_boot_retries();
   test_damaged_frames_are_not_believed();

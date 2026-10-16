@@ -3,7 +3,7 @@
 //
 // A state machine with no task and no blocking waits. Every exchange is a transaction, as on the
 // vendor module: flush RX, stamp the frame, raise DE, settle 5 ms, send, hold DE 25 ms past the
-// last byte, drop DE, then listen up to 500 ms for a reply of the expected class. The A/C only
+// last byte, drop DE, then listen up to 1000 ms for a reply of the expected class. The A/C only
 // ever answers, never initiates, and two frames without a reply window collide on the half-duplex
 // bus.
 //
@@ -11,7 +11,7 @@
 // Each ~1 s cycle: a DevType re-handshake if 5 status polls in a row went unanswered (and one
 // more if the unit came back in a cycle whose probe it had not answered), the 0x1E
 // heartbeat, the queued commands that fit (command_slot_open below), the 0x66 status poll (the
-// link-liveness signal), and the 0x66/40 ProductType poll on the first heard cycle and every 60th
+// link-liveness signal), and the 0x66/40 ProductType poll once per handshake
 // after.
 //
 // A command frame that gets no reply is sent again in the next cycle's command slot, ahead of
@@ -79,7 +79,9 @@ static constexpr BusTicket BUS_TICKET_NONE = 0;
 // Timing, from the vendor module's byte-writer and transaction primitive.
 static constexpr uint32_t BUS_DE_SETTLE_MS = 5;  // DE high before the first byte
 static constexpr uint32_t BUS_DE_DRAIN_MS = 25;  // DE held after the last byte left
-static constexpr uint32_t BUS_REPLY_TIMEOUT_MS = 500;
+// A reply arrives 230 ms after the poll (median, 2026-10-15 capture on an ESP32 node), once in
+// 475 polls at 400 ms. 1000 ms keeps margin over that; the vendor module waits 3000 ms.
+static constexpr uint32_t BUS_REPLY_TIMEOUT_MS = 1000;
 static constexpr uint32_t BUS_CYCLE_MS = 1000;  // the vendor module paces at 0x3e8 ms
 static constexpr uint32_t BUS_BOOT_RETRY_MS = 500;
 static constexpr uint8_t BUS_BOOT_TRIES = 10;
@@ -185,10 +187,15 @@ class BusScheduler {
   bool link_token(uint8_t *hi, uint8_t *lo) const;
   // Complete frames received with a bad checksum, of any class, since boot.
   uint32_t checksum_mismatches() const { return this->chk_mismatch_; }
-  // Counters since boot, for diagnostics. A reply window that closed empty, of any kind; a queued
-  // command among those (each send counts); a command frame sent again for that reason; a
-  // link-lost edge.
+  // Counters since boot, for diagnostics. A reply window that closed empty, of any kind, except
+  // an isolated one (below); a queued command among those (each send counts); a command frame
+  // sent again for that reason; a link-lost edge.
   uint32_t reply_timeouts() const { return this->reply_timeouts_; }
+  // A heartbeat or status poll met by total silence (not one byte in the window) on a live link,
+  // with no other miss in that cycle or the one before. The mainboard skips one status reply on a period of its own
+  // (about every two minutes on the units measured, 2026-10-15) and answers the next poll; that is the unit's habit,
+  // not a fault of the link, so it is kept apart from reply_timeouts.
+  uint32_t skipped_replies() const { return this->skipped_replies_; }
   uint32_t unanswered_commands() const { return this->unanswered_commands_; }
   uint32_t command_resends() const { return this->command_resends_; }
   // Valid inside on_bus_command(): the frame just reported is going out again.
@@ -303,6 +310,10 @@ class BusScheduler {
   uint8_t link_request_{0};
   uint32_t chk_mismatch_{0};
   uint32_t reply_timeouts_{0};
+  uint32_t skipped_replies_{0};
+  bool cycle_missed_{false};
+  bool window_heard_{false};  // a byte arrived in the current reply window
+  bool prev_cycle_missed_{false};
   uint32_t unanswered_commands_{0};
   uint32_t command_resends_{0};
   bool status_seen_{false};
