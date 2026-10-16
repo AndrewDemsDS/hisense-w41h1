@@ -11,6 +11,11 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- A command with horizontal swing no longer writes `14` at byte 37. The vendor firmware's
+  command writer uses byte 37 for 8-degree heat (reverse-engineering doc 09); horizontal swing is
+  bits 4 and 5 of byte 32 alone. The units here have no horizontal louvre, so nothing changes for
+  them; a unit with 8-degree heat no longer gets a stray value in that field.
+
 - The ProductType poll (`66 40`) is sent once per handshake: on the first cycle the A/C is
   heard, and again after a recovery handshake. It was re-sent every 60 cycles, and each re-send
   cost one reply timeout on the ESP32 nodes (the periodic single timeout of #186). The stock

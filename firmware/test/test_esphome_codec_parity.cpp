@@ -33,6 +33,9 @@
 //  4. Eco and turbo both on, to a preset with neither. The original's plan sends the eco clear
 //     alone, which by its own special_apply leaves turbo on. The port sends the turbo clear
 //     (FEATURE_NONE) right after it. Every other plan is the same write for write.
+//  5. Byte 37 of a command frame. The original writes 0x14 there whenever horizontal swing is
+//     commanded; the port leaves it 0, since the vendor firmware's writer uses byte 37 for 8-degree
+//     heat (RE doc 09). Compared with byte 37 and the checksum exempt (same_bytes_but_byte37).
 
 #include <cmath>
 #include <cstdint>
@@ -76,6 +79,41 @@ static uint32_t rnd() {
 
 static bool same_bytes(const uint8_t *a, size_t na, const uint8_t *b, size_t nb) {
   return na == nb && memcmp(a, b, na) == 0;
+}
+
+// Intended difference 5: the reference writes 0x14 at byte 37 whenever horizontal swing is
+// commanded; the port leaves byte 37 at 0 (it is the vendor writer's 8-degree-heat field, RE doc
+// 09). A command frame has no byte to stuff, so byte 37 and the checksum sit at fixed offsets:
+// everything else must match, the port's byte 37 must be 0, and the port's checksum must be right.
+// Un-stuff a transmitted frame (a doubled 0xF4 inside the body or checksum is one byte) into raw.
+static size_t unstuff_tx_for_compare(const uint8_t *f, size_t n, uint8_t *raw, size_t cap) {
+  size_t u = 0;
+  for (size_t i = 0; i < n && u < cap; i++) {
+    raw[u++] = f[i];
+    if (f[i] == 0xF4 && i >= 2 && i + 1 < n - 2 && f[i + 1] == 0xF4)
+      i++;
+  }
+  return u;
+}
+
+static bool same_bytes_but_byte37(const uint8_t *a, size_t na, const uint8_t *b, size_t nb) {
+  if (na == 0 && nb == 0)
+    return true;  // both refuse the command (setpoint out of range)
+  uint8_t ra[80], rb[80];
+  const size_t ua = unstuff_tx_for_compare(a, na, ra, sizeof(ra));
+  const size_t ub = unstuff_tx_for_compare(b, nb, rb, sizeof(rb));
+  if (ua != 50 || ub != 50 || ra[37] != 0x14 || rb[37] != 0x00)
+    return false;
+  unsigned sum = 0;
+  for (size_t i = 0; i < 50; i++) {
+    if (i >= 2 && i < 46)
+      sum += rb[i];
+    if (i == 37 || i == 46 || i == 47)
+      continue;
+    if (ra[i] != rb[i])
+      return false;
+  }
+  return rb[46] == ((sum >> 8) & 0xFF) && rb[47] == (sum & 0xFF);
 }
 
 static void to_old(const H::AcCommand &n, HisenseCommand *o) {
@@ -220,8 +258,9 @@ static void test_build_command() {
                     refused++;
                     continue;
                   }
-                  CHECK(same_bytes(a, na, b, nb), "build_command mode=%u sp=%d f=%d fan=%u vs=%u hs=%u feat=%u disp=%u",
-                        mode, sp, unit, fan, vs, hs, feat, disp);
+                  CHECK(hs == 0 ? same_bytes(a, na, b, nb) : same_bytes_but_byte37(a, na, b, nb),
+                        "build_command mode=%u sp=%d f=%d fan=%u vs=%u hs=%u feat=%u disp=%u", mode, sp, unit, fan, vs,
+                        hs, feat, disp);
                   built++;
                 }
   // Capacity: one short of the stuffed maximum must be refused by both.

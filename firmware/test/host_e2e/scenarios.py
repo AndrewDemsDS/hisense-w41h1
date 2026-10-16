@@ -1136,7 +1136,7 @@ async def damaged_traffic(ctx):
 # ---- Long runs ----------------------------------------------------------------------------------------
 @scenario(70, full=True)
 async def periodic(ctx):
-    """What happens once a minute: the telemetry refresh and the ProductType poll."""
+    """What happens once a minute: the telemetry refresh, and no ProductType re-poll."""
     r = ctx.r
     node = await ctx.node()
     await asyncio.sleep(64)
@@ -1144,9 +1144,10 @@ async def periodic(ctx):
     power = [(round(t, 1), s.state) for t, k, s in node.history if k == "sensor.power" and not s.missing_state]
     r.check(len(power) == 2 and power[0][1] == power[1][1] == 1660.0 and 59.0 <= power[1][0] - power[0][0] <= 62.0,
             "an unchanged power reading is published again after 60 s, and only then", str(power))
+    # Once per handshake, like the vendor module (#230): never again while the link holds.
     product = polls(node, CLASS_STATUS, SUB_PRODUCT)
-    r.check(len(product) == 2 and 59.0 <= product[1].at - product[0].at <= 62.0,
-            "the ProductType poll is repeated after 60 cycles", " ".join(f"{p.at:.1f}" for p in product))
+    r.check(len(product) == 1, "the ProductType poll goes out once, and not again in the minute",
+            " ".join(f"{p.at:.1f}" for p in product))
     energy = node.value("sensor.energy_today")
     r.check(0.025 <= energy <= 0.031, "energy today integrated 1660 W over the minute: about 0.028 kWh", str(energy))
     climate = [s for t, k, s in node.history if k == CLIMATE and not math.isnan(s.current_temperature)]

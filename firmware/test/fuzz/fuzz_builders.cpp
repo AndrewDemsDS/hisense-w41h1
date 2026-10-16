@@ -95,7 +95,7 @@ static void op_command(Reader &r, size_t cap) {
   want[33] = feature_byte[feat];
   static const uint8_t display_byte[3] = {0x00, 0xC0, 0x40};  // no change, on, off
   want[36] = display_byte[disp];
-  want[37] = hs != 0 ? 0x14 : 0x00;
+  want[37] = 0x00;  // the vendor writer's 8-degree-heat field (RE doc 09); never a swing companion
   for (size_t i = 0; i < 46; i++)
     FUZZ_CHECK(f[i] == want[i], "command byte %zu is %02X, the decoder expects %02X", i, f[i], want[i]);
 }

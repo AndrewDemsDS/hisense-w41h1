@@ -30,6 +30,9 @@
 //  - build_single_field refuses an offset outside the body (16 to 45); the reference's static
 //    helper has no guard (its only callers pass 17 and 35). Compared inside the body, and the
 //    port has to return 0 outside it.
+//  - build_command leaves byte 37 at 0 where the reference writes 0x14 for horizontal swing
+//    (the vendor writer's 8-degree-heat field, RE doc 09). Compared with byte 37 and the
+//    checksum exempt (same_bytes_but_byte37).
 //  - build_command refuses an enum field that holds no named value (command_enums_valid); the
 //    reference packs it. Compared for named values, and the port has to return 0 for the rest.
 //  - The bit 5 lockout: the port keeps (armed, since) and compares elapsed time, the reference
@@ -48,6 +51,41 @@ using namespace fz;
 
 static bool same_bytes(const uint8_t *a, size_t na, const uint8_t *b, size_t nb) {
   return na == nb && (na == 0 || memcmp(a, b, na) == 0);
+}
+
+// Intended difference 5: the reference writes 0x14 at byte 37 whenever horizontal swing is
+// commanded; the port leaves byte 37 at 0 (it is the vendor writer's 8-degree-heat field, RE doc
+// 09). A command frame has no byte to stuff, so byte 37 and the checksum sit at fixed offsets:
+// everything else must match, the port's byte 37 must be 0, and the port's checksum must be right.
+// Un-stuff a transmitted frame (a doubled 0xF4 inside the body or checksum is one byte) into raw.
+static size_t unstuff_tx_for_compare(const uint8_t *f, size_t n, uint8_t *raw, size_t cap) {
+  size_t u = 0;
+  for (size_t i = 0; i < n && u < cap; i++) {
+    raw[u++] = f[i];
+    if (f[i] == 0xF4 && i >= 2 && i + 1 < n - 2 && f[i + 1] == 0xF4)
+      i++;
+  }
+  return u;
+}
+
+static bool same_bytes_but_byte37(const uint8_t *a, size_t na, const uint8_t *b, size_t nb) {
+  if (na == 0 && nb == 0)
+    return true;  // both refuse the command (setpoint out of range)
+  uint8_t ra[80], rb[80];
+  const size_t ua = unstuff_tx_for_compare(a, na, ra, sizeof(ra));
+  const size_t ub = unstuff_tx_for_compare(b, nb, rb, sizeof(rb));
+  if (ua != 50 || ub != 50 || ra[37] != 0x14 || rb[37] != 0x00)
+    return false;
+  unsigned sum = 0;
+  for (size_t i = 0; i < 50; i++) {
+    if (i >= 2 && i < 46)
+      sum += rb[i];
+    if (i == 37 || i == 46 || i == 47)
+      continue;
+    if (ra[i] != rb[i])
+      return false;
+  }
+  return rb[46] == ((sum >> 8) & 0xFF) && rb[47] == (sum & 0xFF);
 }
 
 static bool same_state(const HisenseState &o, const H::AcState &n) {
@@ -293,7 +331,9 @@ static void diff_builders(Reader &r) {
   size_t nb = H::build_command(n, b.data(), cap);
   const bool named = H::command_enums_valid(n);
   if (named) {
-    FUZZ_CHECK(same_bytes(a.data(), na, b.data(), nb), "build_command: reference %zu bytes, port %zu", na, nb);
+    FUZZ_CHECK(n.hswing == H::SWING_MODE_OFF ? same_bytes(a.data(), na, b.data(), nb)
+                                             : same_bytes_but_byte37(a.data(), na, b.data(), nb),
+               "build_command: reference %zu bytes, port %zu", na, nb);
   } else {
     FUZZ_CHECK(nb == 0, "build_command packed an enum value that has no name (%zu bytes)", nb);
   }
@@ -308,6 +348,7 @@ static void diff_builders(Reader &r) {
     size_t up = model_unstuff_tx(with_power, np, port_f, sizeof(port_f));
     FUZZ_CHECK(ur == 50 && up == 50, "command frames un-stuff to 50 bytes");
     ref_f[18] |= 0x0C;
+    ref_f[37] = 0x00;  // intended difference: the port never writes the reference's 0x14 there
     model_seal(ref_f, 50);
     FUZZ_CHECK(memcmp(ref_f, port_f, 50) == 0, "power_on changes more than the run field of byte 18");
   }
