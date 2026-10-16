@@ -33,6 +33,8 @@ the facts and the reasons in it are still true, and it says at its top what repl
 | [`docs/03-rs485-ac-protocol.md`](docs/03-rs485-ac-protocol.md) | The bus: physical layer, frame envelope, classes, link bring-up, status and command byte maps, the "77" request bits | Reference, the main one |
 | [`docs/10-stock-fw-init-and-comms.md`](docs/10-stock-fw-init-and-comms.md) | The vendor firmware's bus side from the disassembly: boot order, pins, state machine, field maps, capability and fault tables | Reference, with two history sections on the retired Matter firmware |
 | [`docs/11-model-capability-map.md`](docs/11-model-capability-map.md) | How the device type and the ProductType reply decide a unit's features, and what two units reported | Reference |
+| [`docs/09-stock-command-builders.md`](docs/09-stock-command-builders.md) | The bytes the vendor firmware puts in a command frame for each control, read from its generic field writer (2026-08-19 dump) | Reference |
+| [`docs/12-stock-reply-decoder.md`](docs/12-stock-reply-decoder.md) | Every rule by which the vendor firmware accepts or rejects a received frame, and where the component differs | Reference |
 | [`docs/13-stock-fw-feature-map.md`](docs/13-stock-fw-feature-map.md) | The rest of the vendor firmware: cloud channel, image acceptance rules, listeners, Matter stack, flash map | Reference, with one history section |
 | [`docs/14-open-questions.md`](docs/14-open-questions.md) | Everything unsettled, with what would settle it | Reference |
 | [`docs/04-cloud-and-firewall.md`](docs/04-cloud-and-firewall.md) | The vendor cloud's hosts and ports, and how to block a module on the vendor firmware | Reference for the vendor firmware |

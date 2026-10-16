@@ -21,13 +21,18 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 - The reply window is 1000 ms (was 500). A capture of 475 polls on an ESP32 node put the
   median reply at 230 ms and one at 400 ms; the vendor module waits 3000 ms. A link that goes
-  silent now shows as lost after about 10 s instead of 5 (five unanswered polls, two windows each).
+  silent now shows as lost after about 12 s instead of 5 (five unanswered polls, two windows each).
+
+- A command with horizontal swing no longer writes `14` at byte 37. The vendor firmware's
+  command writer uses byte 37 for 8-degree heat (reverse-engineering doc 09); horizontal swing is
+  bits 4 and 5 of byte 32 alone. The units here have no horizontal louvre, so nothing changes for
+  them; a unit with 8-degree heat no longer gets a stray value in that field.
 
 - The ProductType poll (`66 40`) is sent once per handshake: on the first cycle the A/C is
-  heard, and again after a recovery handshake. It was re-sent every 60 cycles, and each re-send
-  cost one reply timeout on the ESP32 nodes (the periodic single timeout of #186). The stock
-  module asks it once per link bring-up and never again on a live link (reverse-engineering docs
-  10 and 15, read from the 2026-08-19 dump). `BUS_PRODUCTTYPE_CYCLES` is gone.
+  heard, and again after a recovery handshake. It was re-sent every 60 cycles. The stock module
+  asks it once per link bring-up and never again on a live link (reverse-engineering docs 10 and
+  15, read from the 2026-08-19 dump). `BUS_PRODUCTTYPE_CYCLES` is gone. (The periodic single
+  timeout of #186 turned out to be the mainboard skipping a reply, see the entry above.)
 
 ## 2.0.1 - 2026-10-13
 
