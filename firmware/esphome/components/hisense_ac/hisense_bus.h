@@ -3,7 +3,7 @@
 //
 // A state machine with no task and no blocking waits. Every exchange is a transaction, as on the
 // vendor module: flush RX, stamp the frame, raise DE, settle 5 ms, send, hold DE 25 ms past the
-// last byte, drop DE, then listen up to 500 ms for a reply of the expected class. The A/C only
+// last byte, drop DE, then listen up to 1000 ms for a reply of the expected class. The A/C only
 // ever answers, never initiates, and two frames without a reply window collide on the half-duplex
 // bus.
 //
@@ -11,7 +11,7 @@
 // Each ~1 s cycle: a DevType re-handshake if 5 status polls in a row went unanswered (and one
 // more if the unit came back in a cycle whose probe it had not answered), the 0x1E
 // heartbeat, the queued commands that fit (command_slot_open below), the 0x66 status poll (the
-// link-liveness signal), and the 0x66/40 ProductType poll on the first heard cycle and every 60th
+// link-liveness signal), and the 0x66/40 ProductType poll once per handshake
 // after.
 //
 // A command frame that gets no reply is sent again in the next cycle's command slot, ahead of
@@ -79,7 +79,9 @@ static constexpr BusTicket BUS_TICKET_NONE = 0;
 // Timing, from the vendor module's byte-writer and transaction primitive.
 static constexpr uint32_t BUS_DE_SETTLE_MS = 5;  // DE high before the first byte
 static constexpr uint32_t BUS_DE_DRAIN_MS = 25;  // DE held after the last byte left
-static constexpr uint32_t BUS_REPLY_TIMEOUT_MS = 500;
+// A reply arrives 230 ms after the poll (median, 2026-10-15 capture on an ESP32 node), once in
+// 475 polls at 400 ms. 1000 ms keeps margin over that; the vendor module waits 3000 ms.
+static constexpr uint32_t BUS_REPLY_TIMEOUT_MS = 1000;
 static constexpr uint32_t BUS_CYCLE_MS = 1000;  // the vendor module paces at 0x3e8 ms
 static constexpr uint32_t BUS_BOOT_RETRY_MS = 500;
 static constexpr uint8_t BUS_BOOT_TRIES = 10;

@@ -36,7 +36,7 @@ been removed.
 | Direction line | `PA_17` drives the transceiver's DE: high to send, low to receive | firmware (doc 10 §1.3), then hardware 2026-07-06 |
 | DE timing of the stock module | DE high, 5 ms, send, 1 ms, DE low, under a mutex | firmware (doc 10 §4.4) |
 | Receive | interrupt driven into a buffer, one frame complete on `F4 FB` | firmware (doc 10 §4.3) |
-| Reply window | 500 ms per transaction | firmware (doc 10 §4.6) |
+| Reply window | the vendor module: 500 ms at bring-up, 3000 ms in steady state (doc 10 §8). This project's firmware: 1000 ms (replies arrive after about 230 ms, once seen at 400 ms) | firmware, capture of 2026-10-15 |
 
 The firmware also carries the string `baudrate parameter must be B9600 %d, B115200 %d`. The stock
 module probes both rates at start-up, alternating until the A/C answers the device-type request
@@ -48,7 +48,7 @@ set-up, and it cost several days: bytes reached the transceiver's DI pin and nev
 record of that pass is [`firmware/docs/03-ac-uart-pins.md`](../../firmware/docs/03-ac-uart-pins.md).
 
 What this project's firmware does with these facts (DE held 5 ms before the first byte and 25 ms
-after the last, a 1000 ms bus cycle, the same 500 ms window) is in
+after the last, a 1000 ms bus cycle, a 1000 ms window) is in
 [`hisense_bus.h`](../../firmware/esphome/components/hisense_ac/hisense_bus.h). The first driver's
 timing rules are in
 [its README](../../firmware/test/reference-driver/README.md#bus-timing).

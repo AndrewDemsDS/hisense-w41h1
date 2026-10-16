@@ -11,6 +11,10 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- The reply window is 1000 ms (was 500). A capture of 475 polls on an ESP32 node put the
+  median reply at 230 ms and one at 400 ms; the vendor module waits 3000 ms. A link that goes
+  silent now shows as lost after about 10 s instead of 5 (five unanswered polls, two windows each).
+
 - The ProductType poll (`66 40`) is sent once per handshake: on the first cycle the A/C is
   heard, and again after a recovery handshake. It was re-sent every 60 cycles, and each re-send
   cost one reply timeout on the ESP32 nodes (the periodic single timeout of #186). The stock
