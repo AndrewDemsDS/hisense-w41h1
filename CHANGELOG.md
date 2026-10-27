@@ -15,6 +15,11 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
   host test are removed. Every unit runs ESPHome, so nothing on `main` needs them. The last
   release that carries them is `v2.0.2` (and the tag `matter-final`).
 
+- `dev.py` keeps `doctor`, `test`, `build`, `flash`, `monitor` and `bench`. The guided `walk`,
+  `next`, `fetch` and `erase` are removed: units are built and flashed from the ESPHome Device
+  Builder, ESPHome installs with `pipx install esphome==<pin>`, and a brand-new ESP32 board is
+  erased with `esptool.py erase_flash`.
+
 ## 2.0.2 - 2026-10-27
 
 - "Bus reply timeouts" no longer counts an isolated miss: one heartbeat or status poll met by total

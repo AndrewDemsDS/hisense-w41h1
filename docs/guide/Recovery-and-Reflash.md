@@ -36,7 +36,7 @@ write always gets you back. No clip, no dump.
    or, from `firmware/esphome/`, `esphome run w41h1-esp32c3.yaml --device /dev/ttyACM0`.
 
 A normal flash leaves the NVS partition alone, so the node keeps a Wi-Fi network it learned
-through the setup hotspot. `dev.py erase esphome --port P` wipes NVS. That is right for a
+through the setup hotspot. Erasing the whole flash (`esptool.py erase_flash`) wipes NVS. That is right for a
 brand-new board with stale vendor settings, and for anything else it means the node goes back to
 the Wi-Fi in `secrets.yaml`.
 

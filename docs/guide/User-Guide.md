@@ -38,9 +38,9 @@ is `firmware/docs/13-path-comparison.md`.
    esphome run w41h1.yaml              # classic ESP32
    ```
 
-   Or let the wrapper script ask before each step:
-   `python3 firmware/scripts/dev.py walk esphome --board c3`. Its commands are in
-   [Build, Flash and Test](Build-Flash-Test).
+   Or use the wrapper script for a local build and flash:
+   `python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0`. Its commands
+   are in [Build, Flash and Test](Build-Flash-Test).
 5. Bring it up in three stages: on the bench against the simulator, on the real bus with only A
    and B connected, then powered from the A/C
    ([staged bring-up](ESP32-Replacement-Build#staged-bring-up)).

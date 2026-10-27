@@ -1,37 +1,22 @@
 # Build, Flash and Test
 
-`firmware/scripts/dev.py` is one entry point for the steps around the firmware: check the tools,
-run the tests, build, flash and bench it. It needs only `python3`, prints every command before it
-runs it, and asks before anything slow or destructive. This page is its reference, and the place
-where the bench test against the simulator is described. To run the same steps by hand, see
-[Build Environment](ESP32-Build-Environment).
-
-## The guided flow
-
-From the repository root:
-
-```
-python3 firmware/scripts/dev.py walk esphome --board c3 --port /dev/ttyACM0
-```
-
-`walk` asks before each of five steps, and N skips one: check the tools (and offer to install
-ESPHome), host tests and the config check, build, flash and logs (with the erase for a brand-new
-board offered first), then the staged bring-up with its warnings.
+Units in service are normally built and flashed from the ESPHome Device Builder, which keeps
+the dashboard in step with what runs on them. `firmware/scripts/dev.py` is for local builds and
+the bench: check the tools, run the tests, build, flash a board over USB and bench it against the
+simulator. It needs only `python3` and prints every command before it runs it. This page is its
+reference, and the place where the bench test against the simulator is described. To run the
+same steps by hand, see [Build Environment](ESP32-Build-Environment).
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `walk` | the guided flow |
 | `doctor` | read-only: `git`, `python3` and `g++` present, ESPHome at the pinned version, `secrets.yaml` present. Exits non-zero when something is missing |
-| `fetch` | `pipx install esphome==2026.9.1` (asks first), and creates `secrets.yaml` from the example when there is none |
 | `test` | `firmware/test/run_tests.sh`, then `esphome config` on the board file |
 | `build` | `esphome compile` |
-| `erase --port P` | erases the whole flash of an ESP32. For a brand-new board only. You type `ERASE` to confirm |
 | `flash --port P` | `esphome run`: build, write over USB, follow the log |
 | `monitor --port P` | the log only |
 | `bench --port P --sim-port S` | flash, then run the node against the simulator on a second USB adapter ([below](#bench-stage-no-ac)) |
-| `next` | prints the staged bring-up and its safety warnings |
 
 The word `esphome` after the command is optional (`dev.py build esphome` and `dev.py build` are
 the same). It dates from when the script built other firmwares, and the script's own output still
@@ -57,7 +42,7 @@ Every command takes the same options.
 | `c3` | `w41h1-esp32c3.yaml` | ESP32-C3 SuperMini | all |
 | `c3-plus` | `w41h1-esp32c3-plus.yaml` | ESP32-C3 SuperMini Plus (RGB pixel on GPIO8) | all |
 | `classic` | `w41h1.yaml` | classic ESP32 (D0WDQ6) | all |
-| `amebaz2-factory`, `amebaz2-sdk`, `amebaz2-native` | `w41h1-amebaz2-<layout>.yaml` | the stock module, by the flash layout the unit has ([The Stock Module](Stock-Module-Build)) | `doctor`, `fetch`, `test`, `build` |
+| `amebaz2-factory`, `amebaz2-sdk`, `amebaz2-native` | `w41h1-amebaz2-<layout>.yaml` | the stock module, by the flash layout the unit has ([The Stock Module](Stock-Module-Build)) | `doctor`, `test`, `build` |
 
 `dev.py` builds the board file as it is, so the image is the one `esphome compile <that file>`
 gives. It refuses a bare `--board amebaz2`, and it refuses to flash, watch or bench a stock
@@ -76,17 +61,19 @@ Two environment variables:
 ## Step by step
 
 ```
+pipx install esphome==2026.9.1      # if doctor says ESPHome is missing or at another version
+cp firmware/esphome/secrets.yaml.example firmware/esphome/secrets.yaml
 python3 firmware/scripts/dev.py doctor esphome
-python3 firmware/scripts/dev.py fetch esphome
 python3 firmware/scripts/dev.py test esphome --board c3
 python3 firmware/scripts/dev.py build esphome --board c3
-python3 firmware/scripts/dev.py erase esphome --board c3 --port /dev/ttyACM0    # brand-new board only
 python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0
 ```
 
-After `fetch`, fill in `firmware/esphome/secrets.yaml`
-([the four secrets](ESP32-Build-Environment#secrets)). `fetch` only names Wi-Fi and the API key
-in its closing message. The hotspot password is needed too.
+Fill in `firmware/esphome/secrets.yaml` before the build
+([the four secrets](ESP32-Build-Environment#secrets)). A brand-new ESP32 board needs its whole
+flash erased once before the first flash, with ESPHome's own esptool:
+`esptool.py --chip esp32c3 --port /dev/ttyACM0 erase_flash` (`--chip esp32` for a classic ESP32).
+Never erase a board that already runs: that throws away its settings.
 
 ## Bench stage: no A/C
 
@@ -137,7 +124,7 @@ After the bench come the two stages on the real bus:
 |---|---|---|
 | Host tests and `esphome config` | CI, every push | CI, every push |
 | A real compile | CI, when the firmware changes | CI, all three layouts, when the firmware changes |
-| A fresh clone on clean Ubuntu 24.04: `doctor`, `fetch`, `test`, `build` | both boards, 2026-09-15 | not run |
+| A fresh clone on clean Ubuntu 24.04: `doctor`, `fetch` (removed since), `test`, `build` | both boards, 2026-09-15 | not run |
 | On a live A/C, powered from the connector | yes, units run this way | the factory layout, one module, since 2026-10-10 |
 | `dev.py flash` and `dev.py bench` on a board | not recorded as run | does not apply |
 

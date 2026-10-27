@@ -31,7 +31,7 @@ python3 firmware/scripts/dev.py doctor           # what is installed and what is
 ```
 
 To build firmware you also need ESPHome at the version the project pins (2026.9.1 at the time of
-writing: `dev.py doctor` prints the pin and `dev.py fetch` installs it with pipx), and a
+writing: `dev.py doctor` prints the pin, and `pipx install esphome==<pin>` installs it), and a
 `firmware/esphome/secrets.yaml` copied from `secrets.yaml.example`. Building and flashing are
 described in [`firmware/esphome/README.md`](firmware/esphome/README.md) and
 [`docs/guide/Build-Flash-Test.md`](docs/guide/Build-Flash-Test.md).

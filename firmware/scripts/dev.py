@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
-"""dev.py -- one portable entry point for the ESPHome firmware: check the tools, test, build, flash
-and bench it (issues #118, #143).
+"""dev.py -- local builds and the bench for the ESPHome firmware: check the tools, test, build, flash
+and bench it (issues #118, #143). Units in service are normally built and flashed from the ESPHome
+Device Builder. This script is for a local build, a first USB flash and the bench.
 
 Every external command is printed before it runs. Run it as
 `python3 firmware/scripts/dev.py <cmd> [esphome] [opts]`. It needs only python3. The word
 `esphome` after the command is optional: it dates from when there were other firmwares.
 
 Commands:
-  walk                       guided: doctor -> test -> build -> flash -> next (y/N each)
   doctor                     check the tools and the ESPHome version (read-only)
-  fetch                      install the pinned ESPHome with pipx (asks first)
   test                       host QA (run_tests.sh) + `esphome config`
   build                      compile the firmware
-  erase   --port P           erase-flash, BRAND-NEW ESP32 boards only (typed confirmation)
   flash   --port P           flash over USB + logs
   monitor --port P           serial logs only
   bench   --port P --sim-port S   the node against virtual_ac.py over a USB adapter, no A/C
-  next                       print the staged bring-up and its safety warnings
 
 Board: --board c3 (ESP32-C3 SuperMini, default), --board c3-plus (ESP32-C3 SuperMini Plus, the
 one with an RGB pixel on GPIO8) or --board classic (ESP32-D0WDQ6), the ESP32 replacement board.
@@ -58,8 +55,6 @@ BOARDS = {
     "amebaz2-sdk": "w41h1-amebaz2-sdk.yaml",
     "amebaz2-native": "w41h1-amebaz2-native.yaml",
 }
-# The chip `erase` tells esptool to expect, so a port that leads to another kind of ESP is not erased.
-ESP_CHIP = {"c3": "esp32c3", "c3-plus": "esp32c3", "classic": "esp32"}
 ESPHOME_AMEBAZ2_BOARDS = ("amebaz2-factory", "amebaz2-sdk", "amebaz2-native")
 ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2-* has test and build. A first flash is the clip or UART download "
                         "mode, and later updates are "
@@ -187,7 +182,7 @@ class Ctx:
     def esphome_run(self, sub, *args, cache=True):
         cmd = esphome_argv()
         if not have(cmd[0]):
-            die(f"'{cmd[0]}' not found (dev.py fetch esphome, or set ESPHOME=)")
+            die(f"'{cmd[0]}' not found (pipx install esphome=={ESPHOME_PIN}, or set ESPHOME=)")
         if not (ESPHOME_DIR / "secrets.yaml").is_file():
             die(f"no {ESPHOME_DIR}/secrets.yaml -- cp secrets.yaml.example secrets.yaml and fill it in")
         if self.board in ESPHOME_AMEBAZ2_BOARDS and sub not in ("config", "compile"):
@@ -255,9 +250,7 @@ def doctor(ctx):
         ver = ver[-1] if ver else "?"
         ok(f"esphome {ver}") if ver == ESPHOME_PIN else gaps.append(f"esphome is {ver}, CI pins {ESPHOME_PIN}")
     else:
-        gaps.append("esphome not installed (dev.py fetch esphome)")
-        if not have("pipx"):
-            gaps.append("pipx not on PATH (fetch esphome needs it: sudo apt install pipx)")
+        gaps.append(f"esphome not installed (pipx install esphome=={ESPHOME_PIN}, or set ESPHOME=)")
     ok("secrets.yaml") if (ESPHOME_DIR / "secrets.yaml").is_file() else gaps.append("secrets.yaml (cp secrets.yaml.example)")
     for g in gaps:
         print(f"  {C['red']}MISS{C['off']}  {g}")
@@ -266,25 +259,6 @@ def doctor(ctx):
         return False
     say("doctor: all good")
     return True
-
-
-# ---- fetch -----------------------------------------------------------------------------------
-def fetch(ctx):
-    if not have("pipx"):
-        die(f"install pipx first (Debian/Ubuntu: sudo apt install pipx; Arch: sudo pacman -S "
-            f"python-pipx), or pip install esphome=={ESPHOME_PIN} in a venv and set ESPHOME=")
-    if not ask(f"pipx install esphome=={ESPHOME_PIN}?"):
-        return
-    run(["pipx", "install", "--force", f"esphome=={ESPHOME_PIN}"])
-    if not have("esphome"):
-        say("pipx put esphome in ~/.local/bin, which is not on this shell's PATH. dev.py finds it")
-        say("there anyway; to run esphome by hand, run `pipx ensurepath` and open a new terminal.")
-    if not (ESPHOME_DIR / "secrets.yaml").is_file():
-        run(["cp", ESPHOME_DIR / "secrets.yaml.example", ESPHOME_DIR / "secrets.yaml"])
-    say(f"now fill in {ESPHOME_DIR}/secrets.yaml (it is gitignored). The build reads four values:")
-    say("  wifi_ssid, wifi_password      your Wi-Fi")
-    say("  wifi_ap_password              the node's own setup hotspot, at least 8 characters")
-    say("  hisense_ac__encryption_key    a new API key (the file says how to generate one)")
 
 
 # ---- test / build / flash / monitor ----------------------------------------------------------
@@ -306,27 +280,6 @@ def build(ctx):
         ctx.esphome_run("compile", cache=False)
         if not ctx.esphome_slot_image().is_file():
             die(f"the build did not produce {ctx.esphome_slot_image().name}: was the layout file applied?")
-
-
-def erase(ctx):
-    ctx.need_port("erase")
-    if ctx.board not in ESP_CHIP:
-        die(ESPHOME_AMEBAZ2_ONLY)
-    chip = ESP_CHIP[ctx.board]
-    warn("erase-flash is for a BRAND-NEW board only: it wipes NVS, which on a working node holds the")
-    warn("Wi-Fi config. A factory board needs it (the vendor's test firmware leaves a stale one behind).")
-    try:
-        confirm = input(f"type ERASE to erase the whole flash of the {chip} on {ctx.port}: ").strip()
-    except EOFError:
-        confirm = ""
-    if confirm != "ERASE":
-        die("not confirmed; nothing erased")
-    # esptool comes with ESPHome: the python beside the esphome command has it.
-    cmd = esphome_argv()[0]
-    py = Path(os.path.realpath(shutil.which(cmd) or cmd)).parent / "python"
-    py = str(py) if py.is_file() and os.access(py, os.X_OK) else "python3"
-    # --chip: esptool stops when the chip that answers is another one (auto-detect erases whatever is there).
-    run([py, "-m", "esptool", "--chip", chip, "--port", ctx.port, "erase_flash"])
 
 
 def flash(ctx):
@@ -363,53 +316,11 @@ def bench(ctx):
         sim.terminate()
 
 
-def next_steps(ctx):
-    print("""Staged bring-up for the ESP32 replacement board (never leave the A/C in an unknown state):
-
-  1. Bench, no A/C     dev.py test esphome; then dev.py bench esphome --port P --sim-port S
-  2. Real bus, USB     module out, tap A/B ONLY, watch decoded status (read), then one control (write)
-  3. Integration       power from the connector's 5 V, no laptop attached, close it up
-
-Safety, before stage 2:
-  ! Ground loop: while USB-powered connect ONLY A/B. Joining the mains-earthed A/C GND to a
-    laptop-earthed board browns it out (RTCWDT resets, flash-read errors). GND/5V join at stage 3.
-  ! 3.3 V transceiver only (MAX3485 / SP3485 / SN65HVD75). A 5 V MAX485 module's RO kills the RX pin.
-  ! ESP32-C3: fit a ~10k pulldown on DE (GPIO10). DE floats until the firmware configures it and a
-    high DE parks a second driver on the A/C bus. Never put the UART on GPIO18/19 (the C3's only USB).
-  ! Classic ESP32: never GPIO16/17 on WROVER/D0WDQ6 (PSRAM-bonded, dead as I/O).
-  ! Brand-new board: dev.py erase esphome --port P before the first flash (stale vendor NVS).
-Full detail: docs/guide/ESP32-Replacement-Build.md, docs/guide/Build-Flash-Test.md
-The stock module (--board amebaz2-*) is a different procedure: firmware/docs/15-esphome-path.md""")
-
-
-def walk(ctx):
-    say(f"guided flow for esphome (board: {ctx.board}). Each step asks first; N skips it.")
-    if ask("1/5 doctor: check the tools and the ESPHome version?"):
-        if not doctor(ctx) and ask("gaps found. run fetch?"):
-            fetch(ctx)
-    if ask("2/5 host QA + config check?"):
-        test_target(ctx)
-    if ask("3/5 build?"):
-        build(ctx)
-    if not ctx.port:
-        try:
-            ctx.port = input("serial port for flashing (blank to skip flash): ").strip()
-        except EOFError:
-            ctx.port = ""
-    if ctx.port:
-        if ask("   brand-new board that needs erase-flash first?"):
-            erase(ctx)
-        if ask(f"4/5 flash + logs {ctx.port}?"):
-            flash(ctx)
-    say("5/5 next steps")
-    next_steps(ctx)
-
-
 # ---- argument parsing + dispatch -------------------------------------------------------------
-COMMANDS = {"walk": walk, "doctor": doctor, "fetch": fetch, "test": test_target, "build": build,
-            "erase": erase, "flash": flash, "monitor": monitor, "bench": bench, "next": next_steps}
+COMMANDS = {"doctor": doctor, "test": test_target, "build": build, "flash": flash, "monitor": monitor,
+            "bench": bench}
 # What exists for the stock module: it has no USB port to flash, watch or bench over.
-AMEBAZ2_COMMANDS = ("doctor", "fetch", "test", "build")
+AMEBAZ2_COMMANDS = ("doctor", "test", "build")
 
 
 class Parser(argparse.ArgumentParser):

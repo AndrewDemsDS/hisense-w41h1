@@ -17,10 +17,13 @@ tools. This page is the map of the directory.
 From the repository root:
 
 ```
-python3 firmware/scripts/dev.py walk
+python3 firmware/scripts/dev.py doctor
+python3 firmware/scripts/dev.py test
+python3 firmware/scripts/dev.py build --board c3
 ```
 
-It checks the tools, runs the host tests, builds and flashes, asking before each step. The guide
+It checks the tools, runs the host tests and builds. `flash`, `monitor` and `bench` take a
+`--port`. Units in service are normally built and flashed from the ESPHome Device Builder. The guide
 starts at [`docs/guide/User-Guide.md`](../docs/guide/User-Guide.md).
 
 ## Reference docs here

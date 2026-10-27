@@ -4,7 +4,8 @@ The tools that build, test, lint and flash the ESPHome firmware. For each one th
 it does, what it needs, and, for the ones that write flash or reach a machine, what stands
 between a wrong argument and damage.
 
-A newcomer needs one of them: `dev.py`. The step-by-step use of it is in
+A newcomer needs one of them: `dev.py`, for local builds and the bench. Units in service are
+normally built and flashed from the ESPHome Device Builder. The step-by-step use of `dev.py` is in
 [`docs/guide/Build-Flash-Test.md`](../../docs/guide/Build-Flash-Test.md).
 
 ## `dev.py`
@@ -20,15 +21,11 @@ and is optional.
 | Command | Does | Writes or drives |
 |---|---|---|
 | `doctor` | checks the tools and the ESPHome version | nothing |
-| `fetch` | installs the pinned ESPHome with `pipx`, after asking | the machine it runs on |
 | `test` | `firmware/test/run_tests.sh`, then `esphome config` on the board file | nothing |
 | `build` | `esphome compile` on the board file | the build directory |
-| `erase --port P` | erases the whole flash of an ESP32 board | **the board's flash** |
 | `flash --port P` | `esphome run --device P`: build, flash over USB, follow the log | **the board's flash** |
 | `monitor --port P` | `esphome logs --device P` | nothing |
 | `bench --port P --sim-port S` | flashes the board, then runs `virtual_ac.py` on the adapter and follows the node's log | **the board's flash** |
-| `next` | prints the staged bring-up and its safety warnings | nothing |
-| `walk` | guided: doctor, test, build, flash, next, asking before each | what the steps it runs write |
 
 Options:
 
@@ -46,12 +43,8 @@ caveats are in [`firmware/esphome/README.md`](../esphome/README.md#build-cache).
 
 What protects against a wrong target:
 
-- **`erase`** is refused for the stock module's boards. It warns that it is for a brand-new
-  board, asks you to type `ERASE` with the chip and the port in the prompt, and passes `--chip`
-  to esptool, so a port that leads to another kind of ESP is not erased. It cannot tell a new
-  board from a node in service: erasing a working node throws away its saved Wi-Fi settings.
 - **`flash`** and **`bench`** need `--port` and are refused for the stock module's boards
-  (`--board amebaz2-*` has `doctor`, `fetch`, `test` and `build` only). `bench` asks whether the
+  (`--board amebaz2-*` has `doctor`, `test` and `build` only). `bench` asks whether the
   bench wiring is in place before it flashes. Nothing in `dev.py` checks that the board on the
   port is the one `--board` names, and it does not ask before flashing. The image holds your
   `secrets.yaml`.
@@ -62,6 +55,11 @@ What protects against a wrong target:
 > **`dev.py flash` and `dev.py bench` have not run on hardware.** The guide's record of what has
 > been run ([`docs/guide/Build-Flash-Test.md`](../../docs/guide/Build-Flash-Test.md#what-has-been-run))
 > lists both as untested through this script.
+
+The guided `walk`, `next` (the bring-up text), `fetch` (a `pipx install` of the pinned ESPHome)
+and `erase` (a typed-confirmation `esptool erase_flash`) were removed on 2026-10-27. Install
+ESPHome with `pipx install esphome==<pin>` (`doctor` names the pin), and erase a brand-new ESP32
+board with `esptool.py --chip <chip> --port <port> erase_flash`.
 
 ## The Matter conversion (retired)
 
