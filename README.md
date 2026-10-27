@@ -48,8 +48,8 @@ The [User Guide](docs/guide/User-Guide.md) compares them and says which page to 
 ## The quickest path to a working unit
 
 With an ESP32 board wired as in
-[ESP32 Replacement Board](docs/guide/ESP32-Replacement-Build.md), and ESPHome 2026.10.0 installed
-(`pipx install esphome==2026.10.0`):
+[ESP32 Replacement Board](docs/guide/ESP32-Replacement-Build.md), and ESPHome 2026.10.1 installed
+(`pipx install esphome==2026.10.1`):
 
 ```
 git clone https://github.com/AndrewDemsDS/hisense-w41h1.git

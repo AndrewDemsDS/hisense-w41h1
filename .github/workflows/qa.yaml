@@ -36,7 +36,7 @@ permissions:
 # it equal to the pins in dev.py, esphome-upstream-check.sh and esphome-release.yaml, and the
 # lint-extra job holds .github/ci/esphome/requirements.txt (the copy nightly.yaml installs) equal to it.
 env:
-  ESPHOME_VERSION: "2026.10.0"
+  ESPHOME_VERSION: "2026.10.1"
 
 jobs:
   # Whether this run touches anything the three compile jobs build from. A change to the docs,

@@ -32,7 +32,7 @@ COMPONENT="$REPO/firmware/esphome/components/hisense_ac"
 TESTS="$REPO/firmware/esphome/tests/components/hisense_ac"
 
 # The release this repo builds with. version-lint.py fails when the pins differ.
-ESPHOME_SPEC="esphome==2026.10.0"
+ESPHOME_SPEC="esphome==2026.10.1"
 REF="${ESPHOME_UPSTREAM_REF:-${ESPHOME_SPEC#esphome==}}"
 
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/hisense-w41h1/esphome-upstream"

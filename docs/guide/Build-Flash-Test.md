@@ -61,7 +61,7 @@ Two environment variables:
 ## Step by step
 
 ```
-pipx install esphome==2026.10.0      # if doctor says ESPHome is missing or at another version
+pipx install esphome==2026.10.1      # if doctor says ESPHome is missing or at another version
 cp firmware/esphome/secrets.yaml.example firmware/esphome/secrets.yaml
 python3 firmware/scripts/dev.py doctor esphome
 python3 firmware/scripts/dev.py test esphome --board c3

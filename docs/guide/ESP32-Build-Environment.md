@@ -11,7 +11,7 @@ script.
 
 | Tool | Comes from | Version | Needed for |
 |---|---|---|---|
-| `esphome` | PyPI, installed with `pipx` | `2026.10.0`, the release CI builds with | building and flashing |
+| `esphome` | PyPI, installed with `pipx` | `2026.10.1`, the release CI builds with | building and flashing |
 | compilers, `esptool`, ESP-IDF or PlatformIO | downloaded by ESPHome on the first build | chosen by ESPHome | nothing you install yourself |
 | `g++` | your distribution | any with C++17 | the host tests |
 | `firmware/scripts/dev.py` | this repository | | optional wrapper |
@@ -27,7 +27,7 @@ A Linux x86_64 machine. Package names are for Debian and Ubuntu.
 sudo apt install git python3 g++ pipx
 git clone https://github.com/AndrewDemsDS/hisense-w41h1.git
 cd hisense-w41h1
-pipx install esphome==2026.10.0
+pipx install esphome==2026.10.1
 pipx ensurepath
 ```
 

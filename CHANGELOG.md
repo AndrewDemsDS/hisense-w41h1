@@ -28,6 +28,8 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
   Builder, ESPHome installs with `pipx install esphome==<pin>`, and a brand-new ESP32 board is
   erased with `esptool.py erase_flash`.
 
+- Builds with ESPHome 2026.10.1 (was 2026.10.0).
+
 ## 2.0.2 - 2026-10-27
 
 - "Bus reply timeouts" no longer counts an isolated miss: one heartbeat or status poll met by total
