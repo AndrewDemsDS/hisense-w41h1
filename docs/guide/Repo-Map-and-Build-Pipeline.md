@@ -91,10 +91,12 @@ runs:
 
 ## Continuous integration (GitHub Actions)
 
-Every job runs on a GitHub-hosted runner and states its own permissions. Only the job that creates
-a release can write to the repository.
+Every job runs on a GitHub-hosted runner and states its own permissions. Two jobs can write to the
+repository: the one that creates a release, and the pin bump job, which pushes `bot/` branches and
+opens pull requests.
 
-**`qa.yaml`** runs on every push and pull request. A newer push to the same branch cancels the run
+**`qa.yaml`** runs on every push and pull request, and when started by hand or by the pin bump job
+(`workflow_dispatch`, which compiles everything). A newer push to the same branch cancels the run
 in progress.
 
 | Job | Runs | Does |
@@ -128,6 +130,19 @@ and nothing is tagged or published.
 
 **`pages.yaml`** builds and publishes the docs site when a doc changes.
 
+**`pin-bumps.yaml`** runs once a day, after the nightly. It never merges and deploys nothing.
+
+| Job | Does |
+|---|---|
+| `bump (esphome)` | when PyPI has a newer stable ESPHome than the pin, opens a pull request from `bot/esphome-X.Y.Z` that moves every pin `version-lint.py` checks, the install lines of the docs, and adds a `CHANGELOG.md` line |
+| `bump (idf)` | when Docker Hub has a newer `espressif/idf` tag on the v5.5 line, opens a pull request from `bot/idf-vX.Y.Z` with the new tag and its linux/amd64 digest for the `esp32-recon` job. A move off v5.5 is made by hand |
+
+The rewrite is `firmware/scripts/pin-bump.py`. A version that already has a pull request, open or
+closed, is skipped. Because a push made with `GITHUB_TOKEN` starts no workflow, the job starts
+`qa.yaml` and `nightly.yaml` on the new branch itself. Started by hand with `dry_run`, from a
+branch other than `main`, or by a pull request that changes it or `pin-bump.py`, it shows the
+change in the run's summary and pushes nothing.
+
 The workflows' own helpers are in `.github/scripts/`:
 
 | Script | Does |
@@ -138,9 +153,9 @@ The workflows' own helpers are in `.github/scripts/`:
 | `assemble_docs_site.py` | builds the docs site (below) |
 | `indexnow_ping.py` | tells IndexNow that the site changed, after a deploy |
 
-Dependabot proposes updates for the GitHub Actions, the pinned Python requirements, the lint
-tools and the ESPHome release. The ESPHome release is written in four more places that
-`version-lint.py` holds equal, so its Dependabot pull request fails until those are bumped in it.
+Dependabot proposes updates for the GitHub Actions, the pinned Python requirements and the lint
+tools. The ESPHome release and the ESP-IDF image are left to `pin-bumps.yaml`, which moves every
+place that names them in one pull request.
 The clang-format and clang-tidy pins in `cpp-lint.sh` are ESPHome's own and move with the ESPHome
 release, by hand.
 

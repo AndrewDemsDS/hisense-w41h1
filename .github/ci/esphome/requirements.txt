@@ -1,7 +1,7 @@
-# The ESPHome release this repository builds with, in the one form Dependabot reads (pip, this
-# directory). The same number is written in .github/workflows/qa.yaml and esphome-release.yaml
-# (ESPHOME_VERSION), firmware/scripts/dev.py and firmware/scripts/esphome-upstream-check.sh.
-# firmware/scripts/version-lint.py holds those four equal, and the lint-extra job of the QA
-# workflow holds this file equal to them. So a pull request that bumps this line fails until the
+# The ESPHome release this repository builds with, as a pip requirement. The same number is
+# written in .github/workflows/qa.yaml and esphome-release.yaml (ESPHOME_VERSION),
+# firmware/scripts/dev.py and firmware/scripts/esphome-upstream-check.sh. version-lint.py holds
+# the five equal, firmware/scripts/pin-bump.py moves them together (the pin-bumps workflow), and
+# a pull request that bumps this line by hand fails CI until the
 # other four are bumped with it, which is the reminder. The nightly workflow installs from here.
 esphome==2026.10.0

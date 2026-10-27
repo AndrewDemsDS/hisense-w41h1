@@ -1,0 +1,145 @@
+name: Pin bumps
+
+# Once a day: is there a newer ESPHome release, or a newer ESP-IDF image for the nightly
+# esp32-recon job? If so, a pull request that moves the pin (firmware/scripts/pin-bump.py does the
+# rewrite, version-lint.py checks it). It never merges and deploys nothing: the maintainer merges
+# and flashes the units by hand.
+#
+#   esphome   the newest stable release on PyPI (no beta or release candidate). Every place
+#             version-lint.py lists, the docs that tell a reader which release to install, and a
+#             CHANGELOG.md line. Branch bot/esphome-X.Y.Z
+#   idf       the newest espressif/idf tag on the v5.5 line (the line pinned today), with the digest
+#             of its linux/amd64 image. A move to v5.6 or v6 is a decision for a person (a new
+#             toolchain, API changes) and is made by hand. Branch bot/idf-vX.Y.Z
+#
+# A pull request for that exact version, open, closed or merged, stops the job: a bump the
+# maintainer closed is not opened again every day.
+#
+# A push or a pull request made with GITHUB_TOKEN starts no workflow, so the pull request would
+# have no checks. The job starts qa.yaml and nightly.yaml on the branch with workflow_dispatch,
+# which GITHUB_TOKEN may do; their runs attach to the branch's commit, and host-qa there is the
+# required check. A fine-grained token in a secret would make the push an ordinary event instead.
+#
+# The commit is made as github-actions[bot] and is not signed: there is no key for a bot here.
+#
+# Started by hand with dry_run, on any branch other than the default one, or by a pull request
+# that changes the workflow or the script, it checks and shows the change in the summary, and
+# pushes and opens nothing.
+on:
+  schedule:
+    - cron: "41 5 * * *"   # 05:41 UTC, after the nightly (02:17), off the hour
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/pin-bumps.yaml
+      - firmware/scripts/pin-bump.py
+      - firmware/scripts/version-lint.py
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Check and show the change, push nothing and open no pull request
+        type: boolean
+        default: false
+
+concurrency:
+  group: pin-bumps
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  bump:
+    # GitHub-only: the Gitea mirror reads this directory too and has no hosted runner.
+    if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write        # push the bot/ branch
+      pull-requests: write   # open the pull request
+      actions: write         # start qa.yaml and nightly.yaml on the branch
+    strategy:
+      fail-fast: false
+      matrix:
+        what: [esphome, idf]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Is a newer release out?
+        id: check
+        env:
+          WHAT: ${{ matrix.what }}
+        run: python3 firmware/scripts/pin-bump.py "$WHAT" --check --output "$GITHUB_OUTPUT"
+
+      - name: Bump, push and open the pull request
+        if: ${{ steps.check.outputs.due == 'true' }}
+        env:
+          WHAT: ${{ matrix.what }}
+          CURRENT: ${{ steps.check.outputs.current }}
+          LATEST: ${{ steps.check.outputs.latest }}
+          DIGEST: ${{ steps.check.outputs.digest }}
+          DRY_RUN: ${{ inputs.dry_run == true || github.ref_name != github.event.repository.default_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$WHAT" = esphome ]; then
+            branch="bot/esphome-$LATEST"
+            title="build: ESPHome $LATEST (was $CURRENT)"
+            set_args=(--set "$LATEST")
+            what_text="the ESPHome release every build uses, in each place version-lint.py checks, the install lines of the docs, and a CHANGELOG.md line"
+            after="Flash the units from the ESPHome Device Builder after the merge, one at a time, as for any firmware change."
+          else
+            branch="bot/idf-$LATEST"
+            title="ci(nightly): build esp32-recon with ESP-IDF $LATEST (was $CURRENT)"
+            set_args=(--set "$LATEST" --digest "$DIGEST")
+            what_text="the ESP-IDF image of the nightly esp32-recon job (tag and linux/amd64 digest $DIGEST), its comment and the esp32-recon README. It stays on the line pinned today: a move to another ESP-IDF line is made by hand"
+            after="Nothing runs on a unit: esp32-recon is a bench tool, and this only changes the image CI builds it with."
+          fi
+
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state all --json url,state --jq '.[0] | select(.) | "\(.state) \(.url)"')"
+          if [ -n "$existing" ]; then
+            echo "$WHAT $LATEST: a pull request exists for this version ($existing), nothing to do." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          python3 firmware/scripts/pin-bump.py "$WHAT" "${set_args[@]}"
+          python3 firmware/scripts/version-lint.py
+          git switch -c "$branch"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -a -m "$title" -m "Opened by .github/workflows/pin-bumps.yaml ($RUN_URL)."
+
+          {
+            echo "### $title"
+            echo
+            echo '```diff'
+            git show --format= HEAD
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$DRY_RUN" = true ]; then
+            echo "Dry run: branch $branch not pushed, no pull request." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # The branch is the bot's: one left from a run that pushed and then failed to open the
+          # pull request is replaced.
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch"
+
+          cat > "$RUNNER_TEMP/body.md" <<EOF
+          Moves $what_text from $CURRENT to $LATEST.
+
+          Opened by the pin-bumps workflow ($RUN_URL). It does not merge and deploys nothing. $after
+
+          - The commit is by github-actions[bot] and is not signed.
+          - A push made with GITHUB_TOKEN starts no workflow, so the workflow started qa.yaml and nightly.yaml on this branch by hand (workflow_dispatch). Their runs are on this branch's commit. If one is missing: \`gh workflow run qa.yaml --ref $branch\`.
+          - Closing this pull request without merging leaves $LATEST alone: the workflow does not open a second one for the same version.
+          EOF
+          url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$DEFAULT_BRANCH" --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/body.md")"
+          echo "Opened $url" | tee -a "$GITHUB_STEP_SUMMARY"
+
+          gh workflow run qa.yaml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          gh workflow run nightly.yaml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          echo "Started qa.yaml and nightly.yaml on $branch." | tee -a "$GITHUB_STEP_SUMMARY"

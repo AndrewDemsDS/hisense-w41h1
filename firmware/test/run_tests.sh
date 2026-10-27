@@ -149,9 +149,10 @@ echo "== Layer 4: dev.py (build cache, board files, command line) =="
 python3 ./test_dev_release.py
 
 echo
-echo "== Layer 5: the firmware version, the changelog and the ESPHome pin =="
+echo "== Layer 5: the firmware version, the changelog, the ESPHome pin and its bump =="
 python3 ../scripts/version-lint.py
 python3 ./test_version_lint.py
+python3 ./test_pin_bump.py
 
 echo
 echo "== Layer 6: tooling edge cases (dev.py, the scripts, the hook, the lint lists, the clip flasher, the mutation limits) =="

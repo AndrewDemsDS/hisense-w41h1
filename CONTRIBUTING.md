@@ -216,6 +216,28 @@ the fixed commit.
 The tags `amebaz2-v*`, `esp32-v*` and `matter-final` belong to the retired Matter firmwares and
 stay as history.
 
+### Pin bumps
+
+`.github/workflows/pin-bumps.yaml` looks once a day for a newer ESPHome release on PyPI (stable
+only) and a newer ESP-IDF image for the nightly `esp32-recon` job. For each one it finds, it opens a
+pull request from `bot/esphome-X.Y.Z` or `bot/idf-vX.Y.Z` that moves every place the pin is
+written, the install lines of the docs, and (for ESPHome) adds a `CHANGELOG.md` line. The rewrite
+is `firmware/scripts/pin-bump.py`, which you can run yourself (`esphome --check`, `idf --check`).
+
+- It never merges and deploys nothing. Merge it after the checks pass, then build and flash the
+  units as for any firmware change.
+- ESP-IDF stays on the v5.5 line. A move to v5.6 or v6 means a new toolchain and API changes, and
+  is made by hand.
+- A bump you close without merging is not opened again: the job skips a version that already has a
+  pull request, open or closed.
+- Its commits are made by `github-actions[bot]` and are not signed. They are the only unsigned
+  commits that reach `main`, through the merge.
+- A push made with `GITHUB_TOKEN` starts no workflow, so the job starts `qa.yaml` and
+  `nightly.yaml` on the branch itself. If a check is missing on its pull request:
+  `gh workflow run qa.yaml --ref <branch>`.
+- Opening the pull request needs the repository setting "Allow GitHub Actions to create and
+  approve pull requests" (Settings, Actions, General).
+
 ## Licence
 
 By contributing you agree that your contribution is licensed under the repository's

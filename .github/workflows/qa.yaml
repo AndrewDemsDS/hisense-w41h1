@@ -11,11 +11,15 @@ name: QA
 #   pushes to main only           coverage (a table in the job summary, never blocking)
 #   every night                   nightly.yaml: fuzzing, the board files no job here compiles,
 #                                 ESPHome's dev-branch gates, the esp32-recon build
+#   started by hand or by a bot   every job but coverage, the compile jobs always (workflow_dispatch:
+#                                 pin-bumps.yaml starts it on the branch of a pin bump pull request,
+#                                 whose push made with GITHUB_TOKEN starts no workflow by itself)
 on:
   push:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  workflow_dispatch:
 
 # A newer push to the same branch or pull request replaces the run in progress: three pushes
 # within half a minute used to run three full workflows side by side.
@@ -30,7 +34,7 @@ permissions:
 
 # The ESPHome release every job builds with, written once. firmware/scripts/version-lint.py holds
 # it equal to the pins in dev.py, esphome-upstream-check.sh and esphome-release.yaml, and the
-# lint-extra job holds .github/ci/esphome/requirements.txt (the copy Dependabot reads) equal to it.
+# lint-extra job holds .github/ci/esphome/requirements.txt (the copy nightly.yaml installs) equal to it.
 env:
   ESPHOME_VERSION: "2026.10.0"
 
@@ -74,7 +78,8 @@ jobs:
           # The end-to-end job builds from the same files and, on top of them, from its own
           # directory and the A/C model with the frame decoder it imports.
           e2e_inputs='^(firmware/test/(host_e2e/|virtual_ac\.py)|reverse-engineering/tools/decode_ac_frames\.py)'
-          # No list (a new branch, a forced push, a push of several commits): compile.
+          # No list (a new branch, a forced push, a push of several commits, a run started by
+          # workflow_dispatch): compile.
           firmware=true
           e2e=true
           if [ -n "$files" ]; then
@@ -173,7 +178,15 @@ jobs:
       - name: Version, changelog and release tags
         env:
           BASE_REF: ${{ github.base_ref }}
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
+          # Started by hand on a branch (a pin bump pull request from pin-bumps.yaml): there is no
+          # base ref, so the changelog rule is checked against the default branch.
+          if [ -z "$BASE_REF" ] && [ "$EVENT" = workflow_dispatch ] && [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            BASE_REF="$DEFAULT_BRANCH"
+          fi
           if [ -n "$BASE_REF" ]; then
             python3 firmware/scripts/version-lint.py --base "origin/$BASE_REF"
           else
@@ -237,9 +250,9 @@ jobs:
             firmware/test/test_esphome_map_gaps.cpp firmware/test/test_esphome_uart_policy.cpp \
             firmware/test/test_esphome_setup_mode.cpp
 
-      # The copy of the ESPHome pin that Dependabot bumps has to be the release the jobs build
-      # with. A Dependabot pull request fails here until the other pins are bumped in it too.
-      - name: The ESPHome pin Dependabot reads is the one in use
+      # The copy of the ESPHome pin that the nightly workflow installs has to be the release the
+      # jobs build with. firmware/scripts/pin-bump.py moves every pin at once.
+      - name: The ESPHome pin of .github/ci/esphome is the one in use
         run: |
           if ! grep -qx "esphome==$ESPHOME_VERSION" .github/ci/esphome/requirements.txt; then
             echo "::error file=.github/ci/esphome/requirements.txt::this file names $(grep -oE '^esphome==.*' .github/ci/esphome/requirements.txt) and the workflows build with $ESPHOME_VERSION: bump ESPHOME_VERSION in qa.yaml and esphome-release.yaml, ESPHOME_PIN in firmware/scripts/dev.py and ESPHOME_SPEC in firmware/scripts/esphome-upstream-check.sh in the same pull request"
