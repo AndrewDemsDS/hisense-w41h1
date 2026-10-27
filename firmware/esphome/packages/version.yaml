@@ -14,4 +14,4 @@ esphome:
   project:
     # "<author>.<project>". Home Assistant shows the two halves as manufacturer and model.
     name: AndrewDemsDS.hisense-w41h1
-    version: "2.0.1"
+    version: "2.0.2"

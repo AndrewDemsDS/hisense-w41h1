@@ -11,6 +11,8 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+## 2.0.2 - 2026-10-27
+
 - "Bus reply timeouts" no longer counts an isolated miss: one heartbeat or status poll met by total
   silence on a live link, with the cycle before and the rest of that cycle answered. A cut or
   damaged reply, or noise, still counts. The mainboard skips one
