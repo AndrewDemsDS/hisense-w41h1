@@ -145,9 +145,8 @@ echo "== Layer 3: AmebaZ2 image signing chain (#75) =="
 python3 ./test_image_chain.py
 
 echo
-echo "== Layer 4: dev.py (build cache, board files, command line) and matter-convert.py =="
+echo "== Layer 4: dev.py (build cache, board files, command line) =="
 python3 ./test_dev_release.py
-python3 ./test_matter_convert.py
 
 echo
 echo "== Layer 5: the firmware version, the changelog and the ESPHome pin =="

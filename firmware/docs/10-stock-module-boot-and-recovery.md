@@ -41,9 +41,9 @@ decides it: no "last written" flag, no application version.
   from the second slot on hardware (2026-07-27). Never add a "this image must live in slot 1"
   rule to a tool.
 
-`matter-convert.py convert` re-signs an ESPHome image with a serial in the Matter numbering for
-exactly this reason: the Matter firmware writes it to the inactive slot and the bootloader then
-prefers it.
+The retired Matter conversion script (removed from `main` on 2026-10-27, last carried by release
+`v2.0.2`) re-signed an ESPHome image with a serial in the Matter numbering for exactly this
+reason: the Matter firmware wrote it to the inactive slot and the bootloader then preferred it.
 
 ## 2. What makes an image valid
 
@@ -73,7 +73,7 @@ byte-sum             last 4 bytes == sum(all bytes before them) & 0xFFFFFFFF
   trailer to end at the end of the file: the build tool pads 0 or `0x20` trailing bytes.
 
 `firmware/scripts/amebaz2_image.py` is the one implementation of this recipe (walk, verify,
-re-sign). `matter-convert.py` and the clip writers in `firmware/flasher/` use it, and
+re-sign). The clip writers in `firmware/flasher/` use it, and
 `amebaz2_image.py verify <file>` runs the check on a dump or an image (section 4).
 `firmware/test/test_image_chain.py` holds it down with synthetic images, and with any real
 images found in `firmware/built-images/` or `dumps/` (both gitignored).
@@ -91,7 +91,7 @@ byte-perfect. Recovery was the clip.
 Consequences for any tool that writes a slot:
 
 - Verify every trailer of the exact bytes that will be written, after the last modification.
-  `ch341flash.py` and `matter-convert.py convert` both do.
+  `ch341flash.py` does.
 - An image that boots but cannot reach the network is a different failure with the same
   recovery. Nothing rolls an image back.
 
@@ -135,7 +135,7 @@ What settles it, cheapest first:
    chain in the slot with the higher serial plus QE set means the firmware is fine and the
    problem is elsewhere. The same command takes an image file from a build.
 3. On a unit that still runs the retired Matter firmware, its break-glass listener:
-   `matter-convert.py slots <ip>` prints `ok: fw1_sn=<n> fw2_sn=<n> cur=<slot>`. An answer
+   the conversion script's `slots <ip>` (release `v2.0.2`) prints `ok: fw1_sn=<n> fw2_sn=<n> cur=<slot>`. An answer
    proves the unit is alive. No answer proves nothing.
 4. On a unit that runs ESPHome, the `Flash layout` sensor carries the same three values.
 
@@ -149,7 +149,7 @@ The rules that come from the boot process. The commands are in
   `ch341dump.py` reads twice and refuses to write a file when the reads differ, and both writers
   refuse to run without a dump named with `--backup`.
 - The recipe that has worked: write the unit's own dump with slot 1 replaced by the original
-  vendor slot bytes (factory signature, from a `matter-convert.py backup` file or the first
+  vendor slot bytes (factory signature, from a `backup` file of the retired conversion script or the first
   dump) and slot 2 erased to `0xFF`. `ch341flash-full.py` sets QE again at the end. The unit
   boots the vendor firmware and rejoins its cloud.
 - Flash `0x1000..0x3FFF` holds the module's system data, including its calibration data, and
@@ -163,7 +163,7 @@ The rules that come from the boot process. The commands are in
   here can tell two modules apart: the low sectors are the same on every unit dumped so far (two
   modules).
 - Before a second firmware ever overwrites it, save the vendor image from the inactive slot. On
-  the retired Matter firmware (1.3.9 or later) `matter-convert.py backup <ip>` streams it out
+  the retired Matter firmware (1.3.9 or later) the conversion script's `backup <ip>` (release `v2.0.2`) streams it out
   and verifies it. Otherwise it is in your first clip dump.
 
 ## 6. Dead ends, so nobody repeats them

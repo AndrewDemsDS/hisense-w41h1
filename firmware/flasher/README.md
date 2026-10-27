@@ -64,7 +64,7 @@ checked before the programmer is opened.
    - Slot: not a 4 MB file, an application image that verifies the way the bootloader checks it
      (the manifest signature, every sub-image trailer and the byte-sum), and no longer than the
      slot. Both an image as a build writes it (LibreTiny's `image_firmware_is.0x010000.bin`) and
-     a raw slot (`matter-convert.py backup`) are accepted.
+     a raw slot (as the retired Matter conversion's `backup` saved it) are accepted.
 2. **`--backup` names a usable full dump.** It has to be the size of the chip, look like a dump
    and hold a firmware image that verifies. It is the only complete way back. When the chip is
    erased or cannot be read and the file to write is this unit's own dump, name that file for

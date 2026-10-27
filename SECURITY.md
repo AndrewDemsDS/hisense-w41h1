@@ -43,7 +43,7 @@ are security issues in this project:
 - Bytes on the RS-485 bus that make the firmware crash, read or write out of bounds, or send a
   command nobody asked for. The codec's parsers treat the bus as untrusted input and are fuzzed
   for this reason.
-- A flash or conversion tool (`firmware/flasher/`, `firmware/scripts/matter-convert.py`) that
+- A flash tool (`firmware/flasher/`) that
   writes something other than what it was given and verified, or that can be made to run a
   command from a file name, a setting or an image.
 - A CI workflow that runs code from a pull request with more permission than it needs, or that

@@ -59,7 +59,7 @@ It prints a heading per layer, in the order of this table, and ends with `ALL QA
 | 1p | `test_esphome_config_matrix.py` | valid configurations validate with no warning, invalid ones (`firmware/esphome/tests/invalid/`) are rejected with the expected message, and every board file gives the same entities. Skipped without `esphome` |
 | 2 | inline | `virtual_ac.py` and the frame decoder in `reverse-engineering/tools/` agree in both directions |
 | 3 | `test_image_chain.py` | the stock module's image signing chain (`amebaz2_image.py`): walk, verify, re-sign |
-| 4 | `test_dev_release.py`, `test_matter_convert.py` | `dev.py` (build cache, board files, command line) and `matter-convert.py` |
+| 4 | `test_dev_release.py` | `dev.py` (build cache, board files, command line) |
 | 5 | `version-lint.py`, `test_version_lint.py` | the firmware version, the changelog and the ESPHome pin agree, and the lint fails on trees that have to fail |
 | 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py`, `test_mutate_limits.py` | edge cases of the tooling: `dev.py`, the scripts, the commit hook, the lint lists, the clip flasher's checks, the limits `mutate.py` puts on a mutant |
 

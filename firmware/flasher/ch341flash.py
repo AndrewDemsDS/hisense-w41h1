@@ -7,7 +7,7 @@ flash. Transport and guards: ch341common.
                   [--confirm <layout>-ota<slot>-0x<slot length>]
 
 <image.bin> is an application image as a build writes it (payload and byte-sum, for example
-LibreTiny's image_firmware_is.0x010000.bin) or a raw slot (`matter-convert.py backup`). It is
+LibreTiny's image_firmware_is.0x010000.bin) or a raw slot (as the retired Matter conversion's `backup` saved it). It is
 checked the way the bootloader checks it, every sub-image trailer included, and has to fit the
 slot. The whole slot is written: the image, then erased flash to the slot's end.
 

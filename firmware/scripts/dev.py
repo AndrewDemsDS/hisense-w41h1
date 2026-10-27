@@ -28,10 +28,10 @@ module, sdk and native have not). Node identity: --name <hostname> and --friendl
 PLATFORMIO_BUILD_CACHE_DIR (default ~/.cache/w41h1-dev/pio-build-cache; set it yourself to move it,
 or to an empty string to switch it off).
 
-Moving a stock module off the retired Matter firmware is a script of its own, matter-convert.py
-(docs/guide/Matter-Firmware-Retired.md#a-stock-module). The Matter firmwares themselves (AmebaZ2 and
-esp-matter builds, their release steps, the way back to the vendor firmware over the air) are
-retired. The last tree that has them is the tag `matter-final`.
+The Matter firmwares (AmebaZ2 and esp-matter builds, their release steps, the way back to the vendor
+firmware over the air) are retired, and so is the script that moved a stock module off them
+(docs/guide/Matter-Firmware-Retired.md#a-stock-module). The last release that carries the script is
+v2.0.2, and the last tree that has the Matter builds is the tag `matter-final`.
 """
 
 import argparse
@@ -61,8 +61,8 @@ BOARDS = {
 # The chip `erase` tells esptool to expect, so a port that leads to another kind of ESP is not erased.
 ESP_CHIP = {"c3": "esp32c3", "c3-plus": "esp32c3", "classic": "esp32"}
 ESPHOME_AMEBAZ2_BOARDS = ("amebaz2-factory", "amebaz2-sdk", "amebaz2-native")
-ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2-* has test and build. A first flash is matter-convert.py (over the "
-                        "air from the retired Matter firmware), the clip or UART download mode, and later updates are "
+ESPHOME_AMEBAZ2_ONLY = ("esphome --board amebaz2-* has test and build. A first flash is the clip or UART download "
+                        "mode, and later updates are "
                         "`esphome upload` (firmware/docs/15-esphome-path.md)")
 # First slot address (LibreTiny names the app image after it) and slot length, per layout. The
 # host test holds this equal to firmware/esphome/components/w41h1_module/layout-*.json.
@@ -211,7 +211,7 @@ def build_dir(name=None):
 
 def slot_image(board, name=None):
     """The application image LibreTiny builds for a firmware slot (stock module boards only).
-    matter-convert.py re-signs it, and its name carries the first slot's address."""
+    Its name carries the first slot's address."""
     return build_dir(name) / f"image_firmware_is.0x{ESPHOME_AMEBAZ2_SLOTS[board][0]:06X}.bin"
 
 

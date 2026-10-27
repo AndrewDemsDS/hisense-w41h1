@@ -26,12 +26,11 @@ from edge_harness import CLEAN_ENV, ROOT, SCRIPTS, check, died, environ, patched
 import dev
 
 DEV = SCRIPTS / "dev.py"
-NO_ENVF = "/nonexistent/ota-release.env"
 
 
 def cli(*args, stdin="", **env):
     return subprocess.run([sys.executable, str(DEV), *args], input=stdin, capture_output=True, text=True,
-                          env={**CLEAN_ENV, "ENVF": NO_ENVF, **env}, timeout=60)
+                          env={**CLEAN_ENV, **env}, timeout=60)
 
 
 def main(*args, typed=None):
@@ -82,9 +81,9 @@ REFUSALS = [
     (["erase", "esphome"], "erase needs --port", "erase without a port"),
     (["bench", "esphome"], "bench needs --port", "bench without a port"),
     (["bench", "esphome", "--port", "/dev/null"], "bench needs --sim-port", "bench without a simulator port"),
-    (["build", "esphome", "--serial", "5"], "unrecognized arguments: --serial 5", "--serial belongs to matter-convert.py"),
-    (["build", "esphome", "--stage"], "unrecognized arguments: --stage", "--stage belongs to matter-convert.py"),
-    (["convert", "esphome", "--board", "amebaz2-factory"], "invalid choice: 'convert'", "convert is matter-convert.py's"),
+    (["build", "esphome", "--serial", "5"], "unrecognized arguments: --serial 5", "--serial belonged to the retired Matter conversion"),
+    (["build", "esphome", "--stage"], "unrecognized arguments: --stage", "--stage belonged to the retired Matter conversion"),
+    (["convert", "esphome", "--board", "amebaz2-factory"], "invalid choice: 'convert'", "convert belonged to the retired Matter conversion"),
     (["matter-slots", "127.0.0.1"], "invalid choice: 'matter-slots'", "and so are the probes"),
     (["ota", "amebaz2", "build"], "invalid choice: 'ota'", "the retired ota steps are an unknown command like any other"),
     (["flash", "amebaz2", "--port", "/dev/null"], "argument target: invalid choice: 'amebaz2'", "the retired amebaz2 target is not a word dev.py knows"),
@@ -321,13 +320,13 @@ check(example_key is not None
       and base64.b64decode(example_key.group(1), validate=True) == b"this-is-a-public-placeholder-key",
       "the example's API key is a placeholder everyone can recognise: it decodes to a sentence saying so")
 
-# The guide pages the two scripts send the user to exist, are not "Moved" pointers, and have the
+# The guide pages dev.py sends the user to exist, are not "Moved" pointers, and have the
 # heading the link names.
 def heading_anchors(text):
     return {re.sub(r"[^a-z0-9 -]", "", h.lower()).replace(" ", "-") for h in re.findall(r"^#+\s+(.+)$", text, re.M)}
 
 
-for tool in ("dev.py", "matter-convert.py"):
+for tool in ("dev.py",):
     pointers = re.findall(r"docs/guide/[\w-]+\.md(?:#[\w-]+)?", (SCRIPTS / tool).read_text())
     bad = []
     for pointer in sorted(set(pointers)):
@@ -420,28 +419,28 @@ only_python = TMP / "only-python"
 only_python.mkdir()
 (only_python / "python3").symlink_to(sys.executable)
 r = subprocess.run([sys.executable, str(DEV), "doctor", "esphome"], capture_output=True, text=True,
-                   env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
+                   env={"PATH": str(only_python), "HOME": str(TMP)})
 check(r.returncode == 1 and "Traceback" not in r.stderr and "git not on PATH" in r.stdout,
       "doctor on a PATH without bash lists what is missing")
 r = subprocess.run([sys.executable, str(DEV), "test", "esphome"], capture_output=True, text=True,
-                   env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
+                   env={"PATH": str(only_python), "HOME": str(TMP)})
 check(r.returncode == 1 and "Traceback" not in r.stderr and "cannot run bash" in r.stderr,
       "test on a PATH without bash says it cannot run bash (the host tests are a bash script)")
 
 # A PATH with python3 and bash and nothing else: doctor lists every gap and exits 1.
 (only_python / "bash").symlink_to(shutil.which("bash"))
 r = subprocess.run([sys.executable, str(DEV), "doctor", "esphome"], capture_output=True, text=True,
-                   env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
+                   env={"PATH": str(only_python), "HOME": str(TMP)})
 check(r.returncode == 1 and all(gap in r.stdout for gap in ("git not on PATH", "g++ not on PATH", "esphome not installed",
                                                              "pipx not on PATH")),
       "doctor on a PATH with only python3 and bash lists git, g++, esphome and pipx as gaps and exits 1")
 r = subprocess.run([sys.executable, str(DEV), "build", "esphome"], capture_output=True, text=True,
-                   env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
+                   env={"PATH": str(only_python), "HOME": str(TMP)})
 check(r.returncode == 1 and "'esphome' not found (dev.py fetch esphome, or set ESPHOME=)" in r.stderr,
       "build with no esphome on PATH is refused with the way to get it")
 
 check(not any(hasattr(dev, name) for name in ("convert", "load_env", "pi_stage", "matter_slots", "matter_backup", "ENVF")),
-      "dev.py holds nothing of the Matter conversion: that is matter-convert.py")
+      "dev.py holds nothing of the retired Matter conversion")
 
 tmp_holder.cleanup()
 sys.exit(edge_harness.finish("DEV.PY EDGES"))

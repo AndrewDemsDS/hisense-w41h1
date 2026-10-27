@@ -11,6 +11,10 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- `firmware/scripts/matter-convert.py`, its settings template `ota-release.env.example` and its
+  host test are removed. Every unit runs ESPHome, so nothing on `main` needs them. The last
+  release that carries them is `v2.0.2` (and the tag `matter-final`).
+
 ## 2.0.2 - 2026-10-27
 
 - "Bus reply timeouts" no longer counts an isolated miss: one heartbeat or status poll met by total

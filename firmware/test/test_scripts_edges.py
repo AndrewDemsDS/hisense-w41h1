@@ -826,7 +826,7 @@ for name, ran, why in (
         ("firmware/test/new_test.cpp", ["cpp", "tests"], "a host test: the tests and the C/C++ lint"),
         ("firmware/esphome/components/hisense_ac/x.py", ["tests"], "a component file: the tests"),
         ("firmware/scripts/dev.py", ["tests"], "dev.py: the tests"),
-        ("firmware/scripts/matter-convert.py", ["tests"], "matter-convert.py: the tests"),
+        ("firmware/scripts/amebaz2_image.py", ["tests"], "the stock module image tool: the tests"),
         ("firmware/scripts/cpp-lint.py", ["tests"], "the lint tool: the tests (test_scripts_edges.py covers it)"),
         ("firmware/scripts/esphome-compile-check.sh", ["tests"], "CI's compile gate script: the tests"),
         ("firmware/flasher/ch341common.py", ["tests"], "the clip flasher: the tests"),
@@ -1170,7 +1170,7 @@ check(all(ignored[o] for o in binaries), f"every test binary run_tests.sh builds
 objects = [o for o in outputs if o.endswith(".o")]
 check(objects and all(ignored[o] for o in objects), "the object files run_tests.sh builds are in .gitignore: they stay behind when the link fails")
 
-for layer in ("test_image_chain.py", "test_dev_release.py", "test_matter_convert.py", "test_flasher.py", "test_version_lint.py"):
+for layer in ("test_image_chain.py", "test_dev_release.py", "test_flasher.py", "test_version_lint.py"):
     check(layer in run_tests, f"run_tests.sh runs {layer}")
 
 tmp_holder.cleanup()
