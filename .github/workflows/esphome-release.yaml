@@ -29,7 +29,7 @@ permissions: {}
 
 # Kept equal to qa.yaml's pin by firmware/scripts/version-lint.py.
 env:
-  ESPHOME_VERSION: "2026.10.0"
+  ESPHOME_VERSION: "2026.10.1"
 
 concurrency:
   group: esphome-release-${{ github.ref }}
