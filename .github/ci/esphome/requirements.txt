@@ -4,4 +4,4 @@
 # firmware/scripts/version-lint.py holds those four equal, and the lint-extra job of the QA
 # workflow holds this file equal to them. So a pull request that bumps this line fails until the
 # other four are bumped with it, which is the reminder. The nightly workflow installs from here.
-esphome==2026.9.1
+esphome==2026.10.0

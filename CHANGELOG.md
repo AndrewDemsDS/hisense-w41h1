@@ -11,6 +11,11 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- The project builds with ESPHome 2026.10.0 (was 2026.9.1): the pin in CI, `dev.py` and the
+  upstream check, and the install commands in the docs. ESP32 boards now build with the ESP-IDF
+  release ESPHome 2026.10.0 recommends, 5.5.6 (was 5.5.5). No change to the components. A node
+  built with 2026.9.1 keeps working, and nothing has to be done to it.
+
 - `firmware/scripts/matter-convert.py`, its settings template `ota-release.env.example` and its
   host test are removed. Every unit runs ESPHome, so nothing on `main` needs them. The last
   release that carries them is `v2.0.2` (and the tag `matter-final`).
