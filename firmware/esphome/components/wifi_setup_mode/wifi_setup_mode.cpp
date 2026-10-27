@@ -9,7 +9,7 @@
 
 namespace esphome::wifi_setup_mode {
 
-static const char *const TAG = "wifi_setup_mode";
+ESPHOME_LOG_TAG(TAG, "wifi_setup_mode");
 
 // What the journal holds while a session is on: the network to go back to. It is written when
 // setup mode starts and cleared (overwritten with zeroes) when it ends, whichever way. One found

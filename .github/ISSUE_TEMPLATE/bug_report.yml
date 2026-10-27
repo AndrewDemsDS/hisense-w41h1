@@ -37,7 +37,7 @@ body:
     attributes:
       label: Firmware version
       description: The project version and the ESPHome version (Home Assistant shows both on the device page as the firmware), and the commit or tag you built from (`git describe --tags --always`).
-      placeholder: 2.0.0 (ESPHome 2026.9.1), commit 21b0d0f
+      placeholder: 2.0.0 (ESPHome 2026.10.0), commit 21b0d0f
     validations:
       required: true
   - type: input

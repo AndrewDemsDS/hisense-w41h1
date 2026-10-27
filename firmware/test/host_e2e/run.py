@@ -206,36 +206,50 @@ def build(args, esphome: str) -> pathlib.Path:
 def tidy_report(args) -> int:
     """clang-tidy, with the repository's .clang-tidy, over the glue files. firmware/scripts/cpp-lint.py
     cannot reach them: its units compile with plain host flags and these need ESPHome's headers. The
-    host build has those and PlatformIO writes its compile database in a second or two. Report
-    only: prints the findings and their count, and returns 0 unless the tools are missing."""
+    host build has those. From ESPHome 2026.10 it is a native ninja build that writes its compile
+    database itself (esphome/esphome#19214); before that, PlatformIO writes one in a second or two.
+    Report only: prints the findings and their count, and returns 0 unless the tools are missing."""
     build_dir = data_dir(args) / "build" / NODE_NAME
     pio = pathlib.Path(sys.executable).parent / "pio"
     tidy = os.environ.get("CLANG_TIDY") or shutil.which("clang-tidy")
     cached = pathlib.Path.home() / ".cache" / "hisense-w41h1" / "cpp-lint" / "bin" / "clang-tidy"
     if not os.environ.get("CLANG_TIDY") and cached.exists():
         tidy = str(cached)  # the pinned one firmware/scripts/cpp-lint.sh installs
-    if not pio.exists() or tidy is None:
-        print(f"== clang-tidy on the glue SKIPPED: {'no pio beside ' + sys.executable if not pio.exists() else 'no clang-tidy (set CLANG_TIDY)'} ==")
+    native_db = build_dir / ".pioenvs" / NODE_NAME / "compile_commands.json"
+    if tidy is None or (not native_db.exists() and not pio.exists()):
+        print(f"== clang-tidy on the glue SKIPPED: {'no clang-tidy (set CLANG_TIDY)' if tidy is None else 'no compile database and no pio beside ' + sys.executable} ==")
         return 1 if args.require else 0
-    # On a copy of the generated project: for this target PlatformIO deletes the project's build
-    # output (.pioenvs), and the program the scenarios run would go with it.
     project = build_dir
-    build_dir = data_dir(args) / "tidy" / NODE_NAME
-    shutil.rmtree(build_dir, ignore_errors=True)
-    shutil.copytree(project, build_dir, ignore=shutil.ignore_patterns(".pio*", ".piolibdeps", "compile_commands.json"))
-    with open(build_dir / "compiledb.log", "wb") as out:
-        code = subprocess.run([str(pio), "run", "-t", "compiledb"], cwd=build_dir, env=CLEAN_ENV, stdout=out,
-                              stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=600).returncode
-    if code != 0 or not (build_dir / "compile_commands.json").exists():
-        print(f"== clang-tidy on the glue SKIPPED: `pio run -t compiledb` ended with {code} (see {build_dir / 'compiledb.log'}) ==")
-        return 1 if args.require else 0
+    if native_db.exists():
+        # The native build's database names every file by its absolute path: use it where it is.
+        # Its commands include g++'s precompiled header, which clang reads as the plain header
+        # after a warning that the repository's .clang-tidy turns into an error: silence that one.
+        db_dir = native_db.parent
+        extra = ["--extra-arg=-Wno-ignored-gch"]
+        build_dir = data_dir(args) / "tidy" / NODE_NAME
+        shutil.rmtree(build_dir, ignore_errors=True)
+        build_dir.mkdir(parents=True)
+    else:
+        # On a copy of the generated project: for this target PlatformIO deletes the project's build
+        # output (.pioenvs), and the program the scenarios run would go with it.
+        build_dir = data_dir(args) / "tidy" / NODE_NAME
+        shutil.rmtree(build_dir, ignore_errors=True)
+        shutil.copytree(project, build_dir, ignore=shutil.ignore_patterns(".pio*", ".piolibdeps", "compile_commands.json"))
+        with open(build_dir / "compiledb.log", "wb") as out:
+            code = subprocess.run([str(pio), "run", "-t", "compiledb"], cwd=build_dir, env=CLEAN_ENV, stdout=out,
+                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=600).returncode
+        if code != 0 or not (build_dir / "compile_commands.json").exists():
+            print(f"== clang-tidy on the glue SKIPPED: `pio run -t compiledb` ended with {code} (see {build_dir / 'compiledb.log'}) ==")
+            return 1 if args.require else 0
+        db_dir = project = build_dir
+        extra = []
     findings: dict[str, str] = {}
     for name in (g for g in GLUE if g.endswith(".cpp")):
         log = build_dir / f"tidy-{name}.log"
         with open(log, "wb") as out:
-            subprocess.run([tidy, f"--config-file={ROOT / '.clang-tidy'}", "-p", str(build_dir),
-                            f"src/esphome/components/hisense_ac/{name}"], cwd=build_dir, stdout=out,
-                           stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=900)
+            subprocess.run([tidy, f"--config-file={ROOT / '.clang-tidy'}", "-p", str(db_dir), *extra,
+                            str(project / "src" / "esphome" / "components" / "hisense_ac" / name)], cwd=project,
+                           stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=900)
         for line in open(log, encoding="utf-8", errors="replace"):
             # A header's finding comes once per file that includes it.
             if (": warning: " in line or ": error: " in line) and "components/hisense_ac/" in line:

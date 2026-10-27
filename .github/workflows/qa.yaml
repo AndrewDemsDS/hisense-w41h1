@@ -32,7 +32,7 @@ permissions:
 # it equal to the pins in dev.py, esphome-upstream-check.sh and esphome-release.yaml, and the
 # lint-extra job holds .github/ci/esphome/requirements.txt (the copy Dependabot reads) equal to it.
 env:
-  ESPHOME_VERSION: "2026.9.1"
+  ESPHOME_VERSION: "2026.10.0"
 
 jobs:
   # Whether this run touches anything the three compile jobs build from. A change to the docs,

@@ -5,7 +5,7 @@
 
 namespace esphome::hisense_ac {
 
-static const char *const TAG = "hisense_ac.select";
+ESPHOME_LOG_TAG(TAG, "hisense_ac.select");
 
 void HisenseSleepSelect::setup() { this->parent_->add_status_listener(this); }
 

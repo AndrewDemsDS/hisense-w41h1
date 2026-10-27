@@ -458,7 +458,7 @@ The firmware version is written in one file, `packages/version.yaml`, as ESPHome
 block. It is semver and is 2.0.0 now (the retired Matter firmwares were 1.x). `node.yaml`
 includes that file, so a node built from the packages carries the version:
 
-- Home Assistant shows it as the device's firmware, for example `2.0.0 (ESPHome 2026.9.1)`.
+- Home Assistant shows it as the device's firmware, for example `2.0.0 (ESPHome 2026.10.0)`.
 - The ESPHome dashboard shows it beside the node, and the node announces it over mDNS.
 - It is in the image as `ESPHOME_PROJECT_VERSION`.
 

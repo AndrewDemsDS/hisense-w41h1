@@ -12,7 +12,7 @@
 
 namespace esphome::w41h1_module {
 
-static const char *const TAG = "w41h1_module";
+ESPHOME_LOG_TAG(TAG, "w41h1_module");
 
 // Long enough for w41h1_layout_report() with every number at its widest.
 static const size_t LAYOUT_REPORT_LEN = 96;
