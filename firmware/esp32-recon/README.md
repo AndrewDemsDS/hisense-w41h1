@@ -47,7 +47,7 @@ only, and that is the target this page describes.
 
 ## Build and flash
 
-It needs ESP-IDF. CI builds it every night with v5.5.5 in Espressif's container (the
+It needs ESP-IDF. CI builds it every night with v5.5.6 in Espressif's container (the
 `esp32-recon` job of `.github/workflows/nightly.yaml`), so that is the version known to work.
 
 ```sh

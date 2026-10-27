@@ -250,7 +250,7 @@ jobs:
           python3 firmware/test/host_e2e/run.py --require --full
 
   # firmware/esp32-recon/ (the RS-485 bus diagnostic tool) builds for the classic ESP32 with
-  # ESP-IDF v5.5.5, the release it was last built with by hand. Espressif's image has that release
+  # ESP-IDF v5.5.6, the newest v5.5 bugfix release. Espressif's image has that release
   # and its toolchain. The digest is the linux/amd64 image of the tag, so the tag cannot move
   # under the job.
   esp32-recon:
@@ -260,7 +260,7 @@ jobs:
     permissions:
       contents: read
     container:
-      image: espressif/idf:v5.5.5@sha256:6e2800a69f1c6521a5651da524f811e237d13e34cad369687916d0ad0bc4ef89
+      image: espressif/idf:v5.5.6@sha256:851f136a2c09cf17c13e952b9975606d7d1050be1480b1fd82c7ea4bce78cfb3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -279,4 +279,4 @@ jobs:
           # Not a gate: the tool has known warnings of its own (missing field initializers in
           # recon_console.c). The count is shown so a jump is seen.
           warnings="$(grep -a -c -E '(esp32-recon|reference-driver)/.*warning:' build.log || true)"
-          echo "esp32-recon builds with ESP-IDF $(cat "$IDF_PATH/version.txt" 2>/dev/null || echo v5.5.5): $(stat -c %s build/esp32_recon.bin) bytes, $warnings compiler warnings in its own sources." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "esp32-recon builds with ESP-IDF $(cat "$IDF_PATH/version.txt" 2>/dev/null || echo v5.5.6): $(stat -c %s build/esp32_recon.bin) bytes, $warnings compiler warnings in its own sources." | tee -a "$GITHUB_STEP_SUMMARY"
