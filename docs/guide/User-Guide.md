@@ -17,7 +17,7 @@ Not sure the unit is the right kind? See
 |---|---|---|---|
 | What it is | an ESP32-C3 SuperMini or a classic ESP32 with a 3.3 V RS-485 transceiver, plugged in where the module was | the module that came with the A/C (Realtek RTL8710C), running ESPHome through the LibreTiny platform | an ESP8266 D1 mini or a Raspberry Pi Pico W with the same transceiver |
 | You add | about 5 EUR of parts and four soldered wires | nothing | parts you already have |
-| First flash | USB cable | over the air from this project's retired Matter firmware (done once). From the vendor firmware it needs a SOIC-8 clip or UART download mode, and that has not been done | USB cable |
+| First flash | USB cable | over the air from this project's retired Matter firmware (done once, with a script last carried by release `v2.0.2`). From the vendor firmware it needs a SOIC-8 clip or UART download mode, and that has not been done | USB cable |
 | If an update goes wrong | the bootloader rolls back to the previous image. A USB flash always recovers the board | no rollback. An image that does not boot needs the clip and a dump of that unit taken beforehand | USB flash |
 | State today | on live units since 2026-08, both boards | the factory flash layout runs on one module in an A/C since 2026-10-10. The other two layouts compile and have never run. A second converted module went silent on the bus, cause unknown | example configs that compile every night. Never run on a board |
 | Read next | [ESP32 Replacement Board](ESP32-Replacement-Build) | [The Stock Module](Stock-Module-Build) | [ESPHome Firmware](ESPHome-Build#board-files) |
@@ -38,9 +38,9 @@ is `firmware/docs/13-path-comparison.md`.
    esphome run w41h1.yaml              # classic ESP32
    ```
 
-   Or let the wrapper script ask before each step:
-   `python3 firmware/scripts/dev.py walk esphome --board c3`. Its commands are in
-   [Build, Flash and Test](Build-Flash-Test).
+   Or use the wrapper script for a local build and flash:
+   `python3 firmware/scripts/dev.py flash esphome --board c3 --port /dev/ttyACM0`. Its commands
+   are in [Build, Flash and Test](Build-Flash-Test).
 5. Bring it up in three stages: on the bench against the simulator, on the real bus with only A
    and B connected, then powered from the A/C
    ([staged bring-up](ESP32-Replacement-Build#staged-bring-up)).

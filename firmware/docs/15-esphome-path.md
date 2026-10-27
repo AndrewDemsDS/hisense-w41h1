@@ -207,7 +207,7 @@ To tell which layout a unit has:
   First written with the retired Matter clip image: sdk.
 - **Ask the retired Matter firmware,** if the unit still runs it (1.3.9 or later), for the
   address of the inactive slot:
-  `matter-convert.py backup <unit-ip>` prints `addr=`. `0x10000` or `0x190000` is the
+  the conversion script's `backup <unit-ip>`, from a checkout of release `v2.0.2`, prints `addr=`. `0x10000` or `0x190000` is the
   factory layout, `0xC000` or `0x1B8000` is the sdk layout. The command only reads.
 - **A clip dump** ([`firmware/flasher/README.md`](../flasher/README.md)). The second firmware
   image starts at `0x190000` (factory), `0x1B8000` (sdk) or `0x1BC000` (native).
@@ -266,8 +266,8 @@ has not run on the sdk or native layout, and a mismatch has not been provoked on
    SOIC-8 clip on the GD25Q32 or by UART download mode: UART2 (PA15 RX, PA16 TX), with PA0 held at
    3.3 V through reset and PA13 not pulled low. Whether PA0 and PA15 can be reached on the W41H1
    board is not known. A unit that runs this project's Matter firmware needs neither: the Matter
-   firmware installs the application image over the air (`matter-convert.py convert`, the guide
-   linked above). Writing one slot with the clip is what `firmware/flasher/ch341flash.py` is
+   firmware installs the application image over the air (the conversion script, last carried by release
+   `v2.0.2`, and the guide linked above). Writing one slot with the clip is what `firmware/flasher/ch341flash.py` is
    for, and that script has not written a module yet
    ([`firmware/flasher/README.md`](../flasher/README.md)). That is how the one tested module got it.
 5. **Calibration data.** Flash `0x1000..0x3FFF` holds per-module data, including the flash

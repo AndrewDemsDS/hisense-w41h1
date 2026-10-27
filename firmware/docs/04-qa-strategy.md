@@ -66,7 +66,7 @@ The layers, in the order they run, with the label each prints:
 | 1p | `test_esphome_config_matrix.py` | the configuration matrix (below). Skipped when `esphome` is not installed |
 | 2 | inline Python | `virtual_ac.py` and `reverse-engineering/tools/decode_ac_frames.py` agree in both directions |
 | 3 | `test_image_chain.py` | the stock module's image signing chain (`amebaz2_image.py`): walk, verify, re-sign, and the stale-trailer defect that bricked a unit. Real images under `firmware/built-images/` and `dumps/` are checked when present (both are gitignored) |
-| 4 | `test_dev_release.py`, `test_matter_convert.py` | `dev.py` (build cache, board files, the command line) and `matter-convert.py` |
+| 4 | `test_dev_release.py` | `dev.py` (build cache, board files, the command line) |
 | 5 | `version-lint.py`, `test_version_lint.py` | the version, the changelog and the ESPHome pin agree, and the lint fails on trees that have to fail |
 | 6 | `test_dev_edges.py`, `test_scripts_edges.py`, `test_flasher.py`, `test_hil_restore.py`, `test_mutate_limits.py` | edge cases of the tooling: `dev.py`, the lint scripts, the hook, the clip flasher against a chip that is a bytearray, the restore path of the hardware test, the limits `mutate.py` puts on a mutant |
 

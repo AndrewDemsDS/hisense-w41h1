@@ -73,8 +73,8 @@ TX 5, RX 6, DE 10. No data? Swap RXD and TXD: vendor labels vary.*
   debugging session, because an internal loopback passes (it does not go through the pads). To
   prove the pins before wiring the transceiver, put a jumper from GPIO19 to GPIO18: RX has to
   follow TX.
-- **A brand-new board: erase the flash before the first flash** (`dev.py erase esphome --port P`,
-  or `esptool.py erase_flash`). A vendor test image can leave a Wi-Fi configuration in NVS. Never
+- **A brand-new board: erase the flash before the first flash** (`esptool.py --chip <chip> --port P
+  erase_flash`). A vendor test image can leave a Wi-Fi configuration in NVS. Never
   erase a board that is already running: that throws away its Wi-Fi settings.
 - **Ground loop.** While the board is powered over USB, connect only A and B to the A/C. Joining
   the A/C's mains-earthed ground to a laptop-earthed board browns it out (watchdog resets,
@@ -94,8 +94,6 @@ Never leave the A/C in an unknown state. Three stages, each with a clear pass.
    comes up, and the indoor temperature, the mode and the compressor frequency match the unit.
    That proves reading. Then send one command.
 3. **Powered from the connector.** Unplug the laptop, connect 5 V and GND, close the unit.
-
-`python3 firmware/scripts/dev.py next esphome` prints these stages with their warnings.
 
 Both directions are proven on hardware: the mainboard accepts a board that is not Hisense's, the
 link comes up with the device-type bytes learned from the A/C, and nodes drive A/Cs from Home

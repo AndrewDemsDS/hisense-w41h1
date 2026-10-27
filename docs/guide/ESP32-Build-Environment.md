@@ -78,15 +78,15 @@ The serial port is usually `/dev/ttyACM0` for a C3 SuperMini (native USB) and `/
 a classic dev board (a USB to UART bridge).
 
 A brand-new board is erased once before its first flash, because a vendor test image can leave a
-Wi-Fi configuration behind. From the repository root:
+Wi-Fi configuration behind. ESPHome brings esptool with it:
 
 ```
-python3 firmware/scripts/dev.py erase esphome --board c3 --port /dev/ttyACM0
+esptool.py --chip esp32c3 --port /dev/ttyACM0 erase_flash
 ```
 
-It asks you to type `ERASE`, then runs `esptool` (`erase_flash`, with the chip named so another
-kind of board on that port is not erased) from the Python that ESPHome is installed in. Never
-erase a board that is already running: that throws away its Wi-Fi settings.
+Name the chip (`esp32c3` for a C3, `esp32` for a classic ESP32) so another kind of board on that
+port is not erased. Never erase a board that is already running: that throws away its Wi-Fi
+settings.
 
 A second node on the same network needs its own name. Set `name` and `friendly_name` in the board
 file, or pass them: `esphome -s name bedroom-ac -s friendly_name "Bedroom A/C" run ...`. Keep
@@ -112,6 +112,6 @@ the same `esphome run` line and no serial port ([Updates](ESPHome-Build#updates)
 | the port cannot be opened | no access to the serial device | add your user to the `dialout` group, log in again |
 | the write does not connect | the board is not in download mode | hold BOOT while plugging in USB |
 | a new board never joins Wi-Fi | stale vendor settings in NVS | erase the flash once, then flash again (`firmware/docs/16-esp32-board-notes.md`) |
-| `dev.py doctor` says ESPHome is at another version | a newer or older ESPHome on `PATH` | `dev.py fetch esphome`, or set `ESPHOME` to the pinned install |
+| `dev.py doctor` says ESPHome is at another version | a newer or older ESPHome on `PATH` | `pipx install --force esphome==<the pin doctor names>`, or set `ESPHOME` to the pinned install |
 
 Problems after the board runs are in [Troubleshooting and FAQ](FAQ-Gotchas).

@@ -50,11 +50,11 @@ Version numbers such as "AmebaZ2 1.3.50" and paths under `firmware/src/` or
 
 Nothing stops working. The firmware on the unit keeps running.
 
-- The [`hisense-unified-ac`](https://github.com/AndrewDemsDS/hisense-unified-ac) integration has
-  its own repository and still works with a node that runs a Matter build.
-- Such a unit can join a [climate group](Climate-Groups) through that integration (1.4.0 or
-  later), whose climate entity uses the same names as the ESPHome firmware. Add that entity to
-  the group, not the raw Matter climate.
+- The [`hisense-unified-ac`](https://github.com/AndrewDemsDS/hisense-unified-ac) integration
+  that sat on top of a Matter node is retired too, and its repository was archived on
+  2026-10-27. An installed copy keeps whatever it did, but it gets no fixes. Its climate entity
+  (1.4.0 or later) uses the same names as the ESPHome firmware, so such a unit could join a
+  [climate group](Climate-Groups) through it.
 - Take the images a unit needs for the way back (its delta base, its clip image) from the tag or
   from your own archive before you start a move.
 
@@ -165,6 +165,12 @@ firmware never did, and a board with a weak signal became unreachable
 ([the measurement](ESPHome-Build#wi-fi-power-saving)).
 
 ### A stock module
+
+> **Retired on 2026-10-27.** `firmware/scripts/matter-convert.py` and its settings template
+> `ota-release.env.example` were removed from `main`. The last release that carries them is
+> `v2.0.2`, and the tag `matter-final` has them too. Run every command in this section from a
+> checkout of `v2.0.2` (`git checkout v2.0.2`). Nobody needs this unless a module still runs the
+> old Matter firmware.
 
 **State: one module runs this way.** A module with the factory flash layout was converted on
 2026-10-10, inside an A/C, and has taken two ESPHome updates over the air since. A second

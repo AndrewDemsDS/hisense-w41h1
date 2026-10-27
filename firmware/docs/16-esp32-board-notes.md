@@ -60,10 +60,9 @@ refused any other SSID. It read like a credentials problem when the radio was ne
 Observed on a new ESP32-C3 SuperMini, 2026-08-07.
 
 The rule for any firmware: erase a new board once before the first flash
-(`dev.py erase --port P`, or `esptool.py erase_flash`). Never erase a board that is already
-running, since that throws away its settings. `dev.py erase` asks for a typed confirmation and
-tells esptool which chip to expect
-([`firmware/scripts/README.md`](../scripts/README.md)).
+(`esptool.py --chip <chip> --port P erase_flash`). Never erase a board that is already
+running, since that throws away its settings. Naming the chip makes esptool stop when the port
+leads to another kind of board.
 
 ## Wi-Fi power saving
 

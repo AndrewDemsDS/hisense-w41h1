@@ -13,7 +13,7 @@ a release, and what CI checks. The tests themselves are on [Testing and QA](Test
 | `firmware/esphome/components/wifi_setup_mode/` | the on-demand Wi-Fi setup hotspot |
 | `firmware/test/` | host tests, `virtual_ac.py`, the fuzz harnesses, coverage and mutation scripts, the host end-to-end test, the hardware actuation check |
 | `firmware/test/reference-driver/` | the project's first bus driver, frozen. The component's codec is tested against it |
-| `firmware/scripts/` | `dev.py` (test, build, flash), `matter-convert.py` (for a module on the retired Matter firmware), `amebaz2_image.py` (the stock module's image format), the lint scripts and `version-lint.py` |
+| `firmware/scripts/` | `dev.py` (test, build, flash), `amebaz2_image.py` (the stock module's image format), the lint scripts and `version-lint.py` |
 | `firmware/flasher/` | CH341A clip tools for the stock module's SPI flash: dump, write, status register |
 | `firmware/esp32-recon/` | a small ESP-IDF diagnostic tool: a console on the A/C bus, built on the reference driver |
 | `firmware/docs/` | design notes and hardware reference, published under "Firmware" on the docs site |
@@ -61,10 +61,9 @@ builds with those.
 
 The stock module has three board files, one per flash layout, and its build fails when the
 image's slot addresses are not those of the layout the file names
-([The Stock Module](Stock-Module-Build)). `matter-convert.py` and its settings file
-(`firmware/scripts/ota-release.env`, gitignored) exist only for a module that still runs the
-retired Matter firmware ([Matter Firmware (Retired)](Matter-Firmware-Retired#a-stock-module)).
-Its output goes to `firmware/built-images/`, also gitignored.
+([The Stock Module](Stock-Module-Build)). The script that converts a module still on the retired
+Matter firmware was removed from `main` on 2026-10-27. The last release that carries it is
+`v2.0.2` ([Matter Firmware (Retired)](Matter-Firmware-Retired#a-stock-module)).
 
 ## Version and releases
 

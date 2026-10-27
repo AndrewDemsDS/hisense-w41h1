@@ -59,8 +59,9 @@ esphome run w41h1-esp32c3.yaml            # ESP32-C3 SuperMini. Classic ESP32: w
 ```
 
 Home Assistant then discovers the node, and you adopt it with the API key. Do not wire a freshly
-flashed board straight into the A/C: the guide brings it up in three stages. The same steps with
-a script that asks before each one: `python3 firmware/scripts/dev.py walk esphome`.
+flashed board straight into the A/C: the guide brings it up in three stages. For local builds and
+the bench there is a wrapper script, `python3 firmware/scripts/dev.py`
+([Build, Flash and Test](docs/guide/Build-Flash-Test.md)).
 
 > **Stock module: dump it first.** The only complete way back to what a module had on it is a
 > whole-chip write, with a CH341A and a clip, of a dump taken before the first flash.

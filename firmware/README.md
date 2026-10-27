@@ -7,7 +7,7 @@ tools. This page is the map of the directory.
 |---|---|---|
 | [`esphome/`](esphome/) | the firmware: the components `hisense_ac`, `w41h1_module` and `wifi_setup_mode`, the board files and the packages | [`esphome/README.md`](esphome/README.md) |
 | [`test/`](test/) | host tests, the virtual A/C, the host end-to-end test, the hardware actuation check, and the frozen reference driver | [`docs/04-qa-strategy.md`](docs/04-qa-strategy.md) |
-| [`scripts/`](scripts/) | `dev.py`, the one entry point, the lints and `matter-convert.py` | [`scripts/README.md`](scripts/README.md) |
+| [`scripts/`](scripts/) | `dev.py`, the one entry point, and the lints | [`scripts/README.md`](scripts/README.md) |
 | [`flasher/`](flasher/) | CH341A clip tools for the stock module's SPI flash | [`flasher/README.md`](flasher/README.md) |
 | [`esp32-recon/`](esp32-recon/) | a console on the A/C bus for diagnostics and reverse engineering (ESP-IDF, no Home Assistant). Its network console has no authentication | [`esp32-recon/README.md`](esp32-recon/README.md) |
 | [`docs/`](docs/) | architecture, test strategy, hardware reference | the table below |
@@ -17,10 +17,13 @@ tools. This page is the map of the directory.
 From the repository root:
 
 ```
-python3 firmware/scripts/dev.py walk
+python3 firmware/scripts/dev.py doctor
+python3 firmware/scripts/dev.py test
+python3 firmware/scripts/dev.py build --board c3
 ```
 
-It checks the tools, runs the host tests, builds and flashes, asking before each step. The guide
+It checks the tools, runs the host tests and builds. `flash`, `monitor` and `bench` take a
+`--port`. Units in service are normally built and flashed from the ESPHome Device Builder. The guide
 starts at [`docs/guide/User-Guide.md`](../docs/guide/User-Guide.md).
 
 ## Reference docs here

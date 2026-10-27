@@ -757,7 +757,7 @@ After any update, confirm that the `compiled on` line in the log shows the new b
 
 ### A new ESP32 board does not join Wi-Fi
 
-Erase a brand-new board once before the first flash (`dev.py erase --port <port>`). The reason is
+Erase a brand-new board once before the first flash (`esptool.py --chip <chip> --port <port> erase_flash`). The reason is
 in [`firmware/docs/16-esp32-board-notes.md`](../docs/16-esp32-board-notes.md#why-a-brand-new-board-must-be-erased-first).
 
 ### The stock module: `Flash layout` says `MISMATCH`, or `Serial port restarts` climbs

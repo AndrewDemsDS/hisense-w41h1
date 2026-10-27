@@ -4,7 +4,8 @@ The tools that build, test, lint and flash the ESPHome firmware. For each one th
 it does, what it needs, and, for the ones that write flash or reach a machine, what stands
 between a wrong argument and damage.
 
-A newcomer needs one of them: `dev.py`. The step-by-step use of it is in
+A newcomer needs one of them: `dev.py`, for local builds and the bench. Units in service are
+normally built and flashed from the ESPHome Device Builder. The step-by-step use of `dev.py` is in
 [`docs/guide/Build-Flash-Test.md`](../../docs/guide/Build-Flash-Test.md).
 
 ## `dev.py`
@@ -20,15 +21,11 @@ and is optional.
 | Command | Does | Writes or drives |
 |---|---|---|
 | `doctor` | checks the tools and the ESPHome version | nothing |
-| `fetch` | installs the pinned ESPHome with `pipx`, after asking | the machine it runs on |
 | `test` | `firmware/test/run_tests.sh`, then `esphome config` on the board file | nothing |
 | `build` | `esphome compile` on the board file | the build directory |
-| `erase --port P` | erases the whole flash of an ESP32 board | **the board's flash** |
 | `flash --port P` | `esphome run --device P`: build, flash over USB, follow the log | **the board's flash** |
 | `monitor --port P` | `esphome logs --device P` | nothing |
 | `bench --port P --sim-port S` | flashes the board, then runs `virtual_ac.py` on the adapter and follows the node's log | **the board's flash** |
-| `next` | prints the staged bring-up and its safety warnings | nothing |
-| `walk` | guided: doctor, test, build, flash, next, asking before each | what the steps it runs write |
 
 Options:
 
@@ -46,12 +43,8 @@ caveats are in [`firmware/esphome/README.md`](../esphome/README.md#build-cache).
 
 What protects against a wrong target:
 
-- **`erase`** is refused for the stock module's boards. It warns that it is for a brand-new
-  board, asks you to type `ERASE` with the chip and the port in the prompt, and passes `--chip`
-  to esptool, so a port that leads to another kind of ESP is not erased. It cannot tell a new
-  board from a node in service: erasing a working node throws away its saved Wi-Fi settings.
 - **`flash`** and **`bench`** need `--port` and are refused for the stock module's boards
-  (`--board amebaz2-*` has `doctor`, `fetch`, `test` and `build` only). `bench` asks whether the
+  (`--board amebaz2-*` has `doctor`, `test` and `build` only). `bench` asks whether the
   bench wiring is in place before it flashes. Nothing in `dev.py` checks that the board on the
   port is the one `--board` names, and it does not ask before flashing. The image holds your
   `secrets.yaml`.
@@ -63,55 +56,24 @@ What protects against a wrong target:
 > been run ([`docs/guide/Build-Flash-Test.md`](../../docs/guide/Build-Flash-Test.md#what-has-been-run))
 > lists both as untested through this script.
 
-## `matter-convert.py`
+The guided `walk`, `next` (the bring-up text), `fetch` (a `pipx install` of the pinned ESPHome)
+and `erase` (a typed-confirmation `esptool erase_flash`) were removed on 2026-10-27. Install
+ESPHome with `pipx install esphome==<pin>` (`doctor` names the pin), and erase a brand-new ESP32
+board with `esptool.py --chip <chip> --port <port> erase_flash`.
 
-> **Retired on 2026-10-12.** This section describes the tool that moves a stock module off this
-> project's Matter firmware, which is no longer on `main`. Nothing in it is needed to build,
-> flash or update the current ESPHome firmware. The procedure is in
-> [`docs/guide/Matter-Firmware-Retired.md`](../../docs/guide/Matter-Firmware-Retired.md#a-stock-module).
-> The last tree that has the Matter builds is the tag `matter-final`.
+## The Matter conversion (retired)
 
-| Command | Does | Writes or drives |
-|---|---|---|
-| `convert --board amebaz2-factory\|amebaz2-sdk [--name N] [--software-version V] [--serial S] [--stage]` | re-signs the ESPHome image that `dev.py build` left behind with an FWHS serial in the Matter numbering and wraps it as a Matter `.ota` with its provider manifest, in `firmware/built-images/` | files. With `--stage`: **the OTA provider host** |
-| `slots <unit-ip>` | reads both firmware slots' serials from a unit, over the Matter firmware's break-glass listener | nothing (read-only) |
-| `backup <unit-ip> [out.bin]` | saves the unit's inactive slot and prints its address, which tells the flash layout | a local file (read-only on the unit) |
-
-Settings come from `firmware/scripts/ota-release.env` (copy `ota-release.env.example`, the file
-is gitignored), or from the file `ENVF` names. `convert` needs connectedhomeip's
-`ota_image_tool.py` (`OTA_TOOL`), which is not part of this repository.
-
-What protects against a wrong image or target:
-
-- `convert` verifies the built image before it touches it and again after re-signing (the
-  manifest signature, every sub-image trailer and the byte-sum, through `amebaz2_image.py`),
-  and refuses an image that does not fit the slot of the layout named. It refuses
-  `amebaz2-native`, which has no Matter firmware to install the image.
-- It warns, and goes on, when the softwareVersion is not above the last Matter release (the unit
-  is never offered the update) or the serial is not above that release's serial (the unit
-  installs the image and boots the old one again). It warns for `amebaz2-sdk`: only the factory
-  layout has been converted on hardware.
-- **Nothing checks that the unit has the layout you named.** That is yours to establish first,
-  with `backup` or the unit's history
-  ([`firmware/docs/15-esphome-path.md`](../docs/15-esphome-path.md#which-flash-layout-a-unit-has)).
-  The `.ota` is addressed by vendor and product id, so every unit of this product on the
-  provider is offered it.
-- `--stage` copies the `.ota` and its manifest to the provider directory on `PI_HOST` through a
-  root container, renames this product's other manifests to `*.json.archived` (reversible,
-  `OTA_KEEP_MANIFESTS=1` skips that), and **restarts matter-server**, which takes every Matter
-  device of that server offline for about 100 s. It stops before installing anything when a step
-  fails. The update itself is still started by hand, per unit, from Home Assistant.
-- `slots` and `backup` send a token (`BREAKGLASS_TOKEN`) to the unit and only read. `backup`
-  verifies what it received and saves nothing when the check fails.
-
-Tested on the host by `firmware/test/test_matter_convert.py`. The conversion ran on hardware on
-2026-10-10, with the factory layout.
+> **Retired on 2026-10-27.** `matter-convert.py`, the tool that moved a stock module off this
+> project's retired Matter firmware, and its settings template `ota-release.env.example` are no
+> longer on `main`. The last release that carries them is `v2.0.2`, and the tag `matter-final`
+> has them too. Nobody needs them unless a module still runs the old Matter firmware: see
+> [`docs/guide/Converting-a-Stock-Module-to-ESPHome.md`](../../docs/guide/Converting-a-Stock-Module-to-ESPHome.md).
 
 ## The libraries and lints
 
 | File | What it does |
 |---|---|
-| `amebaz2_image.py` | the stock module's image format: walk the sub-image chain, verify, re-sign (#75). Its one command, `amebaz2_image.py verify <dump-or-image>`, prints every image in the file with its chain and whether each signature verifies, exits 0 or 1 and writes nothing. Used by `matter-convert.py` and the clip writers in `firmware/flasher/`, tested by `firmware/test/test_image_chain.py`. The recipe is in [`firmware/docs/10-stock-module-boot-and-recovery.md`](../docs/10-stock-module-boot-and-recovery.md) |
+| `amebaz2_image.py` | the stock module's image format: walk the sub-image chain, verify, re-sign (#75). Its one command, `amebaz2_image.py verify <dump-or-image>`, prints every image in the file with its chain and whether each signature verifies, exits 0 or 1 and writes nothing. Used by the clip writers in `firmware/flasher/`, tested by `firmware/test/test_image_chain.py`. The recipe is in [`firmware/docs/10-stock-module-boot-and-recovery.md`](../docs/10-stock-module-boot-and-recovery.md) |
 | `version-lint.py` | holds the firmware version (`firmware/esphome/packages/version.yaml`), the changelog, the release tag and the ESPHome pins together. Options below |
 | `cpp-lint.sh`, `cpp-lint.py` | C and C++ lint for every tree this repository owns. Options below |
 | `esphome-compile-check.sh <config.yaml>...` | compiles the configurations it is given (paths relative to `firmware/esphome/`) and fails when one does not build, when one of this repository's components warns, when a board file's image does not carry the version, or when a stock-module build leaves no slot image of its layout. CI's compile gate. It copies the placeholder secrets when there is no `secrets.yaml`, so **never flash an image it built** |
@@ -119,7 +81,6 @@ Tested on the host by `firmware/test/test_matter_convert.py`. The conversion ran
 | `esphome-glue-tidy.py <compile_commands.json>` | clang-tidy over the components as a board build compiles them, for the files a host build cannot reach (`wifi_setup_mode.cpp`, `w41h1_module.cpp`, code under a platform `#ifdef`). It reports and always exits 0: it is not a gate |
 | `esphome-upstream-check.sh` | runs ESPHome's own CI scripts against `hisense_ac` in a checkout of `esphome/esphome` that it clones under `~/.cache/hisense-w41h1/esphome-upstream` (`ci-custom.py`, `build_codeowners.py`, ruff, pylint, `test_build_components.py`). The default ref is the pinned release. `ESPHOME_UPSTREAM_REF=dev` checks against their development branch. It sends nothing upstream |
 | `stop-slop.sh` | the pre-commit gate on newly added prose: it blocks an em dash in the added lines of staged Markdown |
-| `ota-release.env.example` | template for the settings of `matter-convert.py`. Never commit a filled-in copy |
 
 ### `version-lint.py`
 

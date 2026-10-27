@@ -26,12 +26,21 @@ from edge_harness import CLEAN_ENV, ROOT, SCRIPTS, check, died, environ, patched
 import dev
 
 DEV = SCRIPTS / "dev.py"
-NO_ENVF = "/nonexistent/ota-release.env"
 
 
 def cli(*args, stdin="", **env):
     return subprocess.run([sys.executable, str(DEV), *args], input=stdin, capture_output=True, text=True,
-                          env={**CLEAN_ENV, "ENVF": NO_ENVF, **env}, timeout=60)
+                          env={**CLEAN_ENV, **env}, timeout=60)
+
+
+def parses(*args):
+    """The command line through dev.py's parser alone, nothing run. Returns ("ran", namespace) or
+    ("die", message)."""
+    with quiet():
+        try:
+            return "ran", dev.parser().parse_args(list(args))
+        except dev.Die as e:
+            return "die", str(e)
 
 
 def main(*args, typed=None):
@@ -66,7 +75,7 @@ for flag in ("-h", "--help", "help"):
 
 # (arguments, text expected on stderr, what it shows)
 REFUSALS = [
-    (["frobnicate"], "invalid choice: 'frobnicate' (choose from 'walk', 'doctor'", "an unknown command is named, with the ones there are"),
+    (["frobnicate"], "invalid choice: 'frobnicate' (choose from 'doctor', 'test'", "an unknown command is named, with the ones there are"),
     (["frobnicate", "esphome"], "invalid choice: 'frobnicate'", "the same with the word esphome after it"),
     (["build", "ESPHOME"], "argument target: invalid choice: 'ESPHOME'", "the word esphome is case-sensitive"),
     (["build", "esphome", "--bogus"], "unrecognized arguments: --bogus", "an unknown option"),
@@ -79,15 +88,18 @@ REFUSALS = [
     (["flash", "esphome"], "flash needs --port", "flash without a port"),
     (["flash"], "flash needs --port", "the same without the word esphome"),
     (["monitor", "esphome"], "monitor needs --port", "monitor without a port"),
-    (["erase", "esphome"], "erase needs --port", "erase without a port"),
     (["bench", "esphome"], "bench needs --port", "bench without a port"),
     (["bench", "esphome", "--port", "/dev/null"], "bench needs --sim-port", "bench without a simulator port"),
-    (["build", "esphome", "--serial", "5"], "unrecognized arguments: --serial 5", "--serial belongs to matter-convert.py"),
-    (["build", "esphome", "--stage"], "unrecognized arguments: --stage", "--stage belongs to matter-convert.py"),
-    (["convert", "esphome", "--board", "amebaz2-factory"], "invalid choice: 'convert'", "convert is matter-convert.py's"),
+    (["build", "esphome", "--serial", "5"], "unrecognized arguments: --serial 5", "--serial belonged to the retired Matter conversion"),
+    (["build", "esphome", "--stage"], "unrecognized arguments: --stage", "--stage belonged to the retired Matter conversion"),
+    (["convert", "esphome", "--board", "amebaz2-factory"], "invalid choice: 'convert'", "convert belonged to the retired Matter conversion"),
     (["matter-slots", "127.0.0.1"], "invalid choice: 'matter-slots'", "and so are the probes"),
     (["ota", "amebaz2", "build"], "invalid choice: 'ota'", "the retired ota steps are an unknown command like any other"),
     (["flash", "amebaz2", "--port", "/dev/null"], "argument target: invalid choice: 'amebaz2'", "the retired amebaz2 target is not a word dev.py knows"),
+    (["walk"], "invalid choice: 'walk'", "the removed guided walk is an unknown command"),
+    (["next", "esphome"], "invalid choice: 'next'", "and so is the removed bring-up text"),
+    (["fetch"], "invalid choice: 'fetch'", "and the removed pipx install"),
+    (["erase", "esphome", "--port", "/dev/null"], "invalid choice: 'erase'", "and the removed erase"),
 ]
 for args, needle, why in REFUSALS:
     how, text = main(*args)
@@ -105,43 +117,30 @@ for flag in ("--board", "--port", "--sim-port", "--name", "--friendly-name"):
           f"{flag} with no value is refused, and the message says a value is missing")
 
 # The word esphome after the command is optional: there is no other firmware to name.
-for args in (["next"], ["next", "esphome"], ["next", "--board", "classic"], ["next", "esphome", "--board", "classic"],
-             ["next", "--board", "classic", "esphome"]):
-    check(main(*args)[0] == "ran", f"`dev.py {' '.join(args)}` runs")
+for args in (["build"], ["build", "esphome"], ["build", "--board", "classic"], ["build", "esphome", "--board", "classic"],
+             ["build", "--board", "classic", "esphome"]):
+    check(parses(*args)[0] == "ran", f"`dev.py {' '.join(args)}` is accepted")
 r = cli("build", "--help")
 check(r.returncode == 0 and "--board" in r.stdout and "--friendly-name" in r.stdout, "a command's own --help lists its options")
 
-# The node name is a hostname: `next` only prints, so it shows which names get through.
+# The node name is a hostname: the parser alone shows which names get through.
 for name in ("a", "ac-2", "0a", "a" * 31):
-    check(main("next", "esphome", "--name", name)[0] == "ran", f"--name '{name[:12]}' ({len(name)} chars) is accepted")
-check(main("next", "esphome", "--name", "-lead") == ("die", "argument --name: expected one argument"),
+    check(parses("build", "--name", name)[0] == "ran", f"--name '{name[:12]}' ({len(name)} chars) is accepted")
+check(parses("build", "--name", "-lead") == ("die", "argument --name: expected one argument"),
       "--name '-lead' is refused: a word that starts with a hyphen is read as an option")
 for name in ("Bad_Name", "UPPER", "-lead", "trail-", "a" * 32, "a.b", "a b", "ac\n"):
-    how, text = main("next", "esphome", f"--name={name}")
+    how, text = parses("build", f"--name={name}")
     check(how == "die" and "is not a valid hostname" in text, f"--name {name[:12]!r} ({len(name)} chars) is refused")
-check(main("next", "esphome", "--name", "")[0] == "ran", "an empty --name falls back to the default name")
+check(parses("build", "--name", "")[0] == "ran", "an empty --name falls back to the default name")
 
 # The stock module has no USB path: every command that would touch a port is refused before it runs.
 for board in dev.ESPHOME_AMEBAZ2_BOARDS:
-    for cmd in ("walk", "erase", "flash", "monitor", "bench", "next"):
+    for cmd in ("flash", "monitor", "bench"):
         how, text = main(cmd, "esphome", "--board", board, "--port", "/dev/null", "--sim-port", "/dev/null")
         check(how == "die" and "has test and build" in text, f"{cmd} --board {board} is refused")
 
-# erase asks for the word ERASE. Anything else, or no terminal, erases nothing.
-for typed in (None, "", "erase", "y", "yes", "ERASE now", "E R A S E"):
-    check(main("erase", "esphome", "--port", "/dev/null", typed=typed) == ("die", "not confirmed; nothing erased"),
-          f"erase with {'no terminal' if typed is None else repr(typed)} typed erases nothing")
-r = cli("erase", "esphome", "--port", "/dev/null", stdin="erase\n")
-check(r.returncode == 1 and "not confirmed; nothing erased" in r.stderr and "BRAND-NEW board only" in r.stderr,
-      "erase from a real process: the warning, the prompt, and exit 1 on the wrong word")
-
-# walk with no terminal: every question is a no, the port prompt is skipped, the notes are printed.
-r = cli("walk", "esphome")
-check(r.returncode == 0 and "5/5 next steps" in r.stdout and "Staged bring-up" in r.stdout,
-      "walk with no terminal skips every step and still prints the bring-up notes")
-
 # ================================================================================================
-print("== dev.py edges: boards, the esphome command, build and erase ==")
+print("== dev.py edges: boards, the esphome command and build ==")
 
 # The pins are read from the board file, so the wiring note of `bench` cannot drift from it.
 for board, pins in (("c3", ("5", "6", "10")), ("c3-plus", ("5", "6", "10")), ("classic", ("19", "18", "4"))):
@@ -285,34 +284,21 @@ with patched(dev, ESPHOME_DIR=doctor_dir), environ(ESPHOME=str(fake_esphome), FA
     with patched(dev, have=lambda tool: tool in ("git", "python3")), quiet() as (out, err):
         res = dev.doctor(ctx)
     text = out.getvalue()
-    check(res is False and "g++ not on PATH" in text and "esphome not installed" in text and "pipx not on PATH" in text,
-          "doctor: g++, esphome and pipx missing are three gaps, all listed in one run")
+    check(res is False and "g++ not on PATH" in text and f"esphome not installed (pipx install esphome=={dev.ESPHOME_PIN}" in text,
+          "doctor: g++ and esphome missing are two gaps, listed in one run, with the way to get esphome")
 r = cli("doctor", "esphome", ESPHOME="/nonexistent/esphome")
 check(r.returncode == 1 and "esphome not installed" in r.stdout and "doctor found gaps" in r.stderr,
       "doctor exits 1 when it found a gap")
 
-# fetch: needs pipx, and asks before it installs.
-with patched(dev, have=lambda tool: False):
-    msg = died(dev.fetch, dev.Ctx("c3", None, None))
-    check(msg and "install pipx first" in msg, "fetch without pipx is refused and says how to get it")
-calls.clear()
-with patched(dev, have=lambda tool: True, run=record_run, input=lambda q: "n"):
-    dev.fetch(dev.Ctx("c3", None, None))
-    check(not calls, "fetch answered with n installs nothing")
-# Its closing message names every value the build reads from secrets.yaml. One that is left out
+# secrets.yaml.example names every value the build reads from secrets.yaml. One that is left out
 # (wifi_ap_password was) is one the user learns about from a failed build.
-calls.clear()
-with patched(dev, have=lambda tool: True, run=record_run, input=lambda q: "y"), quiet() as (out, err):
-    dev.fetch(dev.Ctx("c3", None, None))
 secrets_read = set()
 for yaml_file in sorted(dev.ESPHOME_DIR.glob("*.yaml")) + sorted((dev.ESPHOME_DIR / "packages").glob("*.yaml")):
     if yaml_file.name != "secrets.yaml":
         secrets_read |= set(re.findall(r"!secret\s+(\w+)", yaml_file.read_text()))
-check(len(secrets_read) >= 4 and all(key in out.getvalue() for key in secrets_read),
-      f"fetch ends by naming every value the board files and packages read from secrets.yaml ({len(secrets_read)} of them)")
 example = (dev.ESPHOME_DIR / "secrets.yaml.example").read_text()
-check(all(re.search(rf"^{key}:", example, re.M) for key in secrets_read),
-      "and secrets.yaml.example has a line for each of them")
+check(len(secrets_read) >= 4 and all(re.search(rf"^{key}:", example, re.M) for key in secrets_read),
+      f"secrets.yaml.example has a line for every value the board files and packages read ({len(secrets_read)} of them)")
 # The example's API key is public. It has to look like a placeholder, so nobody takes it for a
 # key, and still be 32 bytes of base64, so ESPHome accepts the file as it is. Not 32 zero bytes:
 # ESPHome 2026.9 refuses that key.
@@ -321,13 +307,13 @@ check(example_key is not None
       and base64.b64decode(example_key.group(1), validate=True) == b"this-is-a-public-placeholder-key",
       "the example's API key is a placeholder everyone can recognise: it decodes to a sentence saying so")
 
-# The guide pages the two scripts send the user to exist, are not "Moved" pointers, and have the
+# The guide pages dev.py sends the user to exist, are not "Moved" pointers, and have the
 # heading the link names.
 def heading_anchors(text):
     return {re.sub(r"[^a-z0-9 -]", "", h.lower()).replace(" ", "-") for h in re.findall(r"^#+\s+(.+)$", text, re.M)}
 
 
-for tool in ("dev.py", "matter-convert.py"):
+for tool in ("dev.py",):
     pointers = re.findall(r"docs/guide/[\w-]+\.md(?:#[\w-]+)?", (SCRIPTS / tool).read_text())
     bad = []
     for pointer in sorted(set(pointers)):
@@ -344,48 +330,6 @@ for tool in ("dev.py", "matter-convert.py"):
     check(pointers and not bad, f"{tool}: every guide page it names is there, current, with its heading"
           + (": " + "; ".join(bad) if bad else ""))
 
-# erase: the typed word, then esptool from the same environment as esphome.
-venv = TMP / "venv" / "bin"
-script(venv / "esphome", "#!/bin/sh\n")
-script(venv / "python", "#!/bin/sh\n")
-calls.clear()
-with patched(dev, run=record_run, input=lambda q: "ERASE"), environ(ESPHOME=str(venv / "esphome")):
-    with quiet():
-        dev.erase(dev.Ctx("c3", "/dev/ttyFAKE", None))
-check(calls and calls[-1]["args"] == [str(venv / "python"), "-m", "esptool", "--chip", "esp32c3", "--port", "/dev/ttyFAKE", "erase_flash"],
-      "erase confirmed: esptool erase_flash on the port given, for the board's chip, with the python beside esphome")
-calls.clear()
-with patched(dev, run=record_run, input=lambda q: " ERASE "), environ(ESPHOME="/nonexistent/esphome"):
-    with quiet():
-        dev.erase(dev.Ctx("c3", "/dev/ttyFAKE", None))
-check(calls and calls[-1]["args"][0] == "python3", "erase: no python beside esphome falls back to python3 on PATH")
-for board, chip in (("c3", "esp32c3"), ("c3-plus", "esp32c3"), ("classic", "esp32")):
-    calls.clear()
-    prompts = []
-    with patched(dev, run=record_run, input=lambda q: prompts.append(q) or "ERASE"), environ(ESPHOME="/nonexistent/esphome"), quiet():
-        dev.erase(dev.Ctx(board, "/dev/ttyFAKE"))
-    check(calls[-1]["args"][3:5] == ["--chip", chip] and f"the {chip} on /dev/ttyFAKE" in prompts[0],
-          f"erase --board {board}: esptool is told to expect an {chip}, and the prompt names the chip and the port")
-for board in dev.ESPHOME_AMEBAZ2_BOARDS:
-    calls.clear()
-    with patched(dev, run=record_run, input=lambda q: "ERASE"), quiet():
-        msg = died(dev.erase, dev.Ctx(board, "/dev/ttyFAKE"))
-    check(msg and "has test and build" in msg and not calls, f"erase called for {board} runs nothing, whatever is typed")
-calls.clear()
-with patched(dev, run=record_run, input=lambda q: "erase"), quiet():
-    msg = died(dev.erase, dev.Ctx("c3", "/dev/ttyFAKE", None))
-check(msg == "not confirmed; nothing erased" and not calls, "erase: the word in lower case runs nothing")
-
-# walk: the order of the steps, driven by scripted answers.
-order = []
-answers = iter(["y", "y", "y", "y", "/dev/ttyFAKE", "n", "y"])
-steps = {name: (lambda ctx, name=name: order.append(name)) for name in ("fetch", "test_target", "build", "erase", "flash")}
-with patched(dev, input=lambda q: next(answers), doctor=lambda ctx: order.append("doctor") or False, **steps), quiet():
-    ctx = dev.Ctx("c3", None, None)
-    dev.walk(ctx)
-check(order == ["doctor", "fetch", "test_target", "build", "flash"] and ctx.port == "/dev/ttyFAKE",
-      "walk: doctor, fetch after gaps, test, build, then flash on the port typed in, erase skipped on n")
-
 # ================================================================================================
 print("== dev.py edges: the environment it runs in ==")
 
@@ -394,8 +338,6 @@ marker = TMP / "ran-from-ESPHOME"
 for cmd in ("doctor", "build", "test"):
     r = cli(cmd, "esphome", ESPHOME=f"nonexistent-tool; touch {marker}")
 check(not marker.exists(), "$ESPHOME is looked up as a command name, not run as shell text (doctor, build, test)")
-r = cli("erase", "esphome", "--port", "/dev/null", stdin="ERASE\n", ESPHOME=f"nonexistent-tool; touch {marker}", PATH=str(TMP / "empty-path"))
-check(not marker.exists() and r.returncode == 1 and "Traceback" not in r.stderr, "nor by erase, which looks for the python beside it")
 
 # A command with arguments in $ESPHOME ("uvx esphome", "python3 -m esphome") runs as that command.
 (esphome_dir / "secrets.yaml").write_text("")
@@ -420,28 +362,29 @@ only_python = TMP / "only-python"
 only_python.mkdir()
 (only_python / "python3").symlink_to(sys.executable)
 r = subprocess.run([sys.executable, str(DEV), "doctor", "esphome"], capture_output=True, text=True,
-                   env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
+                   env={"PATH": str(only_python), "HOME": str(TMP)})
 check(r.returncode == 1 and "Traceback" not in r.stderr and "git not on PATH" in r.stdout,
       "doctor on a PATH without bash lists what is missing")
 r = subprocess.run([sys.executable, str(DEV), "test", "esphome"], capture_output=True, text=True,
-                   env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
+                   env={"PATH": str(only_python), "HOME": str(TMP)})
 check(r.returncode == 1 and "Traceback" not in r.stderr and "cannot run bash" in r.stderr,
       "test on a PATH without bash says it cannot run bash (the host tests are a bash script)")
 
 # A PATH with python3 and bash and nothing else: doctor lists every gap and exits 1.
 (only_python / "bash").symlink_to(shutil.which("bash"))
 r = subprocess.run([sys.executable, str(DEV), "doctor", "esphome"], capture_output=True, text=True,
-                   env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
-check(r.returncode == 1 and all(gap in r.stdout for gap in ("git not on PATH", "g++ not on PATH", "esphome not installed",
-                                                             "pipx not on PATH")),
-      "doctor on a PATH with only python3 and bash lists git, g++, esphome and pipx as gaps and exits 1")
+                   env={"PATH": str(only_python), "HOME": str(TMP)})
+check(r.returncode == 1 and all(gap in r.stdout for gap in ("git not on PATH", "g++ not on PATH", "esphome not installed")),
+      "doctor on a PATH with only python3 and bash lists git, g++ and esphome as gaps and exits 1")
 r = subprocess.run([sys.executable, str(DEV), "build", "esphome"], capture_output=True, text=True,
-                   env={"PATH": str(only_python), "HOME": str(TMP), "ENVF": NO_ENVF})
-check(r.returncode == 1 and "'esphome' not found (dev.py fetch esphome, or set ESPHOME=)" in r.stderr,
+                   env={"PATH": str(only_python), "HOME": str(TMP)})
+check(r.returncode == 1 and f"'esphome' not found (pipx install esphome=={dev.ESPHOME_PIN}, or set ESPHOME=)" in r.stderr,
       "build with no esphome on PATH is refused with the way to get it")
 
+check(not any(hasattr(dev, name) for name in ("walk", "next_steps", "fetch", "erase", "ESP_CHIP")),
+      "dev.py holds none of the removed commands (walk, next, fetch, erase)")
 check(not any(hasattr(dev, name) for name in ("convert", "load_env", "pi_stage", "matter_slots", "matter_backup", "ENVF")),
-      "dev.py holds nothing of the Matter conversion: that is matter-convert.py")
+      "dev.py holds nothing of the retired Matter conversion")
 
 tmp_holder.cleanup()
 sys.exit(edge_harness.finish("DEV.PY EDGES"))

@@ -72,7 +72,7 @@ def grade(path, strict):
         return
     for how, payload, trailer in found:
         # The byte-sum is an OTA TRANSPORT trailer. A transport artifact (bare payload, or a
-        # raw slot fetched by `matter-convert.py backup`) carries it; a slot carved out of a multi-slot
+        # raw slot read back by the retired Matter conversion's `backup`) carries it; a slot carved out of a multi-slot
         # flash image or dump may not, so there it is reported, not gated.
         gated = strict and how in ("bare", "@0x0")
         ok, lines = az.verify(payload, trailer if gated else None)
