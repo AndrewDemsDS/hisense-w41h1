@@ -1,6 +1,6 @@
 # packages/status-pixel.yaml on GPIO8 of an ESP32-C3 without status_pixel_strapping_ok: ESPHome warns, as it should.
 # accepted: by design, with the warning below. The Plus board file sets status_pixel_strapping_ok.
-# warns: GPIO8 is a strapping PIN
+# warns: GPIO8 is a strapping pin
 substitutions:
   name: invalid-case
   friendly_name: Invalid case
