@@ -7,7 +7,7 @@
 
 namespace esphome::hisense_ac {
 
-static const char *const TAG = "hisense_ac";
+ESPHOME_LOG_TAG(TAG, "hisense_ac");
 
 // What each log level shows:
 //   WARN          the bus link dropping, a frame that could not be sent, a bad checksum, a fault,

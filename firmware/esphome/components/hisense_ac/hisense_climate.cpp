@@ -5,7 +5,7 @@
 
 namespace esphome::hisense_ac {
 
-static const char *const TAG = "hisense_ac.climate";
+ESPHOME_LOG_TAG(TAG, "hisense_ac.climate");
 
 // hisense_mapping.h mirrors these enums as plain ints so it stays free of ESPHome types. If ESPHome
 // ever renumbers one, this is where the build breaks, instead of the A/C silently switching to

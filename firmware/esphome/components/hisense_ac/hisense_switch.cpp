@@ -5,7 +5,7 @@
 
 namespace esphome::hisense_ac {
 
-static const char *const TAG = "hisense_ac.switch";
+ESPHOME_LOG_TAG(TAG, "hisense_ac.switch");
 
 void HisenseSwitch::setup() {
   this->parent_->add_status_listener(this);
