@@ -1170,7 +1170,7 @@ check(all(ignored[o] for o in binaries), f"every test binary run_tests.sh builds
 objects = [o for o in outputs if o.endswith(".o")]
 check(objects and all(ignored[o] for o in objects), "the object files run_tests.sh builds are in .gitignore: they stay behind when the link fails")
 
-for layer in ("test_image_chain.py", "test_dev_release.py", "test_flasher.py", "test_version_lint.py"):
+for layer in ("test_image_chain.py", "test_dev_release.py", "test_flasher.py", "test_version_lint.py", "test_pin_bump.py"):
     check(layer in run_tests, f"run_tests.sh runs {layer}")
 
 tmp_holder.cleanup()
