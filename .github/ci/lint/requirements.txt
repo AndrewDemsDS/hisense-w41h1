@@ -8,4 +8,4 @@ shellcheck-py==0.11.0.1    # the shellcheck actionlint calls
 cppcheck==1.5.3            # Cppcheck 2.22.0, on the pure sources of the components
 ruff==0.16.10              # Python lint, rules in ruff.toml
 gcovr==8.6                 # the coverage table: firmware/test/coverage/run.sh runs it through uvx
-uv==0.13.0                 # uvx, with this file as its constraints (UV_CONSTRAINT)
+uv==0.13.4                 # uvx, with this file as its constraints (UV_CONSTRAINT)
