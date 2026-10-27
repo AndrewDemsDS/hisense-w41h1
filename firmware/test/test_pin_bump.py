@@ -288,7 +288,8 @@ check(re.search(r"(?m)^permissions: \{\}$", wf) and "write-all" not in wf, "no p
 check("pin-bump.py \"$WHAT\" --check --output \"$GITHUB_OUTPUT\"" in wf and "version-lint.py" in wf, "it runs the check, and version-lint after the rewrite")
 check("--state all" in wf, "a pull request for the same version, closed ones included, stops it")
 check("gh workflow run qa.yaml" in wf and re.search(r"(?m)^  workflow_dispatch:$", qa), "it starts qa.yaml, which takes workflow_dispatch")
-check("dry_run" in wf and "github.ref_name != github.event.repository.default_branch" in wf, "a dry run, forced off the default branch")
+check("dry_run" in wf and "github.ref_name != github.event.repository.default_branch" in wf,
+      "a dry run, forced off the default branch (a pull request's ref is N/merge, so a pull request is one too)")
 check(not re.search(r"(?i)claude|anthropic|generated with|co-authored", wf), "no assistant or vendor text in what the bot writes")
 run_tests = (ROOT / "firmware/test/run_tests.sh").read_text()
 check("test_pin_bump.py" in run_tests, "run_tests.sh runs this test")

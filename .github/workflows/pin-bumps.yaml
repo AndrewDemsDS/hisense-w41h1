@@ -22,11 +22,18 @@ name: Pin bumps
 #
 # The commit is made as github-actions[bot] and is not signed: there is no key for a bot here.
 #
-# Started by hand with dry_run (or on any branch other than the default one), it checks and shows
-# the change in the summary, and pushes and opens nothing.
+# Started by hand with dry_run, on any branch other than the default one, or by a pull request
+# that changes the workflow or the script, it checks and shows the change in the summary, and
+# pushes and opens nothing.
 on:
   schedule:
     - cron: "41 5 * * *"   # 05:41 UTC, after the nightly (02:17), off the hour
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/pin-bumps.yaml
+      - firmware/scripts/pin-bump.py
+      - firmware/scripts/version-lint.py
   workflow_dispatch:
     inputs:
       dry_run:

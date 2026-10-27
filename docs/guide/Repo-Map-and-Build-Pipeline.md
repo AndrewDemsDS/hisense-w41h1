@@ -139,8 +139,9 @@ and nothing is tagged or published.
 
 The rewrite is `firmware/scripts/pin-bump.py`. A version that already has a pull request, open or
 closed, is skipped. Because a push made with `GITHUB_TOKEN` starts no workflow, the job starts
-`qa.yaml` and `nightly.yaml` on the new branch itself. Started by hand with `dry_run`, or from a
-branch other than `main`, it shows the change in the run's summary and pushes nothing.
+`qa.yaml` and `nightly.yaml` on the new branch itself. Started by hand with `dry_run`, from a
+branch other than `main`, or by a pull request that changes it or `pin-bump.py`, it shows the
+change in the run's summary and pushes nothing.
 
 The workflows' own helpers are in `.github/scripts/`:
 
