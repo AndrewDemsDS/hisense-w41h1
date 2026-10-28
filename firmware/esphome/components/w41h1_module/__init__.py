@@ -163,3 +163,11 @@ async def to_code(config):
     # updates and one mains power cycle came back without a hang (one module, 2026-10-10).
     cg.add_build_flag("-Wl,--wrap=lt_reboot")
     cg.add_build_flag("-Wl,--defsym=__wrap_lt_reboot=sys_reset")
+
+    # LibreTiny 1.13.0 moves the bootloader's bit flag at flash 0x1004 on every update, also on
+    # a bootloader that picks the slot by serial number, as this module's does. Every 33rd update
+    # it erases the 4 KB sector at 0x1000 and writes back 128 bytes: on this module that keeps all
+    # of its data (8 bytes, the same in every dump on record), but a power cut in between loses
+    # the flash calibration the boot code reads. w41h1_module.cpp leaves the flag alone unless
+    # the bootloader uses it.
+    cg.add_build_flag("-Wl,--wrap=lt_ota_dual_switch_flag")
