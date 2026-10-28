@@ -11,6 +11,14 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- On the stock module, an update no longer moves LibreTiny's OTA bit flag at flash `0x1004`.
+  This module's bootloader picks the slot by serial number and never reads that flag, but
+  LibreTiny 1.13.0 moved it on every update and, at every 33rd, erased the 4 KB sector at `0x1000`
+  and wrote back 128 bytes. All of the module's data there fits in those 128 bytes (8 bytes in
+  every dump on record), so nothing was lost, but a power cut between the erase and the write
+  would take the flash calibration the boot code reads. A bootloader that does use the flag
+  still gets it moved.
+
 - The project builds with ESPHome 2026.10.0 (was 2026.9.1): the pin in CI, `dev.py` and the
   upstream check, and the install commands in the docs. ESP32 boards now build with the ESP-IDF
   release ESPHome 2026.10.0 recommends, 5.5.6 (was 5.5.5). No change to the components. A node

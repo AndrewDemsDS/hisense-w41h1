@@ -124,4 +124,17 @@ void W41H1Module::restart_serial_port_() {
 
 }  // namespace esphome::w41h1_module
 
+#ifdef USE_LIBRETINY_VARIANT_RTL8720C
+// The other half of --wrap=lt_ota_dual_switch_flag (__init__.py has why). LibreTiny's own scan
+// of the bootloader decides: 2 is its LT_OTA_SWITCH_BIT_FLAG, and only that bootloader reads the
+// flag, so on any other the flag stays as it is.
+extern "C" uint8_t lt_ota_check_switch_type();
+extern "C" bool __real_lt_ota_dual_switch_flag();
+extern "C" bool __wrap_lt_ota_dual_switch_flag() {
+  if (lt_ota_check_switch_type() == 2)
+    return __real_lt_ota_dual_switch_flag();
+  return true;
+}
+#endif
+
 #endif  // USE_LIBRETINY

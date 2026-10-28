@@ -399,6 +399,14 @@ jobs:
                 compile "w41h1-amebaz2-$layout.yaml" > build.log 2>&1 || { tail -n 200 build.log; exit 1; }
             fi
             ls -l "$out/firmware.uf2" "$out/image_firmware_is.${want##*:}.bin"
+            # The OTA bit-flag guard (w41h1_module.cpp) links either way, so look at the call:
+            # lt_ota_switch() has to reach the bit flag through the wrapper.
+            od=("$HOME"/.platformio/packages/toolchain-gccarmnoneeabi*/bin/arm-none-eabi-objdump)
+            if ! "${od[0]}" -d "$out/raw_firmware.elf" | awk '/<lt_ota_switch>:/ { f = 1 } f && /^$/ { exit } f' |
+              grep -q "<__wrap_lt_ota_dual_switch_flag>"; then
+              echo "::error::$layout: lt_ota_switch() does not call the OTA bit-flag guard of w41h1_module"
+              exit 1
+            fi
           done
           # Every layout the tree has is one of the three built above.
           for b in $(bash ../../.github/scripts/board-groups.sh amebaz2); do
