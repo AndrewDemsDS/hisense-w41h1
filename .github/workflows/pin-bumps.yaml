@@ -6,11 +6,17 @@ name: Pin bumps
 # and flashes the units by hand.
 #
 #   esphome   the newest stable release on PyPI (no beta or release candidate). Every place
-#             version-lint.py lists, the docs that tell a reader which release to install, and a
-#             CHANGELOG.md line. Branch bot/esphome-X.Y.Z
+#             version-lint.py lists (.github/ci/esphome/requirements.txt first), the docs that
+#             tell a reader which release to install, and a CHANGELOG.md line. Branch
+#             bot/esphome-X.Y.Z
 #   idf       the newest espressif/idf tag on the v5.5 line (the line pinned today), with the digest
-#             of its linux/amd64 image. A move to v5.6 or v6 is a decision for a person (a new
-#             toolchain, API changes) and is made by hand. Branch bot/idf-vX.Y.Z
+#             of its linux/amd64 image, in .github/ci/idf/image.txt. A move to v5.6 or v6 is a
+#             decision for a person (a new toolchain, API changes) and is made by hand. Branch
+#             bot/idf-vX.Y.Z
+#
+# No pin is in a workflow file: a push made with GITHUB_TOKEN is refused when it changes a file
+# under .github/workflows/ (the token cannot carry the `workflows` permission), which is what
+# failed here daily from 2026-11-03 to 2026-11-05. The workflows read the two pin files instead.
 #
 # A pull request for that exact version, open, closed or merged, stops the job: a bump the
 # maintainer closed is not opened again every day.
@@ -95,7 +101,7 @@ jobs:
             branch="bot/idf-$LATEST"
             title="ci(nightly): build esp32-recon with ESP-IDF $LATEST (was $CURRENT)"
             set_args=(--set "$LATEST" --digest "$DIGEST")
-            what_text="the ESP-IDF image of the nightly esp32-recon job (tag and linux/amd64 digest $DIGEST), its comment and the esp32-recon README. It stays on the line pinned today: a move to another ESP-IDF line is made by hand"
+            what_text="the ESP-IDF image of the nightly esp32-recon job (.github/ci/idf/image.txt: tag and linux/amd64 digest $DIGEST) and the esp32-recon README. It stays on the line pinned today: a move to another ESP-IDF line is made by hand"
             after="Nothing runs on a unit: esp32-recon is a bench tool, and this only changes the image CI builds it with."
           fi
 

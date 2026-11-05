@@ -46,8 +46,6 @@ OLD_DIGEST = "sha256:" + "a" * 64
 NEW_DIGEST = "sha256:" + "b" * 64
 
 FIXTURE = {
-    ".github/workflows/qa.yaml": 'env:\n  ESPHOME_VERSION: "2026.9.1"\n',
-    ".github/workflows/esphome-release.yaml": 'env:\n  ESPHOME_VERSION: "2026.9.1"\n',
     "firmware/scripts/dev.py": 'ESPHOME_PIN = "2026.9.1"   # the release CI builds with\n',
     "firmware/scripts/esphome-upstream-check.sh": 'ESPHOME_SPEC="esphome==2026.9.1"\n',
     ".github/ci/esphome/requirements.txt": "# the pin\nesphome==2026.9.1\n",
@@ -60,24 +58,7 @@ FIXTURE = {
     "firmware/esphome/README.md": "for example `2.0.0 (ESPHome 2026.9.1)`\n",
     "CHANGELOG.md": "# Changelog\n\nIntro.\n\n## Unreleased\n\n- First thing.\n\n- Second thing,\n  two lines.\n\n"
                     "## 2.0.2 - 2026-10-27\n\n- Built with 2026.9.1.\n",
-    ".github/workflows/nightly.yaml": (
-        "jobs:\n"
-        "  other:\n"
-        "    steps:\n"
-        "      - run: echo v5.5.5 is not ours\n"
-        "\n"
-        "  # firmware/esp32-recon/ builds with\n"
-        "  # ESP-IDF v5.5.5, the newest v5.5 release. Not v5.5.50.\n"
-        "  esp32-recon:\n"
-        "    container:\n"
-        f"      image: espressif/idf:v5.5.5@{OLD_DIGEST}\n"
-        "    steps:\n"
-        "      - run: echo \"$(cat v || echo v5.5.5)\"\n"
-        "\n"
-        "  # after\n"
-        "  later:\n"
-        "    steps:\n"
-        "      - run: echo v5.5.5\n"),
+    ".github/ci/idf/image.txt": f"# the image, v5.5.5 at the time of writing\nespressif/idf:v5.5.5@{OLD_DIGEST}\n",
     "firmware/esp32-recon/README.md": "CI builds it every night with v5.5.5 in Espressif's container (the\n",
 }
 
@@ -119,9 +100,10 @@ check(all((ROOT / rel).is_file() for rel, _ in pb.ESPHOME_DOCS), "every doc it r
 real_docs = {rel: (ROOT / rel).read_text() for rel, _ in pb.ESPHOME_DOCS}
 real_pin = pb.esphome_pin(ROOT)
 check(all(re.search(p, real_docs[rel]) for rel, p in pb.ESPHOME_DOCS), "and each of its patterns finds its line there")
-check(pb.idf_pin(ROOT)[0].startswith("v5.5."), "the real nightly.yaml pins one espressif/idf image on v5.5")
+check(pb.idf_pin(ROOT)[0].startswith("v5.5."), "the real image file pins one espressif/idf image on v5.5")
 check(re.search(pb.RECON_DOC, (ROOT / pb.RECON_README).read_text()) is not None, "and the esp32-recon README names it")
-check(pb.RECON_JOB.search((ROOT / pb.NIGHTLY).read_text()) is not None, "the esp32-recon job is found in nightly.yaml")
+nightly = (ROOT / ".github/workflows/nightly.yaml").read_text()
+check(pb.IDF_FILE in nightly and not re.search(r"espressif/idf:v\d", nightly), "nightly.yaml reads the image file and names no tag itself")
 check(real_pin, f"the real tree has one ESPHome pin ({real_pin})")
 
 # ================================================================================================
@@ -180,12 +162,9 @@ check(code == 1 and "requirements.txt is missing" in out, "a missing pin file is
 print("== idf --set ==")
 d = tree()
 code, out = run("idf", "--set", "v5.5.6", "--digest", NEW_DIGEST, "--repo", str(d))
-nightly = (d / pb.NIGHTLY).read_text()
+image = (d / pb.IDF_FILE).read_text()
 check(code == 0 and "v5.5.5 -> v5.5.6" in out, "a newer tag on the line is set (exit 0)")
-check(f"image: espressif/idf:v5.5.6@{NEW_DIGEST}\n" in nightly and OLD_DIGEST not in nightly, "the image line: tag and digest")
-check("# ESP-IDF v5.5.6, the newest v5.5 release. Not v5.5.50." in nightly, "the comment above the job, and v5.5.50 is not taken for v5.5.5")
-check('echo "$(cat v || echo v5.5.6)"' in nightly, "the fallback in the job's step")
-check(nightly.count("echo v5.5.5") == 2, "another job's v5.5.5, above or below, is not touched")
+check(image == f"# the image, v5.5.5 at the time of writing\nespressif/idf:v5.5.6@{NEW_DIGEST}\n", "the image line: tag and digest, the comment untouched")
 check("every night with v5.5.6 in Espressif's" in (d / pb.RECON_README).read_text(), "the esp32-recon README")
 code, out = run("idf", "--set", "v5.5.6", "--digest", NEW_DIGEST, "--repo", str(d))
 check(code == 0 and "already on v5.5.6" in out, "the same tag again: exit 0, nothing to change")
@@ -197,7 +176,7 @@ for args, why in ((["v6.0.0", "--digest", NEW_DIGEST], "another line (v6)"), (["
     before = snapshot(d)
     code, out = run("idf", "--set", *args, "--repo", str(d))
     check(code == 1 and snapshot(d) == before, f"{why} is refused and nothing is written")
-d = tree({pb.NIGHTLY: "jobs:\n  esp32-recon:\n    container:\n      image: espressif/idf:v5.5.5\n"})
+d = tree({pb.IDF_FILE: "espressif/idf:v5.5.5\n"})
 code, out = run("idf", "--check", "--repo", str(d))
 check(code == 1 and "expected one" in out, "an image without a digest is not a pin it understands")
 
@@ -282,6 +261,11 @@ print("== the workflow ==")
 wf = (ROOT / ".github/workflows/pin-bumps.yaml").read_text()
 qa = (ROOT / ".github/workflows/qa.yaml").read_text()
 check("github.server_url == 'https://github.com'" in wf, "pin-bumps.yaml runs on GitHub only")
+# A push made with GITHUB_TOKEN is refused when it changes a file under .github/workflows/ (the
+# token cannot carry the `workflows` permission), so no pin may live there: the workflows read
+# the pins from files under .github/ci/ instead.
+check(not any(rel.startswith(".github/workflows/") for rel, _ in pb.ESPHOME_PINS) and not pb.IDF_FILE.startswith(".github/workflows/"),
+      "no pin the bot rewrites is under .github/workflows/ (GITHUB_TOKEN cannot push one)")
 uses = re.findall(r"uses:\s*(\S+)", wf)
 check(uses and all(re.search(r"@[0-9a-f]{40}$", u) for u in uses), "every action is pinned by commit")
 check(re.search(r"(?m)^permissions: \{\}$", wf) and "write-all" not in wf, "no permission at the top, the job states its own")

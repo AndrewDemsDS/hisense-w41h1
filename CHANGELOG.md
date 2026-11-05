@@ -11,6 +11,11 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- CI: the ESPHome and ESP-IDF pins moved out of the workflow files into
+  `.github/ci/esphome/requirements.txt` and `.github/ci/idf/image.txt`, which the workflows read.
+  The daily pin-bump pull request was refused at push from 2026-11-03 on because `GITHUB_TOKEN`
+  cannot change a workflow file. No change to the firmware.
+
 - On the stock module, an update no longer moves LibreTiny's OTA bit flag at flash `0x1004`.
   This module's bootloader picks the slot by serial number and never reads that flag, but
   LibreTiny 1.13.0 moved it on every update and, at every 33rd, erased the 4 KB sector at `0x1000`

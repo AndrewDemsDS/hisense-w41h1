@@ -230,6 +230,9 @@ is `firmware/scripts/pin-bump.py`, which you can run yourself (`esphome --check`
   is made by hand.
 - A bump you close without merging is not opened again: the job skips a version that already has a
   pull request, open or closed.
+- No pin lives in a workflow file. The workflows read `.github/ci/esphome/requirements.txt` and
+  `.github/ci/idf/image.txt` at run time, because a push made with `GITHUB_TOKEN` is refused when
+  it changes a file under `.github/workflows/`.
 - Its commits are made by `github-actions[bot]` and are not signed. They are the only unsigned
   commits that reach `main`, through the merge.
 - A push made with `GITHUB_TOKEN` starts no workflow, so the job starts `qa.yaml` and

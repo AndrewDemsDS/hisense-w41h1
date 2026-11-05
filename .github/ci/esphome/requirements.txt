@@ -1,7 +1,7 @@
-# The ESPHome release this repository builds with, as a pip requirement. The same number is
-# written in .github/workflows/qa.yaml and esphome-release.yaml (ESPHOME_VERSION),
-# firmware/scripts/dev.py and firmware/scripts/esphome-upstream-check.sh. version-lint.py holds
-# the five equal, firmware/scripts/pin-bump.py moves them together (the pin-bumps workflow), and
-# a pull request that bumps this line by hand fails CI until the
-# other four are bumped with it, which is the reminder. The nightly workflow installs from here.
+# The ESPHome release this repository builds with, as a pip requirement. The workflows (qa,
+# esphome-release, nightly) install from this file and key their caches on its hash. The same
+# number is written in firmware/scripts/dev.py and firmware/scripts/esphome-upstream-check.sh:
+# version-lint.py holds the three equal, firmware/scripts/pin-bump.py moves them together (the
+# pin-bumps workflow), and a pull request that bumps this line by hand fails CI until the other
+# two are bumped with it, which is the reminder.
 esphome==2026.10.1

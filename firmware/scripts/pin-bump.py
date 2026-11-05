@@ -7,12 +7,13 @@ the result. It never merges, and nothing reaches a unit: the maintainer merges a
   pin-bump.py esphome --check            the pinned ESPHome release and the newest stable one on PyPI
   pin-bump.py esphome --set X.Y.Z        rewrite every pin (version-lint.py's list), the docs that
                                          name the release, and add a CHANGELOG.md line
-  pin-bump.py idf --check                the ESP-IDF image of the nightly esp32-recon job and the
-                                         newest tag on the same vMAJOR.MINOR line on Docker Hub
+  pin-bump.py idf --check                the ESP-IDF image of the nightly esp32-recon job
+                                         (.github/ci/idf/image.txt) and the newest tag on the same
+                                         vMAJOR.MINOR line on Docker Hub
   pin-bump.py idf --set vX.Y.Z [--digest sha256:...]
-                                         rewrite the image (tag and linux/amd64 digest), the job's
-                                         comment and the esp32-recon README. Without --digest the
-                                         digest is fetched from the registry
+                                         rewrite the image (tag and linux/amd64 digest) and the
+                                         esp32-recon README. Without --digest the digest is
+                                         fetched from the registry
 
   --output FILE   (with --check) append current=, latest=, due=true|false (and digest= for idf)
                   to FILE, in the form of $GITHUB_OUTPUT
@@ -21,6 +22,9 @@ the result. It never merges, and nothing reaches a unit: the maintainer merges a
 ESP-IDF stays on the line it is on: with v5.5.5 pinned, v5.5.6 is a bump and v6.0.0 is not. A
 move to another MAJOR.MINOR is a decision for a person (a new toolchain and API changes), made
 by hand. ESPHome takes the newest stable release: digits only, no beta (b) or release candidate.
+
+No pin is under .github/workflows/: the workflow pushes with GITHUB_TOKEN, and a push made with
+that token is refused when it changes a workflow file. The workflows read the pin files.
 
 Exit codes: 0 done (also when the pin is already current), 1 a network or repository problem
 (with a message), 2 a usage error. Stdlib only.
@@ -58,11 +62,10 @@ ESPHOME_DOCS = (
     ("docs/guide/ESP32-Build-Environment.md", r"`([0-9.]+)`, the release CI builds with"),
 )
 
-NIGHTLY = ".github/workflows/nightly.yaml"
+# The image the nightly esp32-recon job builds in, one line (comments above it), read by the job.
+IDF_FILE = ".github/ci/idf/image.txt"
 RECON_README = "firmware/esp32-recon/README.md"
-IDF_IMAGE = re.compile(r"^(\s*image:\s*espressif/idf:)(v\d+\.\d+\.\d+)@(sha256:[0-9a-f]{64})\s*$", re.M)
-# The job and the comment block right above it: the only part of nightly.yaml that names IDF.
-RECON_JOB = re.compile(r"(?ms)^(?:  #[^\n]*\n)*  esp32-recon:\n.*?(?=^(?:  #[^\n]*\n)*  [\w-]+:\n|\Z)")
+IDF_IMAGE = re.compile(r"^(espressif/idf:)(v\d+\.\d+\.\d+)@(sha256:[0-9a-f]{64})[ \t]*$", re.M)
 RECON_DOC = r"every night with (v[0-9.]+) in Espressif's container"
 
 PYPI = "https://pypi.org/pypi/esphome/json"
@@ -172,9 +175,9 @@ def esphome_pin(repo):
 
 
 def idf_pin(repo):
-    found = IDF_IMAGE.findall(read(repo, NIGHTLY))
+    found = IDF_IMAGE.findall(read(repo, IDF_FILE))
     if len(found) != 1:
-        raise Problem(f"{NIGHTLY}: expected one `image: espressif/idf:vX.Y.Z@sha256:...` line, found {len(found)}")
+        raise Problem(f"{IDF_FILE}: expected one `espressif/idf:vX.Y.Z@sha256:...` line, found {len(found)}")
     return found[0][1], found[0][2]
 
 
@@ -238,14 +241,9 @@ def set_idf(repo, new, digest, notes):
     if as_tuple(new) < as_tuple(old):
         raise Problem(f"{new} is older than the pinned {old}: a downgrade is done by hand")
     digest = digest or idf_digest(new)
-    text = read(repo, NIGHTLY)
-    job = RECON_JOB.search(text)
-    if job is None:
-        raise Problem(f"{NIGHTLY}: no esp32-recon job")
-    block = re.sub(rf"\b{re.escape(old)}(?![\d.]*\d)", new, job.group(0)).replace(old_digest, digest)
-    n = len(re.findall(rf"\b{re.escape(old)}(?![\d.]*\d)", job.group(0)))
-    write(repo, NIGHTLY, text[:job.start()] + block + text[job.end():])
-    notes.append(f"  {NIGHTLY}: the image (tag and digest) and {n - 1} other mention(s) in the esp32-recon job")
+    text = read(repo, IDF_FILE)
+    write(repo, IDF_FILE, IDF_IMAGE.sub(lambda m: f"{m.group(1)}{new}@{digest}", text, count=1))
+    notes.append(f"  {IDF_FILE}: the image (tag and digest)")
     path = repo / RECON_README
     if path.is_file():
         doc, k = replace_group(path.read_text(encoding="utf-8"), RECON_DOC, old, new)
