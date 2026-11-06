@@ -2821,7 +2821,7 @@
 		(in_bom yes)
 		(on_board yes)
 		(in_pos_files yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "1b6f0d82-73d9-488e-898a-f3ab1ab2caa7")
 		(property "Reference" "J1"
 			(at 30.48 44.45 0)
@@ -2833,7 +2833,7 @@
 				)
 			)
 		)
-		(property "Value" "A/C port (2.0 mm, verify)"
+		(property "Value" "A/C port (stock header, not fitted)"
 			(at 30.48 57.15 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -2843,7 +2843,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Connector_JST:JST_PH_S4B-PH-K_1x04_P2.00mm_Horizontal"
+		(property "Footprint" "w41h1:AC_Header_1x04_P2.00mm_Horizontal"
 			(at 30.48 49.53 0)
 			(hide yes)
 			(show_name no)
@@ -2876,15 +2876,6 @@
 				)
 			)
 		)
-    (property "MPN" "S4B-PH-K-S(LF)(SN)" (at 30.48 49.53 0)
-      (effects (font (size 1.27 1.27)) (hide yes))
-    )
-    (property "Manufacturer" "JST" (at 30.48 49.53 0)
-      (effects (font (size 1.27 1.27)) (hide yes))
-    )
-    (property "LCSC" "C157926" (at 30.48 49.53 0)
-      (effects (font (size 1.27 1.27)) (hide yes))
-    )
 		(pin "1"
 			(uuid "9daef4c3-f733-4ea3-be53-9e6736d9008e")
 		)
@@ -5573,7 +5564,7 @@
 				)
 			)
 		)
-		(property "Value" "PROG (not fitted)"
+		(property "Value" "PROG 2.54 mm (not fitted)"
 			(at 255.27 175.26 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -5583,7 +5574,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Connector_PinHeader_1.27mm:PinHeader_1x06_P1.27mm_Vertical_SMD_Pin1Left"
+		(property "Footprint" "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical"
 			(at 255.27 165.1 0)
 			(hide yes)
 			(show_name no)

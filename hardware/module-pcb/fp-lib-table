@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "w41h1")(type "KiCad")(uri "${KIPRJMOD}/w41h1.pretty")(options "")(descr "Footprints drawn for this board, written by scripts/place.py"))
+)
