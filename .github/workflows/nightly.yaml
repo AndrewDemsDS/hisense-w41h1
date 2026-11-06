@@ -283,7 +283,8 @@ jobs:
     permissions:
       contents: read
     container:
-      image: ${{ needs.idf-image.outputs.image }}
+      # Pinned by digest in .github/ci/idf/image.txt, which idf-image checks before handing it on.
+      image: ${{ needs.idf-image.outputs.image }} # zizmor: ignore[unpinned-images]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
