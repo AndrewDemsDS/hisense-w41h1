@@ -75,7 +75,8 @@ for flag in ("-h", "--help", "help"):
 
 # (arguments, text expected on stderr, what it shows)
 REFUSALS = [
-    (["frobnicate"], "invalid choice: 'frobnicate' (choose from 'doctor', 'test'", "an unknown command is named, with the ones there are"),
+    # argparse quotes the choices in some Python releases (3.12.x, 3.14) and not in others (3.13.x).
+    (["frobnicate"], re.compile(r"invalid choice: 'frobnicate' \(choose from '?doctor'?, '?test'?"), "an unknown command is named, with the ones there are"),
     (["frobnicate", "esphome"], "invalid choice: 'frobnicate'", "the same with the word esphome after it"),
     (["build", "ESPHOME"], "argument target: invalid choice: 'ESPHOME'", "the word esphome is case-sensitive"),
     (["build", "esphome", "--bogus"], "unrecognized arguments: --bogus", "an unknown option"),
@@ -103,7 +104,8 @@ REFUSALS = [
 ]
 for args, needle, why in REFUSALS:
     how, text = main(*args)
-    check(how == "die" and needle in text, f"refused: {why}")
+    found = needle.search(text) if hasattr(needle, "search") else needle in text
+    check(how == "die" and found, f"refused: {why}")
 # A refusal is one line on stderr and exit code 1, never a traceback.
 for args in (["build", "esphome", "--board", "nope"], ["frobnicate"], ["build", "--bogus"], ["build", "--board"]):
     r = cli(*args)
