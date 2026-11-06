@@ -10,8 +10,9 @@ Usage: python3 scripts/jlc_cpl.py kicad-pos.csv jlc-cpl.csv
 import csv
 import sys
 
-# Not placed by the assembly house: holes, bare test pads, the unpopulated programming pads.
-SKIP_PREFIXES = ("H", "TP", "J2")
+# Not placed by the assembly house: holes, bare test pads and the two connectors the owner
+# solders in (they are also marked not fitted, so KiCad leaves them out before this runs).
+SKIP_PREFIXES = ("H", "TP", "J")
 
 
 def main():
