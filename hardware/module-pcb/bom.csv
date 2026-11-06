@@ -6,7 +6,6 @@
 "1u","C6","Capacitor_SMD:C_0603_1608Metric","C15849","CL10A105KB8NNNC","Samsung"
 "red","D1","LED_SMD:LED_0603_1608Metric","C2286","KT-0603R","Hubei KENTO"
 "SM712","D2","Package_TO_SOT_SMD:SOT-23","C502564","SM712","MDD"
-"A/C port (2.0 mm, verify)","J1","Connector_JST:JST_PH_S4B-PH-K_1x04_P2.00mm_Horizontal","C157926","S4B-PH-K-S(LF)(SN)","JST"
 "2.2uH 1.5A","L1","Inductor_SMD:L_1008_2520Metric","C48888311","FTC252012S2R2MGCA","cjiang"
 "453k 1%","R1","Resistor_SMD:R_0603_1608Metric","C25818","0603WAF4533T5E","UNI-ROYAL"
 "100k 1%","R2","Resistor_SMD:R_0603_1608Metric","C25803","0603WAF1003T5E","UNI-ROYAL"
