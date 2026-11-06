@@ -1,7 +1,8 @@
 # Case for the replacement module PCB
 
-> **This case has not been printed or fitted to a unit.** It is sized around the rev B test
-> board, not the stock module's housing.
+> **This case has not been printed or fitted to a unit.** It is sized around the rev C test
+> board, not the stock module's housing. The headroom and the cable opening were sized for
+> rev B's JST PH header and have not been checked against the stock header rev C takes.
 
 A base and a lid for the board in [`../module-pcb`](../module-pcb). Two M2 x 8 self-tapping
 screws go through the lid, through the board's two mounting holes and into the base, so the
@@ -9,10 +10,11 @@ same screws close the case and clamp the board.
 
 | Dimension | Value |
 |---|---|
-| Length | 65.0 mm |
+| Length | 69.0 mm |
 | Width | 26.2 mm |
 | Thickness | 11.5 mm: 1.2 mm floor, 2.2 mm under the board, 1.6 mm board, 5.3 mm above it, 1.2 mm roof |
 | Cable opening | 5.5 mm round, on the short end by the connector, sized for the 4-wire lead but not measured |
+| Roof slot | over the programming header `J2`, 3.5 x 16.2 mm, because a 2.54 mm pin header stands about 8.5 mm above the board |
 
 The board sits at the antenna end. The 9.5 mm between the connector and the end wall is for
 the lead's plug and the bend in its wires.
@@ -26,7 +28,8 @@ uv run --python 3.12 --with cadquery python case.py ../module-pcb/fab/w41h1-modu
 
 `out/` (not tracked in git) then holds each part as STEP and STL. With the board model as an
 argument the script also prints how much each part overlaps the board. That has to be zero,
-and it is for the dimensions in the file.
+and it is for the dimensions in the file. The board's STEP leaves out the two not-fitted
+connectors, so the check does not see them.
 
 All dimensions are constants at the top of `case.py`. The board's size and hole positions are
 repeated there: change them together with `../module-pcb/scripts/place.py`.

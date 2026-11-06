@@ -18,11 +18,20 @@ from pathlib import Path
 import cadquery as cq
 
 # Board (keep in step with ../module-pcb/scripts/place.py)
-BOARD_L = 52.0
+BOARD_L = 56.0
 BOARD_W = 22.0
 BOARD_T = 1.6
 HOLE_X = 2.7
 HOLE_PITCH = BOARD_W - 5.4
+# Programming header J2: a column of 2.54 mm pins on top, centred on the board's width
+# (place.py: J2_X, PLACEMENT["J2"]). It stands J2_HEIGHT above the board, more than
+# HEADROOM, so the lid's roof gets a slot over it.
+J2_X = BOARD_L - 26.7
+J2_PINS = 6
+J2_PITCH = 2.54
+J2_BODY_W = 2.54
+J2_HEIGHT = 8.5  # plastic body plus the pins, from the board's top face
+J2_SLOT_MARGIN = 0.5  # around the body, each side
 
 # What this board needs
 CLEARANCE = 0.3  # board edge to wall
@@ -34,7 +43,10 @@ CASE_W = BOARD_W + 2 * CLEARANCE + 2 * SIDE_WALL
 FLOOR = 1.2
 ROOF = 1.2
 STANDOFF = 2.2  # the connector's pins stand 1.5 mm out of the bottom
-HEADROOM = 5.3  # the JST PH header stands 4.8 mm above the board
+# VERIFY: HEADROOM and CABLE_Z were sized for the JST PH header of rev B (4.8 mm tall, wire
+# axis 2.4 mm up). Rev C takes the stock module's own header, which is unmeasured: check
+# both against it before printing.
+HEADROOM = 5.3
 CABLE_D = 5.5  # opening for the 4-wire lead
 CABLE_Z = BOARD_T + 2.4  # the header's wire axis above the board's bottom face
 BOSS_R = 2.7
@@ -74,6 +86,15 @@ def shell(z0, z1):
     outer = box(X0, X1 + END_WALL, Y0, Y0 + CASE_W, z0, z1).edges("|Z").fillet(2.0)
     cavity = box(X0 + END_WALL, X1, -CLEARANCE, BOARD_W + CLEARANCE, z0 - 1, z1 + 1)
     return outer.cut(cavity)
+
+
+def j2_slot():
+    """Opening in the roof for the programming header, which is taller than the headroom."""
+    half_l = J2_PINS * J2_PITCH / 2 + J2_SLOT_MARGIN
+    half_w = J2_BODY_W / 2 + J2_SLOT_MARGIN
+    return box(
+        J2_X - half_w, J2_X + half_w, MID - half_l, MID + half_l, Z1 - ROOF - 1, Z1 + 1
+    )
 
 
 def cable_hole():
@@ -122,7 +143,7 @@ def lid():
         part = part.union(
             box(BOARD_L - 4.5, BOARD_L - 0.5, y0, y1, BOARD_T + 0.1, Z1 - ROOF)
         )
-    return part.cut(cable_hole())
+    return part.cut(cable_hole()).cut(j2_slot())
 
 
 def main():
@@ -137,7 +158,9 @@ def main():
             tolerance=0.02,
             angularTolerance=0.1,
         )
-    print(f"case {CASE_L:.1f} x {CASE_W:.1f} x {CASE_T:.1f} mm, side wall {SIDE_WALL:.2f} mm")
+    print(
+        f"case {CASE_L:.1f} x {CASE_W:.1f} x {CASE_T:.1f} mm, side wall {SIDE_WALL:.2f} mm"
+    )
     overlap = parts["base"].intersect(parts["lid"]).val()
     print(f"base and lid overlap: {overlap.Volume():.3f} mm3")
     if len(sys.argv) > 1:
