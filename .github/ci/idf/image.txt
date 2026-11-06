@@ -1,0 +1,5 @@
+# The ESP-IDF image the nightly esp32-recon job builds in (.github/workflows/nightly.yaml reads
+# this file). The digest is the linux/amd64 image of the tag, so the tag cannot move under the
+# job. firmware/scripts/pin-bump.py idf moves it to the newest tag on the same vMAJOR.MINOR line
+# (the pin-bumps workflow); a move to another line is made by hand.
+espressif/idf:v5.5.6@sha256:851f136a2c09cf17c13e952b9975606d7d1050be1480b1fd82c7ea4bce78cfb3

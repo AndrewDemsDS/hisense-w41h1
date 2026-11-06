@@ -137,8 +137,10 @@ and nothing is tagged or published.
 | `bump (esphome)` | when PyPI has a newer stable ESPHome than the pin, opens a pull request from `bot/esphome-X.Y.Z` that moves every pin `version-lint.py` checks, the install lines of the docs, and adds a `CHANGELOG.md` line |
 | `bump (idf)` | when Docker Hub has a newer `espressif/idf` tag on the v5.5 line, opens a pull request from `bot/idf-vX.Y.Z` with the new tag and its linux/amd64 digest for the `esp32-recon` job. A move off v5.5 is made by hand |
 
-The rewrite is `firmware/scripts/pin-bump.py`. A version that already has a pull request, open or
-closed, is skipped. Because a push made with `GITHUB_TOKEN` starts no workflow, the job starts
+The rewrite is `firmware/scripts/pin-bump.py`. The pins it moves are files the workflows read
+(`.github/ci/esphome/requirements.txt`, `.github/ci/idf/image.txt`), never a workflow file: a push
+made with `GITHUB_TOKEN` is refused when it changes one. A version that already has a pull
+request, open or closed, is skipped. Because a push made with `GITHUB_TOKEN` starts no workflow, the job starts
 `qa.yaml` and `nightly.yaml` on the new branch itself. Started by hand with `dry_run`, from a
 branch other than `main`, or by a pull request that changes it or `pin-bump.py`, it shows the
 change in the run's summary and pushes nothing.

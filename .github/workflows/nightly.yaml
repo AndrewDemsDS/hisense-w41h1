@@ -251,24 +251,48 @@ jobs:
           pipx install "$(grep -oE '^esphome==[0-9.]+' .github/ci/esphome/requirements.txt)"
           python3 firmware/test/host_e2e/run.py --require --full
 
-  # firmware/esp32-recon/ (the RS-485 bus diagnostic tool) builds for the classic ESP32 with
-  # ESP-IDF v5.5.6, the newest v5.5 bugfix release. Espressif's image has that release
-  # and its toolchain. The digest is the linux/amd64 image of the tag, so the tag cannot move
-  # under the job.
-  esp32-recon:
+  # The ESP-IDF image the esp32-recon job builds in, read from .github/ci/idf/image.txt. A
+  # container image is named before a job's steps run, so a job of its own reads the file. It is
+  # a file, not a line here, because the pin-bumps workflow moves it with GITHUB_TOKEN, and a push
+  # made with that token is refused when it changes a file under .github/workflows/.
+  idf-image:
     if: ${{ github.server_url == 'https://github.com' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      image: ${{ steps.read.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: read
+        run: |
+          image="$(grep -oE '^espressif/idf:v[0-9.]+@sha256:[0-9a-f]{64}$' .github/ci/idf/image.txt)"
+          [ -n "$image" ] || { echo "::error file=.github/ci/idf/image.txt::no espressif/idf:vX.Y.Z@sha256:... line"; exit 1; }
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+  # firmware/esp32-recon/ (the RS-485 bus diagnostic tool) builds for the classic ESP32 with
+  # the ESP-IDF release pinned in .github/ci/idf/image.txt (the v5.5 line). Espressif's image
+  # has that release and its toolchain, by digest, so the tag cannot move under the job.
+  esp32-recon:
+    needs: idf-image
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
     container:
-      image: espressif/idf:v5.5.6@sha256:851f136a2c09cf17c13e952b9975606d7d1050be1480b1fd82c7ea4bce78cfb3
+      # Pinned by digest in .github/ci/idf/image.txt, which idf-image checks before handing it on.
+      image: ${{ needs.idf-image.outputs.image }} # zizmor: ignore[unpinned-images]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build esp32-recon
         shell: bash
+        env:
+          IDF_IMAGE: ${{ needs.idf-image.outputs.image }}
         run: |
           # The checkout belongs to another user than the one in the container.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -281,4 +305,4 @@ jobs:
           # Not a gate: the tool has known warnings of its own (missing field initializers in
           # recon_console.c). The count is shown so a jump is seen.
           warnings="$(grep -a -c -E '(esp32-recon|reference-driver)/.*warning:' build.log || true)"
-          echo "esp32-recon builds with ESP-IDF $(cat "$IDF_PATH/version.txt" 2>/dev/null || echo v5.5.6): $(stat -c %s build/esp32_recon.bin) bytes, $warnings compiler warnings in its own sources." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "esp32-recon builds with ESP-IDF $(cat "$IDF_PATH/version.txt" 2>/dev/null || { t="${IDF_IMAGE%@*}"; echo "${t##*:}"; }): $(stat -c %s build/esp32_recon.bin) bytes, $warnings compiler warnings in its own sources." | tee -a "$GITHUB_STEP_SUMMARY"

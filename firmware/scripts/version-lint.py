@@ -38,12 +38,13 @@ CHANGELOG = "CHANGELOG.md"
 WATCHED = ("firmware/esphome/components/", "firmware/esphome/packages/")
 SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 # Where the ESPHome release is pinned, and how each file spells it.
+# None is under .github/workflows/: the pin-bumps workflow moves them with GITHUB_TOKEN, and a
+# push made with that token is refused when it changes a workflow file. The workflows read the
+# requirements file instead.
 ESPHOME_PINS = (
-    (".github/workflows/qa.yaml", r'^\s*ESPHOME_VERSION:\s*"?([0-9.]+)"?\s*$'),
-    (".github/workflows/esphome-release.yaml", r'^\s*ESPHOME_VERSION:\s*"?([0-9.]+)"?\s*$'),
+    (".github/ci/esphome/requirements.txt", r"^esphome==([0-9.]+)"),
     ("firmware/scripts/dev.py", r'^ESPHOME_PIN = "([0-9.]+)"'),
     ("firmware/scripts/esphome-upstream-check.sh", r'^ESPHOME_SPEC="esphome==([0-9.]+)"'),
-    (".github/ci/esphome/requirements.txt", r"^esphome==([0-9.]+)"),
 )
 
 

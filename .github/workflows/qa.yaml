@@ -32,11 +32,11 @@ concurrency:
 permissions:
   contents: read
 
-# The ESPHome release every job builds with, written once. firmware/scripts/version-lint.py holds
-# it equal to the pins in dev.py, esphome-upstream-check.sh and esphome-release.yaml, and the
-# lint-extra job holds .github/ci/esphome/requirements.txt (the copy nightly.yaml installs) equal to it.
-env:
-  ESPHOME_VERSION: "2026.10.1"
+# The ESPHome release every job builds with is the one line of .github/ci/esphome/requirements.txt.
+# The jobs install from it and key their caches on its hash. It is a file, not an `env:` here,
+# because the pin-bumps workflow moves it with GITHUB_TOKEN, and a push made with that token is
+# refused when it changes a file under .github/workflows/. firmware/scripts/version-lint.py holds
+# it equal to the pins in dev.py and esphome-upstream-check.sh.
 
 jobs:
   # Whether this run touches anything the three compile jobs build from. A change to the docs,
@@ -145,7 +145,7 @@ jobs:
       # compiles are the esphome-esp32 and esphome-amebaz2 jobs below.
       - name: ESPHome config validation
         run: |
-          pipx install "esphome==$ESPHOME_VERSION"
+          pipx install "$(grep -oE '^esphome==[0-9.]+' .github/ci/esphome/requirements.txt)"
           cd firmware/esphome
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
           # Every board file: they share packages/, so a change made for one chip is checked
@@ -250,15 +250,6 @@ jobs:
             firmware/test/test_esphome_map_gaps.cpp firmware/test/test_esphome_uart_policy.cpp \
             firmware/test/test_esphome_setup_mode.cpp
 
-      # The copy of the ESPHome pin that the nightly workflow installs has to be the release the
-      # jobs build with. firmware/scripts/pin-bump.py moves every pin at once.
-      - name: The ESPHome pin of .github/ci/esphome is the one in use
-        run: |
-          if ! grep -qx "esphome==$ESPHOME_VERSION" .github/ci/esphome/requirements.txt; then
-            echo "::error file=.github/ci/esphome/requirements.txt::this file names $(grep -oE '^esphome==.*' .github/ci/esphome/requirements.txt) and the workflows build with $ESPHOME_VERSION: bump ESPHOME_VERSION in qa.yaml and esphome-release.yaml, ESPHOME_PIN in firmware/scripts/dev.py and ESPHOME_SPEC in firmware/scripts/esphome-upstream-check.sh in the same pull request"
-            exit 1
-          fi
-
   # Line and branch coverage of the pure code under the host tests, as a table in the job
   # summary. On main only, and never blocking: the number is there to be looked at when a change
   # lands, not to fail one.
@@ -333,7 +324,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
-          key: pio-amebaz2-tree-${{ env.ESPHOME_VERSION }}
+          key: pio-amebaz2-tree-${{ hashFiles('.github/ci/esphome/requirements.txt') }}
           # An entry from before the split, until the first save under the key above.
           restore-keys: |
             pio-esphome-amebaz2-
@@ -343,13 +334,13 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/pio-objects
-          key: pio-amebaz2-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1-amebaz2-*.yaml') }}
+          key: pio-amebaz2-objects-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1-amebaz2-*.yaml') }}
           restore-keys: |
-            pio-amebaz2-objects-${{ env.ESPHOME_VERSION }}-
+            pio-amebaz2-objects-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-
 
       - name: Compile every flash layout
         run: |
-          pipx install "esphome==$ESPHOME_VERSION"
+          pipx install "$(grep -oE '^esphome==[0-9.]+' .github/ci/esphome/requirements.txt)"
           cd firmware/esphome
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
           # An object served from the build cache prints no compiler output, so the warning check
@@ -452,14 +443,14 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
-          key: pio-amebaz2-tree-${{ env.ESPHOME_VERSION }}
+          key: pio-amebaz2-tree-${{ hashFiles('.github/ci/esphome/requirements.txt') }}
 
       - name: Save the build cache
         if: ${{ github.ref == 'refs/heads/main' && steps.objects.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/pio-objects
-          key: pio-amebaz2-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1-amebaz2-*.yaml') }}
+          key: pio-amebaz2-objects-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1-amebaz2-*.yaml') }}
 
   # The ESP32 boards, which are the ones that run in A/C units: a real compile of every board
   # file that includes packages/esp32.yaml (the classic ESP32 file and both ESP32-C3 files: the
@@ -490,7 +481,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/esphome/idf
-          key: idf-esp32-tree-${{ env.ESPHOME_VERSION }}
+          key: idf-esp32-tree-${{ hashFiles('.github/ci/esphome/requirements.txt') }}
           # An entry from before the split, until the first save under the key above.
           restore-keys: |
             idf-esphome-esp32-
@@ -500,9 +491,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/ccache
-          key: idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1*.yaml', 'firmware/esphome/tests/build.hub-only.*.yaml') }}
+          key: idf-esp32-ccache-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1*.yaml', 'firmware/esphome/tests/build.hub-only.*.yaml') }}
           restore-keys: |
-            idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-
+            idf-esp32-ccache-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-
 
       - name: Compile the ESP32 board files
         env:
@@ -512,7 +503,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ccache
-          pipx install "esphome==$ESPHOME_VERSION"
+          pipx install "$(grep -oE '^esphome==[0-9.]+' .github/ci/esphome/requirements.txt)"
           # ESPHome's default is a ccache inside the ESP-IDF tree. It gets a directory of its
           # own, so the tree's entry holds no objects.
           export CCACHE_DIR="$HOME/.cache/w41h1/ccache"
@@ -557,14 +548,14 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/esphome/idf
-          key: idf-esp32-tree-${{ env.ESPHOME_VERSION }}
+          key: idf-esp32-tree-${{ hashFiles('.github/ci/esphome/requirements.txt') }}
 
       - name: Save the ccache
         if: ${{ github.ref == 'refs/heads/main' && steps.ccache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/ccache
-          key: idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1*.yaml', 'firmware/esphome/tests/build.hub-only.*.yaml') }}
+          key: idf-esp32-ccache-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/esphome/w41h1*.yaml', 'firmware/esphome/tests/build.hub-only.*.yaml') }}
 
   # The component end to end, with no hardware: host.yaml is packages/hisense-ac.yaml built for
   # ESPHome's `host` platform, a Linux program with a pseudo-terminal where a board has the A/C.
@@ -595,22 +586,22 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
-          key: pio-host-tree-${{ env.ESPHOME_VERSION }}
+          key: pio-host-tree-${{ hashFiles('.github/ci/esphome/requirements.txt') }}
 
       - name: Restore the build cache
         id: objects
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/pio-host-objects
-          key: pio-host-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/test/host_e2e/*.yaml') }}
+          key: pio-host-objects-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/test/host_e2e/*.yaml') }}
           restore-keys: |
-            pio-host-objects-${{ env.ESPHOME_VERSION }}-
+            pio-host-objects-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-
 
       # aioesphomeapi, the API client, is a dependency of esphome at the version that release
       # pins: run.py finds the Python esphome was installed into and runs under it.
       - name: Build the host program and run the scenarios
         run: |
-          pipx install "esphome==$ESPHOME_VERSION"
+          pipx install "$(grep -oE '^esphome==[0-9.]+' .github/ci/esphome/requirements.txt)"
           export PLATFORMIO_BUILD_CACHE_DIR="$HOME/.cache/w41h1/pio-host-objects"
           python3 firmware/test/host_e2e/run.py --require
 
@@ -673,14 +664,14 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
-          key: pio-host-tree-${{ env.ESPHOME_VERSION }}
+          key: pio-host-tree-${{ hashFiles('.github/ci/esphome/requirements.txt') }}
 
       - name: Save the build cache
         if: ${{ github.ref == 'refs/heads/main' && steps.objects.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/w41h1/pio-host-objects
-          key: pio-host-objects-${{ env.ESPHOME_VERSION }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/test/host_e2e/*.yaml') }}
+          key: pio-host-objects-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-${{ hashFiles('firmware/esphome/packages/**', 'firmware/test/host_e2e/*.yaml') }}
 
   # ESPHome's own CI gates, run against the hisense_ac component placed in a checkout of
   # esphome/esphome at the release this repo builds with (firmware/scripts/esphome-upstream-check.sh).

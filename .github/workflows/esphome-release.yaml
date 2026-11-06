@@ -27,9 +27,7 @@ on:
 # Nothing is granted here. Each job states what it needs, and only `release` may write.
 permissions: {}
 
-# Kept equal to qa.yaml's pin by firmware/scripts/version-lint.py.
-env:
-  ESPHOME_VERSION: "2026.10.1"
+# The ESPHome release is the one line of .github/ci/esphome/requirements.txt, as in qa.yaml.
 
 concurrency:
   group: esphome-release-${{ github.ref }}
@@ -93,7 +91,7 @@ jobs:
 
       - name: ESPHome config validation
         run: |
-          pipx install "esphome==$ESPHOME_VERSION"
+          pipx install "$(grep -oE '^esphome==[0-9.]+' .github/ci/esphome/requirements.txt)"
           cd firmware/esphome
           cp secrets.yaml.example secrets.yaml   # placeholders; the real file is gitignored
           for b in w41h1*.yaml tests/build*.yaml; do esphome config "$b" > /dev/null; done
@@ -136,7 +134,7 @@ jobs:
             echo "esphome run w41h1-esp32c3.yaml         # or the file for your board"
             echo '```'
             echo
-            echo "Built with ESPHome $ESPHOME_VERSION. To use the components and packages from"
+            echo "Built with ESPHome $(grep -oE '^esphome==[0-9.]+' .github/ci/esphome/requirements.txt | cut -d= -f3). To use the components and packages from"
             echo "your own configuration, pinned to this tag, see"
             echo "[Using a release from your own configuration](https://github.com/$REPO/blob/v$VERSION/firmware/esphome/README.md#using-a-release-from-your-own-configuration)."
           } > release-notes.md
@@ -170,7 +168,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/esphome/idf
-          key: idf-esp32-tree-${{ env.ESPHOME_VERSION }}
+          key: idf-esp32-tree-${{ hashFiles('.github/ci/esphome/requirements.txt') }}
 
       - name: Restore the ccache
         if: ${{ matrix.toolchain == 'esp32' }}
@@ -178,16 +176,16 @@ jobs:
         with:
           path: ~/.cache/w41h1/ccache
           # Never an exact hit: the newest entry for this ESPHome release is the one wanted.
-          key: idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-release-${{ github.run_id }}
+          key: idf-esp32-ccache-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-release-${{ github.run_id }}
           restore-keys: |
-            idf-esp32-ccache-${{ env.ESPHOME_VERSION }}-
+            idf-esp32-ccache-${{ hashFiles('.github/ci/esphome/requirements.txt') }}-
 
       - name: Restore the PlatformIO tree
         if: ${{ matrix.toolchain == 'amebaz2' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
-          key: pio-amebaz2-tree-${{ env.ESPHOME_VERSION }}
+          key: pio-amebaz2-tree-${{ hashFiles('.github/ci/esphome/requirements.txt') }}
 
       # ESPHome uses ccache for ESP-IDF builds when the binary is there.
       - name: ccache for the ESP-IDF build
@@ -201,7 +199,7 @@ jobs:
         env:
           CONFIGS: ${{ matrix.configs }}
         run: |
-          pipx install "esphome==$ESPHOME_VERSION"
+          pipx install "$(grep -oE '^esphome==[0-9.]+' .github/ci/esphome/requirements.txt)"
           # Word splitting is wanted: CONFIGS is a list of file names from board-groups.sh.
           # shellcheck disable=SC2086
           bash firmware/scripts/esphome-compile-check.sh $CONFIGS

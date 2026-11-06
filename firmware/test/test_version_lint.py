@@ -129,7 +129,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # --- the ESPHome pin ---
     pins = tree(tmp, "pins")
-    write(pins, ".github/workflows/qa.yaml", 'env:\n  ESPHOME_VERSION: "2026.7.4"\n')
+    write(pins, ".github/ci/esphome/requirements.txt", "# the pin\nesphome==2026.7.4\n")
     write(pins, "firmware/scripts/dev.py", 'ESPHOME_PIN = "2026.7.4"\n')
     check(lint(pins).returncode == 0, "the same ESPHome pin in two places passes")
     write(pins, "firmware/scripts/dev.py", 'ESPHOME_PIN = "2026.8.0"\n')
