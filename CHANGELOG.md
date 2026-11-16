@@ -43,6 +43,8 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 - Builds with ESPHome 2026.10.1 (was 2026.10.0).
 
+- Builds with ESPHome 2026.10.2 (was 2026.10.1).
+
 ## 2.0.2 - 2026-10-27
 
 - "Bus reply timeouts" no longer counts an isolated miss: one heartbeat or status poll met by total

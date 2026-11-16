@@ -4,4 +4,4 @@
 # version-lint.py holds the three equal, firmware/scripts/pin-bump.py moves them together (the
 # pin-bumps workflow), and a pull request that bumps this line by hand fails CI until the other
 # two are bumped with it, which is the reminder.
-esphome==2026.10.1
+esphome==2026.10.2
