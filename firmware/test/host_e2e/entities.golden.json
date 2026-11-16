@@ -5,6 +5,16 @@
   },
   "entities": [
     {
+      "domain": "NumberInfo",
+      "object_id": "power_correction_factor",
+      "name": "Power correction factor",
+      "icon": "mdi:tune-variant",
+      "entity_category": "config",
+      "disabled_by_default": false,
+      "device_class": "",
+      "unit_of_measurement": ""
+    },
+    {
       "domain": "binary_sensor",
       "object_id": "ac_bus_link",
       "name": "AC bus link",
