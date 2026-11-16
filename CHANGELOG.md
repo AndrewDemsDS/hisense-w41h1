@@ -11,6 +11,8 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+## 2.1.0 - 2026-11-16
+
 - New entity: Power correction factor (number, config, 0.5 to 4, default 1.0, kept across
   reboots). It multiplies Power and Current, so a unit whose power estimate reads high or low by
   a steady ratio against a real meter can be corrected from Home Assistant. Energy today
