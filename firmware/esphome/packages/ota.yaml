@@ -4,3 +4,5 @@
 
 ota:
   - platform: esphome
+    # Security audit 2026-11-09: uploads must be encrypted with the api key.
+    encryption:

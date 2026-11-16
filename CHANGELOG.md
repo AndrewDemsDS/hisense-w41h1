@@ -11,6 +11,13 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- New entity: Power correction factor (number, config, 0.5 to 4, default 1.0, kept across
+  reboots). It multiplies Power and Current, so a unit whose power estimate reads high or low by
+  a steady ratio against a real meter can be corrected from Home Assistant. Energy today
+  integrates the corrected power. The `power_factor` substitution of `packages/hisense-ac.yaml`
+  sets the first-boot value.
+- `packages/ota.yaml` and `packages/amebaz2.yaml`: the update server takes only uploads encrypted
+  with the node's API encryption key (`ota: encryption:`).
 - CI: the ESPHome and ESP-IDF pins moved out of the workflow files into
   `.github/ci/esphome/requirements.txt` and `.github/ci/idf/image.txt`, which the workflows read.
   The daily pin-bump pull request was refused at push from 2026-11-03 on because `GITHUB_TOKEN`

@@ -7,7 +7,7 @@
 # with the hardware-validated timing (5 ms settle, 25 ms drain).
 #
 # Substitutions the including file must define: tx_pin, rx_pin, de_pin.
-# Substitutions it may override: w41h1_components (below).
+# Substitutions it may override: w41h1_components, power_factor (below).
 
 substitutions:
   # Where the components come from. The default is the components/ directory beside the file
@@ -19,6 +19,12 @@ substitutions:
   w41h1_components:
     type: local
     path: components
+  # First-boot value of the "Power correction factor" number below. The power estimate is
+  # calibrated on one unit; another unit can read high or low by a steady ratio, found by
+  # comparing it with a real meter. After the first boot the number keeps whatever was last set
+  # from Home Assistant or the web UI, so changing this later only reaches a node whose stored
+  # value was wiped.
+  power_factor: "1.0"
 
 external_components:
   - source: ${w41h1_components}
@@ -87,13 +93,19 @@ sensor:
       name: Coil temperature
     compressor_frequency:
       name: Compressor frequency
+    # Power and current both come from the same byte, so both take the correction factor.
+    # Unknown (NaN) stays unknown. Energy today integrates the corrected power.
     power:
       name: Power
       id: ac_power
+      filters:
+        - lambda: return x * id(power_factor_number).state;
     voltage:
       name: Voltage
     current:
       name: Current
+      filters:
+        - lambda: return x * id(power_factor_number).state;
     checksum_errors:
       name: Bus checksum errors
     reply_timeouts:
@@ -120,6 +132,22 @@ sensor:
     accuracy_decimals: 3
     filters:
       - multiply: 0.001
+
+# Multiplies Power and Current. Kept across reboots. A new value applies from the next power
+# update (within a minute); energy already counted is not recomputed.
+number:
+  - platform: template
+    id: power_factor_number
+    name: Power correction factor
+    icon: mdi:tune-variant
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: ${power_factor}
+    min_value: 0.5
+    max_value: 4
+    step: 0.01
+    mode: box
 
 binary_sensor:
   - platform: hisense_ac

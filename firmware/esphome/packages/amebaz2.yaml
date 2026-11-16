@@ -44,6 +44,8 @@ rtl87xx:
 ota:
   - platform: esphome
     id: ota_server
+    # Security audit 2026-11-09: uploads must be encrypted with the api key.
+    encryption:
 
 w41h1_module:
   layout: ${layout}

@@ -71,10 +71,10 @@ noticing. `firmware/test/test_esphome_config_matrix.py` checks that.
 |---|---|---|
 | `packages/version.yaml` | the firmware version, as ESPHome's `project:` block. Included by `node.yaml` | none |
 | `packages/node.yaml` | the node: name, logger, API, Wi-Fi, the setup hotspot, the `wifi_setup_mode` component with its script and button, and three diagnostics (`Uptime`, `WiFi signal`, `Reset reason`) | `name` (`hisense-ac`), `friendly_name` (`Air Conditioner`), `wifi_power_save` (`none`), `wifi_setup_timeout` (`10min`) |
-| `packages/hisense-ac.yaml` | the UART, the `hisense_ac` hub and every entity | needs `tx_pin`, `rx_pin`, `de_pin`. May override `w41h1_components` |
+| `packages/hisense-ac.yaml` | the UART, the `hisense_ac` hub and every entity | needs `tx_pin`, `rx_pin`, `de_pin`. May override `w41h1_components`, `power_factor` (`1.0`, the first-boot value of Power correction factor) |
 | `packages/esp32.yaml` | the `esp32:` block on ESP-IDF | needs `board` |
-| `packages/ota.yaml` | ESPHome's update server | none |
-| `packages/amebaz2.yaml` | for the stock module, in place of `ota.yaml`: the `rtl87xx:` block, the module's three pins, the update server with an id, and `w41h1_module` | needs `layout` |
+| `packages/ota.yaml` | ESPHome's update server, which takes only uploads encrypted with the API encryption key | none |
+| `packages/amebaz2.yaml` | for the stock module, in place of `ota.yaml`: the `rtl87xx:` block, the module's three pins, the update server with an id (encrypted uploads, as in `ota.yaml`), and `w41h1_module` | needs `layout` |
 | `packages/status-led.yaml` | optional: a plain LED on a GPIO | needs `status_led_pin`. `status_led_inverted` (`false`) |
 | `packages/status-pixel.yaml` | optional: one WS2812 pixel, ESP32 only | needs `status_pixel_pin`. `status_pixel_order` (`GRB`), `status_pixel_strapping_ok` (`false`) |
 
@@ -438,6 +438,7 @@ read the counters, is in
 | climate | the device itself (`name: None`) |
 | switch | Eco, Turbo, Quiet, Panel display, Beeper |
 | select | Sleep profile |
+| number, config | Power correction factor (multiplies Power and Current, kept across reboots) |
 | sensor | Outdoor temperature, Coil temperature, Compressor frequency, Power, Voltage, Current, Energy today |
 | sensor, diagnostic | Uptime, WiFi signal |
 | sensor, diagnostic, disabled by default | Bus checksum errors, Bus reply timeouts, Unanswered commands, Command retries, Failed commands, Bus link losses |
