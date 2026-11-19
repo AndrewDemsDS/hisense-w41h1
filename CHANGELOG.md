@@ -11,6 +11,8 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- Builds with ESPHome 2026.11.0 (was 2026.10.2).
+
 ## 2.1.0 - 2026-11-16
 
 - New entity: Power correction factor (number, config, 0.5 to 4, default 1.0, kept across
