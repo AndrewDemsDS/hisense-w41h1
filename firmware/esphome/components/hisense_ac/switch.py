@@ -11,7 +11,14 @@ DEPENDENCIES = ["hisense_ac"]
 HisenseSwitch = hisense_ac_ns.class_("HisenseSwitch", switch.Switch, cg.Component)
 SwitchKind = hisense_ac_ns.enum("SwitchKind")
 
-CONF_ECO = "eco"
+# ESPHome's ci-custom.py wants a CONF_ constant that three or more components define to live in
+# esphome/components/const. From 2026.11.0 airton_serial and tuya define CONF_ECO, so this is the
+# third: use the shared one once it exists, keep a local one until then. An upstream submission
+# would move it there first, in a pull request of its own (issue 192).
+try:
+    from esphome.components.const import CONF_ECO
+except ImportError:
+    CONF_ECO = "eco"
 CONF_TURBO = "turbo"
 CONF_QUIET = "quiet"
 

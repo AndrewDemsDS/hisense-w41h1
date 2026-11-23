@@ -12,6 +12,9 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 ## Unreleased
 
 - Builds with ESPHome 2026.11.0 (was 2026.10.2).
+- `hisense_ac` switch platform: `CONF_ECO` comes from `esphome.components.const` when ESPHome
+  has it there and stays a local constant until then. ESPHome 2026.11.0 has two other components
+  that define it, and its `ci-custom.py` rejects a third copy. No change to options or entities.
 
 ## 2.1.0 - 2026-11-16
 
