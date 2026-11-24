@@ -1,0 +1,97 @@
+(footprint "AC_Header_1x04_P2.00mm_Horizontal"
+	(version 20241229)
+	(generator "place.py")
+	(generator_version "1")
+	(layer "F.Cu")
+	(descr "4-pin 2.0 mm side-entry header desoldered from the stock AEH-W41H1 module; mating face at +Y, body size unverified")
+	(tags "connector 2.00mm")
+	(property "Reference" "REF**"
+		(at 3 -2.5 0)
+		(layer "F.SilkS")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "AC_Header_1x04_P2.00mm_Horizontal"
+		(at 3 5.2 0)
+		(layer "F.Fab")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole)
+	(fp_rect
+		(start -1.61 -1.61)
+		(end 7.61 3.4)
+		(stroke
+			(width 0.12)
+			(type default)
+		)
+		(fill no)
+		(layer "F.SilkS")
+	)
+	(fp_rect
+		(start -1.5 -1.5)
+		(end 7.5 4.0)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "F.Fab")
+	)
+	(fp_rect
+		(start -2.0 -2.0)
+		(end 8.0 4.25)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+	)
+	(fp_line
+		(start -2.4 -0.8)
+		(end -2.4 0.8)
+		(stroke
+			(width 0.15)
+			(type default)
+		)
+		(layer "F.SilkS")
+	)
+	(pad "1" thru_hole roundrect
+		(at 0.0 0)
+		(size 1.5 1.9)
+		(drill 0.9)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(roundrect_rratio 0.25)
+	)
+	(pad "2" thru_hole oval
+		(at 2.0 0)
+		(size 1.5 1.9)
+		(drill 0.9)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+	)
+	(pad "3" thru_hole oval
+		(at 4.0 0)
+		(size 1.5 1.9)
+		(drill 0.9)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+	)
+	(pad "4" thru_hole oval
+		(at 6.0 0)
+		(size 1.5 1.9)
+		(drill 0.9)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+	)
+)
