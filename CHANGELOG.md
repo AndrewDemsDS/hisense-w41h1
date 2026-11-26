@@ -16,6 +16,8 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
   has it there and stays a local constant until then. ESPHome 2026.11.0 has two other components
   that define it, and its `ci-custom.py` rejects a third copy. No change to options or entities.
 
+- Builds with ESPHome 2026.11.1 (was 2026.11.0).
+
 ## 2.1.0 - 2026-11-16
 
 - New entity: Power correction factor (number, config, 0.5 to 4, default 1.0, kept across
