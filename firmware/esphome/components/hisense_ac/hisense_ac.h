@@ -164,9 +164,14 @@ class HisenseAC final : public Component,
   SUB_BINARY_SENSOR(aux_heat)
   SUB_BINARY_SENSOR(bus_link)
   SUB_BINARY_SENSOR(problem)
+  SUB_BINARY_SENSOR(protection)
   /// One entry per named f_e_* fault bit, keyed by its FAULT1_* index. Each bit is its own entity.
   void add_fault_binary_sensor(uint8_t bit, binary_sensor::BinarySensor *sensor) {
     this->fault_sensors_.emplace_back(bit, sensor);
+  }
+  /// One entry per fault bit with no FAULT1_* index, keyed by its payload offset and mask.
+  void add_fault_raw_binary_sensor(uint8_t byte, uint8_t mask, binary_sensor::BinarySensor *sensor) {
+    this->fault_raw_sensors_.push_back(FaultRawSensor{byte, mask, sensor});
   }
   void add_capability_binary_sensor(uint8_t bit, binary_sensor::BinarySensor *sensor) {
     this->capability_sensors_.emplace_back(bit, sensor);
@@ -174,6 +179,8 @@ class HisenseAC final : public Component,
 #endif
 #ifdef USE_TEXT_SENSOR
   SUB_TEXT_SENSOR(link_token)
+  SUB_TEXT_SENSOR(fault_detail)
+  SUB_TEXT_SENSOR(fault_bytes)
 #endif
 
  protected:
@@ -217,9 +224,12 @@ class HisenseAC final : public Component,
   HisenseClimate *climate_{nullptr};
   std::vector<StatusListener *> listeners_;
   bool features_published_{false};
-  // Last fault bitmap logged, so a fault is reported when it appears and when it clears, not on
+  // Last fault_log_key logged, so a fault is reported when it appears, changes and clears, not on
   // every status frame that still carries it.
   uint32_t logged_faults_{0};
+  // The raw fault bytes the fault text sensors last showed, so they publish on change only.
+  uint32_t published_fault_raw_{0};
+  bool fault_text_published_{false};
   // Status frames arrive about once a second and almost never differ, so telemetry goes out on
   // change plus one refresh per TELEMETRY_REFRESH_MS.
   TelemetryRefresh telemetry_refresh_{};
@@ -231,6 +241,12 @@ class HisenseAC final : public Component,
   bool beeper_{true};
 #ifdef USE_BINARY_SENSOR
   std::vector<std::pair<uint8_t, binary_sensor::BinarySensor *>> fault_sensors_;
+  struct FaultRawSensor {
+    uint8_t byte;
+    uint8_t mask;
+    binary_sensor::BinarySensor *sensor;
+  };
+  std::vector<FaultRawSensor> fault_raw_sensors_;
   std::vector<std::pair<uint8_t, binary_sensor::BinarySensor *>> capability_sensors_;
 #endif
 };

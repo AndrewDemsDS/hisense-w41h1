@@ -11,6 +11,20 @@ tag `vX.Y.Z`. Changes that are merged and not yet released sit under `## Unrelea
 
 ## Unreleased
 
+- New entities in `packages/hisense-ac.yaml`: Fault detail (text sensor, diagnostic), Protection
+  active (binary sensor) and Fault over temperature (the existing `fault_over_temp` option,
+  disabled in Home Assistant by default like the other per-bit faults). Fault detail says which
+  fault raised Fault: `none`, or the set bits by name (`indoor_comms`), with a bit that has no
+  stock name as `reserved byteNN 0xMM`, `name? byteNN 0xMM` (a name with no firm source) or
+  `unknown byteNN 0xMM`. Protection active is on while byte 66 reports a protection state (any
+  bit but the frost-guard flag). Those bits still turn Fault on, as before. Until now a bit
+  without its own binary sensor, or without any name, raised Fault and left no record of which
+  bit it was. No existing entity changes, and Fault turns on for the same bytes as before.
+- New options of the `hisense_ac` platforms, not in the package: `fault_bytes` (text sensor, the
+  four raw fault bytes as hex) and a binary sensor for each of the 13 fault bits that have no
+  stock name, `fault_byte40_0x04` to `fault_byte66_0x01`.
+- The `A/C reports a fault` log line names the faults and prints the four raw bytes, and is
+  logged again when the set bits change, also between two bits that have no name.
 - Builds with ESPHome 2026.11.0 (was 2026.10.2).
 - `hisense_ac` switch platform: `CONF_ECO` comes from `esphome.components.const` when ESPHome
   has it there and stays a local constant until then. ESPHome 2026.11.0 has two other components

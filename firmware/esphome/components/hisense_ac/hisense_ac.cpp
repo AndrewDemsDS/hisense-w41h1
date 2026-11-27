@@ -271,20 +271,39 @@ void HisenseAC::publish_diagnostics_() {
   AcFaults faults;
   if (this->bus_.faults(&faults)) {
     uint32_t bitmap = faults_to_bitmap32(faults);
-    // The bitmap always carries its valid bit, so it is never 0: `any` says whether a fault is
-    // set. A healthy unit is remembered as 0, the value before the first status frame.
-    const uint32_t reported = faults.any ? bitmap : 0;
+    // Keyed on the raw bytes, so a change between two unnamed bits is logged too. A healthy unit
+    // is remembered as 0, the value before the first status frame.
+    const uint32_t reported = fault_log_key(faults);
+    const uint32_t raw = fault_raw32(faults);
+    char detail[FAULT_TEXT_CAP];
+    char bytes[12];
+    fault_detail_text(faults, detail, sizeof(detail));
+    fault_bytes_text(faults, bytes, sizeof(bytes));
     if (reported != this->logged_faults_) {
       if (reported != 0) {
-        ESP_LOGW(TAG, "A/C reports a fault: bitmap 0x%08" PRIX32, bitmap);
+        ESP_LOGW(TAG, "A/C reports a fault: %s (bytes 39 40 64 66: %s, bitmap 0x%08" PRIX32 ")", detail, bytes, bitmap);
       } else {
         ESP_LOGI(TAG, "A/C fault cleared");
       }
       this->logged_faults_ = reported;
     }
+#ifdef USE_TEXT_SENSOR
+    if (fault_text_due(this->fault_text_published_, this->published_fault_raw_, raw)) {
+      if (this->fault_detail_text_sensor_ != nullptr)
+        this->fault_detail_text_sensor_->publish_state(detail);
+      if (this->fault_bytes_text_sensor_ != nullptr)
+        this->fault_bytes_text_sensor_->publish_state(bytes);
+      this->fault_text_published_ = true;
+      this->published_fault_raw_ = raw;
+    }
+#endif
 #ifdef USE_BINARY_SENSOR
     if (this->problem_binary_sensor_ != nullptr)
       this->problem_binary_sensor_->publish_state(faults.any);
+    if (this->protection_binary_sensor_ != nullptr)
+      this->protection_binary_sensor_->publish_state(fault_protection_active(faults));
+    for (auto &entry : this->fault_raw_sensors_)
+      entry.sensor->publish_state(fault_bit(faults, entry.byte, entry.mask));
     for (auto &entry : this->fault_sensors_)
       entry.second->publish_state((bitmap >> entry.first) & 1u);
 #endif

@@ -123,6 +123,34 @@ binary_sensor:
       name: Fault outdoor temp sensor
     fault_over_temp:
       name: Fault over temperature
+    protection:
+      name: Protection active
+    fault_byte40_0x04:
+      name: Fault reserved byte40 0x04
+    fault_byte40_0x02:
+      name: Fault reserved byte40 0x02
+    fault_byte40_0x01:
+      name: Fault reserved byte40 0x01
+    fault_byte64_0x80:
+      name: Fault unknown byte64 0x80
+    fault_byte64_0x04:
+      name: Fault unknown byte64 0x04
+    fault_byte64_0x02:
+      name: Fault unknown byte64 0x02
+    fault_byte64_0x01:
+      name: Fault unknown byte64 0x01
+    fault_byte66_0x40:
+      name: Fault unknown byte66 0x40
+    fault_byte66_0x20:
+      name: Fault unknown byte66 0x20
+    fault_byte66_0x08:
+      name: Fault unknown byte66 0x08
+    fault_byte66_0x04:
+      name: Fault unknown byte66 0x04
+    fault_byte66_0x02:
+      name: Fault discharge temp protection
+    fault_byte66_0x01:
+      name: Fault unknown byte66 0x01
     capability_cool_heat:
       name: Capability heat pump
     capability_ai:
@@ -155,3 +183,7 @@ text_sensor:
     hisense_ac_id: ac_bus
     link_token:
       name: AC device type
+    fault_detail:
+      name: Fault detail
+    fault_bytes:
+      name: Fault bytes

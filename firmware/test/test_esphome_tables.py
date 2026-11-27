@@ -84,6 +84,49 @@ def main() -> int:
     fault_bits = {name for name, bit in faults.items() if bit < faults.get("FAULT1_ANY", 0)}
     binary_sensor = source("binary_sensor.py")
     bit_table("fault bits", re.findall(r'"(FAULT1_\w+)"', binary_sensor), faults, fault_bits)
+    # The fault detail text names a stock fault bit as its binary sensor option, less "fault_".
+    names_table = re.search(r"FAULT_NAMES\[\] = \{(.*?)\n\};", source("hisense_protocol.cpp"), re.DOTALL)
+    detail_names = re.findall(
+        r'\{FAULT_BYTE_\w+, 0x[0-9A-Fa-f]{2}, FAULT_NAME_FAULT, "(\w+)"', names_table.group(1) if names_table else ""
+    )
+    options = [
+        key.removeprefix("fault_")
+        for key in re.findall(r'^\s*"(fault_\w+)": \("FAULT1_', binary_sensor, re.MULTILINE)
+    ]
+    check(
+        sorted(detail_names) == sorted(options) and len(set(detail_names)) == len(detail_names),
+        f"FAULT_NAMES names {sorted(detail_names)}, binary_sensor.py has {sorted(options)}",
+    )
+    # Every other fault bit has a FAULT_RAW_BITS entry, the frost-guard flag (byte 66 0x80) excepted,
+    # and its name says what FAULT_NAMES knows of the bit: reserved, a guess ("?"), or unknown.
+    offsets = cpp_constants(protocol, "FAULT_BYTE_")
+    rows = {
+        (offsets.get(byte), int(mask, 16)): kind
+        for byte, mask, kind in re.findall(
+            r"\{(FAULT_BYTE_\w+), (0x[0-9A-Fa-f]{2}), (FAULT_NAME_\w+)", names_table.group(1) if names_table else ""
+        )
+    }
+    raw = re.findall(
+        r'^\s*"(fault_byte(\d+)_0x([0-9a-f]{2}))": \(\s*"(FAULT_BYTE_\w+)",\s*(0x[0-9A-Fa-f]{2}),\s*"([^"]+)",?\s*\),',
+        binary_sensor,
+        re.MULTILINE,
+    )
+    check(len(raw) > 0, "binary_sensor.py: FAULT_RAW_BITS found")
+    every = {(offsets[name], 1 << bit) for name in offsets for bit in range(8)} - {(66, 0x80)}
+    stock = {key for key, kind in rows.items() if kind == "FAULT_NAME_FAULT"}
+    seen = []
+    for key, num, hexmask, byte, mask, label in raw:
+        at = (offsets.get(byte), int(mask, 16))
+        seen.append(at)
+        check(at == (int(num), int(hexmask, 16)), f"{key}: the option name says byte {num} 0x{hexmask}, the entry {at}")
+        kind = rows.get(at)
+        want = {"FAULT_NAME_RESERVED": "reserved", "FAULT_NAME_GUESS": "?"}.get(kind, "unknown")
+        check(kind != "FAULT_NAME_FAULT" and want in label, f"{key}: FAULT_NAMES has {kind}, the name is {label!r}")
+    check(len(set(seen)) == len(seen), "FAULT_RAW_BITS: a bit is listed twice")
+    check(
+        set(seen) == every - stock,
+        f"FAULT_RAW_BITS misses {sorted(every - stock - set(seen))}, or has {sorted(set(seen) - (every - stock))}",
+    )
 
     # Capability bits: the one-bit FEAT1_* fields. The two-bit fields (_SHIFT) and the validity
     # bits are not booleans and have no entity.

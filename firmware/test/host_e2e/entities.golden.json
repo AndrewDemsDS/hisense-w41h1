@@ -61,6 +61,15 @@
     },
     {
       "domain": "binary_sensor",
+      "object_id": "e2e_fault_byte66_0x02",
+      "name": "E2E fault byte66 0x02",
+      "icon": "",
+      "entity_category": "diagnostic",
+      "disabled_by_default": true,
+      "device_class": "problem"
+    },
+    {
+      "domain": "binary_sensor",
       "object_id": "fault",
       "name": "Fault",
       "icon": "",
@@ -103,6 +112,24 @@
       "entity_category": "diagnostic",
       "disabled_by_default": true,
       "device_class": "problem"
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "fault_over_temperature",
+      "name": "Fault over temperature",
+      "icon": "",
+      "entity_category": "diagnostic",
+      "disabled_by_default": true,
+      "device_class": "problem"
+    },
+    {
+      "domain": "binary_sensor",
+      "object_id": "protection_active",
+      "name": "Protection active",
+      "icon": "mdi:shield-alert-outline",
+      "entity_category": "none",
+      "disabled_by_default": false,
+      "device_class": ""
     },
     {
       "domain": "climate",
@@ -401,6 +428,24 @@
       "object_id": "ac_device_type",
       "name": "AC device type",
       "icon": "mdi:identifier",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "text_sensor",
+      "object_id": "e2e_fault_bytes",
+      "name": "E2E fault bytes",
+      "icon": "mdi:hexadecimal",
+      "entity_category": "diagnostic",
+      "disabled_by_default": false,
+      "device_class": ""
+    },
+    {
+      "domain": "text_sensor",
+      "object_id": "fault_detail",
+      "name": "Fault detail",
+      "icon": "mdi:alert-circle-outline",
       "entity_category": "diagnostic",
       "disabled_by_default": false,
       "device_class": ""

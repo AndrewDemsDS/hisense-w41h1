@@ -42,6 +42,7 @@ presets and the limits are in [Everyday Control](Everyday-Control#the-climate-en
 | Energy today | `sensor.air_conditioner_energy_today` | kWh | the power estimate summed over the day. An unknown power value adds nothing of its own. The day rolls over on Home Assistant's clock |
 | Aux heat relay | `binary_sensor.air_conditioner_aux_heat_relay` | | on while the auxiliary heater runs |
 | Fault | `binary_sensor.air_conditioner_fault` | | on while the unit reports any fault |
+| Protection active | `binary_sensor.air_conditioner_protection_active` | | on while the unit reports a protection state (byte 66, such as over temperature). It turns Fault on too. An automation can answer it apart from a fault, for example by raising the fan |
 
 ### Diagnostics
 
@@ -56,7 +57,8 @@ presets and the limits are in [Everyday Control](Everyday-Control#the-climate-en
 | Command retries | `sensor.air_conditioner_command_retries` | |
 | Failed commands | `sensor.air_conditioner_failed_commands` | |
 | Capability heat pump, Capability eco, Capability quiet | `binary_sensor.air_conditioner_capability_*` | what the unit says it supports ([below](#capability-and-fault-flags)) |
-| Fault indoor temp sensor, Fault indoor to outdoor comms, Fault condensate tray full, Fault outdoor temp sensor | `binary_sensor.air_conditioner_fault_*` | one fault bit each |
+| Fault indoor temp sensor, Fault indoor to outdoor comms, Fault condensate tray full, Fault outdoor temp sensor, Fault over temperature | `binary_sensor.air_conditioner_fault_*` | one fault bit each |
+| Fault detail | `sensor.air_conditioner_fault_detail` | which fault raised `Fault`: `none`, or the set bits by name, `unknown byteNN 0xMM` for a bit with no name ([below](#capability-and-fault-flags)) |
 | Uptime, WiFi signal, Reset reason | | the node itself. The wording of the reset reason is the chip's own and differs between platforms |
 | Start Wi-Fi setup | a button | opens [Wi-Fi setup mode](Wifi-Setup-Mode) |
 | Serial port restarts, Flash layout | | the stock module only ([The Stock Module](Stock-Module-Build#after-the-first-boot)) |
@@ -75,13 +77,33 @@ entities.
 
 The A/C reports what it supports in its ProductType reply, and its faults as a bitmap. The
 component can publish every bit as a binary sensor. The shipped package declares three
-capability flags and four fault flags, the ones that have fired on a bench unit. The rest are
+capability flags and five fault flags: four that have fired on a bench unit, and over
+temperature, the protection bit most likely to fire in heat or cool. The rest are
 options you add to `packages/hisense-ac.yaml` in the same way:
 
 | Group | Options |
 |---|---|
 | Capability flags (13) | `capability_cool_heat`, `capability_power_save`, `capability_fan_mute` (the three shipped), `capability_ai`, `capability_infinite_fan`, `capability_swing_dir_8`, `capability_swing_follow`, `capability_humidity`, `capability_heat_8c`, `capability_purify`, `capability_q_display`, `capability_enable_8heat`, `capability_trans_102_64` |
-| Fault flags (18) | `fault_indoor_temp`, `fault_indoor_comms`, `fault_water_full`, `fault_outdoor_temp` (the four shipped), `fault_indoor_coil_temp`, `fault_indoor_humidity`, `fault_indoor_fan_motor`, `fault_grille`, `fault_indoor_vzero`, `fault_indoor_display`, `fault_indoor_keys`, `fault_indoor_wifi`, `fault_indoor_ele`, `fault_indoor_eeprom`, `fault_outdoor_eeprom`, `fault_outdoor_coil_temp`, `fault_outdoor_gas_temp`, `fault_over_temp` |
+| Fault flags (18) | `fault_indoor_temp`, `fault_indoor_comms`, `fault_water_full`, `fault_outdoor_temp`, `fault_over_temp` (the five shipped), `fault_indoor_coil_temp`, `fault_indoor_humidity`, `fault_indoor_fan_motor`, `fault_grille`, `fault_indoor_vzero`, `fault_indoor_display`, `fault_indoor_keys`, `fault_indoor_wifi`, `fault_indoor_ele`, `fault_indoor_eeprom`, `fault_outdoor_eeprom`, `fault_outdoor_coil_temp`, `fault_outdoor_gas_temp` |
+| Fault bits with no stock name (13) | `fault_byte40_0x04`, `fault_byte40_0x02`, `fault_byte40_0x01` (reserved), `fault_byte64_0x80`, `fault_byte64_0x04`, `fault_byte64_0x02`, `fault_byte64_0x01`, `fault_byte66_0x40`, `fault_byte66_0x20`, `fault_byte66_0x08`, `fault_byte66_0x04`, `fault_byte66_0x01` (unknown), `fault_byte66_0x02` (discharge temperature protection, a guess) |
+| Fault bytes (text sensor) | `fault_bytes`: the four raw fault bytes (payload 39, 40, 64, 66) as `HH HH HH HH` |
+
+`Fault detail` covers every bit, also the ones without a binary sensor on the node and the ones
+with no stock name. It names a bit as its option above, without `fault_`: for example
+`indoor_comms`, or `indoor_temp, indoor_comms` for two at once. Over temperature (byte 66
+`0x10`) reads `over_temp (coil overload in heat or anti-freeze in cool)`, because the stock
+firmware gives the one bit both names. The other bits show how sure their name is:
+
+| Text | Bits | Source |
+|---|---|---|
+| `reserved byte40 0x04` | byte 40 masks `0x04` `0x02` `0x01` | reserved in the Hisense XM protocol rev 3.2.6 |
+| `discharge temp protection? byte66 0x02` | byte 66 mask `0x02` | a community firmware, which gives no source |
+| `unknown byte64 0x80` | byte 64 masks `0x80` `0x04` `0x02` `0x01`, byte 66 masks `0x40` `0x20` `0x08` `0x04` `0x01` | none |
+
+Byte 66 `0x80` is the 8 C frost-guard flag, not a fault: it leaves `Fault detail` at `none`
+and shows only in `fault_bytes` (`00 00 00 80`). `Fault` turns on for every other set bit,
+named or not. Home Assistant keeps the history of `Fault detail`, so a fault that came and went
+can still be read back.
 
 A capability flag that is off means "not on this unit", never "not on this model". What each flag
 stands for is in `reverse-engineering/docs/11-model-capability-map.md`.
@@ -159,7 +181,7 @@ in the ESPHome dashboard. The deployed level is `INFO`.
 | `Command taken by the unit after N re-send(s)` | INFO | a re-send landed |
 | `Command not taken by the unit after N re-send(s) (fields 0x...), showing what it reports` | WARN | given up. Counted in `Failed commands` |
 | `N command(s) unconfirmed or unsent when the link dropped, not sent again` | WARN | open commands dropped at a link loss |
-| `A/C reports a fault: bitmap 0x...` | WARN | a real fault. `A/C fault cleared` at INFO when it goes |
+| `A/C reports a fault: <names> (bytes 39 40 64 66: HH HH HH HH, bitmap 0x...)` | WARN | a real fault, by name (as the `Fault detail` entity shows it) and as raw bytes. Logged again when the set bits change. `A/C fault cleared` at INFO when it goes |
 | `Setup requested from the remote (0x1E reply request bits 0x..)` | INFO | the "77" gesture was seen ([Wi-Fi setup mode](Wifi-Setup-Mode)) |
 
 To see more, raise `logger: level:` in the node's YAML. `DEBUG` adds each status change and every

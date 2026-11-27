@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <string>
 #include <vector>
 
 #include "hisense_protocol.h"
@@ -1155,6 +1156,177 @@ static void test_parse_features_and_faults() {
         (unsigned) H::features_to_bitmap32(all));
 }
 
+// ---- Which fault: the fault text sensors and the log line --------------------------------------
+// The fault bytes of a 160-byte status frame, set to the four given values (39, 40, 64, 66).
+static H::AcFaults faults_of(uint8_t b39, uint8_t b40, uint8_t b64, uint8_t b66) {
+  Bytes f(160, 0);
+  f[39] = b39;
+  f[40] = b40;
+  f[64] = b64;
+  f[66] = b66;
+  H::AcFaults fl;
+  H::parse_faults(f.data(), f.size(), &fl);
+  return fl;
+}
+
+static std::string detail_of(const H::AcFaults &fl, size_t cap = H::FAULT_TEXT_CAP) {
+  std::vector<char> buf(cap, 'X');
+  size_t n = H::fault_detail_text(fl, buf.data(), cap);
+  return n == 0 ? std::string("<0>") : std::string(buf.data(), n);
+}
+
+static void test_fault_text() {
+  printf("-- fault text: names, unknown bits, the frost-guard flag, the 255-character cut\n");
+  char bytes[12];
+  // Healthy, and the frost-guard flag alone (header: byte 66 bit 7 is a mode flag): no fault.
+  H::AcFaults fl = faults_of(0, 0, 0, 0);
+  CHECK(detail_of(fl) == "none", "healthy: none (got %s)", detail_of(fl).c_str());
+  CHECK(H::fault_bytes_text(fl, bytes, sizeof(bytes)) == 11 && std::string(bytes) == "00 00 00 00",
+        "healthy bytes (got %s)", bytes);
+  CHECK(H::fault_log_key(fl) == 0 && H::fault_raw32(fl) == 0, "healthy: log key and raw are 0");
+  fl = faults_of(0, 0, 0, 0x80);
+  CHECK(detail_of(fl) == "none", "frost guard alone: none (got %s)", detail_of(fl).c_str());
+  H::fault_bytes_text(fl, bytes, sizeof(bytes));
+  CHECK(std::string(bytes) == "00 00 00 80", "frost guard alone: the flag shows in the bytes (got %s)", bytes);
+  CHECK(H::fault_log_key(fl) == 0 && H::fault_raw32(fl) == 0x80u, "frost guard alone: no log key, raw 0x80");
+
+  // Named bits by name, wire order: byte 39 to 66, high bit to low. Unnamed bits by byte and mask.
+  struct {
+    uint8_t b39, b40, b64, b66;
+    const char *want;
+  } rows[] = {
+      {0x80, 0, 0, 0, "indoor_temp"},
+      {0x01, 0, 0, 0, "indoor_comms"},
+      {0, 0, 0x08, 0, "outdoor_temp"},
+      {0, 0, 0, 0x10, "over_temp (coil overload in heat or anti-freeze in cool)"},
+      {0x81, 0, 0, 0x12,
+       "indoor_temp, indoor_comms, over_temp (coil overload in heat or anti-freeze in cool), discharge temp protection? byte66 0x02"},
+      {0, 0x07, 0, 0, "reserved byte40 0x04, reserved byte40 0x02, reserved byte40 0x01"},
+      {0, 0, 0x87, 0, "unknown byte64 0x80, unknown byte64 0x04, unknown byte64 0x02, unknown byte64 0x01"},
+      {0, 0, 0, 0xEF,
+       "unknown byte66 0x40, unknown byte66 0x20, unknown byte66 0x08, unknown byte66 0x04, "
+       "discharge temp protection? byte66 0x02, unknown byte66 0x01"},
+      {0, 0x08, 0x40, 0x90, "indoor_eeprom, outdoor_eeprom, over_temp (coil overload in heat or anti-freeze in cool)"},
+  };
+  for (const auto &r : rows) {
+    fl = faults_of(r.b39, r.b40, r.b64, r.b66);
+    CHECK(fl.any && detail_of(fl) == r.want, "bytes %02X %02X %02X %02X: want \"%s\", got \"%s\"", r.b39, r.b40, r.b64,
+          r.b66, r.want, detail_of(fl).c_str());
+  }
+
+  // The names table and parse_faults agree: a stock fault name sets exactly one named bitmap
+  // bit, any other bit sets none, and each kind of row shows how sure its name is.
+  size_t count = 0;
+  const H::FaultName *names = H::fault_names(&count);
+  size_t faults_named = 0;
+  for (size_t i = 0; i < count; i++)
+    faults_named += names[i].kind == H::FAULT_NAME_FAULT ? 1 : 0;
+  CHECK(faults_named == H::FAULT1_OVER_TEMP + 1u, "one stock fault name per named fault bit (got %zu)", faults_named);
+  const size_t offsets[] = {39, 40, 64, 66};
+  for (size_t at : offsets) {
+    for (int bit = 0; bit < 8; bit++) {
+      const uint8_t mask = static_cast<uint8_t>(1u << bit);
+      if (at == 66 && mask == H::FAULT_NONFAULT_PROTECT)
+        continue;
+      Bytes f(160, 0);
+      f[at] = mask;
+      H::parse_faults(f.data(), f.size(), &fl);
+      const uint32_t named = H::faults_to_bitmap32(fl) & ((1u << (H::FAULT1_OVER_TEMP + 1)) - 1);
+      const H::FaultName *row = nullptr;
+      int rows_here = 0;
+      for (size_t i = 0; i < count; i++) {
+        if (names[i].byte == at && names[i].mask == mask) {
+          row = &names[i];
+          rows_here++;
+        }
+      }
+      CHECK(rows_here <= 1, "byte %zu 0x%02X: at most one row", at, mask);
+      char want[96];
+      if (row == nullptr)
+        snprintf(want, sizeof(want), "unknown byte%zu 0x%02X", at, mask);
+      else if (row->kind == H::FAULT_NAME_RESERVED)
+        snprintf(want, sizeof(want), "reserved byte%zu 0x%02X", at, mask);
+      else if (row->kind == H::FAULT_NAME_GUESS)
+        snprintf(want, sizeof(want), "%s? byte%zu 0x%02X", row->name, at, mask);
+      else if (row->note != nullptr)
+        snprintf(want, sizeof(want), "%s (%s)", row->name, row->note);
+      else
+        snprintf(want, sizeof(want), "%s", row->name);
+      if (row != nullptr && row->kind == H::FAULT_NAME_FAULT) {
+        CHECK(named != 0 && (named & (named - 1)) == 0 && detail_of(fl) == want,
+              "byte %zu 0x%02X: one named bit and the text %s (got 0x%05X, %s)", at, mask, want, (unsigned) named,
+              detail_of(fl).c_str());
+      } else {
+        CHECK(named == 0 && detail_of(fl) == want, "byte %zu 0x%02X: no named bit, shown as %s (got %s)", at, mask,
+              want, detail_of(fl).c_str());
+      }
+    }
+  }
+
+  // Every bit set: the list is cut to what Home Assistant takes (255 characters) and says so.
+  fl = faults_of(0xFF, 0xFF, 0xFF, 0xFF);
+  std::string all = detail_of(fl);
+  CHECK(all.size() <= 255 && all.size() > 200 && all.compare(0, 13, "indoor_temp, ") == 0 &&
+            all.compare(all.size() - 5, 5, ", ...") == 0,
+        "everything set: cut at 255 with an ellipsis (%zu chars: %s)", all.size(), all.c_str());
+  // A small buffer: whole entries, then the ellipsis; the last entry may use the ellipsis room.
+  fl = faults_of(0x81, 0, 0, 0);
+  CHECK(detail_of(fl, 20) == "indoor_temp, ...", "cap 20: one entry and the ellipsis (got %s)",
+        detail_of(fl, 20).c_str());
+  CHECK(detail_of(fl, 26) == "indoor_temp, indoor_comms", "cap 26: both fit exactly (got %s)",
+        detail_of(fl, 26).c_str());
+  CHECK(detail_of(fl, 8) == "...", "cap 8: only the ellipsis (got %s)", detail_of(fl, 8).c_str());
+  CHECK(detail_of(faults_of(0, 0, 0, 0), 5) == "none" && detail_of(fl, 4) == "<0>",
+        "cap 5 holds none, cap 4 is refused");
+  CHECK(H::fault_detail_text(fl, nullptr, 64) == 0 && H::fault_bytes_text(fl, nullptr, 12) == 0 &&
+            H::fault_bytes_text(fl, bytes, 11) == 0,
+        "null or short buffers are refused");
+
+  // Raw packing and the log key: the frost-guard flag is masked from the key, never from raw.
+  fl = faults_of(0x11, 0x22, 0x33, 0x44);
+  CHECK(H::fault_raw32(fl) == 0x11223344u && H::fault_log_key(fl) == 0x11223344u, "raw packing 39, 40, 64, 66");
+  H::fault_bytes_text(fl, bytes, sizeof(bytes));
+  CHECK(std::string(bytes) == "11 22 33 44", "bytes text order (got %s)", bytes);
+  fl = faults_of(0x01, 0, 0, 0x80);
+  CHECK(H::fault_log_key(fl) == 0x01000000u && H::fault_raw32(fl) == 0x01000080u,
+        "a fault under frost guard: the key drops the flag");
+  CHECK(H::fault_log_key(faults_of(0, 0, 0, 0x90)) == 0x10u, "over temp under frost guard: key 0x10");
+
+  // One bit by offset and mask, for the binary sensors of the bits with no FAULT1_* index, and the
+  // protection/fault split: each bit alone, on every fault byte.
+  for (size_t at : offsets) {
+    for (int bit = 0; bit < 8; bit++) {
+      const uint8_t mask = static_cast<uint8_t>(1u << bit);
+      const bool frost = at == 66 && mask == H::FAULT_NONFAULT_PROTECT;
+      Bytes f(160, 0);
+      f[at] = mask;
+      H::parse_faults(f.data(), f.size(), &fl);
+      bool only = true;  // set at its own offset and mask, nowhere else
+      for (size_t other : offsets) {
+        for (int ob = 0; ob < 8; ob++) {
+          const uint8_t om = static_cast<uint8_t>(1u << ob);
+          const bool want = !frost && other == at && om == mask;
+          only = only && H::fault_bit(fl, static_cast<uint8_t>(other), om) == want;
+        }
+      }
+      CHECK(only, "byte %zu 0x%02X alone: fault_bit is set there only%s", at, mask, frost ? " (frost: nowhere)" : "");
+      CHECK(H::fault_protection_active(fl) == (at == 66 && !frost) && fl.any == !frost,
+            "byte %zu 0x%02X alone: protection %d, fault %d", at, mask, H::fault_protection_active(fl), fl.any);
+    }
+  }
+  fl = faults_of(0xFF, 0xFF, 0xFF, 0xFF);
+  CHECK(!H::fault_bit(fl, 41, 0x01) && !H::fault_bit(fl, 0, 0x01) && !H::fault_bit(fl, 66, 0x80),
+        "fault_bit: no other offset, and never the frost-guard flag");
+  fl = faults_of(0x01, 0, 0, 0x80);
+  CHECK(!H::fault_protection_active(fl) && fl.any, "a fault under frost guard: a fault, no protection");
+  fl = faults_of(0x01, 0, 0, 0x10);
+  CHECK(H::fault_protection_active(fl) && fl.any, "a fault and over temp together: both");
+
+  // The text sensors publish once, then on a change of the raw bytes only.
+  CHECK(H::fault_text_due(false, 0, 0) && !H::fault_text_due(true, 0x80, 0x80) && H::fault_text_due(true, 0, 0x80),
+        "fault_text_due: first time, unchanged, changed");
+}
+
 // ---- Setup request ("77") ----------------------------------------------------------------------
 static void test_setup_request() {
   printf("-- setup request: the shortest reply, the debounce count, the lockout to the millisecond\n");
@@ -1729,6 +1901,7 @@ int main() {
   test_stamps();
   test_parse_status();
   test_parse_features_and_faults();
+  test_fault_text();
   test_setup_request();
   test_assembler();
   test_frame_progress();

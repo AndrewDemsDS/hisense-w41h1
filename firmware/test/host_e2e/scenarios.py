@@ -288,24 +288,31 @@ async def telemetry(ctx):
 
 @scenario(10)
 async def faults(ctx):
-    """Fault bytes from the unit reach the problem sensor and the per-bit sensors."""
+    """Fault bytes reach the problem and protection sensors, the per-bit sensors and the fault text."""
     r = ctx.r
     unit = Unit()
     unit.caps = set()
     node = await ctx.node(unit)
     names = {"indoor_temp_sensor": False, "condensate_tray_full": False, "indoor_to_outdoor_comms": False,
-             "outdoor_temp_sensor": False}
+             "outdoor_temp_sensor": False, "over_temperature": False, "protection": False, "byte66_0x02": False}
+    # The package's per-bit sensors, its protection sensor, and host.yaml's opt-in byte 66 0x02 one.
+    ids = {k: f"binary_sensor.fault_{k}" for k in names}
+    ids["protection"] = "binary_sensor.protection_active"
+    ids["byte66_0x02"] = "binary_sensor.e2e_fault_byte66_0x02"
 
     def shown():
-        return {"fault": node.value("binary_sensor.fault"),
-                **{k: node.value(f"binary_sensor.fault_{k}") for k in names}}
+        return {"fault": node.value("binary_sensor.fault"), **{k: node.value(ids[k]) for k in names}}
 
-    async def expect(want_any, want_bits, what):
+    def text():
+        return node.value("text_sensor.fault_detail"), node.value("text_sensor.e2e_fault_bytes")
+
+    async def expect(want_any, want_bits, what, detail, raw):
         want = {"fault": want_any, **names, **want_bits}
-        await node.wait(lambda: shown() == want, 3)
+        await node.wait(lambda: shown() == want and text() == (detail, raw), 3)
         r.check(shown() == want, what, f"got {shown()}")
+        r.equal(text(), (detail, raw), f"{what}: Fault detail and Fault bytes")
 
-    await expect(False, {}, "a healthy unit: no fault")
+    await expect(False, {}, "a healthy unit: no fault", "none", "00 00 00 00")
     # Was a known failure, found by this test: the fault log tested the bitmap, whose valid bit
     # (bit 31) is always set, where it meant AcFaults::any.
     r.equal(node.log_count("A/C reports a fault"), 0, "a healthy unit is not logged as reporting a fault")
@@ -314,26 +321,41 @@ async def faults(ctx):
             {"heat_pump": False, "eco": False, "quiet": False}, "a unit that advertises nothing: every capability off")
     unit.faults = {39: 0x80 | 0x10, 64: 0x08}
     await expect(True, {"indoor_temp_sensor": True, "condensate_tray_full": True, "outdoor_temp_sensor": True},
-                 "byte 39 bits 7 and 4, byte 64 bit 3: indoor temp, tray full and outdoor temp faults")
-    r.check(await node.wait(lambda: node.log_count("A/C reports a fault: bitmap 0xC0010009") == 1, 2),
-            "the fault is logged once, as bitmap 0xC0010009 (valid, any, bits 16, 3 and 0)")
+                 "byte 39 bits 7 and 4, byte 64 bit 3: indoor temp, tray full and outdoor temp faults",
+                 "indoor_temp, water_full, outdoor_temp", "90 00 08 00")
+    first = ("A/C reports a fault: indoor_temp, water_full, outdoor_temp (bytes 39 40 64 66: 90 00 08 00, "
+             "bitmap 0xC0010009)")
+    r.check(await node.wait(lambda: node.log_count(first) == 1, 2),
+            "the fault is logged once, by name, with the raw bytes and bitmap 0xC0010009")
     unit.faults = {39: 0x01}
-    await expect(True, {"indoor_to_outdoor_comms": True}, "byte 39 bit 0: indoor to outdoor comms, the others clear")
+    await expect(True, {"indoor_to_outdoor_comms": True}, "byte 39 bit 0: indoor to outdoor comms, the others clear",
+                 "indoor_comms", "01 00 00 00")
     unit.faults = {40: 0x01}
-    await expect(True, {}, "a fault bit with no name (byte 40 bit 0) still raises the problem sensor")
+    await expect(True, {}, "a reserved fault bit (byte 40 bit 0) still raises the problem sensor",
+                 "reserved byte40 0x01", "00 01 00 00")
+    unit.faults = {64: 0x01}
+    await expect(True, {}, "a bit with no name (byte 64 bit 0): the text follows", "unknown byte64 0x01",
+                 "00 00 01 00")
     unit.faults = {66: 0x80}
-    await expect(False, {}, "byte 66 bit 7 is the 8 C frost guard, not a fault")
-    unit.faults = {66: 0x10}
-    await expect(True, {}, "byte 66 bit 4 (over temperature) raises the problem sensor")
+    await expect(False, {}, "byte 66 bit 7 is the 8 C frost guard, not a fault", "none", "00 00 00 80")
+    unit.faults = {66: 0x12}
+    await expect(True, {"over_temperature": True, "protection": True, "byte66_0x02": True},
+                 "byte 66 bit 4 (over temperature) and bit 1 (a guessed name): problem, protection and both bits",
+                 "over_temp (coil overload in heat or anti-freeze in cool), discharge temp protection? byte66 0x02", "00 00 00 12")
     unit.faults = {}
-    await expect(False, {}, "all clear again")
+    await expect(False, {}, "all clear again", "none", "00 00 00 00")
     await node.quiet_cycles(2)
     r.equal(node.log_count("A/C fault cleared"), 2, "each of the two clearings is logged as 'A/C fault cleared'")
     r.equal(node.log_count("bitmap 0x80000000"), 0, "and never as a fault with an empty bitmap")
-    logged = {b: node.log_count(f"A/C reports a fault: bitmap 0x{b:08X}") for b in (0xC0010009, 0xC0000080, 0xC0000000,
-                                                                                    0xC0020000)}
-    r.check(all(n == 1 for n in logged.values()), "each of the four fault patterns was logged once, with its bitmap",
-            str({f"0x{b:08X}": n for b, n in logged.items()}))
+    logged = {line: node.log_count(f"A/C reports a fault: {line}") for line in (
+        "indoor_temp, water_full, outdoor_temp (bytes 39 40 64 66: 90 00 08 00, bitmap 0xC0010009)",
+        "indoor_comms (bytes 39 40 64 66: 01 00 00 00, bitmap 0xC0000080)",
+        "reserved byte40 0x01 (bytes 39 40 64 66: 00 01 00 00, bitmap 0xC0000000)",
+        "unknown byte64 0x01 (bytes 39 40 64 66: 00 00 01 00, bitmap 0xC0000000)",
+        "over_temp (coil overload in heat or anti-freeze in cool), discharge temp protection? byte66 0x02 (bytes 39 40 64 66: 00 00 00 12, bitmap 0xC0020000)")}
+    r.check(all(n == 1 for n in logged.values()),
+            "each of the five fault patterns was logged once, also the change between two unnamed bits",
+            str(logged))
 
 
 # ---- Climate ---------------------------------------------------------------------------------------
