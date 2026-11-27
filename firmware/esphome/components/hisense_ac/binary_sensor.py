@@ -6,6 +6,10 @@ The tables below name the FAULT1_* / FEAT1_* constants in hisense_protocol.h, an
 code passes the constant, not a number: the bit indices are written once, in the C++ header. A
 name that does not exist there fails the build, and the host test test_esphome_tables.py says so
 before a build is needed.
+
+FAULT_RAW_BITS covers the fault bits with no stock name, by payload offset (a FAULT_BYTE_*
+constant) and mask. Its names follow FAULT_NAMES in hisense_protocol.cpp, the one table of fault
+names with a source per row, and test_esphome_tables.py checks that the two agree.
 """
 
 import esphome.codegen as cg
@@ -27,6 +31,8 @@ DEPENDENCIES = ["hisense_ac"]
 CONF_AUX_HEAT = "aux_heat"
 CONF_BUS_LINK = "bus_link"
 CONF_PROBLEM = "problem"
+# Any byte 66 protection bit but the frost-guard flag (fault_protection_active()).
+CONF_PROTECTION = "protection"
 
 # option -> (FAULT1_* constant, what the fault is)
 FAULT_BITS = {
@@ -48,6 +54,28 @@ FAULT_BITS = {
     "fault_outdoor_gas_temp": ("FAULT1_OUT_GAS_TEMP", "Fault outdoor gas sensor"),
     "fault_outdoor_temp": ("FAULT1_OUT_TEMP", "Fault outdoor temp sensor"),
     "fault_over_temp": ("FAULT1_OVER_TEMP", "Fault over temperature"),
+}
+
+# option -> (FAULT_BYTE_* constant, mask, what the bit is). Every fault bit FAULT_BITS does not
+# cover, the frost-guard flag (byte 66 0x80) excepted. "reserved" and "?" say how sure the name is.
+FAULT_RAW_BITS = {
+    "fault_byte40_0x04": ("FAULT_BYTE_MODULE", 0x04, "Fault reserved byte40 0x04"),
+    "fault_byte40_0x02": ("FAULT_BYTE_MODULE", 0x02, "Fault reserved byte40 0x02"),
+    "fault_byte40_0x01": ("FAULT_BYTE_MODULE", 0x01, "Fault reserved byte40 0x01"),
+    "fault_byte64_0x80": ("FAULT_BYTE_OUTDOOR", 0x80, "Fault unknown byte64 0x80"),
+    "fault_byte64_0x04": ("FAULT_BYTE_OUTDOOR", 0x04, "Fault unknown byte64 0x04"),
+    "fault_byte64_0x02": ("FAULT_BYTE_OUTDOOR", 0x02, "Fault unknown byte64 0x02"),
+    "fault_byte64_0x01": ("FAULT_BYTE_OUTDOOR", 0x01, "Fault unknown byte64 0x01"),
+    "fault_byte66_0x40": ("FAULT_BYTE_PROTECT", 0x40, "Fault unknown byte66 0x40"),
+    "fault_byte66_0x20": ("FAULT_BYTE_PROTECT", 0x20, "Fault unknown byte66 0x20"),
+    "fault_byte66_0x08": ("FAULT_BYTE_PROTECT", 0x08, "Fault unknown byte66 0x08"),
+    "fault_byte66_0x04": ("FAULT_BYTE_PROTECT", 0x04, "Fault unknown byte66 0x04"),
+    "fault_byte66_0x02": (
+        "FAULT_BYTE_PROTECT",
+        0x02,
+        "Fault discharge temp protection?",
+    ),
+    "fault_byte66_0x01": ("FAULT_BYTE_PROTECT", 0x01, "Fault unknown byte66 0x01"),
 }
 
 # The two-bit fields (power_display, demand_resp) are not booleans and are left out.
@@ -136,6 +164,11 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_PROBLEM): binary_sensor.binary_sensor_schema(
                 device_class=DEVICE_CLASS_PROBLEM,
             ),
+            # On while the unit reports a protection state (byte 66), which can be normal
+            # operation for a while: an automation can answer it apart from a fault.
+            cv.Optional(CONF_PROTECTION): binary_sensor.binary_sensor_schema(
+                icon="mdi:shield-alert-outline",
+            ),
         }
     )
     # The per-bit faults are disabled by default in Home Assistant: the summary `problem`
@@ -147,7 +180,7 @@ CONFIG_SCHEMA = (
             cv.Optional(key): _diagnostic(
                 DEVICE_CLASS_PROBLEM, disabled_by_default=True
             )
-            for key in FAULT_BITS
+            for key in (*FAULT_BITS, *FAULT_RAW_BITS)
         }
     )
     .extend(
@@ -163,7 +196,7 @@ CONFIG_SCHEMA = (
 async def to_code(config: ConfigType) -> None:
     parent = await cg.get_variable(config[CONF_HISENSE_AC_ID])
 
-    for key in (CONF_AUX_HEAT, CONF_BUS_LINK, CONF_PROBLEM):
+    for key in (CONF_AUX_HEAT, CONF_BUS_LINK, CONF_PROBLEM, CONF_PROTECTION):
         if conf := config.get(key):
             var = await binary_sensor.new_binary_sensor(conf)
             cg.add(getattr(parent, f"set_{key}_binary_sensor")(var))
@@ -173,6 +206,12 @@ async def to_code(config: ConfigType) -> None:
             var = await binary_sensor.new_binary_sensor(conf)
             bit = cg.RawExpression(f"{hisense_ac_ns}::{constant}")
             cg.add(parent.add_fault_binary_sensor(bit, var))
+
+    for key, (constant, mask, _) in FAULT_RAW_BITS.items():
+        if conf := config.get(key):
+            var = await binary_sensor.new_binary_sensor(conf)
+            byte = cg.RawExpression(f"{hisense_ac_ns}::{constant}")
+            cg.add(parent.add_fault_raw_binary_sensor(byte, mask, var))
 
     for key, (constant, _, _) in CAPABILITY_BITS.items():
         if conf := config.get(key):

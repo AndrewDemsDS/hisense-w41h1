@@ -210,17 +210,25 @@ binary_sensor:
       name: AC bus link
     problem:
       name: Fault
+    protection:
+      name: Protection active
 ```
 
 - **bus_link** (*Optional*): On while the A/C is answering on the bus.
 - **problem** (*Optional*): On while the unit reports any fault.
+- **protection** (*Optional*): On while the unit reports a protection state (status byte 66, any
+  bit but the 8 °C frost-guard flag). A protection also turns on `problem`.
 - **aux_heat** (*Optional*): On while the auxiliary heater relay is closed.
 - **fault_\*** (*Optional*): One sensor per fault the unit can report: `fault_indoor_temp`,
   `fault_indoor_coil_temp`, `fault_indoor_humidity`, `fault_water_full`, `fault_indoor_fan_motor`,
   `fault_grille`, `fault_indoor_vzero`, `fault_indoor_comms`, `fault_indoor_display`,
   `fault_indoor_keys`, `fault_indoor_wifi`, `fault_indoor_ele`, `fault_indoor_eeprom`,
   `fault_outdoor_eeprom`, `fault_outdoor_coil_temp`, `fault_outdoor_gas_temp`,
-  `fault_outdoor_temp`, `fault_over_temp`.
+  `fault_outdoor_temp`, `fault_over_temp`, and one per bit with no name, by byte and mask:
+  `fault_byte40_0x04`, `fault_byte40_0x02`, `fault_byte40_0x01`, `fault_byte64_0x80`,
+  `fault_byte64_0x04`, `fault_byte64_0x02`, `fault_byte64_0x01`, `fault_byte66_0x40`,
+  `fault_byte66_0x20`, `fault_byte66_0x08`, `fault_byte66_0x04`, `fault_byte66_0x02`,
+  `fault_byte66_0x01`.
 - **capability_\*** (*Optional*): What the unit says it supports. Use these to decide which
   `supports_*` options and switches to declare: `capability_cool_heat`, `capability_ai`,
   `capability_infinite_fan`, `capability_power_save`, `capability_fan_mute`,
@@ -238,10 +246,20 @@ text_sensor:
     hisense_ac_id: ac_bus
     link_token:
       name: AC device type
+    fault_detail:
+      name: Fault detail
+    fault_bytes:
+      name: Fault bytes
 ```
 
 - **link_token** (*Optional*): The two-byte device type the unit reports when the link comes up.
   All options from [Text Sensor](/components/text_sensor/#config-text_sensor).
+- **fault_detail** (*Optional*): Which fault the unit reports: `none`, or a comma list of the set
+  fault bits, named as the `fault_*` binary sensor options without the prefix (for example
+  `indoor_comms`). A reserved bit shows as `reserved byteNN 0xMM`, a name with no firm source as
+  `name? byteNN 0xMM` and any other bit as `unknown byteNN 0xMM`. Cut to 255 characters with `...`. All options from [Text Sensor](/components/text_sensor/#config-text_sensor).
+- **fault_bytes** (*Optional*): The four raw fault bytes of the status frame (payload 39, 40, 64
+  and 66) as `HH HH HH HH`. All options from [Text Sensor](/components/text_sensor/#config-text_sensor).
 
 ## Automations
 

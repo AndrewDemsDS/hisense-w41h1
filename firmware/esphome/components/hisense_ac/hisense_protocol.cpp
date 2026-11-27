@@ -1,5 +1,6 @@
 #include "hisense_protocol.h"
 
+#include <cstdio>
 #include <cstring>
 
 namespace esphome::hisense_ac {
@@ -71,6 +72,169 @@ uint32_t faults_to_bitmap32(const AcFaults &f) {
   if (f.valid)
     b |= 1u << FAULT1_VALID;
   return b;
+}
+
+// ---- Which fault -------------------------------------------------------------------------------
+// The one table of fault names. To name another bit, add one row with its source.
+//
+// FAULT_NAME_FAULT rows: the stock firmware's f_e_* attribute table, group/bit read as payload
+// byte/mask (RE docs/10 section 7.3 and 7.5). Byte 39 masks 0x80 and 0x01 were also seen firing on
+// induced faults (RE docs/10 section 7.6). Three rows carry a vendor alias for the same bit.
+//
+// The other rows are from outside the repo and are not checked against a unit:
+// - Byte 40 masks 0x04 0x02 0x01 are reserved in the Hisense XM protocol header rev 3.2.6, as
+//   reproduced in github.com/bannhead/pyaehw4a1 (pyaehw4a1/responses.py, field rev25:3).
+// - Byte 66 mask 0x02 is "high compressor discharge temperature protection" in the community
+//   firmware github.com/Druidblack/AC-Hisense (components/ac_hi/ac_hi.cpp, which skydoy/ESPHome_AC
+//   copies). Neither gives a source, so it is a guess.
+// - Byte 66 mask 0x10: the stock names f_e_over_hot / f_e_over_cold share the bit, and the Hisense
+//   outdoor-unit service manual pairs the two modes as one code (anti-overload in heat, anti-freeze
+//   in cool), which the note says.
+// The rest of bytes 64 and 66 is reserved in rev 3.2.6, but the named bits there come from a later
+// revision, so those bits are left unknown.
+static const FaultName FAULT_NAMES[] = {
+    {FAULT_BYTE_INDOOR, 0x80, FAULT_NAME_FAULT, "indoor_temp", nullptr},         // f_e_intemp, induced
+    {FAULT_BYTE_INDOOR, 0x40, FAULT_NAME_FAULT, "indoor_coil_temp", nullptr},    // f_e_incoiltemp
+    {FAULT_BYTE_INDOOR, 0x20, FAULT_NAME_FAULT, "indoor_humidity", nullptr},     // f_e_inhumidity
+    {FAULT_BYTE_INDOOR, 0x10, FAULT_NAME_FAULT, "water_full", nullptr},          // f_e_waterfull
+    {FAULT_BYTE_INDOOR, 0x08, FAULT_NAME_FAULT, "indoor_fan_motor", nullptr},    // f_e_infanmotor / upmachine
+    {FAULT_BYTE_INDOOR, 0x04, FAULT_NAME_FAULT, "grille", nullptr},              // f_e_arkgrille / dwmachine
+    {FAULT_BYTE_INDOOR, 0x02, FAULT_NAME_FAULT, "indoor_vzero", nullptr},        // f_e_invzero
+    {FAULT_BYTE_INDOOR, 0x01, FAULT_NAME_FAULT, "indoor_comms", nullptr},        // f_e_incom, induced
+    {FAULT_BYTE_MODULE, 0x80, FAULT_NAME_FAULT, "indoor_display", nullptr},      // f_e_indisplay
+    {FAULT_BYTE_MODULE, 0x40, FAULT_NAME_FAULT, "indoor_keys", nullptr},         // f_e_inkeys
+    {FAULT_BYTE_MODULE, 0x20, FAULT_NAME_FAULT, "indoor_wifi", nullptr},         // f_e_inwifi
+    {FAULT_BYTE_MODULE, 0x10, FAULT_NAME_FAULT, "indoor_ele", nullptr},          // f_e_inele
+    {FAULT_BYTE_MODULE, 0x08, FAULT_NAME_FAULT, "indoor_eeprom", nullptr},       // f_e_ineeprom
+    {FAULT_BYTE_MODULE, 0x04, FAULT_NAME_RESERVED, nullptr, nullptr},            // XM rev 3.2.6
+    {FAULT_BYTE_MODULE, 0x02, FAULT_NAME_RESERVED, nullptr, nullptr},            // XM rev 3.2.6
+    {FAULT_BYTE_MODULE, 0x01, FAULT_NAME_RESERVED, nullptr, nullptr},            // XM rev 3.2.6
+    {FAULT_BYTE_OUTDOOR, 0x40, FAULT_NAME_FAULT, "outdoor_eeprom", nullptr},     // f_e_outeeprom
+    {FAULT_BYTE_OUTDOOR, 0x20, FAULT_NAME_FAULT, "outdoor_coil_temp", nullptr},  // f_e_outcoiltemp
+    {FAULT_BYTE_OUTDOOR, 0x10, FAULT_NAME_FAULT, "outdoor_gas_temp", nullptr},   // f_e_outgastemp
+    {FAULT_BYTE_OUTDOOR, 0x08, FAULT_NAME_FAULT, "outdoor_temp", nullptr},       // f_e_outtemp
+    {FAULT_BYTE_PROTECT, 0x10, FAULT_NAME_FAULT, "over_temp",
+     "coil overload in heat or anti-freeze in cool"},  // f_e_over_hot / over_cold, service manual
+    {FAULT_BYTE_PROTECT, 0x02, FAULT_NAME_GUESS, "discharge temp protection", nullptr},  // community, no source
+};
+
+const FaultName *fault_names(size_t *count) {
+  if (count != nullptr)
+    *count = sizeof(FAULT_NAMES) / sizeof(FAULT_NAMES[0]);
+  return FAULT_NAMES;
+}
+
+uint32_t fault_raw32(const AcFaults &f) {
+  return (static_cast<uint32_t>(f.raw_indoor) << 24) | (static_cast<uint32_t>(f.raw_module) << 16) |
+         (static_cast<uint32_t>(f.raw_outdoor) << 8) | f.raw_protect;
+}
+
+uint32_t fault_log_key(const AcFaults &f) { return f.any ? (fault_raw32(f) & ~uint32_t{FAULT_NONFAULT_PROTECT}) : 0; }
+
+bool fault_bit(const AcFaults &f, uint8_t byte, uint8_t mask) {
+  switch (byte) {
+    case FAULT_BYTE_INDOOR:
+      return (f.raw_indoor & mask) != 0;
+    case FAULT_BYTE_MODULE:
+      return (f.raw_module & mask) != 0;
+    case FAULT_BYTE_OUTDOOR:
+      return (f.raw_outdoor & mask) != 0;
+    case FAULT_BYTE_PROTECT:
+      return (f.raw_protect & mask & ~FAULT_NONFAULT_PROTECT) != 0;
+    default:
+      return false;
+  }
+}
+
+bool fault_protection_active(const AcFaults &f) { return (f.raw_protect & ~FAULT_NONFAULT_PROTECT) != 0; }
+
+// One bit's text, from its row, or "unknown" without one.
+static void fault_item_text(uint8_t byte, uint8_t mask, char *out, size_t cap) {
+  const FaultName *row = nullptr;
+  for (const auto &r : FAULT_NAMES) {
+    if (r.byte == byte && r.mask == mask)
+      row = &r;
+  }
+  const unsigned b = byte;
+  const unsigned m = mask;
+  if (row == nullptr) {
+    snprintf(out, cap, "unknown byte%u 0x%02X", b, m);
+  } else if (row->kind == FAULT_NAME_RESERVED) {
+    snprintf(out, cap, "reserved byte%u 0x%02X", b, m);
+  } else if (row->kind == FAULT_NAME_GUESS) {
+    snprintf(out, cap, "%s? byte%u 0x%02X", row->name, b, m);
+  } else if (row->note != nullptr) {
+    snprintf(out, cap, "%s (%s)", row->name, row->note);
+  } else {
+    snprintf(out, cap, "%s", row->name);
+  }
+}
+
+size_t fault_detail_text(const AcFaults &f, char *out, size_t cap) {
+  static const char ELLIPSIS[] = "...";
+  if (out == nullptr || cap < 5)
+    return 0;
+  // One entry per set fault bit, in wire order. 4 bytes x 8 bits bounds the count.
+  struct Entry {
+    uint8_t byte;
+    uint8_t mask;
+  } entries[32];
+  size_t n = 0;
+  const uint8_t bytes[] = {FAULT_BYTE_INDOOR, FAULT_BYTE_MODULE, FAULT_BYTE_OUTDOOR, FAULT_BYTE_PROTECT};
+  const uint8_t raws[] = {f.raw_indoor, f.raw_module, f.raw_outdoor,
+                          static_cast<uint8_t>(f.raw_protect & ~FAULT_NONFAULT_PROTECT)};
+  for (size_t b = 0; b < sizeof(bytes); b++) {
+    for (int bit = 7; bit >= 0; bit--) {
+      const uint8_t mask = static_cast<uint8_t>(1u << bit);
+      if (raws[b] & mask)
+        entries[n++] = Entry{bytes[b], mask};
+    }
+  }
+  if (n == 0) {
+    std::memcpy(out, "none", 5);
+    return 4;
+  }
+  // Room is kept for ", ..." until the last entry, which may use it.
+  const size_t limit = cap - 1;
+  const size_t tail = 2 + sizeof(ELLIPSIS) - 1;
+  size_t pos = 0;
+  for (size_t i = 0; i < n; i++) {
+    char item[64];
+    fault_item_text(entries[i].byte, entries[i].mask, item, sizeof(item));
+    const char *name = item;
+    const size_t sep = pos == 0 ? 0 : 2;
+    const size_t need = sep + std::strlen(name);
+    const bool last = i + 1 == n;
+    if (pos + need <= (last ? limit : (limit >= tail ? limit - tail : 0))) {
+      if (sep != 0) {
+        out[pos++] = ',';
+        out[pos++] = ' ';
+      }
+      std::memcpy(out + pos, name, need - sep);
+      pos += need - sep;
+      continue;
+    }
+    // Does not fit: close with an ellipsis, after a separator when there is room for one.
+    if (pos != 0 && pos + tail <= limit) {
+      out[pos++] = ',';
+      out[pos++] = ' ';
+    } else if (pos + sizeof(ELLIPSIS) - 1 > limit) {
+      pos = limit - (sizeof(ELLIPSIS) - 1);
+    }
+    std::memcpy(out + pos, ELLIPSIS, sizeof(ELLIPSIS) - 1);
+    pos += sizeof(ELLIPSIS) - 1;
+    break;
+  }
+  out[pos] = '\0';
+  return pos;
+}
+
+size_t fault_bytes_text(const AcFaults &f, char *out, size_t cap) {
+  if (out == nullptr || cap < 12)
+    return 0;
+  snprintf(out, cap, "%02X %02X %02X %02X", static_cast<unsigned>(f.raw_indoor), static_cast<unsigned>(f.raw_module),
+           static_cast<unsigned>(f.raw_outdoor), static_cast<unsigned>(f.raw_protect));
+  return 11;
 }
 
 // ---- Temperature -------------------------------------------------------------------------------

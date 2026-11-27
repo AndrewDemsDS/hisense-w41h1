@@ -266,6 +266,7 @@ All optional. Each takes every option of ESPHome's binary sensor schema.
 |---|---|---|
 | `bus_link` | connectivity, diagnostic | on while the unit answers its status poll |
 | `problem` | problem | on while the unit reports any fault |
+| `protection` | none | on while byte 66 reports a protection state: any bit but the frost-guard flag `0x80`, so over temperature (`0x10`) and the bits without a stock name. These raise `problem` too, and this sensor lets an automation tell a protection from a fault |
 | `aux_heat` | heat | on while the auxiliary heater relay is closed |
 | `fault_*` | problem, diagnostic | one per fault bit, list below. [Disabled by default](#entities-that-are-disabled-by-default) |
 | `capability_*` | diagnostic | one per capability bit, list below |
@@ -276,6 +277,8 @@ The 18 fault options: `fault_indoor_temp`, `fault_indoor_coil_temp`, `fault_indo
 `fault_indoor_ele`, `fault_indoor_eeprom`, `fault_outdoor_eeprom`, `fault_outdoor_coil_temp`,
 `fault_outdoor_gas_temp`, `fault_outdoor_temp`, `fault_over_temp`.
 
+The 13 options for the fault bits with no stock name, by byte and mask: `fault_byte40_0x04`, `fault_byte40_0x02`, `fault_byte40_0x01` (reserved), `fault_byte64_0x80`, `fault_byte64_0x04`, `fault_byte64_0x02`, `fault_byte64_0x01`, `fault_byte66_0x40`, `fault_byte66_0x20`, `fault_byte66_0x08`, `fault_byte66_0x04`, `fault_byte66_0x01` (unknown), `fault_byte66_0x02` (discharge temperature protection, a guess). Their names follow `FAULT_NAMES` in `hisense_protocol.cpp`, which gives the source of each.
+
 The 13 capability options: `capability_cool_heat`, `capability_ai`, `capability_infinite_fan`,
 `capability_power_save`, `capability_fan_mute`, `capability_swing_dir_8`,
 `capability_swing_follow`, `capability_humidity`, `capability_heat_8c`, `capability_purify`,
@@ -284,9 +287,9 @@ fields (`power_display`, `demand_resp`) are not booleans and have no entity.
 
 ### Entities that are disabled by default
 
-The six bus counters and the 18 `fault_*` binary sensors are created disabled in Home Assistant
+The six bus counters and the 31 `fault_*` binary sensors are created disabled in Home Assistant
 (ESPHome's `disabled_by_default: true`, as the default of their schema). The node still publishes
-them, and the summary `problem` sensor, `bus_link` and the `capability_*` sensors are enabled as
+them, and the summary `problem` and `protection` sensors, `bus_link` and the `capability_*` sensors are enabled as
 before. To see one, enable it on the device page in Home Assistant, or change the default in the
 YAML:
 
@@ -328,6 +331,8 @@ Eco and turbo are refused before the first status frame has arrived.
 | Option | What |
 |---|---|
 | `link_token` | the two-byte device type the unit reports in the handshake, as `HH LL`. Diagnostic. The name is historical: it is a per-model identifier and not a session token |
+| `fault_detail` | which fault the unit reports: `none`, or the set fault bits as a comma list. A stock fault name is the `fault_*` binary sensor option without the prefix (`indoor_comms`). Byte 66 `0x10` reads `over_temp (coil overload in heat or anti-freeze in cool)`. A bit reserved in the published protocol shows as `reserved byteNN 0xMM`, a name with no firm source as `name? byteNN 0xMM` (`discharge temp protection? byte66 0x02`), any other bit as `unknown byteNN 0xMM`. The byte 66 frost-guard flag (`0x80`) is not a fault and is left out. Cut to 255 characters with `...`. Diagnostic. The names are one table with a source per row, `FAULT_NAMES` in `hisense_protocol.cpp` |
+| `fault_bytes` | the four raw fault bytes of the status frame, payload 39, 40, 64 and 66, as `HH HH HH HH` (healthy `00 00 00 00`, frost guard on `00 00 00 80`). Diagnostic |
 
 ### The trigger and the action
 

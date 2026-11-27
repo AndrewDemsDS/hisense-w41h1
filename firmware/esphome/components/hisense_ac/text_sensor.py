@@ -9,6 +9,8 @@ from . import CONF_HISENSE_AC_ID, HISENSE_AC_CLIENT_SCHEMA
 DEPENDENCIES = ["hisense_ac"]
 
 CONF_LINK_TOKEN = "link_token"
+CONF_FAULT_DETAIL = "fault_detail"
+CONF_FAULT_BYTES = "fault_bytes"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -20,12 +22,31 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             icon="mdi:identifier",
         ),
+        # Which fault the A/C reports: "none", or the set fault bits as a comma list of the
+        # fault_* binary sensor names, less the prefix. Other bits show as "reserved byteNN 0xMM",
+        # "name? byteNN 0xMM" or "unknown byteNN 0xMM". The text comes from fault_detail_text()
+        # in hisense_protocol.cpp.
+        cv.Optional(CONF_FAULT_DETAIL): text_sensor.text_sensor_schema(
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:alert-circle-outline",
+        ),
+        # The four raw fault bytes, payload 39, 40, 64 and 66, as "HH HH HH HH".
+        cv.Optional(CONF_FAULT_BYTES): text_sensor.text_sensor_schema(
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:hexadecimal",
+        ),
     }
 ).extend(HISENSE_AC_CLIENT_SCHEMA)
 
 
 async def to_code(config: ConfigType) -> None:
+    parent = await cg.get_variable(config[CONF_HISENSE_AC_ID])
     if conf := config.get(CONF_LINK_TOKEN):
-        parent = await cg.get_variable(config[CONF_HISENSE_AC_ID])
         var = await text_sensor.new_text_sensor(conf)
         cg.add(parent.set_link_token_text_sensor(var))
+    if conf := config.get(CONF_FAULT_DETAIL):
+        var = await text_sensor.new_text_sensor(conf)
+        cg.add(parent.set_fault_detail_text_sensor(var))
+    if conf := config.get(CONF_FAULT_BYTES):
+        var = await text_sensor.new_text_sensor(conf)
+        cg.add(parent.set_fault_bytes_text_sensor(var))

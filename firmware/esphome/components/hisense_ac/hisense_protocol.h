@@ -296,6 +296,46 @@ static constexpr uint8_t FAULT1_VALID = 31;
 uint32_t features_to_bitmap32(const AcFeatures &f);
 uint32_t faults_to_bitmap32(const AcFaults &f);
 
+// ---- Which fault: text for the log and the fault text sensors -----------------------------------
+// The four raw fault bytes packed as 0xAABBCCDD: byte 39, 40, 64, 66.
+uint32_t fault_raw32(const AcFaults &f);
+// What the fault log line is keyed on: 0 when no fault is set, else fault_raw32 without the
+// frost-guard flag, so the flag alone neither logs a fault nor logs one again.
+uint32_t fault_log_key(const AcFaults &f);
+// One fault bit by payload offset and mask, from the raw bytes, for the binary sensors of the bits
+// that have no FAULT1_* index. False for the frost-guard flag and for an offset that is not a
+// fault byte.
+bool fault_bit(const AcFaults &f, uint8_t byte, uint8_t mask);
+// A protection bit is set: any bit of byte 66 but the frost-guard flag. Byte 66 holds the
+// protection states (over_temp is f_e_over_hot / f_e_over_cold), which can be the unit guarding
+// itself for a while rather than a fault. They still count in `any` (open question 19).
+bool fault_protection_active(const AcFaults &f);
+// Whether the fault text sensors need a new state: nothing published yet, or the raw bytes moved.
+inline bool fault_text_due(bool published, uint32_t last_raw, uint32_t raw) { return !published || last_raw != raw; }
+
+// Every fault bit the repo has a name for, one row each, in hisense_protocol.cpp (FAULT_NAMES).
+// The kind says how sure the name is, and the text shows it:
+//   FAULT_NAME_FAULT     a stock-firmware fault name: the binary sensor option, less "fault_"
+//   FAULT_NAME_GUESS     a name from a community project with no source of its own: "name? byteNN 0xMM"
+//   FAULT_NAME_RESERVED  reserved in a published protocol revision: "reserved byteNN 0xMM"
+// A set bit with no row is "unknown byteNN 0xMM". The frost-guard flag is not a fault and is skipped.
+enum FaultNameKind : uint8_t { FAULT_NAME_FAULT, FAULT_NAME_GUESS, FAULT_NAME_RESERVED };
+struct FaultName {
+  uint8_t byte;  // payload offset: FAULT_BYTE_*
+  uint8_t mask;
+  FaultNameKind kind;
+  const char *name;  // nullptr for FAULT_NAME_RESERVED
+  const char *note;  // shown in brackets after the name, or nullptr
+};
+const FaultName *fault_names(size_t *count);
+// The longest text a Home Assistant state may hold is 255 characters.
+static constexpr size_t FAULT_TEXT_CAP = 256;
+// The active faults as a comma list, byte 39 to 66 and high bit to low, or "none". A list that
+// does not fit in `cap` ends in "...". Returns the length written, 0 when cap < 5.
+size_t fault_detail_text(const AcFaults &f, char *out, size_t cap);
+// The four raw bytes as "HH HH HH HH" (39, 40, 64, 66). Returns the length, 0 when cap < 12.
+size_t fault_bytes_text(const AcFaults &f, char *out, size_t cap);
+
 // ---- Temperature helpers -----------------------------------------------------------------------
 // Rounded to nearest, integer maths, correct for negatives.
 int8_t f_to_c(int f);

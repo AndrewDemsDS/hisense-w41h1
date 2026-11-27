@@ -80,6 +80,20 @@ sensor:
     accuracy_decimals: 0
     update_interval: never
 
+# Two opt-in fault options the package leaves out, so the faults scenario can read them: the raw
+# fault bytes, and the binary sensor of one bit that has no FAULT1_* index.
+text_sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    fault_bytes:
+      name: E2E fault bytes
+
+binary_sensor:
+  - platform: hisense_ac
+    hisense_ac_id: ac_bus
+    fault_byte66_0x02:
+      name: E2E fault byte66 0x02
+
 switch:
   # The test's handle on hisense_ac.set_setup_indicator, which a node calls from wifi_setup_toggle.
   - platform: template

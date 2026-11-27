@@ -158,8 +158,14 @@ binary_sensor:
       name: AC bus link
     problem:
       name: Fault
-    # Per-bit fault detail. Add any of the other 14 bits from binary_sensor.py the same way;
-    # these four are the ones that have actually fired on a bench unit.
+    # On while byte 66 reports a protection state (over temperature, and the other byte 66 bits
+    # but the frost-guard flag). They raise Fault too, and this one lets an automation tell them
+    # apart.
+    protection:
+      name: Protection active
+    # Per-bit fault detail. Add any of the other bits from binary_sensor.py (FAULT_BITS and
+    # FAULT_RAW_BITS) the same way. These four are the ones that have fired on a bench unit, and
+    # over temperature is the protection bit most likely to fire in heat or cool.
     fault_indoor_temp:
       name: Fault indoor temp sensor
     fault_indoor_comms:
@@ -168,6 +174,8 @@ binary_sensor:
       name: Fault condensate tray full
     fault_outdoor_temp:
       name: Fault outdoor temp sensor
+    fault_over_temp:
+      name: Fault over temperature
     # What the A/C says it supports, from the ProductType poll. Use these to decide which
     # controls to declare above.
     capability_cool_heat:
@@ -182,3 +190,8 @@ text_sensor:
     hisense_ac_id: ac_bus
     link_token:
       name: AC device type
+    # Which fault raised "Fault" above, by name, any bit with or without an entity of its own:
+    # "none", or e.g. "indoor_comms, unknown byte64 0x01". The `fault_bytes` option adds the four
+    # raw fault bytes (payload 39, 40, 64, 66) as hex.
+    fault_detail:
+      name: Fault detail
